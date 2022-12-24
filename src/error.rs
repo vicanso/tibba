@@ -7,6 +7,7 @@ use http::HeaderValue;
 use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct HTTPError {
     // 出错信息
     pub message: String,

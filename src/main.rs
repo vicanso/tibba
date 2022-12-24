@@ -7,9 +7,11 @@ use std::time::Duration;
 use tokio::signal;
 use tower::ServiceBuilder;
 
+use controller::new_router;
 use middleware::{entry, stats};
 use state::get_app_state;
 
+mod controller;
 mod error;
 mod middleware;
 mod state;
@@ -24,14 +26,14 @@ async fn main() {
     // build our application with a route
     let app = Router::new()
         .route("/ping", get(ping))
+        .merge(new_router())
         .layer(
             ServiceBuilder::new()
                 .layer(HandleErrorLayer::new(error::handle_error))
                 .timeout(Duration::from_secs(30)),
         )
         .layer(from_fn_with_state(app_state, entry))
-        .layer(from_fn_with_state(app_state, stats))
-        .with_state(get_app_state());
+        .layer(from_fn_with_state(app_state, stats));
 
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
     tracing::debug!("listening on {}", addr);
