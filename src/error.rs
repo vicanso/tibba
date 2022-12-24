@@ -44,6 +44,41 @@ impl HTTPError {
             ..Default::default()
         }
     }
+    pub fn new_with_status(message: &str, status: u16) -> Self {
+        Self {
+            message: message.to_string(),
+            status,
+            ..Default::default()
+        }
+    }
+    pub fn new_with_category_status(message: &str, category: &str, status: u16) -> Self {
+        Self {
+            message: message.to_string(),
+            category: category.to_string(),
+            status,
+            ..Default::default()
+        }
+    }
+}
+
+impl From<http::header::InvalidHeaderName> for HTTPError {
+    fn from(error: http::header::InvalidHeaderName) -> Self {
+        HTTPError {
+            message: error.to_string(),
+            category: "invalidHeaderName".to_string(),
+            ..Default::default()
+        }
+    }
+}
+
+impl From<http::header::InvalidHeaderValue> for HTTPError {
+    fn from(error: http::header::InvalidHeaderValue) -> Self {
+        HTTPError {
+            message: error.to_string(),
+            category: "invalidHeaderValue".to_string(),
+            ..Default::default()
+        }
+    }
 }
 
 impl IntoResponse for HTTPError {
@@ -69,9 +104,7 @@ pub async fn handle_error(
 ) -> HTTPError {
     tracing::error!("method:{}, uri:{}, error:{}", method, uri, err.to_string());
     if err.is::<tower::timeout::error::Elapsed>() {
-        let mut he = HTTPError::new_with_category("Request took too long", "timeout");
-        he.status = 408;
-        return he;
+        return HTTPError::new_with_category_status("Request took too long", "timeout", 408);
     }
     HTTPError::new(err.to_string().as_str())
 }

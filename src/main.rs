@@ -1,29 +1,42 @@
-use axum::{error_handling::HandleErrorLayer, routing::get, Router};
+use axum::{
+    error_handling::HandleErrorLayer, middleware::from_fn_with_state, routing::get, Router,
+};
 
 use std::net::SocketAddr;
 use std::time::Duration;
 use tokio::signal;
 use tower::ServiceBuilder;
 
+use middleware::{entry, stats};
+use state::get_app_state;
+
 mod error;
 mod middleware;
+mod state;
+mod util;
 
 #[tokio::main]
 async fn main() {
     // initialize tracing
     tracing_subscriber::fmt::init();
+    let app_state = get_app_state();
 
     // build our application with a route
-    let app = Router::new().route("/ping", get(ping)).layer(
-        ServiceBuilder::new()
-            .layer(HandleErrorLayer::new(error::handle_error))
-            .timeout(Duration::from_secs(30)),
-    );
+    let app = Router::new()
+        .route("/ping", get(ping))
+        .layer(
+            ServiceBuilder::new()
+                .layer(HandleErrorLayer::new(error::handle_error))
+                .timeout(Duration::from_secs(30)),
+        )
+        .layer(from_fn_with_state(app_state, entry))
+        .layer(from_fn_with_state(app_state, stats))
+        .with_state(get_app_state());
 
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
     tracing::debug!("listening on {}", addr);
     axum::Server::bind(&addr)
-        .serve(app.into_make_service())
+        .serve(app.into_make_service_with_connect_info::<SocketAddr>())
         .with_graceful_shutdown(shutdown_signal())
         .await
         .unwrap();
