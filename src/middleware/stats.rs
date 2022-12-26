@@ -1,12 +1,21 @@
-use axum::{extract::State, http::Request, middleware::Next, response::Response};
+use axum::{
+    body::{Body, Bytes},
+    extract::State,
+    http::Request,
+    middleware::Next,
+    response::Response,
+};
 use axum_client_ip::ClientIp;
 use chrono::{Duration, Utc};
+use http::Method;
 use urlencoding::decode;
 
-use crate::state::AppState;
+use crate::util::get_context;
+use crate::{error::HTTPError, state::AppState};
 
 #[derive(Debug, Clone)]
 pub struct StatsInfo {
+    pub trace_id: String,
     pub ip: String,
     pub method: String,
     pub route: String,
@@ -14,14 +23,30 @@ pub struct StatsInfo {
     pub status: http::StatusCode,
     pub cost: Duration,
     pub processing: i32,
+    pub request_body_size: usize,
 }
 
-pub async fn stats<B>(
+async fn read_buffer<B>(body: B) -> Result<Bytes, HTTPError>
+where
+    B: axum::body::HttpBody<Data = Bytes>,
+    B::Error: std::fmt::Display,
+{
+    let bytes = match hyper::body::to_bytes(body).await {
+        Ok(bytes) => bytes,
+        Err(err) => {
+            let msg = format!("failed to read body: {}", err);
+            return Err(HTTPError::new(msg.as_str()));
+        }
+    };
+    Ok(bytes)
+}
+
+pub async fn stats(
     State(state): State<&AppState>,
     ClientIp(ip): ClientIp,
-    req: Request<B>,
-    next: Next<B>,
-) -> Response {
+    mut req: Request<Body>,
+    next: Next<Body>,
+) -> Result<Response, HTTPError> {
     let start_at = Utc::now();
     state.increase_processing();
     let processing_count = state.get_processing();
@@ -33,11 +58,21 @@ pub async fn stats<B>(
     }
     let method = req.method().to_string();
     let route = req.uri().path().to_string();
+    let mut request_body_size = 0;
+    if [Method::POST, Method::PATCH, Method::PUT].contains(req.method()) {
+        let (parts, body) = req.into_parts();
+        let bytes = read_buffer(body).await?;
+        request_body_size = bytes.len();
+        req = Request::from_parts(parts, Body::from(bytes));
+    }
+    let ctx = get_context(req.extensions());
+
     // TODO 获取request body
     // 获取 response body
 
     let resp = next.run(req).await;
     let info = StatsInfo {
+        trace_id: ctx.trace_id,
         ip: ip.to_string(),
         method,
         route,
@@ -45,10 +80,11 @@ pub async fn stats<B>(
         status: resp.status(),
         cost: Utc::now() - start_at,
         processing: processing_count,
+        request_body_size,
     };
 
     tracing::info!("{:?}", info);
 
     state.decrease_processing();
-    resp
+    Ok(resp)
 }

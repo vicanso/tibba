@@ -32,8 +32,9 @@ async fn main() {
                 .layer(HandleErrorLayer::new(error::handle_error))
                 .timeout(Duration::from_secs(30)),
         )
-        .layer(from_fn_with_state(app_state, entry))
-        .layer(from_fn_with_state(app_state, stats));
+        // 后面的layer先执行
+        .layer(from_fn_with_state(app_state, stats))
+        .layer(from_fn_with_state(app_state, entry));
 
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
     tracing::debug!("listening on {}", addr);
