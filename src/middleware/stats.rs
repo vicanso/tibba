@@ -8,6 +8,7 @@ use axum::{
 use axum_client_ip::ClientIp;
 use chrono::{Duration, Utc};
 use http::Method;
+use tracing::{event, Level};
 use urlencoding::decode;
 
 use crate::util::get_context;
@@ -65,11 +66,10 @@ pub async fn stats(
         request_body_size = bytes.len();
         req = Request::from_parts(parts, Body::from(bytes));
     }
-    let ctx = get_context(req.extensions());
 
+    let ctx = get_context(req.extensions());
     // TODO 获取request body
     // 获取 response body
-
     let resp = next.run(req).await;
     let info = StatsInfo {
         trace_id: ctx.trace_id,
@@ -83,7 +83,17 @@ pub async fn stats(
         request_body_size,
     };
 
-    tracing::info!("{:?}", info);
+    event!(
+        Level::INFO,
+        traceId = info.trace_id,
+        ip = info.ip,
+        method = info.method,
+        uri = info.uri,
+        status = info.status.as_u16(),
+        cost = info.cost.num_milliseconds(),
+        processing = info.processing,
+        requestBodySize = info.request_body_size,
+    );
 
     state.decrease_processing();
     Ok(resp)

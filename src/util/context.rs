@@ -14,6 +14,10 @@ impl Context {
     }
 }
 
+pub fn set_context(exts: &mut Extensions, ctx: Context) -> Option<Context> {
+    exts.insert(ctx)
+}
+
 pub fn get_context(exts: &Extensions) -> Context {
     if let Some(ctx) = exts.get::<Context>() {
         return ctx.clone();

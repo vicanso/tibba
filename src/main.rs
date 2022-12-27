@@ -6,6 +6,7 @@ use std::net::SocketAddr;
 use std::time::Duration;
 use tokio::signal;
 use tower::ServiceBuilder;
+use tracing::{debug, info};
 
 use controller::new_router;
 use middleware::{entry, stats};
@@ -37,7 +38,7 @@ async fn main() {
         .layer(from_fn_with_state(app_state, entry));
 
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
-    tracing::debug!("listening on {}", addr);
+    debug!("listening on {}", addr);
     axum::Server::bind(&addr)
         .serve(app.into_make_service_with_connect_info::<SocketAddr>())
         .with_graceful_shutdown(shutdown_signal())
@@ -72,5 +73,5 @@ async fn shutdown_signal() {
         _ = terminate => {},
     }
 
-    tracing::info!("signal received, starting graceful shutdown");
+    info!("signal received, starting graceful shutdown");
 }

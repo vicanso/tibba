@@ -5,6 +5,7 @@ use axum::{
 };
 use http::HeaderValue;
 use serde::Serialize;
+use tracing::error;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -103,7 +104,7 @@ pub async fn handle_error(
     // the last argument must be the error itself
     err: BoxError,
 ) -> HTTPError {
-    tracing::error!("method:{}, uri:{}, error:{}", method, uri, err.to_string());
+    error!("method:{}, uri:{}, error:{}", method, uri, err.to_string());
     if err.is::<tower::timeout::error::Elapsed>() {
         return HTTPError::new_with_category_status("Request took too long", "timeout", 408);
     }
