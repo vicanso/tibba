@@ -12,6 +12,7 @@ use controller::new_router;
 use middleware::{entry, stats};
 use state::get_app_state;
 
+mod cache;
 mod controller;
 mod error;
 mod middleware;

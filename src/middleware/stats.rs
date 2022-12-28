@@ -67,10 +67,14 @@ pub async fn stats(
         req = Request::from_parts(parts, Body::from(bytes));
     }
 
-    let ctx = get_context(req.extensions());
-    // TODO 获取request body
+    let mut ctx = get_context(req.extensions());
+    // TODO
     // 获取 response body
     let resp = next.run(req).await;
+
+    // account 在获取session后才能获取
+    ctx.account = get_context(resp.extensions()).account;
+
     let info = StatsInfo {
         trace_id: ctx.trace_id,
         ip: ip.to_string(),
