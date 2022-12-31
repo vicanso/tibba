@@ -13,6 +13,7 @@ use middleware::{entry, stats};
 use state::get_app_state;
 
 mod cache;
+mod config;
 mod controller;
 mod error;
 mod middleware;
@@ -38,7 +39,9 @@ async fn main() {
         .layer(from_fn_with_state(app_state, stats))
         .layer(from_fn_with_state(app_state, entry));
 
-    let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
+    let basic_config = config::must_new_basic_config();
+
+    let addr = basic_config.listen.parse().unwrap();
     debug!("listening on {}", addr);
     axum::Server::bind(&addr)
         .serve(app.into_make_service_with_connect_info::<SocketAddr>())
