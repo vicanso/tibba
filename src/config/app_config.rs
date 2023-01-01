@@ -2,6 +2,7 @@ use config::{Config, File};
 use once_cell::sync::OnceCell;
 use std::collections::HashMap;
 use std::env;
+use validator::Validate;
 
 static APP_CONFIG: OnceCell<APPConfig> = OnceCell::new();
 
@@ -75,7 +76,7 @@ impl APPConfig {
     fn get_value_from_env_first_default(&self, key: &str, default_value: &str) -> String {
         let value = self.get_value_from_env_first(key);
         if !value.is_empty() {
-            return value
+            return value;
         }
         default_value.to_string()
     }
@@ -85,7 +86,7 @@ impl APPConfig {
     fn get_int_value_from_env_first_default(&self, key: &str, default_value: i32) -> i32 {
         let value = self.get_int_value_from_env_first(key);
         if value != 0 {
-            return value
+            return value;
         }
         default_value
     }
@@ -110,30 +111,66 @@ fn must_new_config() -> &'static APPConfig {
 }
 
 // 基本配置
+#[derive(Debug, Clone, Default, Validate)]
 pub struct BasicConfig {
     // 监听地址
+    #[validate(length(min = 1))]
     pub listen: String,
     // 请求连接限制
+    #[validate(range(min = 0, max = 100000))]
     pub request_limit: i32,
 }
 
 pub fn must_new_basic_config() -> BasicConfig {
     let config = must_new_config().set_prefix("basic");
-    BasicConfig {
+    let basic_config = BasicConfig {
         listen: config.get_value_from_env_first("listen"),
         request_limit: config.get_int_value_default("requestLimit", 5000),
-    }
+    };
+    basic_config.validate().unwrap();
+    basic_config
 }
 
 // redis 配置
+#[derive(Debug, Clone, Default, Validate)]
 pub struct RedisConfig {
     // redis连接地址
+    #[validate(length(min = 1))]
     pub uri: String,
 }
 pub fn must_new_redis_config() -> RedisConfig {
     let config = must_new_config().set_prefix("redis");
-    // TODO validate
-    RedisConfig {
+    let redis_config = RedisConfig {
         uri: config.get_value_from_env_first("uri"),
-    }
+    };
+    redis_config.validate().unwrap();
+    redis_config
+}
+
+// session配置
+#[derive(Debug, Clone, Default, Validate)]
+pub struct SessionConfig {
+    // session有效期
+    #[validate(range(min = 60, max = 2592000))]
+    pub ttl: i32,
+    // cookie名称
+    #[validate(length(min = 1))]
+    pub cookie: String,
+    // session存储的key前缀
+    #[validate(length(min = 1))]
+    pub prefix: String,
+    // session的secret，长度最少64
+    #[validate(length(min = 64))]
+    pub secret: String,
+}
+pub fn must_new_session_config() -> SessionConfig {
+    let config = must_new_config().set_prefix("session");
+    let session_config = SessionConfig {
+        ttl: config.get_int_value_default("ttl", 7 * 24 * 3600),
+        cookie: config.get_value_from_env_first_default("cookie", "tibba"),
+        prefix: config.get_value_from_env_first_default("prefix", "ss:"),
+        secret: config.get_value_from_env_first("secret")
+    };
+    session_config.validate().unwrap();
+    session_config
 }

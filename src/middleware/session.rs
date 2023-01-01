@@ -6,7 +6,7 @@ use axum_sessions::{
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-use crate::{cache::must_new_redis_client, error::HTTPError, util::Context};
+use crate::{cache::must_new_redis_client, error::HTTPError, util::Context, config::must_new_session_config};
 
 const SESSION_KEY: &str = "info";
 
@@ -16,13 +16,13 @@ pub struct SessionInfo {
 }
 
 pub fn new_session_layer() -> SessionLayer<RedisSessionStore> {
-    // TODO redis、secret 从配置中获取
-    let store = RedisSessionStore::from_client(must_new_redis_client()).with_prefix("ss:");
-    let secret = "random string random string random string random string random string".as_bytes();
-    SessionLayer::new(store, secret)
+    let session_config = must_new_session_config();
+    let store = RedisSessionStore::from_client(must_new_redis_client()).with_prefix(session_config.prefix);
+    let ttl = session_config.ttl as u64;
+    SessionLayer::new(store, session_config.secret.as_bytes())
         .with_secure(false)
-        .with_cookie_name("tibba")
-        .with_session_ttl(Some(Duration::from_secs(7 * 24 * 3600)))
+        .with_cookie_name(session_config.cookie)
+        .with_session_ttl(Some(Duration::from_secs(ttl)))
 }
 
 pub fn get_session_info(_ctx: Context, session: ReadableSession) -> SessionInfo {
