@@ -22,6 +22,7 @@ mod util;
 
 #[tokio::main]
 async fn main() {
+    cache::get_redis_pool();
     // initialize tracing
     tracing_subscriber::fmt::init();
     let app_state = get_app_state();

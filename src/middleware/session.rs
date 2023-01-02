@@ -6,7 +6,9 @@ use axum_sessions::{
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-use crate::{cache::must_new_redis_client, error::HTTPError, util::Context, config::must_new_session_config};
+use crate::{
+    cache::must_new_redis_client, config::must_new_session_config, error::HTTPError, util::Context,
+};
 
 const SESSION_KEY: &str = "info";
 
@@ -17,7 +19,8 @@ pub struct SessionInfo {
 
 pub fn new_session_layer() -> SessionLayer<RedisSessionStore> {
     let session_config = must_new_session_config();
-    let store = RedisSessionStore::from_client(must_new_redis_client()).with_prefix(session_config.prefix);
+    let store =
+        RedisSessionStore::from_client(must_new_redis_client()).with_prefix(session_config.prefix);
     let ttl = session_config.ttl as u64;
     SessionLayer::new(store, session_config.secret.as_bytes())
         .with_secure(false)

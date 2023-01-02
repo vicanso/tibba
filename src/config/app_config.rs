@@ -1,7 +1,8 @@
 use config::{Config, File};
 use once_cell::sync::OnceCell;
 use std::collections::HashMap;
-use std::env;
+use std::{env, time::Duration};
+use url::Url;
 use validator::Validate;
 
 static APP_CONFIG: OnceCell<APPConfig> = OnceCell::new();
@@ -137,12 +138,43 @@ pub struct RedisConfig {
     // redis连接地址
     #[validate(length(min = 1))]
     pub uri: String,
+    // 连接池大小，默认为10
+    pub pool_size: u32,
+    // 空闲连接大小，默认为2
+    pub idle: u32,
+    // 连接超时，默认3秒
+    pub connection_timeout: Duration,
 }
 pub fn must_new_redis_config() -> RedisConfig {
     let config = must_new_config().set_prefix("redis");
-    let redis_config = RedisConfig {
-        uri: config.get_value_from_env_first("uri"),
+    let uri = config.get_value_from_env_first("uri");
+    let info = Url::parse(uri.as_str()).unwrap();
+    let mut redis_config = RedisConfig {
+        uri: uri,
+        pool_size: 10,
+        idle: 2,
+        connection_timeout: Duration::from_millis(3000),
     };
+    for (key, value) in info.query_pairs() {
+        match key.to_string().as_str() {
+            "poolSize" => {
+                if let Ok(num) = value.parse::<u32>() {
+                    redis_config.pool_size = num;
+                }
+            }
+            "idle" => {
+                if let Ok(num) = value.parse::<u32>() {
+                    redis_config.idle = num;
+                }
+            }
+            "connectionTimeout" => {
+                if let Ok(num) = value.parse::<u64>() {
+                    redis_config.connection_timeout = Duration::from_millis(num);
+                }
+            }
+            _ => (),
+        }
+    }
     redis_config.validate().unwrap();
     redis_config
 }
@@ -169,7 +201,7 @@ pub fn must_new_session_config() -> SessionConfig {
         ttl: config.get_int_value_default("ttl", 7 * 24 * 3600),
         cookie: config.get_value_from_env_first_default("cookie", "tibba"),
         prefix: config.get_value_from_env_first_default("prefix", "ss:"),
-        secret: config.get_value_from_env_first("secret")
+        secret: config.get_value_from_env_first("secret"),
     };
     session_config.validate().unwrap();
     session_config
