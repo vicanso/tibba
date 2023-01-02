@@ -7,7 +7,10 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 use crate::{
-    cache::must_new_redis_client, config::must_new_session_config, error::HTTPError, util::Context,
+    cache::must_new_redis_client,
+    config::must_new_session_config,
+    error::{HTTPError, HTTPResult},
+    util::Context,
 };
 
 const SESSION_KEY: &str = "info";
@@ -40,7 +43,7 @@ pub fn add_session_info(
     _ctx: Context,
     mut session: WritableSession,
     info: SessionInfo,
-) -> Result<(), HTTPError> {
+) -> HTTPResult<()> {
     if let Err(err) = session.insert(SESSION_KEY, info) {
         return Err(HTTPError::new(err.to_string().as_str()));
     }

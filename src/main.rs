@@ -22,7 +22,8 @@ mod util;
 
 #[tokio::main]
 async fn main() {
-    cache::get_redis_pool();
+    let redis_cache = cache::RedisCache::new().unwrap();
+    println!("{:?}", redis_cache.lock("key".to_string(), None));
     // initialize tracing
     tracing_subscriber::fmt::init();
     let app_state = get_app_state();

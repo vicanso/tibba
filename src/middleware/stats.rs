@@ -12,7 +12,10 @@ use tracing::{event, Level};
 use urlencoding::decode;
 
 use crate::util::get_context;
-use crate::{error::HTTPError, state::AppState};
+use crate::{
+    error::{HTTPError, HTTPResult},
+    state::AppState,
+};
 
 #[derive(Debug, Clone)]
 pub struct StatsInfo {
@@ -27,7 +30,7 @@ pub struct StatsInfo {
     pub request_body_size: usize,
 }
 
-async fn read_buffer<B>(body: B) -> Result<Bytes, HTTPError>
+async fn read_buffer<B>(body: B) -> HTTPResult<Bytes>
 where
     B: axum::body::HttpBody<Data = Bytes>,
     B::Error: std::fmt::Display,
@@ -47,7 +50,7 @@ pub async fn stats(
     ClientIp(ip): ClientIp,
     mut req: Request<Body>,
     next: Next<Body>,
-) -> Result<Response, HTTPError> {
+) -> HTTPResult<Response> {
     let start_at = Utc::now();
     state.increase_processing();
     let processing_count = state.get_processing();

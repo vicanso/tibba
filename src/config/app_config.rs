@@ -150,7 +150,7 @@ pub fn must_new_redis_config() -> RedisConfig {
     let uri = config.get_value_from_env_first("uri");
     let info = Url::parse(uri.as_str()).unwrap();
     let mut redis_config = RedisConfig {
-        uri: uri,
+        uri,
         pool_size: 10,
         idle: 2,
         connection_timeout: Duration::from_millis(3000),

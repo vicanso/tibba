@@ -20,6 +20,8 @@ pub struct HTTPError {
     pub status: u16,
 }
 
+pub type HTTPResult<T> = Result<T, HTTPError>;
+
 impl Default for HTTPError {
     fn default() -> Self {
         HTTPError {
