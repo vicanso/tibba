@@ -1,10 +1,8 @@
 use once_cell::sync::OnceCell;
 use r2d2::Pool;
-use redis::{Client, Commands, ConnectionLike};
-use std::{
-    ops::{Deref, DerefMut},
-    time::Duration,
-};
+use redis::{Client, Commands};
+use serde::{Deserialize, Serialize};
+use std::{ops::DerefMut, time::Duration};
 
 use crate::{config::must_new_redis_config, error::HTTPResult};
 
@@ -55,16 +53,17 @@ impl RedisCache {
             .arg("NX")
             .arg("EX")
             .arg(ttl.unwrap_or(self.ttl).as_secs())
-            .query::<bool>(conn.deref_mut())?;
+            .query(conn.deref_mut())?;
         Ok(result)
     }
     /// Del a key from cache
     pub fn del(&self, key: String) -> HTTPResult<()> {
         let mut conn = self.pool.get()?;
-        let _ = conn.del(key)?;
+        conn.del(key)?;
         Ok(())
     }
-    /// Increase the value of key
+    /// Increase the value of key, if ttl is none,
+    /// the default ttl will be used.
     pub fn incr(&self, key: String, delta: i64, ttl: Option<Duration>) -> HTTPResult<i64> {
         let mut conn = self.pool.get()?;
         let (_, count) = redis::pipe()
@@ -79,5 +78,57 @@ impl RedisCache {
             .arg(delta)
             .query::<(bool, i64)>(conn.deref_mut())?;
         Ok(count)
+    }
+    /// Set bytes value to cache with ttl, if ttl is none,
+    /// the default ttl will be used.
+    pub fn set_bytes(&self, key: String, value: Vec<u8>, ttl: Option<Duration>) -> HTTPResult<()> {
+        let mut conn = self.pool.get()?;
+        let seconds = ttl.unwrap_or(self.ttl).as_secs();
+        conn.set_ex(key, value, seconds as usize)?;
+        Ok(())
+    }
+    /// Get bytes value from cache
+    pub fn get_bytes(&self, key: String) -> HTTPResult<Vec<u8>> {
+        let mut conn = self.pool.get()?;
+        let result = conn.get(key)?;
+        Ok(result)
+    }
+    /// Set struct to cache with ttl, if ttl is none,
+    /// the default ttl will be used.
+    pub fn set_struct<T>(&self, key: String, value: &T, ttl: Option<Duration>) -> HTTPResult<()>
+    where
+        T: ?Sized + Serialize,
+    {
+        let value = serde_json::to_vec(&value)?;
+        self.set_bytes(key, value, ttl)?;
+        Ok(())
+    }
+    // pub fn get_struct<'a, T>(&self, key: &'a str) -> HTTPResult<T>
+    // where
+    //     T: Deserialize<'a>,
+    // {
+    //     let mut conn = self.pool.get()?;
+    //     let value:Vec<u8> = conn.get(key)?;
+
+    //     let result = serde_json::from_slice(&value)?;
+
+    //     Ok(result)
+    // }
+    /// Ttl returns the ttl of key
+    pub fn ttl(&self, key: String) -> HTTPResult<i32> {
+        let mut conn = self.pool.get()?;
+        let result = conn.ttl(key)?;
+        Ok(result)
+    }
+    // GetDel gets the value of key and delete it
+    pub fn get_del(&self, key: String) -> HTTPResult<Vec<u8>> {
+        let mut conn = self.pool.get()?;
+        let (value, _) = redis::pipe()
+            .cmd("GET")
+            .arg(key.clone())
+            .cmd("DEL")
+            .arg(key)
+            .query::<(Vec<u8>, bool)>(conn.deref_mut())?;
+        Ok(value)
     }
 }

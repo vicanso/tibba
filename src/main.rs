@@ -9,6 +9,7 @@ use tower::ServiceBuilder;
 use tracing::{debug, info};
 
 use controller::new_router;
+use error::HTTPError;
 use middleware::{entry, stats};
 use state::get_app_state;
 
@@ -23,7 +24,7 @@ mod util;
 #[tokio::main]
 async fn main() {
     let redis_cache = cache::RedisCache::new().unwrap();
-    println!("{:?}", redis_cache.lock("key".to_string(), None));
+
     // initialize tracing
     tracing_subscriber::fmt::init();
     let app_state = get_app_state();

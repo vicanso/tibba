@@ -105,6 +105,25 @@ impl From<http::header::InvalidHeaderValue> for HTTPError {
     }
 }
 
+impl From<serde_json::Error> for HTTPError {
+    fn from(error: serde_json::Error) -> Self {
+        HTTPError {
+            message: error.to_string(),
+            category: "serdeJson".to_string(),
+            ..Default::default()
+        }
+    }
+}
+impl From<std::str::Utf8Error> for HTTPError {
+    fn from(error: std::str::Utf8Error) -> Self {
+        HTTPError {
+            message: error.to_string(),
+            category: "utf8".to_string(),
+            ..Default::default()
+        }
+    }
+}
+
 impl IntoResponse for HTTPError {
     fn into_response(self) -> Response {
         let status = match StatusCode::from_u16(self.status) {
