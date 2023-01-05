@@ -4,10 +4,10 @@ use axum::{
     BoxError, Json,
 };
 use http::HeaderValue;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tracing::error;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HTTPError {
     // 出错信息

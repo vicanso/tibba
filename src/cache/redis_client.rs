@@ -2,7 +2,7 @@ use once_cell::sync::OnceCell;
 use r2d2::Pool;
 use redis::{Client, Commands};
 use serde::{Deserialize, Serialize};
-use std::{ops::DerefMut, time::Duration};
+use std::{ops::DerefMut, slice::from_raw_parts, time::Duration};
 
 use crate::{config::must_new_redis_config, error::HTTPResult};
 
@@ -45,7 +45,7 @@ impl RedisCache {
     }
     /// Lock a key with ttl, if ttl is none,
     /// the default ttl will be used.
-    pub fn lock(&self, key: String, ttl: Option<Duration>) -> HTTPResult<bool> {
+    pub fn lock(&self, key: &str, ttl: Option<Duration>) -> HTTPResult<bool> {
         let mut conn = self.pool.get()?;
         let result = redis::cmd("SET")
             .arg(key)
@@ -57,18 +57,18 @@ impl RedisCache {
         Ok(result)
     }
     /// Del a key from cache
-    pub fn del(&self, key: String) -> HTTPResult<()> {
+    pub fn del(&self, key: &str) -> HTTPResult<()> {
         let mut conn = self.pool.get()?;
         conn.del(key)?;
         Ok(())
     }
     /// Increase the value of key, if ttl is none,
     /// the default ttl will be used.
-    pub fn incr(&self, key: String, delta: i64, ttl: Option<Duration>) -> HTTPResult<i64> {
+    pub fn incr(&self, key: &str, delta: i64, ttl: Option<Duration>) -> HTTPResult<i64> {
         let mut conn = self.pool.get()?;
         let (_, count) = redis::pipe()
             .cmd("SET")
-            .arg(key.clone())
+            .arg(key)
             .arg(0)
             .arg("NX")
             .arg("EX")
@@ -81,21 +81,21 @@ impl RedisCache {
     }
     /// Set bytes value to cache with ttl, if ttl is none,
     /// the default ttl will be used.
-    pub fn set_bytes(&self, key: String, value: Vec<u8>, ttl: Option<Duration>) -> HTTPResult<()> {
+    pub fn set_bytes(&self, key: &str, value: Vec<u8>, ttl: Option<Duration>) -> HTTPResult<()> {
         let mut conn = self.pool.get()?;
         let seconds = ttl.unwrap_or(self.ttl).as_secs();
         conn.set_ex(key, value, seconds as usize)?;
         Ok(())
     }
     /// Get bytes value from cache
-    pub fn get_bytes(&self, key: String) -> HTTPResult<Vec<u8>> {
+    pub fn get_bytes(&self, key: &str) -> HTTPResult<Vec<u8>> {
         let mut conn = self.pool.get()?;
         let result = conn.get(key)?;
         Ok(result)
     }
     /// Set struct to cache with ttl, if ttl is none,
     /// the default ttl will be used.
-    pub fn set_struct<T>(&self, key: String, value: &T, ttl: Option<Duration>) -> HTTPResult<()>
+    pub fn set_struct<T>(&self, key: &str, value: &T, ttl: Option<Duration>) -> HTTPResult<()>
     where
         T: ?Sized + Serialize,
     {
@@ -103,29 +103,34 @@ impl RedisCache {
         self.set_bytes(key, value, ttl)?;
         Ok(())
     }
-    // pub fn get_struct<'a, T>(&self, key: &'a str) -> HTTPResult<T>
-    // where
-    //     T: Deserialize<'a>,
-    // {
-    //     let mut conn = self.pool.get()?;
-    //     let value:Vec<u8> = conn.get(key)?;
+    /// Get struct from cache
+    pub fn get_struct<'a, T>(&self, key: &str) -> HTTPResult<T>
+    where
+        T: Deserialize<'a>,
+    {
+        let mut conn = self.pool.get()?;
+        let value: Vec<u8> = conn.get(key)?;
 
-    //     let result = serde_json::from_slice(&value)?;
+        // TODO 生命周期是否有其它方法调整
+        let result = unsafe {
+            let p = value.as_ptr();
+            serde_json::from_slice(from_raw_parts(p, value.len()))?
+        };
 
-    //     Ok(result)
-    // }
+        Ok(result)
+    }
     /// Ttl returns the ttl of key
-    pub fn ttl(&self, key: String) -> HTTPResult<i32> {
+    pub fn ttl(&self, key: &str) -> HTTPResult<i32> {
         let mut conn = self.pool.get()?;
         let result = conn.ttl(key)?;
         Ok(result)
     }
     // GetDel gets the value of key and delete it
-    pub fn get_del(&self, key: String) -> HTTPResult<Vec<u8>> {
+    pub fn get_del(&self, key: &str) -> HTTPResult<Vec<u8>> {
         let mut conn = self.pool.get()?;
         let (value, _) = redis::pipe()
             .cmd("GET")
-            .arg(key.clone())
+            .arg(key)
             .cmd("DEL")
             .arg(key)
             .query::<(Vec<u8>, bool)>(conn.deref_mut())?;

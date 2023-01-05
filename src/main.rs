@@ -25,6 +25,10 @@ mod util;
 async fn main() {
     let redis_cache = cache::RedisCache::new().unwrap();
 
+    redis_cache.set_struct("key", &HTTPError::new("测试"), None);
+    let he: HTTPError = redis_cache.get_struct("key").unwrap();
+    println!("{:?}", he);
+
     // initialize tracing
     tracing_subscriber::fmt::init();
     let app_state = get_app_state();
