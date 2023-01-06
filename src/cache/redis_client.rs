@@ -106,10 +106,14 @@ impl RedisCache {
     /// Get struct from cache
     pub fn get_struct<'a, T>(&self, key: &str) -> HTTPResult<T>
     where
-        T: Deserialize<'a>,
+        T: Default + Deserialize<'a>,
     {
         let mut conn = self.pool.get()?;
         let value: Vec<u8> = conn.get(key)?;
+
+        if value.is_empty() {
+            return Ok(T::default())
+        }
 
         // TODO 生命周期是否有其它方法调整
         let result = unsafe {

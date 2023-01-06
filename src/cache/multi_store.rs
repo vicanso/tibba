@@ -8,12 +8,8 @@ use crate::error::HTTPResult;
 use super::RedisCache;
 
 pub trait Store {
-    fn set<T>(&mut self, key: &str, value: &T, ttl: Duration) -> HTTPResult<()>
-    where
-        T: ?Sized + Serialize;
-    fn get<'a, T>(&mut self, key: &str) -> HTTPResult<T>
-    where
-        T: Deserialize<'a>;
+    fn set(&mut self, key: &str, value: Vec<u8>) -> HTTPResult<()>;
+    fn get(&mut self, key: &str) -> HTTPResult<Vec<u8>>;
     fn del(&mut self, key: &str) -> HTTPResult<()>;
     fn close(&mut self) -> HTTPResult<()> {
         Ok(())
@@ -21,61 +17,51 @@ pub trait Store {
 }
 
 // redis 实现的store存储
-struct RedisStore {
+pub struct TtlRedisStore {
     cache: RedisCache,
+    ttl: Duration,
 }
-impl RedisStore {
-    pub fn new(cache: RedisCache) -> Self {
-        RedisStore { cache }
+impl TtlRedisStore {
+    pub fn new(cache: RedisCache, ttl: Duration) -> Self {
+        TtlRedisStore { cache, ttl }
     }
 }
 
-impl Store for RedisStore {
-    fn set<T>(&mut self, key: &str, value: &T, ttl: Duration) -> HTTPResult<()>
-    where
-        T: ?Sized + Serialize,
-    {
-        self.cache.set_struct(key, value, Some(ttl))
+impl Store for TtlRedisStore {
+    fn set(&mut self, key: &str, value: Vec<u8>) -> HTTPResult<()> {
+        self.cache.set_bytes(key, value, Some(self.ttl))
     }
-    fn get<'a, T>(&mut self, key: &str) -> HTTPResult<T>
-    where
-        T: Deserialize<'a>,
-    {
-        self.cache.get_struct(key)
+    fn get(&mut self, key: &str) -> HTTPResult<Vec<u8>> {
+        self.cache.get_bytes(key)
     }
     fn del(&mut self, key: &str) -> HTTPResult<()> {
         self.cache.del(key)
     }
 }
 
-pub struct LRUStore {
+pub struct TtlLruStore {
     cache: LruCache<String, Vec<u8>>,
+    ttl: Duration,
 }
-impl LRUStore {
-    pub fn new(size: usize) -> Self {
+impl TtlLruStore {
+    pub fn new(size: usize, ttl: Duration) -> Self {
         let cache = LruCache::new(NonZeroUsize::new(size).unwrap());
-        LRUStore { cache }
+        TtlLruStore { cache, ttl }
     }
 }
-impl Store for LRUStore {
-    fn set<T>(&mut self, key: &str, value: &T, ttl: Duration) -> HTTPResult<()>
-    where
-        T: ?Sized + Serialize,
-    {
-        let mut value = serde_json::to_vec(&value)?;
+impl Store for TtlLruStore {
+    fn set(&mut self, key: &str, value: Vec<u8>) -> HTTPResult<()> {
+        let mut data = value;
         let cache = &mut self.cache;
-        let expired = Utc::now().timestamp_nanos() + (ttl.as_nanos() as i64);
+        let expired = Utc::now().timestamp_nanos() + (self.ttl.as_nanos() as i64);
 
         for v in expired.to_be_bytes() {
-            value.push(v);
+            data.push(v);
         }
-        cache.put(key.to_string(), value);
+        cache.put(key.to_string(), data);
         Ok(())
     }
-    fn get<'b, T>(&mut self, key: &str) -> HTTPResult<T>
-    where
-        T: Deserialize<'b>,
-    {
+    fn get(&mut self, key: &str) -> HTTPResult<Vec<u8>> {
         let mut value = vec![];
         let cache = &mut self.cache;
 
@@ -93,6 +79,48 @@ impl Store for LRUStore {
                 }
             }
         }
+        Ok(value)
+    }
+    fn del(&mut self, key: &str) -> HTTPResult<()> {
+        let cache = &mut self.cache;
+        cache.pop(&key.to_string());
+        Ok(())
+    }
+}
+
+pub struct TtlMultiStore {
+    stores: Vec<Box<dyn Store>>,
+}
+impl TtlMultiStore {
+    pub fn new(stores: Vec<Box<dyn Store>>) -> Self {
+        TtlMultiStore { stores }
+    }
+    pub fn set_struct<T>(&mut self, key: &str, value: &T) -> HTTPResult<()>
+    where
+        T: ?Sized + Serialize,
+    {
+        let value = serde_json::to_vec(&value)?;
+        for s in self.stores.iter_mut() {
+            s.set(key, value.clone())?;
+        }
+        Ok(())
+    }
+    pub fn get_struct<'a, T>(&mut self, key: &str) -> HTTPResult<T>
+    where
+        T: Default + Deserialize<'a>,
+    {
+        let mut value: Vec<u8> = vec![];
+        for s in self.stores.iter_mut() {
+            let v = s.get(key)?;
+            if !v.is_empty() {
+                value = v;
+                break;
+            }
+        }
+        if value.is_empty() {
+            return Ok(T::default())
+        }
+        
         // TODO 生命周期是否有其它方法调整
         let result = unsafe {
             let p = value.as_ptr();
@@ -100,10 +128,5 @@ impl Store for LRUStore {
         };
 
         Ok(result)
-    }
-    fn del(&mut self, key: &str) -> HTTPResult<()> {
-        let cache = &mut self.cache;
-        cache.pop(&key.to_string());
-        Ok(())
     }
 }

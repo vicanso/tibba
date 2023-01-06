@@ -2,7 +2,7 @@ use axum::{
     error_handling::HandleErrorLayer, middleware::from_fn_with_state, routing::get, Router,
 };
 
-use std::net::SocketAddr;
+use std::{net::SocketAddr, thread::sleep};
 use std::time::Duration;
 use tokio::signal;
 use tower::ServiceBuilder;
@@ -21,13 +21,34 @@ mod middleware;
 mod state;
 mod util;
 
+fn test() {
+    
+    let redis_cache = cache::RedisCache::new().unwrap();
+    let lru_store = cache::TtlLruStore::new(10, Duration::from_secs(10));
+    let redis_store = cache::TtlRedisStore::new(redis_cache, Duration::from_secs(60));
+    let mut store = cache::TtlMultiStore::new(vec![Box::new(lru_store), Box::new(redis_store)]);
+    println!("{}", chrono::Utc::now().to_string());
+    println!("{:?}", store.set_struct("key", &HTTPError::new("def")));
+
+    let result:HTTPError = store.get_struct("key").unwrap();
+    println!("{:?}", result);
+    sleep(Duration::from_secs(12));
+    // println!("{:?}", store.set_struct("key", &HTTPError::new("测试1")));
+    let result:HTTPError = store.get_struct("key").unwrap();
+    println!("{:?}", result);
+    sleep(Duration::from_secs(60));
+
+    let result:HTTPError = store.get_struct("key").unwrap();
+    println!("{:?}", result);
+
+    // redis_cache.set_struct("key", &HTTPError::new("测试"), None);
+    // let he: HTTPError = redis_cache.get_struct("key").unwrap();
+    // println!("{:?}", he);
+}
+
 #[tokio::main]
 async fn main() {
-    let redis_cache = cache::RedisCache::new().unwrap();
-
-    redis_cache.set_struct("key", &HTTPError::new("测试"), None);
-    let he: HTTPError = redis_cache.get_struct("key").unwrap();
-    println!("{:?}", he);
+    test();
 
     // initialize tracing
     tracing_subscriber::fmt::init();
