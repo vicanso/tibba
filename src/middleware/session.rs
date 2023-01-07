@@ -1,16 +1,17 @@
 use async_redis_session::RedisSessionStore;
+use axum::{body::Body, http::Request, middleware::Next, response::Response};
 use axum_sessions::{
     extractors::{ReadableSession, WritableSession},
     SessionLayer,
 };
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
+use std::{borrow::BorrowMut, time::Duration};
 
 use crate::{
     cache::must_new_redis_client,
     config::must_new_session_config,
     error::{HTTPError, HTTPResult},
-    util::Context,
+    util::ACCOUNT,
 };
 
 const SESSION_KEY: &str = "info";
@@ -31,7 +32,7 @@ pub fn new_session_layer() -> SessionLayer<RedisSessionStore> {
         .with_session_ttl(Some(Duration::from_secs(ttl)))
 }
 
-pub fn get_session_info(_ctx: Context, session: ReadableSession) -> SessionInfo {
+pub fn get_session_info(session: ReadableSession) -> SessionInfo {
     let result: Option<SessionInfo> = session.get(SESSION_KEY);
     if let Some(info) = result {
         return info;
@@ -39,13 +40,23 @@ pub fn get_session_info(_ctx: Context, session: ReadableSession) -> SessionInfo 
     SessionInfo::default()
 }
 
-pub fn add_session_info(
-    _ctx: Context,
-    mut session: WritableSession,
-    info: SessionInfo,
-) -> HTTPResult<()> {
+pub fn add_session_info(mut session: WritableSession, info: SessionInfo) -> HTTPResult<()> {
     if let Err(err) = session.insert(SESSION_KEY, info) {
         return Err(HTTPError::new(err.to_string().as_str()));
     }
     Ok(())
+}
+
+pub async fn load_session<B>(
+    session: ReadableSession,
+    req: Request<B>,
+    next: Next<B>,
+) -> HTTPResult<Response> {
+    let info = get_session_info(session);
+    ACCOUNT
+        .scope(info.account, async {
+            let resp = next.run(req).await;
+            Ok(resp)
+        })
+        .await
 }

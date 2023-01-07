@@ -11,7 +11,7 @@ use http::Method;
 use tracing::{event, Level};
 use urlencoding::decode;
 
-use crate::util::get_context;
+use crate::util::{clone_value_from_context, ACCOUNT, TRACE_ID};
 use crate::{
     error::{HTTPError, HTTPResult},
     state::AppState,
@@ -20,6 +20,7 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct StatsInfo {
     pub trace_id: String,
+    pub account: String,
     pub ip: String,
     pub method: String,
     pub route: String,
@@ -69,17 +70,17 @@ pub async fn stats(
         request_body_size = bytes.len();
         req = Request::from_parts(parts, Body::from(bytes));
     }
+    let trace_id = TRACE_ID.with(clone_value_from_context);
 
-    let mut ctx = get_context(req.extensions());
     // TODO
     // 获取 response body
     let resp = next.run(req).await;
-
     // account 在获取session后才能获取
-    ctx.account = get_context(resp.extensions()).account;
+    let account = ACCOUNT.with(clone_value_from_context);
 
     let info = StatsInfo {
-        trace_id: ctx.trace_id,
+        trace_id,
+        account,
         ip: ip.to_string(),
         method,
         route,
@@ -93,6 +94,7 @@ pub async fn stats(
     event!(
         Level::INFO,
         traceId = info.trace_id,
+        account = info.account,
         ip = info.ip,
         method = info.method,
         uri = info.uri,

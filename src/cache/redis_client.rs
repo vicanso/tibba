@@ -112,7 +112,7 @@ impl RedisCache {
         let value: Vec<u8> = conn.get(key)?;
 
         if value.is_empty() {
-            return Ok(T::default())
+            return Ok(T::default());
         }
 
         // TODO 生命周期是否有其它方法调整

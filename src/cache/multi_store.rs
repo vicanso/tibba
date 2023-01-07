@@ -118,9 +118,9 @@ impl TtlMultiStore {
             }
         }
         if value.is_empty() {
-            return Ok(T::default())
+            return Ok(T::default());
         }
-        
+
         // TODO 生命周期是否有其它方法调整
         let result = unsafe {
             let p = value.as_ptr();
