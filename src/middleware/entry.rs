@@ -1,7 +1,7 @@
 use axum::{http::Request, middleware::Next, response::Response};
 
 use crate::util::{
-    random_string, set_header_if_not_exist, set_no_cache_if_not_exist, ACCOUNT, TRACE_ID,
+    random_string, set_header_if_not_exist, set_no_cache_if_not_exist, ACCOUNT, DEVICE_ID, TRACE_ID,
 };
 
 pub async fn entry<B>(req: Request<B>, next: Next<B>) -> Response {

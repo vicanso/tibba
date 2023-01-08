@@ -11,7 +11,7 @@ use http::Method;
 use tracing::{event, Level};
 use urlencoding::decode;
 
-use crate::util::{clone_value_from_context, ACCOUNT, TRACE_ID};
+use crate::util::{clone_value_from_context, get_account_from_context, TRACE_ID};
 use crate::{
     error::{HTTPError, HTTPResult},
     state::AppState,
@@ -76,7 +76,8 @@ pub async fn stats(
     // 获取 response body
     let resp = next.run(req).await;
     // account 在获取session后才能获取
-    let account = ACCOUNT.with(clone_value_from_context);
+    // 而task local的值已回收，因此只能从extensions中获取
+    let account = get_account_from_context(resp.extensions());
 
     let info = StatsInfo {
         trace_id,

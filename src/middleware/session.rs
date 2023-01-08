@@ -1,17 +1,17 @@
 use async_redis_session::RedisSessionStore;
-use axum::{body::Body, http::Request, middleware::Next, response::Response};
+use axum::{http::Request, middleware::Next, response::Response};
 use axum_sessions::{
     extractors::{ReadableSession, WritableSession},
     SessionLayer,
 };
 use serde::{Deserialize, Serialize};
-use std::{borrow::BorrowMut, time::Duration};
+use std::time::Duration;
 
 use crate::{
     cache::must_new_redis_client,
     config::must_new_session_config,
     error::{HTTPError, HTTPResult},
-    util::ACCOUNT,
+    util::{set_account_to_context, Account, ACCOUNT},
 };
 
 const SESSION_KEY: &str = "info";
@@ -53,9 +53,12 @@ pub async fn load_session<B>(
     next: Next<B>,
 ) -> HTTPResult<Response> {
     let info = get_session_info(session);
+
+    let account = info.account.clone();
     ACCOUNT
         .scope(info.account, async {
-            let resp = next.run(req).await;
+            let mut resp = next.run(req).await;
+            set_account_to_context(resp.extensions_mut(), Account::new(account));
             Ok(resp)
         })
         .await
