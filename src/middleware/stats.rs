@@ -11,7 +11,7 @@ use http::Method;
 use tracing::{event, Level};
 use urlencoding::decode;
 
-use crate::util::{clone_value_from_context, get_account_from_context, TRACE_ID};
+use crate::util::{clone_value_from_context, get_account_from_context, TRACE_ID, DEVICE_ID};
 use crate::{
     error::{HTTPError, HTTPResult},
     state::AppState,
@@ -19,6 +19,7 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub struct StatsInfo {
+    pub device_id: String,
     pub trace_id: String,
     pub account: String,
     pub ip: String,
@@ -71,6 +72,7 @@ pub async fn stats(
         req = Request::from_parts(parts, Body::from(bytes));
     }
     let trace_id = TRACE_ID.with(clone_value_from_context);
+    let device_id = DEVICE_ID.with(clone_value_from_context);
 
     // TODO
     // 获取 response body
@@ -80,6 +82,7 @@ pub async fn stats(
     let account = get_account_from_context(resp.extensions());
 
     let info = StatsInfo {
+        device_id,
         trace_id,
         account,
         ip: ip.to_string(),
@@ -94,6 +97,7 @@ pub async fn stats(
 
     event!(
         Level::INFO,
+        deviceId = info.device_id,
         traceId = info.trace_id,
         account = info.account,
         ip = info.ip,

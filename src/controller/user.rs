@@ -1,14 +1,17 @@
 use crate::{
     controller::JSONResult,
+    error::HTTPResult,
     middleware::{
         add_session_info, get_session_info, load_session, new_session_layer, SessionInfo,
     },
+    util::{generate_device_id_cookie, get_device_id_from_cookie},
 };
 use axum::{
     middleware::from_fn,
     routing::{get, post},
     Json, Router,
 };
+use axum_extra::extract::cookie::CookieJar;
 use axum_sessions::extractors::{ReadableSession, WritableSession};
 use serde::{Deserialize, Serialize};
 
@@ -28,10 +31,14 @@ pub fn new_router() -> Router {
     Router::new().nest("/users", r)
 }
 
-async fn me(session: ReadableSession) -> JSONResult<UserMe> {
+async fn me(session: ReadableSession, mut jar: CookieJar) -> HTTPResult<(CookieJar, Json<UserMe>)> {
     let info = get_session_info(session);
-    Ok(Json(UserMe { name: info.account }))
-    // let id: String = TRACE_ID.try_with()?;
+    let me = UserMe { name: info.account };
+    // 如果未设置device，则设置
+    if get_device_id_from_cookie(&jar).is_empty() {
+        jar = jar.add(generate_device_id_cookie());
+    }
+    Ok((jar, Json(me)))
 }
 
 #[derive(Deserialize)]
