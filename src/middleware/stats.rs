@@ -11,7 +11,7 @@ use http::Method;
 use tracing::{event, Level};
 use urlencoding::decode;
 
-use crate::util::{clone_value_from_context, get_account_from_context, TRACE_ID, DEVICE_ID};
+use crate::util::{clone_value_from_context, get_account_from_context, DEVICE_ID, TRACE_ID};
 use crate::{
     error::{HTTPError, HTTPResult},
     state::AppState,

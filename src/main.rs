@@ -1,6 +1,4 @@
-use axum::{
-    error_handling::HandleErrorLayer, middleware::from_fn_with_state, routing::get, Router,
-};
+use axum::{error_handling::HandleErrorLayer, middleware::from_fn_with_state, Router};
 
 use std::time::Duration;
 use std::{net::SocketAddr, thread::sleep};
@@ -13,6 +11,7 @@ use error::HTTPError;
 use middleware::{entry, stats};
 use state::get_app_state;
 
+mod asset;
 mod cache;
 mod config;
 mod controller;
@@ -55,7 +54,6 @@ async fn main() {
 
     // build our application with a route
     let app = Router::new()
-        .route("/ping", get(ping))
         .merge(new_router())
         .layer(
             ServiceBuilder::new()
@@ -70,15 +68,12 @@ async fn main() {
 
     let addr = basic_config.listen.parse().unwrap();
     debug!("listening on {}", addr);
+    app_state.run();
     axum::Server::bind(&addr)
         .serve(app.into_make_service_with_connect_info::<SocketAddr>())
         .with_graceful_shutdown(shutdown_signal())
         .await
         .unwrap();
-}
-
-async fn ping() -> &'static str {
-    "pong"
 }
 
 async fn shutdown_signal() {

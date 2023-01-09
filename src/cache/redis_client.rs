@@ -140,4 +140,5 @@ impl RedisCache {
             .query::<(Vec<u8>, bool)>(conn.deref_mut())?;
         Ok(value)
     }
+    // TODO 增加snappy的set struct与get struct
 }

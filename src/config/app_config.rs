@@ -1,11 +1,16 @@
 use config::{Config, File};
 use once_cell::sync::OnceCell;
-use std::collections::HashMap;
-use std::{env, time::Duration};
+use rust_embed::RustEmbed;
+use std::{collections::HashMap, env, fs, io::Write, path::PathBuf, time::Duration};
+use tempfile::TempDir;
 use url::Url;
 use validator::Validate;
 
 static APP_CONFIG: OnceCell<APPConfig> = OnceCell::new();
+
+#[derive(RustEmbed)]
+#[folder = "configs/"]
+struct Configs;
 
 #[derive(Debug, Clone, Default)]
 pub struct APPConfig {
@@ -93,17 +98,36 @@ impl APPConfig {
     }
 }
 
+fn write_data_to_temp_file(dir: &TempDir, name: &str) -> PathBuf {
+    let default_path = dir.path().join(name);
+
+    let mut file = fs::File::create(default_path.clone()).unwrap();
+
+    file.write_all(&Configs::get(name).unwrap().data).unwrap();
+    default_path
+}
+
+pub fn get_env() -> String {
+    env::var("RUST_ENV").unwrap_or_else(|_| "dev".to_string())
+}
+
 fn must_new_config() -> &'static APPConfig {
     APP_CONFIG.get_or_init(|| {
-        let mode = env::var("RUST_ENV").unwrap_or_else(|_| "dev".to_string());
-        let file = format!("configs/{}.yml", mode);
+        let mode = get_env();
+
+        // TODO config是否可直接使用字符串作为源
+        let dir = tempfile::tempdir().unwrap();
+        let default_file = write_data_to_temp_file(&dir, "default.yml");
+        let current_file = write_data_to_temp_file(&dir, format!("{}.yml", mode).as_str());
+
         let settings = Config::builder()
-            .add_source(File::with_name("configs/default.yml"))
-            .add_source(File::with_name(file.as_str()))
+            .add_source(File::with_name(default_file.to_str().unwrap()))
+            .add_source(File::with_name(current_file.to_str().unwrap()))
             .build()
             .unwrap()
             .try_deserialize::<HashMap<String, HashMap<String, String>>>()
             .unwrap();
+        println!("{:?}", settings);
         APPConfig {
             settings,
             ..Default::default()
