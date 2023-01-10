@@ -1,9 +1,10 @@
 use chrono::Duration;
 
-pub fn duration_to_string(d: Duration) -> String {
-    if let Ok(v) = d.to_std() {
-        let value: humantime::Duration = v.into();
-        return value.to_string();
+pub fn duration_to_string(mut d: Duration) -> String {
+    if d < Duration::zero() {
+        d = -d;
     }
-    "".to_string()
+    // 已保证一定>=0，因此不会出错
+    let value: humantime::Duration = d.to_std().unwrap().into();
+    value.to_string()
 }

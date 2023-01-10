@@ -1,8 +1,11 @@
 use std::str::FromStr;
 
-use axum::http::{header::HeaderName, HeaderMap, HeaderValue};
+use axum::{
+    body::Bytes,
+    http::{header::HeaderName, HeaderMap, HeaderValue},
+};
 
-use crate::error::HTTPResult;
+use crate::error::{HTTPError, HTTPResult};
 
 // 插入HTTP响应头
 pub fn insert_header(
@@ -33,4 +36,19 @@ pub fn set_no_cache_if_not_exist(headers: &mut HeaderMap<HeaderValue>) {
     // 因为只会字符导致设置错误
     // 因此此处理不会出错
     let _ = set_header_if_not_exist(headers, "Cache-Control".to_string(), "no-cache".to_string());
+}
+
+pub async fn read_http_body<B>(body: B) -> HTTPResult<Bytes>
+where
+    B: axum::body::HttpBody<Data = Bytes>,
+    B::Error: std::fmt::Display,
+{
+    let bytes = match hyper::body::to_bytes(body).await {
+        Ok(bytes) => bytes,
+        Err(err) => {
+            let msg = format!("failed to read body: {}", err);
+            return Err(HTTPError::new(msg.as_str()));
+        }
+    };
+    Ok(bytes)
 }

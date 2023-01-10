@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use once_cell::sync::OnceCell;
 use std::sync::atomic::{AtomicI32, AtomicI8, Ordering};
 
@@ -5,6 +6,7 @@ use std::sync::atomic::{AtomicI32, AtomicI8, Ordering};
 pub struct AppState {
     status: AtomicI8,
     processing: AtomicI32,
+    started_at: DateTime<Utc>,
 }
 
 const APP_STATUS_STOP: i8 = 0;
@@ -30,12 +32,16 @@ impl AppState {
     pub fn stop(&self) {
         self.status.store(APP_STATUS_STOP, Ordering::Relaxed)
     }
+    pub fn get_started_at(&self) -> DateTime<Utc> {
+        self.started_at
+    }
 }
 
 static APP_STATE: OnceCell<AppState> = OnceCell::new();
 
 pub fn get_app_state() -> &'static AppState {
     APP_STATE.get_or_init(|| AppState {
+        started_at: Utc::now(),
         status: AtomicI8::new(0),
         processing: AtomicI32::new(0),
     })

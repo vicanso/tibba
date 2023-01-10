@@ -15,6 +15,7 @@ use crate::util::{clone_value_from_context, get_account_from_context, DEVICE_ID,
 use crate::{
     error::{HTTPError, HTTPResult},
     state::AppState,
+    util::read_http_body,
 };
 
 #[derive(Debug, Clone)]
@@ -30,21 +31,6 @@ pub struct StatsInfo {
     pub cost: Duration,
     pub processing: i32,
     pub request_body_size: usize,
-}
-
-async fn read_buffer<B>(body: B) -> HTTPResult<Bytes>
-where
-    B: axum::body::HttpBody<Data = Bytes>,
-    B::Error: std::fmt::Display,
-{
-    let bytes = match hyper::body::to_bytes(body).await {
-        Ok(bytes) => bytes,
-        Err(err) => {
-            let msg = format!("failed to read body: {}", err);
-            return Err(HTTPError::new(msg.as_str()));
-        }
-    };
-    Ok(bytes)
 }
 
 pub async fn stats(
@@ -67,7 +53,7 @@ pub async fn stats(
     let mut request_body_size = 0;
     if [Method::POST, Method::PATCH, Method::PUT].contains(req.method()) {
         let (parts, body) = req.into_parts();
-        let bytes = read_buffer(body).await?;
+        let bytes = read_http_body(body).await?;
         request_body_size = bytes.len();
         req = Request::from_parts(parts, Body::from(bytes));
     }

@@ -1,6 +1,5 @@
 use axum::{routing::get, Json, Router};
-use chrono::{DateTime, Duration, Utc};
-use once_cell::sync::OnceCell;
+use chrono::Utc;
 use serde::Serialize;
 
 use crate::{
@@ -20,10 +19,7 @@ struct ApplicationInfo {
     os: String,
 }
 
-static STARTED_AT: OnceCell<DateTime<Utc>> = OnceCell::new();
-
 pub fn new_router() -> Router {
-    STARTED_AT.get_or_init(Utc::now);
     let r = Router::new().route("/application", get(get_application_info));
 
     Router::new().route("/ping", get(ping)).nest("/commons", r)
@@ -38,13 +34,8 @@ async fn ping() -> HTTPResult<&'static str> {
 }
 
 async fn get_application_info() -> HTTPResult<Json<ApplicationInfo>> {
-    let d = {
-        if let Some(value) = STARTED_AT.get() {
-            Utc::now().signed_duration_since(*value)
-        } else {
-            Duration::nanoseconds(0)
-        }
-    };
+    let app_state = get_app_state();
+    let d = Utc::now().signed_duration_since(app_state.get_started_at());
     let os = os_info::get().os_type().to_string();
 
     let info = ApplicationInfo {

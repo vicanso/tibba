@@ -123,6 +123,15 @@ impl From<std::str::Utf8Error> for HTTPError {
         }
     }
 }
+impl From<std::io::Error> for HTTPError {
+    fn from(error: std::io::Error) -> Self {
+        HTTPError {
+            message: error.to_string(),
+            category: "io".to_string(),
+            ..Default::default()
+        }
+    }
+}
 
 impl IntoResponse for HTTPError {
     fn into_response(self) -> Response {

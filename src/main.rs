@@ -1,4 +1,8 @@
-use axum::{error_handling::HandleErrorLayer, middleware::from_fn_with_state, Router};
+use axum::{
+    error_handling::HandleErrorLayer,
+    middleware::{from_fn, from_fn_with_state},
+    Router,
+};
 
 use std::time::Duration;
 use std::{net::SocketAddr, thread::sleep};
@@ -8,7 +12,7 @@ use tracing::{debug, info};
 
 use controller::new_router;
 use error::HTTPError;
-use middleware::{entry, stats};
+use middleware::{entry, error_handler, stats};
 use state::get_app_state;
 
 mod asset;
@@ -55,6 +59,7 @@ async fn main() {
     // build our application with a route
     let app = Router::new()
         .merge(new_router())
+        .layer(from_fn(error_handler))
         .layer(
             ServiceBuilder::new()
                 .layer(HandleErrorLayer::new(error::handle_error))
