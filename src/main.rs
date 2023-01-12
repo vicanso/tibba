@@ -1,8 +1,4 @@
-use axum::{
-    error_handling::HandleErrorLayer,
-    middleware::{from_fn, from_fn_with_state},
-    Router,
-};
+use axum::{error_handling::HandleErrorLayer, middleware::from_fn_with_state, Router};
 
 use std::time::Duration;
 use std::{net::SocketAddr, thread::sleep};
@@ -12,7 +8,7 @@ use tracing::{debug, info};
 
 use controller::new_router;
 use error::HTTPError;
-use middleware::{entry, error_handler, stats};
+use middleware::{access_log, entry};
 use state::get_app_state;
 
 mod asset;
@@ -26,6 +22,7 @@ mod util;
 
 fn test() {
     let redis_cache = cache::RedisCache::new().unwrap();
+
     let lru_store = cache::TtlLruStore::new(10, Duration::from_secs(10));
     let redis_store = cache::TtlRedisStore::new(redis_cache, Duration::from_secs(60));
     let mut store = cache::TtlMultiStore::new(vec![Box::new(lru_store), Box::new(redis_store)]);
@@ -59,14 +56,13 @@ async fn main() {
     // build our application with a route
     let app = Router::new()
         .merge(new_router())
-        .layer(from_fn(error_handler))
         .layer(
             ServiceBuilder::new()
                 .layer(HandleErrorLayer::new(error::handle_error))
                 .timeout(Duration::from_secs(30)),
         )
         // 后面的layer先执行
-        .layer(from_fn_with_state(app_state, stats))
+        .layer(from_fn_with_state(app_state, access_log))
         .layer(from_fn_with_state(app_state, entry));
 
     let basic_config = config::must_new_basic_config();

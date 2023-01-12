@@ -1,11 +1,3 @@
-use crate::{
-    controller::JSONResult,
-    error::HTTPResult,
-    middleware::{
-        add_session_info, get_session_info, load_session, new_session_layer, SessionInfo,
-    },
-    util::{generate_device_id_cookie, get_device_id_from_cookie},
-};
 use axum::{
     middleware::from_fn,
     routing::{get, post},
@@ -14,6 +6,15 @@ use axum::{
 use axum_extra::extract::cookie::CookieJar;
 use axum_sessions::extractors::{ReadableSession, WritableSession};
 use serde::{Deserialize, Serialize};
+
+use crate::{
+    controller::JSONResult,
+    error::HTTPResult,
+    middleware::{
+        add_session_info, get_session_info, load_session, new_session_layer, SessionInfo,
+    },
+    util::{generate_device_id_cookie, get_device_id_from_cookie},
+};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]

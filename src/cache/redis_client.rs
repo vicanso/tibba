@@ -2,12 +2,12 @@ use once_cell::sync::OnceCell;
 use r2d2::Pool;
 use redis::{Client, Commands};
 use serde::{Deserialize, Serialize};
-use snap::{read::FrameDecoder, write::FrameEncoder};
 use std::{ops::DerefMut, slice::from_raw_parts, time::Duration};
 
 use crate::{
     config::must_new_redis_config,
-    error::{HTTPError, HTTPResult},
+    error::HTTPResult,
+    util::{snappy_decode, snappy_encode, zstd_decode, zstd_encode},
 };
 
 static REDIS_POOL: OnceCell<Pool<Client>> = OnceCell::new();
@@ -153,15 +153,9 @@ impl RedisCache {
     where
         T: ?Sized + Serialize,
     {
-        use std::io::Write;
         let value = serde_json::to_vec(&value)?;
-        let mut writer = FrameEncoder::new(vec![]);
-        writer.write_all(&value)?;
-        let data = writer
-            .into_inner()
-            .map_err(|err| HTTPError::new(err.to_string().as_str()))?;
-
-        self.set_bytes(key, data, ttl)?;
+        let buf = snappy_encode(&value)?;
+        self.set_bytes(key, buf, ttl)?;
         Ok(())
     }
     // Get struct from cache, the data will be decompressed using snappy
@@ -169,15 +163,44 @@ impl RedisCache {
     where
         T: Default + Deserialize<'a>,
     {
-        use std::io::Read;
         let value = self.get_bytes(key)?;
 
         if value.is_empty() {
             return Ok(T::default());
         }
 
-        let mut buf = vec![];
-        FrameDecoder::new(value.as_slice()).read_to_end(&mut buf)?;
+        let buf = snappy_decode(value.as_slice())?;
+
+        // TODO 生命周期是否有其它方法调整
+        let result = unsafe {
+            let p = buf.as_ptr();
+            serde_json::from_slice(from_raw_parts(p, buf.len()))?
+        };
+
+        Ok(result)
+    }
+    // Set struct to cache, the data will be compressed using zstd
+    pub fn set_struct_zstd<T>(&self, key: &str, value: &T, ttl: Option<Duration>) -> HTTPResult<()>
+    where
+        T: ?Sized + Serialize,
+    {
+        let value = serde_json::to_vec(&value)?;
+        let buf = zstd_encode(&value)?;
+        self.set_bytes(key, buf, ttl)?;
+        Ok(())
+    }
+    // Get struct from cache, the data will be decompressed using zstd
+    pub fn get_struct_zstd<'a, T>(&self, key: &str) -> HTTPResult<T>
+    where
+        T: Default + Deserialize<'a>,
+    {
+        let value = self.get_bytes(key)?;
+
+        if value.is_empty() {
+            return Ok(T::default());
+        }
+
+        let buf = zstd_decode(value.as_slice())?;
 
         // TODO 生命周期是否有其它方法调整
         let result = unsafe {

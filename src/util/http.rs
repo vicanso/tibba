@@ -38,6 +38,13 @@ pub fn set_no_cache_if_not_exist(headers: &mut HeaderMap<HeaderValue>) {
     let _ = set_header_if_not_exist(headers, "Cache-Control".to_string(), "no-cache".to_string());
 }
 
+pub fn get_header_value(headers: &HeaderMap<HeaderValue>, key: &str) -> String {
+    if let Some(value) = headers.get(key) {
+        return value.to_str().unwrap_or("").to_string();
+    }
+    "".to_string()
+}
+
 pub async fn read_http_body<B>(body: B) -> HTTPResult<Bytes>
 where
     B: axum::body::HttpBody<Data = Bytes>,
