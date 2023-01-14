@@ -31,6 +31,7 @@ pub async fn access_log(
     }
     let method = req.method().to_string();
     let x_forwarded_for = get_header_value(req.headers(), "X-Forwarded-For");
+    let referrer = get_header_value(req.headers(),"Referer");
     let mut request_body_size = 0;
 
     // 获取请求数据
@@ -73,6 +74,7 @@ pub async fn access_log(
         account = account,
         ip = ip.to_string(),
         xForwardedFor = x_forwarded_for,
+        referrer,
         method,
         uri,
         status,
