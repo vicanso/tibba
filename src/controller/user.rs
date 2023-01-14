@@ -11,7 +11,7 @@ use crate::{
     controller::JSONResult,
     error::HTTPResult,
     middleware::{
-        add_session_info, get_session_info, load_session, new_session_layer, SessionInfo,
+        add_session_info, get_session_info, load_session, new_session_layer, wait2s, SessionInfo,
     },
     util::{generate_device_id_cookie, get_device_id_from_cookie},
 };
@@ -23,9 +23,13 @@ struct UserMe {
 }
 
 pub fn new_router() -> Router {
+    let login_router = Router::new()
+        .route("/v1/login", post(login))
+        // 登录设置为最少等待x秒，避免快速尝试
+        .layer(from_fn(wait2s));
     let r = Router::new()
         .route("/v1/me", get(me))
-        .route("/v1/login", post(login))
+        .merge(login_router)
         .layer(from_fn(load_session))
         .layer(new_session_layer());
 

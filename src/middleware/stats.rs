@@ -10,7 +10,7 @@ use crate::{
     state::AppState,
     util::{
         clone_value_from_context, get_account_from_context, get_header_value, json_get,
-        read_http_body, DEVICE_ID, TRACE_ID,
+        read_http_body, DEVICE_ID, STARTED_AT, TRACE_ID,
     },
 };
 
@@ -20,7 +20,7 @@ pub async fn access_log(
     mut req: Request<Body>,
     next: Next<Body>,
 ) -> HTTPResult<Response<Body>> {
-    let start_at = Utc::now();
+    let start_at = STARTED_AT.with(clone_value_from_context);
     state.increase_processing();
     let processing_count = state.get_processing();
 
@@ -64,7 +64,7 @@ pub async fn access_log(
     // /users/:id 请求/users/123
     // route为 /users/:id
 
-    let cost = (Utc::now() - start_at).num_milliseconds();
+    let cost = Utc::now().timestamp_millis() - start_at;
     event!(
         Level::INFO,
         category = "accessLog",

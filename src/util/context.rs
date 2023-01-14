@@ -8,6 +8,7 @@ tokio::task_local! {
     pub static TRACE_ID: String;
     pub static ACCOUNT: String;
     pub static DEVICE_ID: String;
+    pub static STARTED_AT: i64;
 }
 
 static DEVICE_ID_NAME: &str = "device";
