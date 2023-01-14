@@ -84,13 +84,17 @@ pub async fn access_log(
 
     // 出错日志
     if status >= 400 {
+        let mut message = json_get(error_message.as_str(), "message");
+        if message.is_empty() {
+            message = error_message;
+        }
         event!(
             Level::ERROR,
             category = "httpError",
             deviceId = device_id,
             traceId = trace_id,
             account = account,
-            error = json_get(error_message.as_str(), "message"),
+            error = message,
         )
     }
 
