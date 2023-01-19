@@ -22,6 +22,8 @@ pub struct SessionInfo {
 }
 
 pub fn new_session_layer() -> SessionLayer<RedisSessionStore> {
+    // TODO session加载出错时，仅状态码调整了
+    // 无出错内容，且后续流程还是继续运行了
     let session_config = must_new_session_config();
     let store =
         RedisSessionStore::from_client(must_new_redis_client()).with_prefix(session_config.prefix);

@@ -9,7 +9,7 @@ async fn wait<B>(ms: i64, only_err_occurred: bool, req: Request<B>, next: Next<B
     let resp = next.run(req).await;
     // 如果仅出错时等待
     if only_err_occurred && resp.status().as_u16() < 400 {
-        return resp
+        return resp;
     }
     let started_at = STARTED_AT.with(clone_value_from_context);
 

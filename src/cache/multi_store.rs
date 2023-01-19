@@ -1,7 +1,7 @@
 use chrono::Utc;
 use lru::LruCache;
 use serde::{Deserialize, Serialize};
-use std::{num::NonZeroUsize, slice::from_raw_parts, time::Duration};
+use std::{num::NonZeroUsize, slice::from_raw_parts, sync::RwLock, time::Duration};
 
 use crate::error::HTTPResult;
 
@@ -40,19 +40,22 @@ impl Store for TtlRedisStore {
 }
 
 pub struct TtlLruStore {
-    cache: LruCache<String, Vec<u8>>,
+    cache: RwLock<LruCache<String, Vec<u8>>>,
     ttl: Duration,
 }
 impl TtlLruStore {
     pub fn new(size: usize, ttl: Duration) -> Self {
         let cache = LruCache::new(NonZeroUsize::new(size).unwrap());
-        TtlLruStore { cache, ttl }
+        TtlLruStore {
+            cache: RwLock::new(cache),
+            ttl,
+        }
     }
 }
 impl Store for TtlLruStore {
     fn set(&mut self, key: &str, value: Vec<u8>) -> HTTPResult<()> {
         let mut data = value;
-        let cache = &mut self.cache;
+        let cache = &mut self.cache.write()?;
         let expired = Utc::now().timestamp_nanos() + (self.ttl.as_nanos() as i64);
 
         for v in expired.to_be_bytes() {
@@ -63,8 +66,8 @@ impl Store for TtlLruStore {
     }
     fn get(&mut self, key: &str) -> HTTPResult<Vec<u8>> {
         let mut value = vec![];
-        let cache = &mut self.cache;
-
+        let cache = &mut self.cache.write()?;
+        // 如果要提升性能，需要使用peek
         if let Some(v) = cache.get(&key.to_string()) {
             // 获取8个字节
             let i64_size = 8;
@@ -82,7 +85,7 @@ impl Store for TtlLruStore {
         Ok(value)
     }
     fn del(&mut self, key: &str) -> HTTPResult<()> {
-        let cache = &mut self.cache;
+        let cache = &mut self.cache.write()?;
         cache.pop(&key.to_string());
         Ok(())
     }
