@@ -1,17 +1,69 @@
 use chrono::Utc;
 use lru::LruCache;
 use serde::{Deserialize, Serialize};
+use snafu::{ResultExt, Snafu};
 use std::{num::NonZeroUsize, slice::from_raw_parts, sync::RwLock, time::Duration};
-
-use crate::error::HTTPResult;
 
 use super::RedisCache;
 
+#[derive(Debug, Snafu)]
+pub enum Error {
+    #[snafu(display("{}", source))]
+    RedisClient { source: super::redis_client::Error },
+
+    #[snafu(display("{}", message))]
+    RwLock { message: String },
+    #[snafu(display("Json fail: {}", source))]
+    Json { source: serde_json::Error },
+}
+pub type Result<T, E = Error> = std::result::Result<T, E>;
+
+impl From<super::redis_client::Error> for Error {
+    fn from(err: super::redis_client::Error) -> Self {
+        Error::RedisClient { source: err }
+    }
+}
+
+impl
+    From<
+        std::sync::PoisonError<
+            std::sync::RwLockReadGuard<'_, lru::LruCache<std::string::String, std::vec::Vec<u8>>>,
+        >,
+    > for Error
+{
+    fn from(
+        err: std::sync::PoisonError<
+            std::sync::RwLockReadGuard<'_, lru::LruCache<std::string::String, std::vec::Vec<u8>>>,
+        >,
+    ) -> Self {
+        Error::RwLock {
+            message: err.to_string(),
+        }
+    }
+}
+impl
+    From<
+        std::sync::PoisonError<
+            std::sync::RwLockWriteGuard<'_, lru::LruCache<std::string::String, std::vec::Vec<u8>>>,
+        >,
+    > for Error
+{
+    fn from(
+        err: std::sync::PoisonError<
+            std::sync::RwLockWriteGuard<'_, lru::LruCache<std::string::String, std::vec::Vec<u8>>>,
+        >,
+    ) -> Self {
+        Error::RwLock {
+            message: err.to_string(),
+        }
+    }
+}
+
 pub trait Store {
-    fn set(&mut self, key: &str, value: Vec<u8>) -> HTTPResult<()>;
-    fn get(&mut self, key: &str) -> HTTPResult<Vec<u8>>;
-    fn del(&mut self, key: &str) -> HTTPResult<()>;
-    fn close(&mut self) -> HTTPResult<()> {
+    fn set(&mut self, key: &str, value: Vec<u8>) -> Result<()>;
+    fn get(&mut self, key: &str) -> Result<Vec<u8>>;
+    fn del(&mut self, key: &str) -> Result<()>;
+    fn close(&mut self) -> Result<()> {
         Ok(())
     }
 }
@@ -28,14 +80,17 @@ impl TtlRedisStore {
 }
 
 impl Store for TtlRedisStore {
-    fn set(&mut self, key: &str, value: Vec<u8>) -> HTTPResult<()> {
-        self.cache.set_bytes(key, value, Some(self.ttl))
+    fn set(&mut self, key: &str, value: Vec<u8>) -> Result<()> {
+        self.cache.set_bytes(key, value, Some(self.ttl))?;
+        Ok(())
     }
-    fn get(&mut self, key: &str) -> HTTPResult<Vec<u8>> {
-        self.cache.get_bytes(key)
+    fn get(&mut self, key: &str) -> Result<Vec<u8>> {
+        let result = self.cache.get_bytes(key)?;
+        Ok(result)
     }
-    fn del(&mut self, key: &str) -> HTTPResult<()> {
-        self.cache.del(key)
+    fn del(&mut self, key: &str) -> Result<()> {
+        self.cache.del(key)?;
+        Ok(())
     }
 }
 
@@ -53,7 +108,7 @@ impl TtlLruStore {
     }
 }
 impl Store for TtlLruStore {
-    fn set(&mut self, key: &str, value: Vec<u8>) -> HTTPResult<()> {
+    fn set(&mut self, key: &str, value: Vec<u8>) -> Result<()> {
         let mut data = value;
         let cache = &mut self.cache.write()?;
         let expired = Utc::now().timestamp_nanos() + (self.ttl.as_nanos() as i64);
@@ -64,11 +119,12 @@ impl Store for TtlLruStore {
         cache.put(key.to_string(), data);
         Ok(())
     }
-    fn get(&mut self, key: &str) -> HTTPResult<Vec<u8>> {
+    fn get(&mut self, key: &str) -> Result<Vec<u8>> {
         let mut value = vec![];
-        let cache = &mut self.cache.write()?;
-        // 如果要提升性能，需要使用peek
-        if let Some(v) = cache.get(&key.to_string()) {
+        let cache = self.cache.read()?;
+        // peek不会调整其顺序，因此热点数据也可能被清除
+        // 由于其为ttl+lru，因此可设置更大的容量即可
+        if let Some(v) = cache.peek(&key.to_string()) {
             // 获取8个字节
             let i64_size = 8;
             let size = v.len();
@@ -84,7 +140,7 @@ impl Store for TtlLruStore {
         }
         Ok(value)
     }
-    fn del(&mut self, key: &str) -> HTTPResult<()> {
+    fn del(&mut self, key: &str) -> Result<()> {
         let cache = &mut self.cache.write()?;
         cache.pop(&key.to_string());
         Ok(())
@@ -98,17 +154,17 @@ impl TtlMultiStore {
     pub fn new(stores: Vec<Box<dyn Store>>) -> Self {
         TtlMultiStore { stores }
     }
-    pub fn set_struct<T>(&mut self, key: &str, value: &T) -> HTTPResult<()>
+    pub fn set_struct<T>(&mut self, key: &str, value: &T) -> Result<()>
     where
         T: ?Sized + Serialize,
     {
-        let value = serde_json::to_vec(&value)?;
+        let value = serde_json::to_vec(&value).context(JsonSnafu {})?;
         for s in self.stores.iter_mut() {
             s.set(key, value.clone())?;
         }
         Ok(())
     }
-    pub fn get_struct<'a, T>(&mut self, key: &str) -> HTTPResult<T>
+    pub fn get_struct<'a, T>(&mut self, key: &str) -> Result<T>
     where
         T: Default + Deserialize<'a>,
     {
@@ -127,7 +183,7 @@ impl TtlMultiStore {
         // TODO 生命周期是否有其它方法调整
         let result = unsafe {
             let p = value.as_ptr();
-            serde_json::from_slice(from_raw_parts(p, value.len()))?
+            serde_json::from_slice(from_raw_parts(p, value.len())).context(JsonSnafu {})?
         };
 
         Ok(result)

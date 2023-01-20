@@ -151,6 +151,25 @@ impl
         }
     }
 }
+impl
+    From<
+        std::sync::PoisonError<
+            std::sync::RwLockReadGuard<'_, lru::LruCache<std::string::String, std::vec::Vec<u8>>>,
+        >,
+    > for HTTPError
+{
+    fn from(
+        error: std::sync::PoisonError<
+            std::sync::RwLockReadGuard<'_, lru::LruCache<std::string::String, std::vec::Vec<u8>>>,
+        >,
+    ) -> Self {
+        HTTPError {
+            message: error.to_string(),
+            category: "readLock".to_string(),
+            ..Default::default()
+        }
+    }
+}
 
 impl IntoResponse for HTTPError {
     fn into_response(self) -> Response {
