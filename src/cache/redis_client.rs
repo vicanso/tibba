@@ -6,13 +6,13 @@ use crate::{
 use redis::Client;
 
 use deadpool_redis::{
-    redis::{cmd, pipe, FromRedisValue},
+    redis::{cmd, pipe},
     Config, Connection, Pool, Runtime,
 };
 use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
 use snafu::{ResultExt, Snafu, Whatever};
-use std::{ops::DerefMut, slice::from_raw_parts, time::Duration};
+use std::{slice::from_raw_parts, time::Duration};
 
 pub fn must_new_redis_client() -> Client {
     let config = must_new_redis_config();
@@ -47,6 +47,11 @@ impl From<Whatever> for Error {
         Error::Whatever { source: err }
     }
 }
+impl From<Error> for HTTPError {
+    fn from(err: Error) -> Self {
+        HTTPError::new_with_category(err.to_string().as_str(), "redisClient")
+    }
+}
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -65,6 +70,12 @@ fn get_redis_pool() -> Result<&'static Pool> {
 pub struct RedisCache {
     pool: &'static Pool,
     ttl: Duration,
+}
+
+pub async fn get_default_redis_cache() -> Result<&'static RedisCache> {
+    static DEFAULT_REDIS_CACHE: OnceCell<RedisCache> = OnceCell::new();
+
+    DEFAULT_REDIS_CACHE.get_or_try_init(|| -> Result<RedisCache> { RedisCache::new() })
 }
 
 impl RedisCache {
