@@ -7,6 +7,7 @@ edition = "2021"
 
 [dependencies]
 async-redis-session = "0.2.2"
+async-trait = "0.1.62"
 axum = "0.6.1"
 axum-client-ip = "0.3.0"
 axum-extra = "0.4.2"
@@ -14,6 +15,7 @@ axum-sessions = "0.4.1"
 chrono = "0.4.23"
 config = { version = "0.13.3", features = ["yaml"] }
 cookie = "0.16.2"
+deadpool-redis = "0.11.1"
 http = "0.2.8"
 humantime = "2.1.0"
 hyper = "0.14.23"

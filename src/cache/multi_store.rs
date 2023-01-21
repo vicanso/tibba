@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use chrono::Utc;
 use lru::LruCache;
 use serde::{Deserialize, Serialize};
@@ -59,11 +60,13 @@ impl
     }
 }
 
+#[async_trait]
+
 pub trait Store {
-    fn set(&mut self, key: &str, value: Vec<u8>) -> Result<()>;
-    fn get(&mut self, key: &str) -> Result<Vec<u8>>;
-    fn del(&mut self, key: &str) -> Result<()>;
-    fn close(&mut self) -> Result<()> {
+    async fn set(&mut self, key: &str, value: Vec<u8>) -> Result<()>;
+    async fn get(&mut self, key: &str) -> Result<Vec<u8>>;
+    async fn del(&mut self, key: &str) -> Result<()>;
+    async fn close(&mut self) -> Result<()> {
         Ok(())
     }
 }
@@ -79,17 +82,18 @@ impl TtlRedisStore {
     }
 }
 
+#[async_trait]
 impl Store for TtlRedisStore {
-    fn set(&mut self, key: &str, value: Vec<u8>) -> Result<()> {
-        self.cache.set_bytes(key, value, Some(self.ttl))?;
+    async fn set(&mut self, key: &str, value: Vec<u8>) -> Result<()> {
+        self.cache.set_bytes(key, value, Some(self.ttl)).await?;
         Ok(())
     }
-    fn get(&mut self, key: &str) -> Result<Vec<u8>> {
-        let result = self.cache.get_bytes(key)?;
+    async fn get(&mut self, key: &str) -> Result<Vec<u8>> {
+        let result = self.cache.get_bytes(key).await?;
         Ok(result)
     }
-    fn del(&mut self, key: &str) -> Result<()> {
-        self.cache.del(key)?;
+    async fn del(&mut self, key: &str) -> Result<()> {
+        self.cache.del(key).await?;
         Ok(())
     }
 }
@@ -107,8 +111,10 @@ impl TtlLruStore {
         }
     }
 }
+
+#[async_trait]
 impl Store for TtlLruStore {
-    fn set(&mut self, key: &str, value: Vec<u8>) -> Result<()> {
+    async fn set(&mut self, key: &str, value: Vec<u8>) -> Result<()> {
         let mut data = value;
         let cache = &mut self.cache.write()?;
         let expired = Utc::now().timestamp_nanos() + (self.ttl.as_nanos() as i64);
@@ -119,7 +125,7 @@ impl Store for TtlLruStore {
         cache.put(key.to_string(), data);
         Ok(())
     }
-    fn get(&mut self, key: &str) -> Result<Vec<u8>> {
+    async fn get(&mut self, key: &str) -> Result<Vec<u8>> {
         let mut value = vec![];
         let cache = self.cache.read()?;
         // peek不会调整其顺序，因此热点数据也可能被清除
@@ -140,7 +146,7 @@ impl Store for TtlLruStore {
         }
         Ok(value)
     }
-    fn del(&mut self, key: &str) -> Result<()> {
+    async fn del(&mut self, key: &str) -> Result<()> {
         let cache = &mut self.cache.write()?;
         cache.pop(&key.to_string());
         Ok(())
@@ -154,23 +160,23 @@ impl TtlMultiStore {
     pub fn new(stores: Vec<Box<dyn Store>>) -> Self {
         TtlMultiStore { stores }
     }
-    pub fn set_struct<T>(&mut self, key: &str, value: &T) -> Result<()>
+    pub async fn set_struct<T>(&mut self, key: &str, value: &T) -> Result<()>
     where
         T: ?Sized + Serialize,
     {
         let value = serde_json::to_vec(&value).context(JsonSnafu {})?;
         for s in self.stores.iter_mut() {
-            s.set(key, value.clone())?;
+            s.set(key, value.clone()).await?;
         }
         Ok(())
     }
-    pub fn get_struct<'a, T>(&mut self, key: &str) -> Result<T>
+    pub async fn get_struct<'a, T>(&mut self, key: &str) -> Result<T>
     where
         T: Default + Deserialize<'a>,
     {
         let mut value: Vec<u8> = vec![];
         for s in self.stores.iter_mut() {
-            let v = s.get(key)?;
+            let v = s.get(key).await?;
             if !v.is_empty() {
                 value = v;
                 break;

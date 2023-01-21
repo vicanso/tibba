@@ -20,24 +20,27 @@ mod middleware;
 mod state;
 mod util;
 
-fn test() {
+async fn test() {
     let redis_cache = cache::RedisCache::new().unwrap();
 
     let lru_store = cache::TtlLruStore::new(10, Duration::from_secs(10));
     let redis_store = cache::TtlRedisStore::new(redis_cache, Duration::from_secs(60));
     let mut store = cache::TtlMultiStore::new(vec![Box::new(lru_store), Box::new(redis_store)]);
     println!("{}", chrono::Utc::now().to_string());
-    println!("{:?}", store.set_struct("key", &HTTPError::new("def")));
+    println!(
+        "{:?}",
+        store.set_struct("key", &HTTPError::new("def")).await
+    );
 
-    let result: HTTPError = store.get_struct("key").unwrap();
+    let result: HTTPError = store.get_struct("key").await.unwrap();
     println!("{:?}", result);
     sleep(Duration::from_secs(12));
     // println!("{:?}", store.set_struct("key", &HTTPError::new("测试1")));
-    let result: HTTPError = store.get_struct("key").unwrap();
+    let result: HTTPError = store.get_struct("key").await.unwrap();
     println!("{:?}", result);
     sleep(Duration::from_secs(60));
 
-    let result: HTTPError = store.get_struct("key").unwrap();
+    let result: HTTPError = store.get_struct("key").await.unwrap();
     println!("{:?}", result);
 
     // redis_cache.set_struct("key", &HTTPError::new("测试"), None);
