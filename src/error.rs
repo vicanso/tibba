@@ -85,16 +85,6 @@ impl From<redis::RedisError> for HTTPError {
     }
 }
 
-impl From<r2d2::Error> for HTTPError {
-    fn from(error: r2d2::Error) -> Self {
-        HTTPError {
-            message: error.to_string(),
-            category: "r2d2".to_string(),
-            ..Default::default()
-        }
-    }
-}
-
 impl From<http::header::InvalidHeaderValue> for HTTPError {
     fn from(error: http::header::InvalidHeaderValue) -> Self {
         HTTPError {

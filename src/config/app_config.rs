@@ -27,17 +27,20 @@ fn convert_string_to_i32(value: String) -> i32 {
 }
 
 impl APPConfig {
+    /// 设置配置key的前缀
     fn set_prefix(&self, prefix: &str) -> APPConfig {
         let mut config = self.clone();
         config.prefix = prefix.to_string();
         config
     }
+    /// 获取配置的key，若有设置前缀则添加前缀
     fn get_key(&self, key: &str) -> String {
         if self.prefix.is_empty() {
             return key.to_string();
         }
         format!("{}.{}", self.prefix, key)
     }
+    /// 从配置中获取对应的值(字符串)
     fn get_value(&self, key: &str) -> String {
         let k = self.get_key(key);
         let arr: Vec<&str> = k.split('.').collect();
@@ -51,6 +54,8 @@ impl APPConfig {
         }
         "".to_string()
     }
+    /// 从配置中获取对应的值(字符串)，
+    /// 如果为空则使用默认值返回
     fn get_value_default(&self, key: &str, default_value: &str) -> String {
         let value = self.get_value(key);
         if !value.is_empty() {
@@ -58,9 +63,12 @@ impl APPConfig {
         }
         default_value.to_string()
     }
+    /// 从配置中获取对应的值(i32)
     fn get_int_value(&self, key: &str) -> i32 {
         convert_string_to_i32(self.get_value(key))
     }
+    /// 从配置中获取对应的值(i32)，
+    /// 如果为0则使用默认值返回
     fn get_int_value_default(&self, key: &str, default_value: i32) -> i32 {
         let value = self.get_int_value(key);
         if value != 0 {
@@ -68,6 +76,7 @@ impl APPConfig {
         }
         default_value
     }
+    /// 优先从env中获取配置的值，如果env中未配置则调用get_value获取
     fn get_value_from_env_first(&self, key: &str) -> String {
         let k = self.get_key(key);
         let mut env_key = k.replace('.', "_").to_uppercase();
@@ -79,6 +88,8 @@ impl APPConfig {
         }
         self.get_value(key)
     }
+    /// 使用get_value_from_env_first获取配置的值，
+    /// 如果为空则使用默认值返回
     fn get_value_from_env_first_default(&self, key: &str, default_value: &str) -> String {
         let value = self.get_value_from_env_first(key);
         if !value.is_empty() {
@@ -86,9 +97,12 @@ impl APPConfig {
         }
         default_value.to_string()
     }
+    /// 使用get_value_from_env_first获取配置的值，
+    /// 并转换为 i32(转换失败则返回0)
     fn get_int_value_from_env_first(&self, key: &str) -> i32 {
         convert_string_to_i32(self.get_value_from_env_first(key))
     }
+    /// 使用get_int_value_from_env_first获取配置的值，如果为0则返回默认值
     fn get_int_value_from_env_first_default(&self, key: &str, default_value: i32) -> i32 {
         let value = self.get_int_value_from_env_first(key);
         if value != 0 {
@@ -169,6 +183,7 @@ pub struct RedisConfig {
     // 连接超时，默认3秒
     pub connection_timeout: Duration,
 }
+// 获取redis的配置
 pub fn must_new_redis_config() -> RedisConfig {
     let config = must_new_config().set_prefix("redis");
     let uri = config.get_value_from_env_first("uri");

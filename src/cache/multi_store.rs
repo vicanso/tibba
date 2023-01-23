@@ -63,9 +63,13 @@ impl
 #[async_trait]
 
 pub trait Store {
+    // 设置数据至存储中
     async fn set(&mut self, key: &str, value: Vec<u8>) -> Result<()>;
+    // 从存储中获取数据
     async fn get(&mut self, key: &str) -> Result<Vec<u8>>;
+    // 从存储中删除数据
     async fn del(&mut self, key: &str) -> Result<()>;
+    // 关闭存储
     async fn close(&mut self) -> Result<()> {
         Ok(())
     }
@@ -98,6 +102,7 @@ impl Store for TtlRedisStore {
     }
 }
 
+/// 基于LRU带有效期的存储组件
 pub struct TtlLruStore {
     cache: RwLock<LruCache<String, Vec<u8>>>,
     ttl: Duration,
@@ -119,6 +124,7 @@ impl Store for TtlLruStore {
         let cache = &mut self.cache.write()?;
         let expired = Utc::now().timestamp_nanos() + (self.ttl.as_nanos() as i64);
 
+        // 保存过期时间
         for v in expired.to_be_bytes() {
             data.push(v);
         }
@@ -157,9 +163,13 @@ pub struct TtlMultiStore {
     stores: Vec<Box<dyn Store>>,
 }
 impl TtlMultiStore {
+    /// 初始化新的ttl多缓存实例，
+    /// 需要注意存储数组应该按性能排列，高性能的排第一位，
+    /// 且第一个存储的有效期尽可能设置为尽短的值
     pub fn new(stores: Vec<Box<dyn Store>>) -> Self {
         TtlMultiStore { stores }
     }
+    /// 将struct数据转换为json后保存至存储数组中
     pub async fn set_struct<T>(&mut self, key: &str, value: &T) -> Result<()>
     where
         T: ?Sized + Serialize,
@@ -170,20 +180,33 @@ impl TtlMultiStore {
         }
         Ok(())
     }
+    /// 从存储中获取数据并转换为struct，需要注意如果数据
+    /// 是从后续存储中获取且不为空，则会将其设置至第一个存储中，
+    /// 提升后续的查询性能
     pub async fn get_struct<'a, T>(&mut self, key: &str) -> Result<T>
     where
         T: Default + Deserialize<'a>,
     {
         let mut value: Vec<u8> = vec![];
+        let mut found = 0;
         for s in self.stores.iter_mut() {
+            // TODO 是否如果失败则直接使用下一个store
             let v = s.get(key).await?;
             if !v.is_empty() {
                 value = v;
                 break;
             }
+            found += 1;
         }
+
         if value.is_empty() {
             return Ok(T::default());
+        }
+        // 每一个为lru ttl缓存，如果非从lru中获取，
+        // 则将缓存数据写入
+        if found != 0 {
+            // 忽略写入结果
+            let _ = self.stores[0].set(key, value.clone()).await;
         }
 
         // TODO 生命周期是否有其它方法调整
