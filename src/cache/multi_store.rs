@@ -70,9 +70,7 @@ pub trait Store {
     // 从存储中删除数据
     async fn del(&mut self, key: &str) -> Result<()>;
     // 关闭存储
-    async fn close(&mut self) -> Result<()> {
-        Ok(())
-    }
+    async fn close(&mut self) -> Result<()>;
 }
 
 // redis 实现的store存储
@@ -98,6 +96,10 @@ impl Store for TtlRedisStore {
     }
     async fn del(&mut self, key: &str) -> Result<()> {
         self.cache.del(key).await?;
+        Ok(())
+    }
+    async fn close(&mut self) -> Result<()> {
+        // 使用redis连接池，无需主动关闭
         Ok(())
     }
 }
@@ -155,6 +157,10 @@ impl Store for TtlLruStore {
     async fn del(&mut self, key: &str) -> Result<()> {
         let cache = &mut self.cache.write()?;
         cache.pop(&key.to_string());
+        Ok(())
+    }
+    async fn close(&mut self) -> Result<()> {
+        // lru无需关闭
         Ok(())
     }
 }

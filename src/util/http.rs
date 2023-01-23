@@ -14,8 +14,12 @@ pub fn insert_header(
     value: String,
 ) -> HTTPResult<()> {
     // 如果失败则不设置
-    let header_name = HeaderName::from_str(name.as_str())?;
-    let header_value = HeaderValue::from_str(value.as_str())?;
+    let header_name = HeaderName::from_str(name.as_str()).map_err(|err| {
+        HTTPError::new_with_category(err.to_string().as_str(), "invalidHeaderName")
+    })?;
+    let header_value = HeaderValue::from_str(value.as_str()).map_err(|err| {
+        HTTPError::new_with_category(err.to_string().as_str(), "invalidHeaderValue")
+    })?;
     headers.insert(header_name, header_value);
     Ok(())
 }
@@ -54,7 +58,7 @@ where
         Ok(bytes) => bytes,
         Err(err) => {
             let msg = format!("failed to read body: {}", err);
-            return Err(HTTPError::new(msg.as_str()));
+            return Err(HTTPError::new_with_category(msg.as_str(), "bodyToBytes"));
         }
     };
     Ok(bytes)
