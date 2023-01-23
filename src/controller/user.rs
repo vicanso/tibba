@@ -16,10 +16,11 @@ use crate::{
     util::{generate_device_id_cookie, get_device_id_from_cookie},
 };
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 struct UserMe {
     name: String,
+    should_refresh: bool,
 }
 
 pub fn new_router() -> Router {
@@ -38,7 +39,15 @@ pub fn new_router() -> Router {
 
 async fn me(session: ReadableSession, mut jar: CookieJar) -> HTTPResult<(CookieJar, Json<UserMe>)> {
     let info = get_session_info(session);
-    let me = UserMe { name: info.account };
+    let mut should_refresh = false;
+    // 如果已登录
+    if info.logged() && info.should_refresh() {
+        should_refresh = true
+    }
+    let me = UserMe {
+        name: info.account,
+        should_refresh,
+    };
     // 如果未设置device，则设置
     if get_device_id_from_cookie(&jar).is_empty() {
         jar = jar.add(generate_device_id_cookie());
@@ -57,9 +66,11 @@ async fn login(session: WritableSession, Json(params): Json<LoginParams>) -> JSO
         session,
         SessionInfo {
             account: params.account.clone(),
+            ..Default::default()
         },
     )?;
     Ok(Json(UserMe {
         name: params.account,
+        ..Default::default()
     }))
 }

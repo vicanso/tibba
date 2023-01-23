@@ -4,6 +4,7 @@ use axum_sessions::{
     extractors::{ReadableSession, WritableSession},
     SessionLayer,
 };
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
@@ -19,6 +20,22 @@ const SESSION_KEY: &str = "info";
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SessionInfo {
     pub account: String,
+    // 创建时间（时间戳)
+    pub created_at: i64,
+}
+
+impl SessionInfo {
+    // 是否应该刷新
+    pub fn should_refresh(&self) -> bool {
+        // 如果创建已超过一天
+        if Utc::now().timestamp() - self.created_at > 24 * 3600 {
+            return true;
+        }
+        false
+    }
+    pub fn logged(&self) -> bool {
+        !self.account.is_empty()
+    }
 }
 
 pub fn new_session_layer() -> SessionLayer<RedisSessionStore> {
@@ -32,6 +49,8 @@ pub fn new_session_layer() -> SessionLayer<RedisSessionStore> {
         .with_secure(false)
         .with_cookie_name(session_config.cookie)
         .with_session_ttl(Some(Duration::from_secs(ttl)))
+        // 仅在变化时写入
+        .with_persistence_policy(axum_sessions::PersistencePolicy::ChangedOnly)
 }
 
 pub fn get_session_info(session: ReadableSession) -> SessionInfo {
@@ -42,7 +61,11 @@ pub fn get_session_info(session: ReadableSession) -> SessionInfo {
     SessionInfo::default()
 }
 
-pub fn add_session_info(mut session: WritableSession, info: SessionInfo) -> HTTPResult<()> {
+pub fn add_session_info(mut session: WritableSession, mut info: SessionInfo) -> HTTPResult<()> {
+    // 已登录的则每次设置创建时间
+    if info.logged() {
+        info.created_at = Utc::now().timestamp();
+    }
     if let Err(err) = session.insert(SESSION_KEY, info) {
         return Err(HTTPError::new(err.to_string().as_str()));
     }
