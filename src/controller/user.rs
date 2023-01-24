@@ -5,9 +5,12 @@ use axum::{
 };
 use axum_extra::extract::cookie::CookieJar;
 use axum_sessions::extractors::{ReadableSession, WritableSession};
+use chrono::Local;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 use crate::{
+    cache::get_default_redis_cache,
     controller::JSONResult,
     error::HTTPResult,
     middleware::{
@@ -18,9 +21,10 @@ use crate::{
 
 #[derive(Debug, Clone, Serialize, Default)]
 #[serde(rename_all = "camelCase")]
-struct UserMe {
+struct UserMeResp {
     name: String,
     should_refresh: bool,
+    time: String,
 }
 
 pub fn new_router() -> Router {
@@ -30,6 +34,7 @@ pub fn new_router() -> Router {
         .layer(from_fn(wait2s));
     let r = Router::new()
         .route("/v1/me", get(me))
+        .route("/v1/login-times", get(get_login_times))
         .merge(login_router)
         .layer(from_fn(load_session))
         .layer(new_session_layer());
@@ -37,16 +42,20 @@ pub fn new_router() -> Router {
     Router::new().nest("/users", r)
 }
 
-async fn me(session: ReadableSession, mut jar: CookieJar) -> HTTPResult<(CookieJar, Json<UserMe>)> {
+async fn me(
+    session: ReadableSession,
+    mut jar: CookieJar,
+) -> HTTPResult<(CookieJar, Json<UserMeResp>)> {
     let info = get_session_info(session);
     let mut should_refresh = false;
     // 如果已登录
     if info.logged() && info.should_refresh() {
         should_refresh = true
     }
-    let me = UserMe {
+    let me = UserMeResp {
         name: info.account,
         should_refresh,
+        time: Local::now().to_rfc3339(),
     };
     // 如果未设置device，则设置
     if get_device_id_from_cookie(&jar).is_empty() {
@@ -61,7 +70,10 @@ struct LoginParams {
     account: String,
 }
 
-async fn login(session: WritableSession, Json(params): Json<LoginParams>) -> JSONResult<UserMe> {
+async fn login(
+    session: WritableSession,
+    Json(params): Json<LoginParams>,
+) -> JSONResult<UserMeResp> {
     add_session_info(
         session,
         SessionInfo {
@@ -69,8 +81,28 @@ async fn login(session: WritableSession, Json(params): Json<LoginParams>) -> JSO
             ..Default::default()
         },
     )?;
-    Ok(Json(UserMe {
+    Ok(Json(UserMeResp {
         name: params.account,
+        time: Local::now().to_rfc3339(),
         ..Default::default()
     }))
+}
+
+#[derive(Debug, Clone, Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct LoginTimesResp {
+    pub count: i64,
+}
+async fn get_login_times(jar: CookieJar) -> JSONResult<LoginTimesResp> {
+    let device_id = get_device_id_from_cookie(&jar);
+    let cache = get_default_redis_cache().await?;
+    // 如果未设置device，则设置
+    let mut count: i64 = 0;
+    if !device_id.is_empty() {
+        count = cache
+            .incr(device_id.as_str(), 1, Some(Duration::from_secs(60 * 60)))
+            .await?;
+    }
+
+    Ok(Json(LoginTimesResp { count }))
 }

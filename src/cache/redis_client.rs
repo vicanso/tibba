@@ -7,7 +7,7 @@ use redis::Client;
 
 use deadpool_redis::{
     redis::{cmd, pipe},
-    Config, Connection, Pool, Runtime,
+    Connection, Manager, Pool, PoolConfig, Runtime,
 };
 use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
@@ -21,18 +21,16 @@ pub fn must_new_redis_client() -> Client {
 
 #[derive(Debug, Snafu)]
 pub enum Error {
-    #[snafu(display("Redis fail, category {}: {}", category, source))]
+    #[snafu(display("Redis fail, category:{}, {}", category, source))]
     Redis {
         category: String,
         source: deadpool_redis::redis::RedisError,
     },
     #[snafu(display("Create redis pool fail, {}", source))]
-    CreatePool {
-        source: deadpool_redis::CreatePoolError,
-    },
+    CreatePool { source: deadpool_redis::BuildError },
     #[snafu(display("Redis pool fail, {}", source))]
     Pool { source: deadpool_redis::PoolError },
-    #[snafu(display("Json fail: {}", source))]
+    #[snafu(display("Json fail, {}", source))]
     Json { source: serde_json::Error },
     #[snafu(display("{}", source))]
     Whatever { source: Whatever },
@@ -59,8 +57,18 @@ fn get_redis_pool() -> Result<&'static Pool> {
     static REDIS_POOL: OnceCell<Pool> = OnceCell::new();
     let result = REDIS_POOL.get_or_try_init(|| -> Result<Pool> {
         let config = must_new_redis_config();
-        let pool = Config::from_url(config.uri)
-            .create_pool(Some(Runtime::Tokio1))
+        let p = Pool::builder(Manager::new(config.uri.as_str()).unwrap());
+        let pool = p
+            .config(PoolConfig {
+                max_size: config.pool_size as usize,
+                timeouts: deadpool_redis::Timeouts {
+                    wait: Some(config.wait_timeout),
+                    create: Some(config.connection_timeout),
+                    recycle: Some(config.recycle_timeout),
+                },
+            })
+            .runtime(Runtime::Tokio1)
+            .build()
             .context(CreatePoolSnafu {})?;
         Ok(pool)
     })?;

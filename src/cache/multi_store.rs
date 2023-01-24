@@ -14,7 +14,7 @@ pub enum Error {
 
     #[snafu(display("{}", message))]
     RwLock { message: String },
-    #[snafu(display("Json fail: {}", source))]
+    #[snafu(display("Json fail, {}", source))]
     Json { source: serde_json::Error },
 }
 pub type Result<T, E = Error> = std::result::Result<T, E>;

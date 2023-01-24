@@ -57,7 +57,7 @@ where
     let bytes = match hyper::body::to_bytes(body).await {
         Ok(bytes) => bytes,
         Err(err) => {
-            let msg = format!("failed to read body: {}", err);
+            let msg = format!("failed to read body, {}", err);
             return Err(HTTPError::new_with_category(msg.as_str(), "bodyToBytes"));
         }
     };

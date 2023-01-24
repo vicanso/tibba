@@ -178,10 +178,12 @@ pub struct RedisConfig {
     pub uri: String,
     // 连接池大小，默认为10
     pub pool_size: u32,
-    // 空闲连接大小，默认为2
-    pub idle: u32,
     // 连接超时，默认3秒
     pub connection_timeout: Duration,
+    // 等待超时，默认3秒
+    pub wait_timeout: Duration,
+    // 复用超时，默认60秒
+    pub recycle_timeout: Duration,
 }
 // 获取redis的配置
 pub fn must_new_redis_config() -> RedisConfig {
@@ -191,8 +193,9 @@ pub fn must_new_redis_config() -> RedisConfig {
     let mut redis_config = RedisConfig {
         uri,
         pool_size: 10,
-        idle: 2,
-        connection_timeout: Duration::from_millis(3000),
+        connection_timeout: Duration::from_secs(3),
+        wait_timeout: Duration::from_secs(3),
+        recycle_timeout: Duration::from_secs(60),
     };
     for (key, value) in info.query_pairs() {
         match key.to_string().as_str() {
@@ -201,14 +204,19 @@ pub fn must_new_redis_config() -> RedisConfig {
                     redis_config.pool_size = num;
                 }
             }
-            "idle" => {
-                if let Ok(num) = value.parse::<u32>() {
-                    redis_config.idle = num;
-                }
-            }
             "connectionTimeout" => {
                 if let Ok(num) = value.parse::<u64>() {
                     redis_config.connection_timeout = Duration::from_millis(num);
+                }
+            }
+            "waitTimeout" => {
+                if let Ok(num) = value.parse::<u64>() {
+                    redis_config.wait_timeout = Duration::from_millis(num);
+                }
+            }
+            "recycle_timeout" => {
+                if let Ok(num) = value.parse::<u64>() {
+                    redis_config.recycle_timeout = Duration::from_millis(num);
                 }
             }
             _ => (),
