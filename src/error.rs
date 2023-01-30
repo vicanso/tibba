@@ -18,18 +18,22 @@ pub struct HTTPError {
     pub code: String,
     // HTTP状态码
     pub status: u16,
+    // 其它额外信息
+    pub extra: Option<Vec<String>>,
 }
 
 pub type HTTPResult<T> = Result<T, HTTPError>;
 
 impl Default for HTTPError {
     fn default() -> Self {
+        // 因为默认status为400，因此需要单独实现default
         HTTPError {
             message: "".to_string(),
             category: "".to_string(),
             // 默认使用400为状态码
             status: 400,
             code: "".to_string(),
+            extra: None,
         }
     }
 }
@@ -61,6 +65,14 @@ impl HTTPError {
             category: category.to_string(),
             status,
             ..Default::default()
+        }
+    }
+    pub fn add_extra(&mut self, value: &str) {
+        if self.extra.is_none() {
+            self.extra = Some(vec![value.to_string()]);
+        } else {
+            // 已保证不会为空
+            self.extra.as_mut().unwrap().push(value.to_string());
         }
     }
 }

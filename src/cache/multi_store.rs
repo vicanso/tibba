@@ -9,12 +9,11 @@ use super::RedisCache;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
-    #[snafu(display("{}", source))]
+    #[snafu(display("{source}"))]
     RedisClient { source: super::redis_client::Error },
-
-    #[snafu(display("{}", message))]
+    #[snafu(display("{message}"))]
     RwLock { message: String },
-    #[snafu(display("Json fail, {}", source))]
+    #[snafu(display("Json fail, {source}"))]
     Json { source: serde_json::Error },
 }
 pub type Result<T, E = Error> = std::result::Result<T, E>;
@@ -208,7 +207,7 @@ impl TtlMultiStore {
         if value.is_empty() {
             return Ok(T::default());
         }
-        // 每一个为lru ttl缓存，如果非从lru中获取，
+        // 第一个为lru ttl缓存，如果非从lru中获取，
         // 则将缓存数据写入
         if found != 0 {
             // 忽略写入结果

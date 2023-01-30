@@ -21,33 +21,38 @@ pub fn must_new_redis_client() -> Client {
 
 #[derive(Debug, Snafu)]
 pub enum Error {
-    #[snafu(display("Redis fail, category:{}, {}", category, source))]
+    #[snafu(display("Redis fail, category:{category}, {source}"))]
     Redis {
         category: String,
         source: deadpool_redis::redis::RedisError,
     },
-    #[snafu(display("Create redis pool fail, {}", source))]
+    #[snafu(display("Create redis pool fail, {source}"))]
     CreatePool { source: deadpool_redis::BuildError },
-    #[snafu(display("Redis pool fail, {}", source))]
+    #[snafu(display("Redis pool fail, {source}"))]
     Pool { source: deadpool_redis::PoolError },
-    #[snafu(display("Json fail, {}", source))]
+    #[snafu(display("Json fail, {source}"))]
     Json { source: serde_json::Error },
-    #[snafu(display("{}", source))]
-    Whatever { source: Whatever },
+    #[snafu(display("category:{category} {source}"))]
+    Whatever { category: String, source: Whatever },
 }
 impl From<serde_json::Error> for Error {
     fn from(err: serde_json::Error) -> Self {
         Error::Json { source: err }
     }
 }
-impl From<Whatever> for Error {
-    fn from(err: Whatever) -> Self {
-        Error::Whatever { source: err }
-    }
-}
+
 impl From<Error> for HTTPError {
     fn from(err: Error) -> Self {
-        HTTPError::new_with_category(err.to_string().as_str(), "redisClient")
+        // 对于部分error单独转换
+        match err {
+            Error::Redis { category, source } => {
+                HTTPError::new_with_category(source.to_string().as_str(), category.as_str())
+            }
+            Error::Whatever { category, source } => {
+                HTTPError::new_with_category(source.to_string().as_str(), category.as_str())
+            }
+            _ => HTTPError::new_with_category(err.to_string().as_str(), "redisClient"),
+        }
     }
 }
 
@@ -240,7 +245,9 @@ impl RedisCache {
         T: ?Sized + Serialize,
     {
         let value = serde_json::to_vec(&value)?;
-        let buf = snappy_encode(&value)?;
+        let buf = snappy_encode(&value).context(WhateverSnafu {
+            category: "snappyEncode".to_string(),
+        })?;
         self.set_bytes(key, buf, ttl).await?;
         Ok(())
     }
@@ -255,7 +262,9 @@ impl RedisCache {
             return Ok(T::default());
         }
 
-        let buf = snappy_decode(value.as_slice())?;
+        let buf = snappy_decode(value.as_slice()).context(WhateverSnafu {
+            category: "snappyDecode".to_string(),
+        })?;
 
         // TODO 生命周期是否有其它方法调整
         let result = unsafe {
@@ -278,7 +287,9 @@ impl RedisCache {
         T: ?Sized + Serialize,
     {
         let value = serde_json::to_vec(&value).context(JsonSnafu {})?;
-        let buf = zstd_encode(&value)?;
+        let buf = zstd_encode(&value).context(WhateverSnafu {
+            category: "zstdEncode".to_string(),
+        })?;
         self.set_bytes(key, buf, ttl).await?;
         Ok(())
     }
@@ -293,7 +304,9 @@ impl RedisCache {
             return Ok(T::default());
         }
 
-        let buf = zstd_decode(value.as_slice())?;
+        let buf = zstd_decode(value.as_slice()).context(WhateverSnafu {
+            category: "zstdDecode".to_string(),
+        })?;
 
         // TODO 生命周期是否有其它方法调整
         let result = unsafe {
