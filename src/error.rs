@@ -102,5 +102,5 @@ pub async fn handle_error(
     if err.is::<tower::timeout::error::Elapsed>() {
         return HTTPError::new_with_category_status("Request took too long", "timeout", 408);
     }
-    HTTPError::new(err.to_string().as_str())
+    HTTPError::new(&err.to_string())
 }

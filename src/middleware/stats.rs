@@ -26,7 +26,7 @@ pub async fn access_log(
 
     let mut uri = req.uri().to_string();
     // decode成功则替换
-    if let Ok(result) = decode(uri.as_str()) {
+    if let Ok(result) = decode(&uri) {
         uri = result.to_string()
     }
     let method = req.method().to_string();
@@ -86,7 +86,7 @@ pub async fn access_log(
 
     // 出错日志
     if status >= 400 {
-        let mut message = json_get(error_message.as_str(), "message");
+        let mut message = json_get(&error_message, "message");
         if message.is_empty() {
             message = error_message;
         }

@@ -14,6 +14,7 @@ use crate::{
 #[serde(rename_all = "camelCase")]
 struct ApplicationInfo {
     builded_at: String,
+    commit: String,
     uptime: String,
     env: String,
     os: String,
@@ -40,6 +41,7 @@ async fn get_application_info() -> HTTPResult<Json<ApplicationInfo>> {
 
     let info = ApplicationInfo {
         builded_at: asset::get_build_date(),
+        commit: asset::get_commit(),
         uptime: duration_to_string(d),
         env: get_env(),
         os,

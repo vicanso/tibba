@@ -46,12 +46,12 @@ impl From<Error> for HTTPError {
         // 对于部分error单独转换
         match err {
             Error::Redis { category, source } => {
-                HTTPError::new_with_category(source.to_string().as_str(), category.as_str())
+                HTTPError::new_with_category(&source.to_string(), &category)
             }
             Error::Whatever { category, source } => {
-                HTTPError::new_with_category(source.to_string().as_str(), category.as_str())
+                HTTPError::new_with_category(&source.to_string(), &category)
             }
-            _ => HTTPError::new_with_category(err.to_string().as_str(), "redisClient"),
+            _ => HTTPError::new_with_category(&err.to_string(), "redisClient"),
         }
     }
 }
@@ -62,7 +62,7 @@ fn get_redis_pool() -> Result<&'static Pool> {
     static REDIS_POOL: OnceCell<Pool> = OnceCell::new();
     let result = REDIS_POOL.get_or_try_init(|| -> Result<Pool> {
         let config = must_new_redis_config();
-        let p = Pool::builder(Manager::new(config.uri.as_str()).unwrap());
+        let p = Pool::builder(Manager::new(config.uri).unwrap());
         let pool = p
             .config(PoolConfig {
                 max_size: config.pool_size as usize,

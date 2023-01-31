@@ -6,6 +6,7 @@ use snafu::{ResultExt, Snafu};
 use std::{num::NonZeroUsize, slice::from_raw_parts, sync::RwLock, time::Duration};
 
 use super::RedisCache;
+use crate::error::HTTPError;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -17,7 +18,20 @@ pub enum Error {
     Json { source: serde_json::Error },
 }
 pub type Result<T, E = Error> = std::result::Result<T, E>;
+// 实现对http error的转换
+impl From<Error> for HTTPError {
+    fn from(err: Error) -> Self {
+        // 对于部分error单独转换
+        match err {
+            // redis client的error直接转换
+            Error::RedisClient { source } => source.into(),
+            Error::RwLock { message } => HTTPError::new_with_category(&message, "rwLock"),
+            _ => HTTPError::new_with_category(&err.to_string(), "multiStore"),
+        }
+    }
+}
 
+// 将redis client的error转换
 impl From<super::redis_client::Error> for Error {
     fn from(err: super::redis_client::Error) -> Self {
         Error::RedisClient { source: err }
@@ -74,7 +88,9 @@ pub trait Store {
 
 // redis 实现的store存储
 pub struct TtlRedisStore {
+    // redis缓存
     cache: RedisCache,
+    // 数据有效期
     ttl: Duration,
 }
 impl TtlRedisStore {
@@ -105,7 +121,10 @@ impl Store for TtlRedisStore {
 
 /// 基于LRU带有效期的存储组件
 pub struct TtlLruStore {
+    // 带锁的lru实例
     cache: RwLock<LruCache<String, Vec<u8>>>,
+    // 缓存有效期
+    // 建议lru的缓存有效期比redis短，避免不同实例中的数据不一致的时间过长
     ttl: Duration,
 }
 impl TtlLruStore {
@@ -170,7 +189,7 @@ pub struct TtlMultiStore {
 impl TtlMultiStore {
     /// 初始化新的ttl多缓存实例，
     /// 需要注意存储数组应该按性能排列，高性能的排第一位，
-    /// 且第一个存储的有效期尽可能设置为尽短的值
+    /// 且第一个存储的有效期尽可能设置为尽量短的值
     pub fn new(stores: Vec<Box<dyn Store>>) -> Self {
         TtlMultiStore { stores }
     }

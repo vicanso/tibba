@@ -67,7 +67,7 @@ pub fn add_session_info(mut session: WritableSession, mut info: SessionInfo) -> 
         info.created_at = Utc::now().timestamp();
     }
     if let Err(err) = session.insert(SESSION_KEY, info) {
-        return Err(HTTPError::new(err.to_string().as_str()));
+        return Err(HTTPError::new(&err.to_string()));
     }
     Ok(())
 }

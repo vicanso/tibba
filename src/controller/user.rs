@@ -100,7 +100,7 @@ async fn get_login_times(jar: CookieJar) -> JSONResult<LoginTimesResp> {
     let mut count: i64 = 0;
     if !device_id.is_empty() {
         count = cache
-            .incr(device_id.as_str(), 1, Some(Duration::from_secs(60 * 60)))
+            .incr(&device_id, 1, Some(Duration::from_secs(60 * 60)))
             .await?;
     }
 

@@ -26,11 +26,8 @@ pub async fn entry<B>(jar: CookieJar, req: Request<B>, next: Next<B>) -> Respons
                                     let headers = resp.headers_mut();
                                     set_no_cache_if_not_exist(headers);
                                     // 忽略出错
-                                    let _ = set_header_if_not_exist(
-                                        headers,
-                                        "X-Trace-Id".to_string(),
-                                        trace_id,
-                                    );
+                                    let _ =
+                                        set_header_if_not_exist(headers, "X-Trace-Id", &trace_id);
 
                                     resp
                                 })

@@ -189,7 +189,7 @@ pub struct RedisConfig {
 pub fn must_new_redis_config() -> RedisConfig {
     let config = must_new_config().set_prefix("redis");
     let uri = config.get_value_from_env_first("uri");
-    let info = Url::parse(uri.as_str()).unwrap();
+    let info = Url::parse(&uri).unwrap();
     let mut redis_config = RedisConfig {
         uri,
         pool_size: 10,

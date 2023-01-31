@@ -10,26 +10,24 @@ use crate::error::{HTTPError, HTTPResult};
 // 插入HTTP响应头
 pub fn insert_header(
     headers: &mut HeaderMap<HeaderValue>,
-    name: String,
-    value: String,
+    name: &str,
+    value: &str,
 ) -> HTTPResult<()> {
     // 如果失败则不设置
-    let header_name = HeaderName::from_str(name.as_str()).map_err(|err| {
-        HTTPError::new_with_category(err.to_string().as_str(), "invalidHeaderName")
-    })?;
-    let header_value = HeaderValue::from_str(value.as_str()).map_err(|err| {
-        HTTPError::new_with_category(err.to_string().as_str(), "invalidHeaderValue")
-    })?;
+    let header_name = HeaderName::from_str(name)
+        .map_err(|err| HTTPError::new_with_category(&err.to_string(), "invalidHeaderName"))?;
+    let header_value = HeaderValue::from_str(value)
+        .map_err(|err| HTTPError::new_with_category(&err.to_string(), "invalidHeaderValue"))?;
     headers.insert(header_name, header_value);
     Ok(())
 }
 
 pub fn set_header_if_not_exist(
     headers: &mut HeaderMap<HeaderValue>,
-    name: String,
-    value: String,
+    name: &str,
+    value: &str,
 ) -> HTTPResult<()> {
-    let current = headers.get(name.clone());
+    let current = headers.get(name);
     if current.is_some() {
         return Ok(());
     }
@@ -39,7 +37,7 @@ pub fn set_header_if_not_exist(
 pub fn set_no_cache_if_not_exist(headers: &mut HeaderMap<HeaderValue>) {
     // 因为只会字符导致设置错误
     // 因此此处理不会出错
-    let _ = set_header_if_not_exist(headers, "Cache-Control".to_string(), "no-cache".to_string());
+    let _ = set_header_if_not_exist(headers, "Cache-Control", "no-cache");
 }
 
 pub fn get_header_value(headers: &HeaderMap<HeaderValue>, key: &str) -> String {
@@ -58,7 +56,7 @@ where
         Ok(bytes) => bytes,
         Err(err) => {
             let msg = format!("failed to read body, {}", err);
-            return Err(HTTPError::new_with_category(msg.as_str(), "bodyToBytes"));
+            return Err(HTTPError::new_with_category(&msg, "bodyToBytes"));
         }
     };
     Ok(bytes)
