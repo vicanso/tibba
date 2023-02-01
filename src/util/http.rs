@@ -7,7 +7,7 @@ use axum::{
 
 use crate::error::{HTTPError, HTTPResult};
 
-// 插入HTTP响应头
+/// 插入HTTP头
 pub fn insert_header(
     headers: &mut HeaderMap<HeaderValue>,
     name: &str,
@@ -22,6 +22,7 @@ pub fn insert_header(
     Ok(())
 }
 
+/// HTTP头不存在时才设置
 pub fn set_header_if_not_exist(
     headers: &mut HeaderMap<HeaderValue>,
     name: &str,
@@ -34,12 +35,14 @@ pub fn set_header_if_not_exist(
     insert_header(headers, name, value)
 }
 
+/// 如果未设置cache-control，则设置为no-cache
 pub fn set_no_cache_if_not_exist(headers: &mut HeaderMap<HeaderValue>) {
     // 因为只会字符导致设置错误
     // 因此此处理不会出错
     let _ = set_header_if_not_exist(headers, "Cache-Control", "no-cache");
 }
 
+/// 获取http头的值
 pub fn get_header_value(headers: &HeaderMap<HeaderValue>, key: &str) -> String {
     if let Some(value) = headers.get(key) {
         return value.to_str().unwrap_or("").to_string();
@@ -47,6 +50,7 @@ pub fn get_header_value(headers: &HeaderMap<HeaderValue>, key: &str) -> String {
     "".to_string()
 }
 
+/// 读取http body
 pub async fn read_http_body<B>(body: B) -> HTTPResult<Bytes>
 where
     B: axum::body::HttpBody<Data = Bytes>,
@@ -55,7 +59,7 @@ where
     let bytes = match hyper::body::to_bytes(body).await {
         Ok(bytes) => bytes,
         Err(err) => {
-            let msg = format!("failed to read body, {}", err);
+            let msg = format!("failed to read body, {err}");
             return Err(HTTPError::new_with_category(&msg, "bodyToBytes"));
         }
     };

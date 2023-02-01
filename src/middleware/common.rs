@@ -21,13 +21,17 @@ async fn wait<B>(ms: i64, only_err_occurred: bool, req: Request<B>, next: Next<B
     resp
 }
 
+/// 如果响应处理时间少于1秒，则等待
 pub async fn wait1s<B>(req: Request<B>, next: Next<B>) -> Response {
     wait(1000, false, req, next).await
 }
 
+/// 如果响应处理时间少于2秒，则等待
 pub async fn wait2s<B>(req: Request<B>, next: Next<B>) -> Response {
     wait(2000, false, req, next).await
 }
+
+/// 如果响应处理时间少于3秒，则等待
 pub async fn wait3s<B>(req: Request<B>, next: Next<B>) -> Response {
     wait(3000, false, req, next).await
 }

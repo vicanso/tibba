@@ -83,6 +83,8 @@ pub async fn load_session<B>(
     ACCOUNT
         .scope(info.account, async {
             let mut resp = next.run(req).await;
+            // 由于在session之前的中间件无法获取account的值
+            // 因此又将account设置至resp extension中
             set_account_to_context(resp.extensions_mut(), Account::new(account));
             Ok(resp)
         })

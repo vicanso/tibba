@@ -58,6 +58,7 @@ impl From<Error> for HTTPError {
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
+// 获取redis连接池
 fn get_redis_pool() -> Result<&'static Pool> {
     static REDIS_POOL: OnceCell<Pool> = OnceCell::new();
     let result = REDIS_POOL.get_or_try_init(|| -> Result<Pool> {

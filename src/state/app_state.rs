@@ -37,9 +37,8 @@ impl AppState {
     }
 }
 
-static APP_STATE: OnceCell<AppState> = OnceCell::new();
-
 pub fn get_app_state() -> &'static AppState {
+    static APP_STATE: OnceCell<AppState> = OnceCell::new();
     APP_STATE.get_or_init(|| AppState {
         started_at: Utc::now(),
         status: AtomicI8::new(0),

@@ -141,22 +141,22 @@ impl TtlLruStore {
 impl Store for TtlLruStore {
     async fn set(&mut self, key: &str, value: Vec<u8>) -> Result<()> {
         let mut data = value;
-        let cache = &mut self.cache.write()?;
         let expired = Utc::now().timestamp_nanos() + (self.ttl.as_nanos() as i64);
-
         // 保存过期时间
         for v in expired.to_be_bytes() {
             data.push(v);
         }
+        // 尽可能把cache与put操作靠近，减少锁的时长
+        let cache = &mut self.cache.write()?;
         cache.put(key.to_string(), data);
         Ok(())
     }
     async fn get(&mut self, key: &str) -> Result<Vec<u8>> {
         let mut value = vec![];
         let cache = self.cache.read()?;
-        // peek不会调整其顺序，因此热点数据也可能被清除
+        // 性能考虑使用peek，但不会调整其顺序，因此热点数据也可能被清除
         // 由于其为ttl+lru，因此可设置更大的容量即可
-        if let Some(v) = cache.peek(&key.to_string()) {
+        if let Some(v) = cache.peek(key) {
             // 获取8个字节
             let i64_size = 8;
             let size = v.len();
@@ -174,7 +174,7 @@ impl Store for TtlLruStore {
     }
     async fn del(&mut self, key: &str) -> Result<()> {
         let cache = &mut self.cache.write()?;
-        cache.pop(&key.to_string());
+        cache.pop(key);
         Ok(())
     }
     async fn close(&mut self) -> Result<()> {
@@ -215,6 +215,7 @@ impl TtlMultiStore {
         let mut found = 0;
         for s in self.stores.iter_mut() {
             // TODO 是否如果失败则直接使用下一个store
+            // 由于现使用的lru不会出错，因此暂不考虑
             let v = s.get(key).await?;
             if !v.is_empty() {
                 value = v;

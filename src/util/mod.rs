@@ -4,6 +4,8 @@ mod duration;
 mod http;
 mod string;
 
+use crate::config::get_env;
+
 pub use self::http::{
     get_header_value, insert_header, read_http_body, set_header_if_not_exist,
     set_no_cache_if_not_exist,
@@ -16,3 +18,18 @@ pub use context::{
 };
 pub use duration::duration_to_string;
 pub use string::{json_get, random_string};
+
+/// 是否开发环境
+/// 用于针对本地开发时的判断
+pub fn is_development() -> bool {
+    get_env() == "dev"
+}
+/// 是否测试环境
+pub fn is_test() -> bool {
+    get_env() == "test"
+}
+
+/// 是否生产环境
+pub fn is_production() -> bool {
+    get_env() == "production"
+}

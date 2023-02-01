@@ -14,8 +14,11 @@ struct Configs;
 
 #[derive(Debug, Clone, Default)]
 pub struct APPConfig {
+    // env变量的前缀
     env_prefix: String,
+    // 应用配置的前缀
     prefix: String,
+    // 应用配置信息
     settings: HashMap<String, HashMap<String, String>>,
 }
 
@@ -24,6 +27,13 @@ fn convert_string_to_i32(value: String) -> i32 {
         return result;
     }
     0
+}
+
+fn convert_string_to_bool(value: String) -> bool {
+    if let Ok(result) = value.parse::<bool>() {
+        return result;
+    }
+    false
 }
 
 impl APPConfig {
@@ -38,7 +48,7 @@ impl APPConfig {
         if self.prefix.is_empty() {
             return key.to_string();
         }
-        format!("{}.{}", self.prefix, key)
+        format!("{}.{key}", self.prefix)
     }
     /// 从配置中获取对应的值(字符串)
     fn get_value(&self, key: &str) -> String {
@@ -76,12 +86,16 @@ impl APPConfig {
         }
         default_value
     }
+    /// 从配置中获取对应的值(bool)
+    fn get_bool_value(&self, key: &str) -> bool {
+        convert_string_to_bool(self.get_value(key))
+    }
     /// 优先从env中获取配置的值，如果env中未配置则调用get_value获取
     fn get_value_from_env_first(&self, key: &str) -> String {
         let k = self.get_key(key);
         let mut env_key = k.replace('.', "_").to_uppercase();
         if !self.env_prefix.is_empty() {
-            env_key = format!("{}_{}", self.env_prefix, env_key);
+            env_key = format!("{}_{env_key}", self.env_prefix);
         }
         if let Ok(value) = env::var(env_key) {
             return value;
@@ -110,6 +124,11 @@ impl APPConfig {
         }
         default_value
     }
+    /// 使用get_value_from_env_first获取配置的值，
+    /// 并转换为bool(转换失败则返回false)
+    fn get_bool_value_from_env_first(&self, key: &str) -> bool {
+        convert_string_to_bool(self.get_value_from_env_first(key))
+    }
 }
 
 fn write_data_to_temp_file(dir: &TempDir, name: &str) -> PathBuf {
@@ -132,7 +151,7 @@ fn must_new_config() -> &'static APPConfig {
         // TODO config是否可直接使用字符串作为源
         let dir = tempfile::tempdir().unwrap();
         let default_file = write_data_to_temp_file(&dir, "default.yml");
-        let current_file = write_data_to_temp_file(&dir, format!("{}.yml", mode).as_str());
+        let current_file = write_data_to_temp_file(&dir, &format!("{mode}.yml"));
 
         let settings = Config::builder()
             .add_source(File::with_name(default_file.to_str().unwrap()))
@@ -141,7 +160,6 @@ fn must_new_config() -> &'static APPConfig {
             .unwrap()
             .try_deserialize::<HashMap<String, HashMap<String, String>>>()
             .unwrap();
-        println!("{:?}", settings);
         APPConfig {
             settings,
             ..Default::default()

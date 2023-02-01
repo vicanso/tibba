@@ -12,7 +12,7 @@ pub fn json_get(data: &str, key: &str) -> String {
         "".to_string()
     };
     // 处理为""
-    if message == "null" {
+    if message.to_uppercase() == "null" {
         return "".to_string();
     }
     message

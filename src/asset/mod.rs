@@ -17,7 +17,7 @@ pub fn get_string_from_asset(file_path: &str) -> String {
             .trim()
             .to_string();
     }
-    "".to_string() 
+    "".to_string()
 }
 
 // 获取程序构建日期
