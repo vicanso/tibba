@@ -6,7 +6,7 @@ use rust_embed::{EmbeddedFile, RustEmbed};
 struct Assets;
 
 // 获取资源文件
-pub fn get_asset(file_path: &str) -> Option<EmbeddedFile> {
+fn get_asset(file_path: &str) -> Option<EmbeddedFile> {
     Assets::get(file_path)
 }
 

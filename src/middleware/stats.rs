@@ -1,5 +1,5 @@
 use axum::{body::Body, extract::State, http::Request, middleware::Next, response::Response};
-use axum_client_ip::ClientIp;
+use axum_client_ip::SecureClientIp;
 use chrono::Utc;
 use http::Method;
 use tracing::{event, Level};
@@ -16,7 +16,7 @@ use crate::{
 
 pub async fn access_log(
     State(state): State<&AppState>,
-    ClientIp(ip): ClientIp,
+    SecureClientIp(ip): SecureClientIp,
     mut req: Request<Body>,
     next: Next<Body>,
 ) -> HTTPResult<Response<Body>> {

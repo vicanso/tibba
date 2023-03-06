@@ -1,4 +1,5 @@
 use axum::{error_handling::HandleErrorLayer, middleware::from_fn_with_state, Router};
+use axum_client_ip::SecureClientIpSource;
 
 use std::time::Duration;
 use std::{net::SocketAddr, thread::sleep};
@@ -66,7 +67,8 @@ async fn main() {
         )
         // 后面的layer先执行
         .layer(from_fn_with_state(app_state, access_log))
-        .layer(from_fn_with_state(app_state, entry));
+        .layer(from_fn_with_state(app_state, entry))
+        .layer(SecureClientIpSource::ConnectInfo.into_extension());
 
     let basic_config = config::must_new_basic_config();
 

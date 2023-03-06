@@ -7,34 +7,35 @@ edition = "2021"
 
 [dependencies]
 async-redis-session = "0.2.2"
-async-trait = "0.1.64"
-axum = "0.6.4"
-axum-client-ip = "0.3.1"
-axum-extra = "0.4.2"
+async-trait = "0.1.66"
+axum = "0.6.10"
+axum-client-ip = "0.4.0"
+axum-extra = { version = "0.6.0", features = ["cookie"] }
 axum-sessions = "0.4.1"
 chrono = "0.4.23"
 config = { version = "0.13.3", features = ["yaml"] }
-cookie = "0.16.2"
+cookie = "0.17.0"
 deadpool-redis = "0.11.1"
-http = "0.2.8"
+http = "0.2.9"
 humantime = "2.1.0"
-hyper = "0.14.23"
-lru = "0.9.0"
+hyper = "0.14.24"
+lru = "0.10.0"
 nanoid = "0.4.0"
-once_cell = "1.17.0"
+once_cell = "1.17.1"
 os_info = "3.6.0"
+# TODO 是否可更新为0.22.3
 redis = { version = "0.20.2", features = ["tokio-comp", "aio"] }
-rust-embed = "6.4.2"
-serde = { version = "1.0.148", features = ["derive"] }
-serde_json = "1.0.91"
+rust-embed = "6.6.0"
+serde = { version = "1.0.152", features = ["derive"] }
+serde_json = "1.0.93"
 snafu = "0.7.4"
 snap = "1.1.0"
-tempfile = "3.3.0"
-tokio = { version = "1.25.0", features = ["macros", "rt", "rt-multi-thread", "net", "signal"] }
+tempfile = "3.4.0"
+tokio = { version = "1.26.0", features = ["macros", "rt", "rt-multi-thread", "net", "signal"] }
 tower = { version = "0.4.13", features = ["timeout"]}
 tracing = "0.1.37"
 tracing-subscriber = "0.3.16"
 url = "2.3.1"
 urlencoding = "2.1.2"
 validator = { version = "0.16.0", features = ["derive"] }
-zstd = "0.12.2"
+zstd = "0.12.3"
