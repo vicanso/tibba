@@ -1,8 +1,8 @@
-use axum::{routing::get, Json, Router};
+use axum::{routing::get, Router};
 use chrono::Utc;
 use serde::Serialize;
 
-use super::JSONResult;
+use super::CacheJSONResult;
 use crate::{
     asset,
     config::get_env,
@@ -35,7 +35,7 @@ async fn ping() -> HTTPResult<&'static str> {
     Ok("pong")
 }
 
-async fn get_application_info() -> JSONResult<ApplicationInfo> {
+async fn get_application_info() -> CacheJSONResult<ApplicationInfo> {
     let app_state = get_app_state();
     let d = Utc::now().signed_duration_since(app_state.get_started_at());
     let os = os_info::get().os_type().to_string();
@@ -47,5 +47,5 @@ async fn get_application_info() -> JSONResult<ApplicationInfo> {
         env: get_env(),
         os,
     };
-    Ok(Json(info))
+    Ok((info, 60).into())
 }

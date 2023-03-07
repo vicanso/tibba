@@ -5,7 +5,7 @@ fmt:
 	cargo fmt
 
 dev:
-	cargo run
+	cargo watch -w src -x 'run'
 
 release:
 	date > assets/build_date
