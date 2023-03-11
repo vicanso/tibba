@@ -49,7 +49,7 @@ async fn me(
     let info = get_session_info(session);
     let mut should_refresh = false;
     // 如果已登录
-    if info.logged() && info.should_refresh() {
+    if info.logged_in() && info.should_refresh() {
         should_refresh = true
     }
     let me = UserMeResp {

@@ -1,14 +1,13 @@
 use axum::{error_handling::HandleErrorLayer, middleware::from_fn_with_state, Router};
 use axum_client_ip::SecureClientIpSource;
 
+use std::net::SocketAddr;
 use std::time::Duration;
-use std::{net::SocketAddr, thread::sleep};
 use tokio::signal;
 use tower::ServiceBuilder;
 use tracing::{debug, info};
 
 use controller::new_router;
-use error::HTTPError;
 use middleware::{access_log, entry};
 use state::get_app_state;
 
@@ -22,27 +21,26 @@ mod state;
 mod util;
 
 async fn test() {
-    let redis_cache = cache::RedisCache::new().unwrap();
+    // let redis_cache = cache::RedisCache::new().unwrap();
 
-    let lru_store = cache::TtlLruStore::new(10, Duration::from_secs(10));
-    let redis_store = cache::TtlRedisStore::new(redis_cache, Duration::from_secs(60));
-    let mut store = cache::TtlMultiStore::new(vec![Box::new(lru_store), Box::new(redis_store)]);
-    println!("{}", chrono::Utc::now());
-    println!(
-        "{:?}",
-        store.set_struct("key", &HTTPError::new("def")).await
-    );
+    // let lru_store = cache::TtlLruStore::new(10, Duration::from_secs(10));
+    // let redis_store = cache::TtlRedisStore::new(redis_cache, Duration::from_secs(60));
+    // println!("{}", chrono::Utc::now());
+    // println!(
+    //     "{:?}",
+    //     store.set_struct("key", &HTTPError::new("def")).await
+    // );
 
-    let result: HTTPError = store.get_struct("key").await.unwrap();
-    println!("{result:?}");
-    sleep(Duration::from_secs(12));
-    // println!("{:?}", store.set_struct("key", &HTTPError::new("测试1")));
-    let result: HTTPError = store.get_struct("key").await.unwrap();
-    println!("{result:?}");
-    sleep(Duration::from_secs(60));
+    // let result: HTTPError = store.get_struct("key").await.unwrap();
+    // println!("{result:?}");
+    // sleep(Duration::from_secs(12));
+    // // println!("{:?}", store.set_struct("key", &HTTPError::new("测试1")));
+    // let result: HTTPError = store.get_struct("key").await.unwrap();
+    // println!("{result:?}");
+    // sleep(Duration::from_secs(60));
 
-    let result: HTTPError = store.get_struct("key").await.unwrap();
-    println!("{result:?}");
+    // let result: HTTPError = store.get_struct("key").await.unwrap();
+    // println!("{result:?}");
 
     // redis_cache.set_struct("key", &HTTPError::new("测试"), None);
     // let he: HTTPError = redis_cache.get_struct("key").unwrap();

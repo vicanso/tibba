@@ -33,7 +33,7 @@ impl SessionInfo {
         }
         false
     }
-    pub fn logged(&self) -> bool {
+    pub fn logged_in(&self) -> bool {
         !self.account.is_empty()
     }
 }
@@ -63,7 +63,7 @@ pub fn get_session_info(session: ReadableSession) -> SessionInfo {
 
 pub fn add_session_info(mut session: WritableSession, mut info: SessionInfo) -> HTTPResult<()> {
     // 已登录的则每次设置创建时间
-    if info.logged() {
+    if info.logged_in() {
         info.created_at = Utc::now().timestamp();
     }
     if let Err(err) = session.insert(SESSION_KEY, info) {

@@ -6,8 +6,6 @@ use tempfile::TempDir;
 use url::Url;
 use validator::Validate;
 
-static APP_CONFIG: OnceCell<APPConfig> = OnceCell::new();
-
 #[derive(RustEmbed)]
 #[folder = "configs/"]
 struct Configs;
@@ -145,6 +143,7 @@ pub fn get_env() -> String {
 }
 
 fn must_new_config() -> &'static APPConfig {
+    static APP_CONFIG: OnceCell<APPConfig> = OnceCell::new();
     APP_CONFIG.get_or_init(|| {
         let mode = get_env();
 
