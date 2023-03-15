@@ -3,7 +3,7 @@ use chrono::Utc;
 use std::time::Duration;
 use tokio::time::sleep;
 
-use crate::util::{clone_value_from_context, STARTED_AT};
+use crate::util::{clone_value_from_task_local, STARTED_AT};
 
 async fn wait<B>(ms: i64, only_err_occurred: bool, req: Request<B>, next: Next<B>) -> Response {
     let resp = next.run(req).await;
@@ -11,7 +11,7 @@ async fn wait<B>(ms: i64, only_err_occurred: bool, req: Request<B>, next: Next<B
     if only_err_occurred && resp.status().as_u16() < 400 {
         return resp;
     }
-    let started_at = STARTED_AT.with(clone_value_from_context);
+    let started_at = STARTED_AT.with(clone_value_from_task_local);
 
     let offset = ms - (Utc::now().timestamp_millis() - started_at);
     // 如果处理时长与等待时长还有 x ms的差距，则等待

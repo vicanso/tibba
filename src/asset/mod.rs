@@ -20,7 +20,9 @@ impl IntoResponse for StaticFile {
     fn into_response(self) -> Response {
         if let Some(file) = self.file {
             let mut max_age = format!("public, max-age={}", self.max_age);
-            if let Some(s_max_age) = self.s_max_age {
+            if self.max_age == 0 {
+                max_age = "no-cache".to_string();
+            } else if let Some(s_max_age) = self.s_max_age {
                 max_age = format!("{max_age}, s-maxage={s_max_age}");
             }
             // 静态文件压缩由前置缓存服务器处理

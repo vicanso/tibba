@@ -11,17 +11,17 @@ mod user;
 // json响应的result
 pub type JSONResult<T> = HTTPResult<Json<T>>;
 // json响应+cache-control
-pub struct CacheJSON<T>(Json<T>, u32);
+pub struct CacheJSON<T>(u32, Json<T>);
 // json响应+cache-control的result
 pub type CacheJSONResult<T> = HTTPResult<CacheJSON<T>>;
 
 // tuple转换为cache json
-impl<T> From<(T, u32)> for CacheJSON<T>
+impl<T> From<(u32, T)> for CacheJSON<T>
 where
     T: Serialize,
 {
-    fn from(arr: (T, u32)) -> Self {
-        CacheJSON(Json(arr.0), arr.1)
+    fn from(arr: (u32, T)) -> Self {
+        CacheJSON(arr.0, Json(arr.1))
     }
 }
 
@@ -34,9 +34,9 @@ where
         (
             [(
                 header::CACHE_CONTROL,
-                format!("public, max-age={}", self.1).as_str(),
+                format!("public, max-age={}", self.0).as_str(),
             )],
-            self.0,
+            self.1,
         )
             .into_response()
     }

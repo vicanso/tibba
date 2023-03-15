@@ -9,7 +9,7 @@ use crate::{
     error::HTTPResult,
     state::AppState,
     util::{
-        clone_value_from_context, get_account_from_context, get_header_value, json_get,
+        clone_value_from_task_local, get_account_from_context, get_header_value, json_get,
         read_http_body, DEVICE_ID, STARTED_AT, TRACE_ID,
     },
 };
@@ -20,7 +20,7 @@ pub async fn access_log(
     mut req: Request<Body>,
     next: Next<Body>,
 ) -> HTTPResult<Response<Body>> {
-    let start_at = STARTED_AT.with(clone_value_from_context);
+    let start_at = STARTED_AT.with(clone_value_from_task_local);
     state.increase_processing();
     let processing_count = state.get_processing();
 
@@ -42,8 +42,8 @@ pub async fn access_log(
         req = Request::from_parts(parts, Body::from(bytes));
     }
 
-    let trace_id = TRACE_ID.with(clone_value_from_context);
-    let device_id = DEVICE_ID.with(clone_value_from_context);
+    let trace_id = TRACE_ID.with(clone_value_from_task_local);
+    let device_id = DEVICE_ID.with(clone_value_from_task_local);
 
     let resp = next.run(req).await;
     // account 在获取session后才能获取
