@@ -1,5 +1,4 @@
 use axum::{error_handling::HandleErrorLayer, middleware::from_fn_with_state, Router};
-use axum_client_ip::SecureClientIpSource;
 
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -19,7 +18,6 @@ mod error;
 mod middleware;
 mod state;
 mod util;
-
 async fn test() {
     // let redis_cache = cache::RedisCache::new().unwrap();
 
@@ -55,6 +53,7 @@ async fn main() {
     tracing_subscriber::fmt::init();
     let app_state = get_app_state();
 
+
     // build our application with a route
     let app = Router::new()
         .merge(new_router())
@@ -65,8 +64,7 @@ async fn main() {
         )
         // 后面的layer先执行
         .layer(from_fn_with_state(app_state, access_log))
-        .layer(from_fn_with_state(app_state, entry))
-        .layer(SecureClientIpSource::ConnectInfo.into_extension());
+        .layer(from_fn_with_state(app_state, entry));
 
     let basic_config = config::must_new_basic_config();
 

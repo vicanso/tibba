@@ -10,7 +10,7 @@ use deadpool_redis::{
     Connection, Manager, Pool, PoolConfig, Runtime,
 };
 use once_cell::sync::OnceCell;
-use serde::{Deserialize, Serialize};
+use serde::{de, de::DeserializeOwned, Deserialize, Serialize};
 use snafu::{ResultExt, Snafu, Whatever};
 use std::{slice::from_raw_parts, time::Duration};
 
@@ -34,6 +34,8 @@ pub enum Error {
     Json { source: serde_json::Error },
     #[snafu(display("category:{category} {source}"))]
     Whatever { category: String, source: Whatever },
+    #[snafu(display("Deserializer fail, {message}"))]
+    Deserializer { message: String },
 }
 impl From<serde_json::Error> for Error {
     fn from(err: serde_json::Error) -> Self {
@@ -194,21 +196,18 @@ impl RedisCache {
     /// 从redis中获取数据并转换为struct，如果缓存中无数据则使用struct的默认值返回
     pub async fn get_struct<'a, T>(&self, key: &str) -> Result<T>
     where
-        T: Default + Deserialize<'a>,
+        T: Default + DeserializeOwned,
     {
-        let value = self.get_bytes(key).await?;
+        let buf = self.get_bytes(key).await?;
 
-        if value.is_empty() {
+        if buf.is_empty() {
             return Ok(T::default());
         }
 
-        // TODO 生命周期是否有其它方法调整
-        let result = unsafe {
-            let p = value.as_ptr();
-            serde_json::from_slice(from_raw_parts(p, value.len()))?
-        };
-
-        Ok(result)
+        let deserializer = &mut serde_json::Deserializer::from_slice(&buf);
+        T::deserialize(deserializer).map_err(|err| Error::Deserializer {
+            message: err.to_string(),
+        })
     }
     /// 返回该key在redis中的有效期
     pub async fn ttl(&self, key: &str) -> Result<i32> {
@@ -255,7 +254,7 @@ impl RedisCache {
     /// 从redis获取数据后使用snappy解压，并转换为对应的struct
     pub async fn get_struct_snappy<'a, T>(&self, key: &str) -> Result<T>
     where
-        T: Default + Deserialize<'a>,
+        T: Default + DeserializeOwned,
     {
         let value = self.get_bytes(key).await?;
 
@@ -267,13 +266,10 @@ impl RedisCache {
             category: "snappyDecode".to_string(),
         })?;
 
-        // TODO 生命周期是否有其它方法调整
-        let result = unsafe {
-            let p = buf.as_ptr();
-            serde_json::from_slice(from_raw_parts(p, buf.len()))?
-        };
-
-        Ok(result)
+        let deserializer = &mut serde_json::Deserializer::from_slice(&buf);
+        T::deserialize(deserializer).map_err(|err| Error::Deserializer {
+            message: err.to_string(),
+        })
     }
     /// 将struct转换为json后使用zstd压缩，
     /// 再将压缩后的数据设置至redis中，若未指定ttl，
@@ -295,9 +291,9 @@ impl RedisCache {
         Ok(())
     }
     /// 从redis获取数据后使用zstd解压，并转换为对应的struct
-    pub async fn get_struct_zstd<'a, T>(&self, key: &str) -> Result<T>
+    pub async fn get_struct_zstd<T>(&self, key: &str) -> Result<T>
     where
-        T: Default + Deserialize<'a>,
+        T: Default + DeserializeOwned,
     {
         let value = self.get_bytes(key).await?;
 
@@ -309,12 +305,10 @@ impl RedisCache {
             category: "zstdDecode".to_string(),
         })?;
 
-        // TODO 生命周期是否有其它方法调整
-        let result = unsafe {
-            let p = buf.as_ptr();
-            serde_json::from_slice(from_raw_parts(p, buf.len()))?
-        };
+        let deserializer = &mut serde_json::Deserializer::from_slice(&buf);
 
-        Ok(result)
+        T::deserialize(deserializer).map_err(|err| Error::Deserializer {
+            message: err.to_string(),
+        })
     }
 }
