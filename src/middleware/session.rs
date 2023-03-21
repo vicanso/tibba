@@ -8,11 +8,12 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
+use crate::task_local::*;
 use crate::{
     cache::must_new_redis_client,
     config::must_new_session_config,
     error::{HTTPError, HTTPResult},
-    util::{set_account_to_context, Account, ACCOUNT},
+    util::{set_account_to_context, Account},
 };
 
 const SESSION_KEY: &str = "info";

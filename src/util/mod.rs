@@ -3,7 +3,6 @@ mod context;
 mod duration;
 mod http;
 mod string;
-mod task_local;
 
 use crate::config::get_env;
 
@@ -14,11 +13,10 @@ pub use self::http::{
 pub use compress::{snappy_decode, snappy_encode, zstd_decode, zstd_encode};
 pub use context::{
     generate_device_id_cookie, get_account_from_context, get_device_id_from_cookie,
-    set_account_to_context, Account, ACCOUNT, DEVICE_ID, IO_COUNT, STARTED_AT, TRACE_ID,
+    set_account_to_context, Account,
 };
 pub use duration::duration_to_string;
 pub use string::{json_get, random_string};
-pub use task_local::clone_value_from_task_local;
 
 /// 是否开发环境
 /// 用于针对本地开发时的判断

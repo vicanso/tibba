@@ -10,9 +10,9 @@ use deadpool_redis::{
     Connection, Manager, Pool, PoolConfig, Runtime,
 };
 use once_cell::sync::OnceCell;
-use serde::{de, de::DeserializeOwned, Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Serialize};
 use snafu::{ResultExt, Snafu, Whatever};
-use std::{slice::from_raw_parts, time::Duration};
+use std::time::Duration;
 
 pub fn must_new_redis_client() -> Client {
     let config = must_new_redis_config();

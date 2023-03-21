@@ -2,17 +2,12 @@ use axum::{body::Body, extract::State, http::Request, middleware::Next, response
 use axum_client_ip::InsecureClientIp;
 use chrono::Utc;
 use http::Method;
-use tracing::{event, Level};
 use urlencoding::decode;
 
-use crate::{
-    error::HTTPResult,
-    state::AppState,
-    util::{
-        clone_value_from_task_local, get_account_from_context, get_header_value, json_get,
-        read_http_body, DEVICE_ID, STARTED_AT, TRACE_ID,
-    },
-};
+use crate::error::HTTPResult;
+use crate::state::AppState;
+use crate::util::{get_account_from_context, get_header_value, json_get, read_http_body};
+use crate::{task_local::*, tl_error, tl_info};
 
 pub async fn access_log(
     State(state): State<&AppState>,
@@ -66,11 +61,9 @@ pub async fn access_log(
     // route为 /users/:id
 
     let cost = Utc::now().timestamp_millis() - start_at;
-    event!(
-        Level::INFO,
+
+    tl_info!(
         category = "accessLog",
-        deviceId = device_id,
-        traceId = trace_id,
         account = account,
         ip = ip.to_string(),
         xForwardedFor = x_forwarded_for,
@@ -90,14 +83,7 @@ pub async fn access_log(
         if message.is_empty() {
             message = error_message;
         }
-        event!(
-            Level::ERROR,
-            category = "httpError",
-            deviceId = device_id,
-            traceId = trace_id,
-            account = account,
-            error = message,
-        )
+        tl_error!(category = "httpError", account = account, error = message);
     }
 
     state.decrease_processing();

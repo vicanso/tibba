@@ -3,7 +3,7 @@ use chrono::Utc;
 use std::time::Duration;
 use tokio::time::sleep;
 
-use crate::util::{clone_value_from_task_local, STARTED_AT};
+use crate::task_local::*;
 
 async fn wait<B>(ms: i64, only_err_occurred: bool, req: Request<B>, next: Next<B>) -> Response {
     let resp = next.run(req).await;

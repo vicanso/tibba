@@ -1,17 +1,8 @@
 use axum::http::Extensions;
 use axum_extra::extract::cookie::{Cookie, CookieJar};
 use cookie::time::{Duration, OffsetDateTime};
-use std::sync::atomic::AtomicUsize;
 
 use super::random_string;
-
-tokio::task_local! {
-    pub static TRACE_ID: String;
-    pub static ACCOUNT: String;
-    pub static DEVICE_ID: String;
-    pub static STARTED_AT: i64;
-    pub static IO_COUNT: AtomicUsize;
-}
 
 static DEVICE_ID_NAME: &str = "device";
 

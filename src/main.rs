@@ -17,7 +17,9 @@ mod controller;
 mod error;
 mod middleware;
 mod state;
+mod task_local;
 mod util;
+
 async fn test() {
     // let redis_cache = cache::RedisCache::new().unwrap();
 
@@ -53,6 +55,7 @@ async fn main() {
     tracing_subscriber::fmt::init();
     let app_state = get_app_state();
 
+    // tl_info!("abcd");
 
     // build our application with a route
     let app = Router::new()
