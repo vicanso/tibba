@@ -27,7 +27,7 @@ once_cell = "1.17.1"
 os_info = "3.6.0"
 # TODO 是否可更新为0.22.3
 redis = { version = "0.20.2", features = ["tokio-comp", "aio"] }
-rust-embed = { version = "6.6.0", features = ["mime-guess"] }
+rust-embed = { version = "6.6.1", features = ["mime-guess"] }
 serde = { version = "1.0.152", features = ["derive"] }
 serde_json = "1.0.93"
 snafu = "0.7.4"

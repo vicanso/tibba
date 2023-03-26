@@ -37,8 +37,6 @@ pub async fn access_log(
         req = Request::from_parts(parts, Body::from(bytes));
     }
 
-    let trace_id = TRACE_ID.with(clone_value_from_task_local);
-    let device_id = DEVICE_ID.with(clone_value_from_task_local);
 
     let resp = next.run(req).await;
     // account 在获取session后才能获取
