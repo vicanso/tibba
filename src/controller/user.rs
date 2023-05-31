@@ -1,8 +1,6 @@
-use axum::{
-    middleware::from_fn,
-    routing::{get, post},
-    Json, Router,
-};
+use axum::middleware::from_fn;
+use axum::routing::{get, post};
+use axum::{Json, Router};
 use axum_extra::extract::cookie::CookieJar;
 use axum_sessions::extractors::{ReadableSession, WritableSession};
 use chrono::Local;

@@ -17,7 +17,6 @@ config = { version = "0.13.3", features = ["yaml"] }
 cookie = "0.17.0"
 deadpool-redis = "0.12.0"
 hex = "0.4.3"
-http = "0.2.9"
 humantime = "2.1.0"
 hyper = "0.14.26"
 lru = "0.10.0"

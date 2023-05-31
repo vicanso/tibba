@@ -1,14 +1,10 @@
-use crate::{
-    config::must_new_redis_config,
-    error::HTTPError,
-    util::{snappy_decode, snappy_encode, zstd_decode, zstd_encode},
-};
+use crate::config::must_new_redis_config;
+use crate::error::HTTPError;
+use crate::util::{snappy_decode, snappy_encode, zstd_decode, zstd_encode};
 use redis::Client;
 
-use deadpool_redis::{
-    redis::{cmd, pipe},
-    Connection, Manager, Pool, PoolConfig, Runtime,
-};
+use deadpool_redis::redis::{cmd, pipe};
+use deadpool_redis::{Connection, Manager, Pool, PoolConfig, Runtime};
 use once_cell::sync::OnceCell;
 use serde::{de::DeserializeOwned, Serialize};
 use snafu::{ResultExt, Snafu, Whatever};

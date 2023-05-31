@@ -5,8 +5,7 @@ use serde::Serialize;
 use super::CacheJSONResult;
 use crate::asset;
 use crate::config::get_env;
-use crate::
-    error::{HTTPError, HTTPResult};
+use crate::error::{HTTPError, HTTPResult};
 use crate::state::get_app_state;
 use crate::util::duration_to_string;
 

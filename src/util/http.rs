@@ -1,10 +1,8 @@
 use std::collections::HashMap;
 use std::str::FromStr;
 
-use axum::{
-    body::Bytes,
-    http::{header, header::HeaderName, HeaderMap, HeaderValue},
-};
+use axum::body::Bytes;
+use axum::http::{header, header::HeaderName, HeaderMap, HeaderValue};
 
 use crate::error::{HTTPError, HTTPResult};
 

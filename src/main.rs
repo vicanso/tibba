@@ -65,7 +65,6 @@ fn init_logger() {
         )
     });
 
-
     let subscriber = FmtSubscriber::builder()
         .with_max_level(level)
         .with_timer(timer)

@@ -1,20 +1,16 @@
 use async_redis_session::RedisSessionStore;
 use axum::{http::Request, middleware::Next, response::Response};
-use axum_sessions::{
-    extractors::{ReadableSession, WritableSession},
-    SessionLayer,
-};
+use axum_sessions::extractors::{ReadableSession, WritableSession};
+use axum_sessions::SessionLayer;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
+use crate::cache::must_new_redis_client;
+use crate::config::must_new_session_config;
+use crate::error::{HTTPError, HTTPResult};
 use crate::task_local::*;
-use crate::{
-    cache::must_new_redis_client,
-    config::must_new_session_config,
-    error::{HTTPError, HTTPResult},
-    util::{set_account_to_context, Account},
-};
+use crate::util::{set_account_to_context, Account};
 
 const SESSION_KEY: &str = "info";
 

@@ -1926,7 +1926,6 @@ dependencies = [
  "cookie",
  "deadpool-redis",
  "hex",
- "http",
  "humantime",
  "hyper",
  "lru",

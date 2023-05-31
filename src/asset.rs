@@ -1,6 +1,6 @@
+use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
 use hex::encode;
-use http::{header, StatusCode};
 /// 项目相关静态资源数据
 use rust_embed::{EmbeddedFile, RustEmbed};
 
