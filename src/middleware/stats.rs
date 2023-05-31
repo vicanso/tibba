@@ -37,7 +37,6 @@ pub async fn access_log(
         req = Request::from_parts(parts, Body::from(bytes));
     }
 
-
     let resp = next.run(req).await;
     // account 在获取session后才能获取
     // 而task local的值已回收，因此只能从extensions中获取

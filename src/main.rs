@@ -2,9 +2,12 @@ use axum::{error_handling::HandleErrorLayer, middleware::from_fn_with_state, Rou
 
 use std::net::SocketAddr;
 use std::time::Duration;
+use std::{env, str::FromStr};
 use tokio::signal;
 use tower::ServiceBuilder;
+use tracing::Level;
 use tracing::{debug, info};
+use tracing_subscriber::FmtSubscriber;
 
 use controller::new_router;
 use middleware::{access_log, entry};
@@ -47,12 +50,35 @@ async fn test() {
     // println!("{:?}", he);
 }
 
+fn init_logger() {
+    let mut level = Level::INFO;
+    if let Ok(log_level) = env::var("LOG_LEVEL") {
+        if let Ok(value) = Level::from_str(log_level.as_str()) {
+            level = value;
+        }
+    }
+
+    let timer = tracing_subscriber::fmt::time::OffsetTime::local_rfc_3339().unwrap_or_else(|_| {
+        tracing_subscriber::fmt::time::OffsetTime::new(
+            time::UtcOffset::from_hms(0, 0, 0).unwrap(),
+            time::format_description::well_known::Rfc3339,
+        )
+    });
+
+
+    let subscriber = FmtSubscriber::builder()
+        .with_max_level(level)
+        .with_timer(timer)
+        .finish();
+    tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
+}
+
 #[tokio::main]
-async fn main() {
+async fn run() {
     // test();
 
     // initialize tracing
-    tracing_subscriber::fmt::init();
+    // tracing_subscriber::fmt::init();
     let app_state = get_app_state();
 
     // tl_info!("abcd");
@@ -105,4 +131,12 @@ async fn shutdown_signal() {
     }
 
     info!("signal received, starting graceful shutdown");
+}
+
+fn main() {
+    // Because we need to get the local offset before Tokio spawns any threads, our `main`
+    // function cannot use `tokio::main`.
+
+    init_logger();
+    run();
 }

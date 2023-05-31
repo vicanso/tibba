@@ -216,17 +216,17 @@ pub fn must_new_redis_config() -> RedisConfig {
     };
     for (key, value) in info.query_pairs() {
         match key.to_string().as_str() {
-            "poolSize" => {
+            "pool_size" => {
                 if let Ok(num) = value.parse::<u32>() {
                     redis_config.pool_size = num;
                 }
             }
-            "connectionTimeout" => {
+            "connection_timeout" => {
                 if let Ok(num) = value.parse::<u64>() {
                     redis_config.connection_timeout = Duration::from_millis(num);
                 }
             }
-            "waitTimeout" => {
+            "wait_timeout" => {
                 if let Ok(num) = value.parse::<u64>() {
                     redis_config.wait_timeout = Duration::from_millis(num);
                 }

@@ -3,7 +3,7 @@ use axum::{
     response::{IntoResponse, Response},
     BoxError, Json,
 };
-use http::HeaderValue;
+use axum::http::HeaderValue;
 use serde::{Deserialize, Serialize};
 use tracing::error;
 
