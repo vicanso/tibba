@@ -1,7 +1,8 @@
 use config::{Config, File};
 use once_cell::sync::OnceCell;
 use rust_embed::RustEmbed;
-use std::{collections::HashMap, env, fs, io::Write, path::PathBuf, time::Duration};
+use std::{collections::HashMap, env, fs, io::Write, ops::Index, path::PathBuf, time::Duration};
+use substring::Substring;
 use tempfile::TempDir;
 use url::Url;
 use validator::Validate;
@@ -192,7 +193,7 @@ pub fn must_new_basic_config() -> BasicConfig {
 pub struct RedisConfig {
     // redis连接地址
     #[validate(length(min = 1))]
-    pub uri: String,
+    pub nodes: Vec<String>,
     // 连接池大小，默认为10
     pub pool_size: u32,
     // 连接超时，默认3秒
@@ -206,9 +207,23 @@ pub struct RedisConfig {
 pub fn must_new_redis_config() -> RedisConfig {
     let config = must_new_config().set_prefix("redis");
     let uri = config.get_value_from_env_first("uri");
-    let info = Url::parse(&uri).unwrap();
+    let start = if let Some(index) = uri.find('@') {
+        index + 1
+    } else {
+        uri.find("//").unwrap() + 2
+    };
+
+    let mut host = uri.substring(start, uri.len());
+    if let Some(end) = host.find('/') {
+        host = host.substring(0, end);
+    }
+    let mut nodes = vec![];
+    for item in host.split(',') {
+        nodes.push(uri.replace(host, item));
+    }
+    let info = Url::parse(&nodes[0]).unwrap();
     let mut redis_config = RedisConfig {
-        uri,
+        nodes,
         pool_size: 10,
         connection_timeout: Duration::from_secs(3),
         wait_timeout: Duration::from_secs(3),

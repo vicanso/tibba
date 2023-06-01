@@ -1,18 +1,18 @@
 use crate::config::must_new_redis_config;
 use crate::error::HTTPError;
 use crate::util::{snappy_decode, snappy_encode, zstd_decode, zstd_encode};
-use redis::Client;
-
 use deadpool_redis::redis::{cmd, pipe};
 use deadpool_redis::{Connection, Manager, Pool, PoolConfig, Runtime};
+use once_cell::sync::Lazy;
 use once_cell::sync::OnceCell;
+use redis::Client;
 use serde::{de::DeserializeOwned, Serialize};
 use snafu::{ResultExt, Snafu, Whatever};
 use std::time::Duration;
 
 pub fn must_new_redis_client() -> Client {
     let config = must_new_redis_config();
-    Client::open(config.uri).unwrap()
+    Client::open(config.nodes[0].as_str()).unwrap()
 }
 
 #[derive(Debug, Snafu)]
@@ -56,31 +56,35 @@ impl From<Error> for HTTPError {
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
-// 获取redis连接池
-fn get_redis_pool() -> Result<&'static Pool> {
-    static REDIS_POOL: OnceCell<Pool> = OnceCell::new();
-    let result = REDIS_POOL.get_or_try_init(|| -> Result<Pool> {
-        let config = must_new_redis_config();
-        let p = Pool::builder(Manager::new(config.uri).unwrap());
-        let pool = p
-            .config(PoolConfig {
-                max_size: config.pool_size as usize,
-                timeouts: deadpool_redis::Timeouts {
-                    wait: Some(config.wait_timeout),
-                    create: Some(config.connection_timeout),
-                    recycle: Some(config.recycle_timeout),
-                },
-            })
-            .runtime(Runtime::Tokio1)
-            .build()
-            .context(CreatePoolSnafu {})?;
-        Ok(pool)
-    })?;
-    Ok(result)
+static REDIS_POOL: Lazy<Pool> = Lazy::new(|| {
+    let config = must_new_redis_config();
+    let p = Pool::builder(Manager::new(config.nodes[0].as_str()).unwrap());
+    p.config(PoolConfig {
+        max_size: config.pool_size as usize,
+        timeouts: deadpool_redis::Timeouts {
+            wait: Some(config.wait_timeout),
+            create: Some(config.connection_timeout),
+            recycle: Some(config.recycle_timeout),
+        },
+    })
+    .runtime(Runtime::Tokio1)
+    .build()
+    .unwrap()
+});
+
+async fn get_redis_conn() -> Result<Connection> {
+    REDIS_POOL.get().await.context(PoolSnafu {})
+}
+
+pub async fn redis_ping() -> Result<String> {
+    let mut conn = get_redis_conn().await?;
+    cmd("PING")
+        .query_async::<Connection, String>(&mut conn)
+        .await
+        .context(RedisSnafu { category: "ping" })
 }
 
 pub struct RedisCache {
-    pool: &'static Pool,
     ttl: Duration,
 }
 
@@ -92,23 +96,19 @@ pub async fn get_default_redis_cache() -> Result<&'static RedisCache> {
 }
 
 impl RedisCache {
-    async fn get_conn(&self) -> Result<Connection> {
-        self.pool.get().await.context(PoolSnafu {})
-    }
     /// 使用默认的ttl初始化redis缓存实例
     pub fn new() -> Result<RedisCache> {
         Self::new_with_ttl(Duration::from_secs(5 * 60))
     }
     /// 初始化redis缓存实例，并指定默认的ttl
     pub fn new_with_ttl(ttl: Duration) -> Result<RedisCache> {
-        let pool = get_redis_pool()?;
-        Ok(RedisCache { pool, ttl })
+        Ok(RedisCache { ttl })
     }
     /// 尝试锁定key，时长为ttl，若未指定时长则使用默认时长
     /// 如果成功则返回true，否则返回false。
     /// 主要用于多实例并发限制。
     pub async fn lock(&self, key: &str, ttl: Option<Duration>) -> Result<bool> {
-        let mut conn = self.get_conn().await?;
+        let mut conn = get_redis_conn().await?;
 
         let result = cmd("SET")
             .arg(key)
@@ -123,7 +123,7 @@ impl RedisCache {
     }
     /// 从redis中删除key
     pub async fn del(&self, key: &str) -> Result<()> {
-        let mut conn = self.get_conn().await?;
+        let mut conn = get_redis_conn().await?;
 
         cmd("DEL")
             .arg(key)
@@ -135,7 +135,7 @@ impl RedisCache {
     /// 增加redis中key所对应的值，如果ttl未指定则使用默认值，
     /// 需要注意此ttl仅在首次时设置。
     pub async fn incr(&self, key: &str, delta: i64, ttl: Option<Duration>) -> Result<i64> {
-        let mut conn = self.get_conn().await?;
+        let mut conn = get_redis_conn().await?;
         let (_, count) = pipe()
             .cmd("SET")
             .arg(key)
@@ -153,7 +153,7 @@ impl RedisCache {
     }
     /// 将数据设置至redis中，如果未设置ttl则使用默认值
     pub async fn set_bytes(&self, key: &str, value: Vec<u8>, ttl: Option<Duration>) -> Result<()> {
-        let mut conn = self.get_conn().await?;
+        let mut conn = get_redis_conn().await?;
 
         let seconds = ttl.unwrap_or(self.ttl).as_secs();
         cmd("SETEX")
@@ -169,7 +169,7 @@ impl RedisCache {
     }
     /// 从redis中获取数据
     pub async fn get_bytes(&self, key: &str) -> Result<Vec<u8>> {
-        let mut conn = self.get_conn().await?;
+        let mut conn = get_redis_conn().await?;
         let result = cmd("GET")
             .arg(key)
             .query_async(&mut conn)
@@ -207,7 +207,7 @@ impl RedisCache {
     }
     /// 返回该key在redis中的有效期
     pub async fn ttl(&self, key: &str) -> Result<i32> {
-        let mut conn = self.get_conn().await?;
+        let mut conn = get_redis_conn().await?;
         let result = cmd("TTL")
             .arg(key)
             .query_async(&mut conn)
@@ -217,7 +217,7 @@ impl RedisCache {
     }
     /// 获取后并删除该key在redis中的值，用于仅获取一次的场景
     pub async fn get_del(&self, key: &str) -> Result<Vec<u8>> {
-        let mut conn = self.get_conn().await?;
+        let mut conn = get_redis_conn().await?;
         let (value, _) = pipe()
             .cmd("GET")
             .arg(key)

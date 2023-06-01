@@ -1,3 +1,10 @@
+use crate::cache::get_default_redis_cache;
+use crate::controller::JSONResult;
+use crate::error::HTTPResult;
+use crate::middleware::{
+    add_session_info, get_session_info, load_session, new_session_layer, wait2s, SessionInfo,
+};
+use crate::util::{generate_device_id_cookie, get_device_id_from_cookie};
 use axum::middleware::from_fn;
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -6,16 +13,6 @@ use axum_sessions::extractors::{ReadableSession, WritableSession};
 use chrono::Local;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
-
-use crate::{
-    cache::get_default_redis_cache,
-    controller::JSONResult,
-    error::HTTPResult,
-    middleware::{
-        add_session_info, get_session_info, load_session, new_session_layer, wait2s, SessionInfo,
-    },
-    util::{generate_device_id_cookie, get_device_id_from_cookie},
-};
 
 #[derive(Debug, Clone, Serialize, Default)]
 #[serde(rename_all = "camelCase")]

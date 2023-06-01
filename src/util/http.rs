@@ -1,10 +1,8 @@
-use std::collections::HashMap;
-use std::str::FromStr;
-
+use crate::error::{HTTPError, HTTPResult};
 use axum::body::Bytes;
 use axum::http::{header, header::HeaderName, HeaderMap, HeaderValue};
-
-use crate::error::{HTTPError, HTTPResult};
+use std::collections::HashMap;
+use std::str::FromStr;
 
 /// 插入HTTP头
 pub fn insert_header(

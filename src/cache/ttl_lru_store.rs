@@ -1,8 +1,7 @@
+use crate::error::HTTPError;
 use lru::LruCache;
 use snafu::Snafu;
 use std::{num::NonZeroUsize, sync::RwLock};
-
-use crate::error::HTTPError;
 
 #[derive(Debug, Snafu)]
 pub enum Error {

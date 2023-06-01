@@ -1,5 +1,4 @@
 use axum::{error_handling::HandleErrorLayer, middleware::from_fn_with_state, Router};
-
 use std::net::SocketAddr;
 use std::time::Duration;
 use std::{env, str::FromStr};
@@ -74,6 +73,8 @@ fn init_logger() {
 
 #[tokio::main]
 async fn run() {
+    cache::redis_ping().await.unwrap();
+    // cache::get_redis_conn().await.unwrap()
     // test();
 
     // initialize tracing
