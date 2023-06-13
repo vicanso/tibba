@@ -1,6 +1,6 @@
 use crate::cache::must_new_redis_client;
 use crate::cache::RedisSessionStore;
-use crate::config::must_new_session_config;
+use crate::config::{must_new_session_config, SessionConfig};
 use crate::error::{HTTPError, HTTPResult};
 use crate::task_local::*;
 use crate::util::{set_account_to_context, Account};
@@ -8,6 +8,7 @@ use axum::{http::Request, middleware::Next, response::Response};
 use axum_sessions::extractors::{ReadableSession, WritableSession};
 use axum_sessions::SessionLayer;
 use chrono::Utc;
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
@@ -34,16 +35,15 @@ impl SessionInfo {
     }
 }
 
+static SESSION_CONFIG: Lazy<SessionConfig> = Lazy::new(must_new_session_config);
+
 pub fn new_session_layer() -> SessionLayer<RedisSessionStore> {
-    // TODO session加载出错时，仅状态码调整了
-    // 无出错内容，且后续流程还是继续运行了
-    let session_config = must_new_session_config();
-    let store =
-        RedisSessionStore::from_client(must_new_redis_client()).with_prefix(session_config.prefix);
-    let ttl = session_config.ttl as u64;
-    SessionLayer::new(store, session_config.secret.as_bytes())
+    let store = RedisSessionStore::from_client(must_new_redis_client())
+        .with_prefix(SESSION_CONFIG.prefix.clone());
+    let ttl = SESSION_CONFIG.ttl as u64;
+    SessionLayer::new(store, SESSION_CONFIG.secret.as_bytes())
         .with_secure(false)
-        .with_cookie_name(session_config.cookie)
+        .with_cookie_name(SESSION_CONFIG.cookie.clone())
         .with_session_ttl(Some(Duration::from_secs(ttl)))
         // 仅在变化时写入
         .with_persistence_policy(axum_sessions::PersistencePolicy::ChangedOnly)

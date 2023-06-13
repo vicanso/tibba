@@ -1,7 +1,7 @@
 use config::{Config, File};
 use once_cell::sync::OnceCell;
 use rust_embed::RustEmbed;
-use std::{collections::HashMap, env, fs, io::Write, ops::Index, path::PathBuf, time::Duration};
+use std::{collections::HashMap, env, fs, io::Write, path::PathBuf, time::Duration};
 use substring::Substring;
 use tempfile::TempDir;
 use url::Url;

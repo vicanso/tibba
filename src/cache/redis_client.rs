@@ -72,7 +72,7 @@ static REDIS_POOL: Lazy<Pool> = Lazy::new(|| {
     .unwrap()
 });
 
-async fn get_redis_conn() -> Result<Connection> {
+pub async fn get_redis_conn() -> Result<Connection> {
     REDIS_POOL.get().await.context(PoolSnafu {})
 }
 
@@ -84,34 +84,50 @@ pub async fn redis_ping() -> Result<String> {
         .context(RedisSnafu { category: "ping" })
 }
 
+#[derive(Default, Clone, Debug)]
 pub struct RedisCache {
     ttl: Duration,
+    prefix: String,
 }
 
 /// 获取默认的redis缓存，基于redis pool并设置默认的ttl
-pub async fn get_default_redis_cache() -> Result<&'static RedisCache> {
+pub fn get_default_redis_cache() -> &'static RedisCache {
     static DEFAULT_REDIS_CACHE: OnceCell<RedisCache> = OnceCell::new();
 
-    DEFAULT_REDIS_CACHE.get_or_try_init(|| -> Result<RedisCache> { RedisCache::new() })
+    DEFAULT_REDIS_CACHE.get_or_init(|| -> RedisCache { RedisCache::new() })
 }
 
 impl RedisCache {
+    fn get_key(&self, key: &str) -> String {
+        if self.prefix.is_empty() {
+            return key.to_string();
+        }
+        self.prefix.to_string() + key
+    }
     /// 使用默认的ttl初始化redis缓存实例
-    pub fn new() -> Result<RedisCache> {
+    pub fn new() -> RedisCache {
         Self::new_with_ttl(Duration::from_secs(5 * 60))
     }
     /// 初始化redis缓存实例，并指定默认的ttl
-    pub fn new_with_ttl(ttl: Duration) -> Result<RedisCache> {
-        Ok(RedisCache { ttl })
+    pub fn new_with_ttl(ttl: Duration) -> RedisCache {
+        RedisCache {
+            ttl,
+            ..Default::default()
+        }
+    }
+    /// 初始化redis缓存实例，指定ttl以及prefix
+    pub fn new_with_ttl_prefix(ttl: Duration, prefix: String) -> RedisCache {
+        RedisCache { ttl, prefix }
     }
     /// 尝试锁定key，时长为ttl，若未指定时长则使用默认时长
     /// 如果成功则返回true，否则返回false。
     /// 主要用于多实例并发限制。
     pub async fn lock(&self, key: &str, ttl: Option<Duration>) -> Result<bool> {
         let mut conn = get_redis_conn().await?;
+        let k = self.get_key(key);
 
         let result = cmd("SET")
-            .arg(key)
+            .arg(&k)
             .arg(true)
             .arg("NX")
             .arg("EX")
@@ -124,9 +140,10 @@ impl RedisCache {
     /// 从redis中删除key
     pub async fn del(&self, key: &str) -> Result<()> {
         let mut conn = get_redis_conn().await?;
+        let k = self.get_key(key);
 
         cmd("DEL")
-            .arg(key)
+            .arg(&k)
             .query_async(&mut conn)
             .await
             .context(RedisSnafu { category: "del" })?;
@@ -136,15 +153,16 @@ impl RedisCache {
     /// 需要注意此ttl仅在首次时设置。
     pub async fn incr(&self, key: &str, delta: i64, ttl: Option<Duration>) -> Result<i64> {
         let mut conn = get_redis_conn().await?;
+        let k = self.get_key(key);
         let (_, count) = pipe()
             .cmd("SET")
-            .arg(key)
+            .arg(&k)
             .arg(0)
             .arg("NX")
             .arg("EX")
             .arg(ttl.unwrap_or(self.ttl).as_secs())
             .cmd("INCRBY")
-            .arg(key)
+            .arg(&k)
             .arg(delta)
             .query_async::<Connection, (bool, i64)>(&mut conn)
             .await
@@ -152,7 +170,7 @@ impl RedisCache {
         Ok(count)
     }
     /// 将数据设置至redis中，如果未设置ttl则使用默认值
-    pub async fn set_bytes(&self, key: &str, value: Vec<u8>, ttl: Option<Duration>) -> Result<()> {
+    async fn set(&self, key: &str, value: Vec<u8>, ttl: Option<Duration>) -> Result<()> {
         let mut conn = get_redis_conn().await?;
 
         let seconds = ttl.unwrap_or(self.ttl).as_secs();
@@ -167,8 +185,13 @@ impl RedisCache {
             })?;
         Ok(())
     }
+    /// 将数据设置至redis中，如果未设置ttl则使用默认值
+    pub async fn set_bytes(&self, key: &str, value: Vec<u8>, ttl: Option<Duration>) -> Result<()> {
+        let k = self.get_key(key);
+        self.set(&k, value, ttl).await
+    }
     /// 从redis中获取数据
-    pub async fn get_bytes(&self, key: &str) -> Result<Vec<u8>> {
+    async fn get(&self, key: &str) -> Result<Vec<u8>> {
         let mut conn = get_redis_conn().await?;
         let result = cmd("GET")
             .arg(key)
@@ -180,13 +203,19 @@ impl RedisCache {
 
         Ok(result)
     }
+    /// 从redis中获取数据
+    pub async fn get_bytes(&self, key: &str) -> Result<Vec<u8>> {
+        let k = self.get_key(key);
+        self.get(&k).await
+    }
     /// 将struct转换为json后设置至redis中，若未指定ttl则使用默认值
     pub async fn set_struct<T>(&self, key: &str, value: &T, ttl: Option<Duration>) -> Result<()>
     where
         T: ?Sized + Serialize,
     {
         let value = serde_json::to_vec(&value)?;
-        self.set_bytes(key, value, ttl).await?;
+        let k = self.get_key(key);
+        self.set(&k, value, ttl).await?;
         Ok(())
     }
     /// 从redis中获取数据并转换为struct，如果缓存中无数据则使用struct的默认值返回
@@ -194,7 +223,8 @@ impl RedisCache {
     where
         T: Default + DeserializeOwned,
     {
-        let buf = self.get_bytes(key).await?;
+        let k = self.get_key(key);
+        let buf = self.get(&k).await?;
 
         if buf.is_empty() {
             return Ok(T::default());
@@ -208,8 +238,9 @@ impl RedisCache {
     /// 返回该key在redis中的有效期
     pub async fn ttl(&self, key: &str) -> Result<i32> {
         let mut conn = get_redis_conn().await?;
+        let k = self.get_key(key);
         let result = cmd("TTL")
-            .arg(key)
+            .arg(&k)
             .query_async(&mut conn)
             .await
             .context(RedisSnafu { category: "ttl" })?;
@@ -217,12 +248,13 @@ impl RedisCache {
     }
     /// 获取后并删除该key在redis中的值，用于仅获取一次的场景
     pub async fn get_del(&self, key: &str) -> Result<Vec<u8>> {
+        let k = self.get_key(key);
         let mut conn = get_redis_conn().await?;
         let (value, _) = pipe()
             .cmd("GET")
-            .arg(key)
+            .arg(&k)
             .cmd("DEL")
-            .arg(key)
+            .arg(&k)
             .query_async::<Connection, (Vec<u8>, bool)>(&mut conn)
             .await
             .context(RedisSnafu { category: "getDel" })?;
@@ -244,7 +276,8 @@ impl RedisCache {
         let buf = snappy_encode(&value).context(WhateverSnafu {
             category: "snappyEncode".to_string(),
         })?;
-        self.set_bytes(key, buf, ttl).await?;
+        let k = self.get_key(key);
+        self.set(&k, buf, ttl).await?;
         Ok(())
     }
     /// 从redis获取数据后使用snappy解压，并转换为对应的struct
@@ -252,7 +285,8 @@ impl RedisCache {
     where
         T: Default + DeserializeOwned,
     {
-        let value = self.get_bytes(key).await?;
+        let k = self.get_key(key);
+        let value = self.get(&k).await?;
 
         if value.is_empty() {
             return Ok(T::default());
@@ -283,7 +317,8 @@ impl RedisCache {
         let buf = zstd_encode(&value).context(WhateverSnafu {
             category: "zstdEncode".to_string(),
         })?;
-        self.set_bytes(key, buf, ttl).await?;
+        let k = self.get_key(key);
+        self.set(&k, buf, ttl).await?;
         Ok(())
     }
     /// 从redis获取数据后使用zstd解压，并转换为对应的struct
@@ -291,7 +326,8 @@ impl RedisCache {
     where
         T: Default + DeserializeOwned,
     {
-        let value = self.get_bytes(key).await?;
+        let k = self.get_key(key);
+        let value = self.get_bytes(&k).await?;
 
         if value.is_empty() {
             return Ok(T::default());

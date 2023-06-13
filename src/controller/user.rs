@@ -90,7 +90,7 @@ struct LoginTimesResp {
 }
 async fn get_login_times(jar: CookieJar) -> JSONResult<LoginTimesResp> {
     let device_id = get_device_id_from_cookie(&jar);
-    let cache = get_default_redis_cache().await?;
+    let cache = get_default_redis_cache();
     // 如果未设置device，则设置
     let mut count: i64 = 0;
     if !device_id.is_empty() {

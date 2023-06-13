@@ -18,6 +18,7 @@ mod config;
 mod controller;
 mod error;
 mod middleware;
+mod request;
 mod state;
 mod task_local;
 mod util;
