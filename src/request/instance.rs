@@ -51,6 +51,12 @@ pub struct Instance {
     timeout: Duration,
 }
 
+// fn convert_response(resp: &Response) -> HTTPResult<bytes::Bytes> {
+//     if resp.status().as_u16() >= 400 {
+
+//     }
+// }
+
 impl Instance {
     fn get_url(&self, url: &str) -> String {
         self.base_url.to_string() + url
@@ -66,8 +72,10 @@ impl Instance {
     }
     async fn handle_response<T: DeserializeOwned>(&self, resp: Response) -> HTTPResult<T> {
         let path = resp.url().path().to_string();
+        // 是否可能传函数
         // 出错
         if resp.status().as_u16() >= 400 {
+            // resp.bytes()
             let he = resp.json::<HTTPError>().await.context(RequestSnafu {
                 service: self.service.clone(),
                 path,

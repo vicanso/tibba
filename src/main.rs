@@ -4,13 +4,14 @@ use std::time::Duration;
 use std::{env, str::FromStr};
 use tokio::signal;
 use tower::ServiceBuilder;
+use tracing::info;
 use tracing::Level;
-use tracing::{debug, info};
 use tracing_subscriber::FmtSubscriber;
 
 use controller::new_router;
 use middleware::{access_log, entry};
 use state::get_app_state;
+use util::is_development;
 
 mod asset;
 mod cache;
@@ -68,6 +69,7 @@ fn init_logger() {
     let subscriber = FmtSubscriber::builder()
         .with_max_level(level)
         .with_timer(timer)
+        .with_ansi(is_development())
         .finish();
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 }
@@ -99,7 +101,7 @@ async fn run() {
     let basic_config = config::must_new_basic_config();
 
     let addr = basic_config.listen.parse().unwrap();
-    debug!("listening on {}", addr);
+    info!("listening on {}", addr);
     app_state.run();
     axum::Server::bind(&addr)
         .serve(app.into_make_service_with_connect_info::<SocketAddr>())

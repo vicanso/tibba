@@ -9,10 +9,7 @@ use crate::error::{HTTPError, HTTPResult};
 use crate::state::get_app_state;
 use crate::util::duration_to_string;
 
-// #[cfg(any(target_arch = "arm", target_arch = "aarch64"))]
-// static ARCH:&str = "arm";
-// #[cfg(not(target_arch = "arm", target_arch = "aarch64"))]
-// static ARCH:&str = "x86";
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -23,6 +20,7 @@ struct ApplicationInfo {
     env: String,
     os: String,
     arch: String,
+    version: String,
 }
 
 pub fn new_router() -> Router {
@@ -57,6 +55,7 @@ async fn get_application_info() -> CacheJSONResult<ApplicationInfo> {
         env: get_env(),
         arch: arch.to_string(),
         os,
+        version: VERSION.to_string(),
     };
     Ok((60, info).into())
 }

@@ -1,9 +1,8 @@
-use config::{Config, File};
+use config::{Config, File, FileFormat, FileSourceString};
 use once_cell::sync::OnceCell;
 use rust_embed::RustEmbed;
-use std::{collections::HashMap, env, fs, io::Write, path::PathBuf, time::Duration};
+use std::{collections::HashMap, env, time::Duration};
 use substring::Substring;
-use tempfile::TempDir;
 use url::Url;
 use validator::Validate;
 
@@ -130,17 +129,13 @@ impl APPConfig {
     }
 }
 
-fn write_data_to_temp_file(dir: &TempDir, name: &str) -> PathBuf {
-    let default_path = dir.path().join(name);
-
-    let mut file = fs::File::create(default_path.clone()).unwrap();
-
-    file.write_all(&Configs::get(name).unwrap().data).unwrap();
-    default_path
-}
-
 pub fn get_env() -> String {
     env::var("RUST_ENV").unwrap_or_else(|_| "dev".to_string())
+}
+
+fn must_new_source(name: &str) -> config::File<FileSourceString, FileFormat> {
+    let str = std::string::String::from_utf8_lossy(&Configs::get(name).unwrap().data).to_string();
+    File::from_str(str.as_str(), FileFormat::Yaml)
 }
 
 fn must_new_config() -> &'static APPConfig {
@@ -148,14 +143,9 @@ fn must_new_config() -> &'static APPConfig {
     APP_CONFIG.get_or_init(|| {
         let mode = get_env();
 
-        // TODO config是否可直接使用字符串作为源
-        let dir = tempfile::tempdir().unwrap();
-        let default_file = write_data_to_temp_file(&dir, "default.yml");
-        let current_file = write_data_to_temp_file(&dir, &format!("{mode}.yml"));
-
         let settings = Config::builder()
-            .add_source(File::with_name(default_file.to_str().unwrap()))
-            .add_source(File::with_name(current_file.to_str().unwrap()))
+            .add_source(must_new_source("default.yml"))
+            .add_source(must_new_source(&format!("{mode}.yml")))
             .build()
             .unwrap()
             .try_deserialize::<HashMap<String, HashMap<String, String>>>()
