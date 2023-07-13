@@ -18,6 +18,7 @@ config = { version = "0.13.3", features = ["yaml"] }
 cookie = "0.17.0"
 deadpool-redis = "0.12.0"
 hex = "0.4.3"
+human-panic = "1.1.5"
 humantime = "2.1.0"
 hyper = "0.14.27"
 lru = "0.10.0"
@@ -28,12 +29,12 @@ os_info = "3.7.0"
 redis = { version = "0.23.0", features = ["tokio-comp", "aio"] }
 reqwest = { version = "0.11.18", default-features = false, features = ["rustls-tls", "json"] }
 rust-embed = { version = "6.8.1", features = ["mime-guess"] }
-serde = { version = "1.0.167", features = ["derive"] }
-serde_json = "1.0.100"
-snafu = "0.7.4"
+serde = { version = "1.0.171", features = ["derive"] }
+serde_json = "1.0.102"
+snafu = "0.7.5"
 snap = "1.1.0"
 substring = "1.4.5"
-time = "0.3.22"
+time = "0.3.23"
 tokio = { version = "1.29.1", features = ["macros", "rt", "rt-multi-thread", "net", "signal"] }
 tower = { version = "0.4.13", features = ["timeout"]}
 tracing = "0.1.37"

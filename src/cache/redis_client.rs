@@ -22,22 +22,17 @@ pub enum Error {
         category: String,
         source: deadpool_redis::redis::RedisError,
     },
-    #[snafu(display("Create redis pool fail, {source}"))]
-    CreatePool { source: deadpool_redis::BuildError },
     #[snafu(display("Redis pool fail, {source}"))]
     Pool { source: deadpool_redis::PoolError },
-    #[snafu(display("Json fail, {source}"))]
-    Json { source: serde_json::Error },
-    #[snafu(display("category:{category} {source}"))]
+    #[snafu(display("Json fail, category:{category}, {source}"))]
+    Json {
+        category: String,
+        source: serde_json::Error,
+    },
+    #[snafu(display("Category:{category} {source}"))]
     Whatever { category: String, source: Whatever },
-    #[snafu(display("Deserializer fail, {message}"))]
-    Deserializer { message: String },
 }
-impl From<serde_json::Error> for Error {
-    fn from(err: serde_json::Error) -> Self {
-        Error::Json { source: err }
-    }
-}
+
 
 impl From<Error> for HTTPError {
     fn from(err: Error) -> Self {
@@ -49,7 +44,7 @@ impl From<Error> for HTTPError {
             Error::Whatever { category, source } => {
                 HTTPError::new_with_category(&source.to_string(), &category)
             }
-            _ => HTTPError::new_with_category(&err.to_string(), "redisClient"),
+            _ => HTTPError::new_with_category(&err.to_string(), "redis_client"),
         }
     }
 }
@@ -181,7 +176,7 @@ impl RedisCache {
             .query_async(&mut conn)
             .await
             .context(RedisSnafu {
-                category: "setBytes",
+                category: "set_bytes",
             })?;
         Ok(())
     }
@@ -198,7 +193,7 @@ impl RedisCache {
             .query_async(&mut conn)
             .await
             .context(RedisSnafu {
-                category: "getBytes",
+                category: "get_bytes",
             })?;
 
         Ok(result)
@@ -213,7 +208,9 @@ impl RedisCache {
     where
         T: ?Sized + Serialize,
     {
-        let value = serde_json::to_vec(&value)?;
+        let value = serde_json::to_vec(&value).context(JsonSnafu{
+            category: "set_struct",
+        })?;
         let k = self.get_key(key);
         self.set(&k, value, ttl).await?;
         Ok(())
@@ -231,8 +228,8 @@ impl RedisCache {
         }
 
         let deserializer = &mut serde_json::Deserializer::from_slice(&buf);
-        T::deserialize(deserializer).map_err(|err| Error::Deserializer {
-            message: err.to_string(),
+        T::deserialize(deserializer).context(JsonSnafu{
+            category: "get_truct",
         })
     }
     /// 返回该key在redis中的有效期
@@ -257,7 +254,7 @@ impl RedisCache {
             .arg(&k)
             .query_async::<Connection, (Vec<u8>, bool)>(&mut conn)
             .await
-            .context(RedisSnafu { category: "getDel" })?;
+            .context(RedisSnafu { category: "get_del" })?;
         Ok(value)
     }
     /// 将struct转换为json后使用snappy压缩，
@@ -272,9 +269,11 @@ impl RedisCache {
     where
         T: ?Sized + Serialize,
     {
-        let value = serde_json::to_vec(&value)?;
+        let value = serde_json::to_vec(&value).context(JsonSnafu{
+            category: "set_struct_snappy",
+        })?;
         let buf = snappy_encode(&value).context(WhateverSnafu {
-            category: "snappyEncode".to_string(),
+            category: "snappy_encode".to_string(),
         })?;
         let k = self.get_key(key);
         self.set(&k, buf, ttl).await?;
@@ -293,12 +292,12 @@ impl RedisCache {
         }
 
         let buf = snappy_decode(value.as_slice()).context(WhateverSnafu {
-            category: "snappyDecode".to_string(),
+            category: "snappy_decode".to_string(),
         })?;
 
         let deserializer = &mut serde_json::Deserializer::from_slice(&buf);
-        T::deserialize(deserializer).map_err(|err| Error::Deserializer {
-            message: err.to_string(),
+        T::deserialize(deserializer).context(JsonSnafu{
+            category: "get_struct_snappy",
         })
     }
     /// 将struct转换为json后使用zstd压缩，
@@ -313,9 +312,11 @@ impl RedisCache {
     where
         T: ?Sized + Serialize,
     {
-        let value = serde_json::to_vec(&value).context(JsonSnafu {})?;
+        let value = serde_json::to_vec(&value).context(JsonSnafu {
+            category: "set_struct_zstd",
+        })?;
         let buf = zstd_encode(&value).context(WhateverSnafu {
-            category: "zstdEncode".to_string(),
+            category: "zstd_encode".to_string(),
         })?;
         let k = self.get_key(key);
         self.set(&k, buf, ttl).await?;
@@ -334,13 +335,12 @@ impl RedisCache {
         }
 
         let buf = zstd_decode(value.as_slice()).context(WhateverSnafu {
-            category: "zstdDecode".to_string(),
+            category: "zstd_decode".to_string(),
         })?;
 
         let deserializer = &mut serde_json::Deserializer::from_slice(&buf);
-
-        T::deserialize(deserializer).map_err(|err| Error::Deserializer {
-            message: err.to_string(),
+        T::deserialize(deserializer).context(JsonSnafu{
+            category: "get_struct_zstd",
         })
     }
 }

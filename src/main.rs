@@ -1,4 +1,5 @@
 use axum::{error_handling::HandleErrorLayer, middleware::from_fn_with_state, Router};
+use human_panic::setup_panic;
 use std::net::SocketAddr;
 use std::time::Duration;
 use std::{env, str::FromStr};
@@ -23,33 +24,6 @@ mod request;
 mod state;
 mod task_local;
 mod util;
-
-async fn test() {
-    // let redis_cache = cache::RedisCache::new().unwrap();
-
-    // let lru_store = cache::TtlLruStore::new(10, Duration::from_secs(10));
-    // let redis_store = cache::TtlRedisStore::new(redis_cache, Duration::from_secs(60));
-    // println!("{}", chrono::Utc::now());
-    // println!(
-    //     "{:?}",
-    //     store.set_struct("key", &HTTPError::new("def")).await
-    // );
-
-    // let result: HTTPError = store.get_struct("key").await.unwrap();
-    // println!("{result:?}");
-    // sleep(Duration::from_secs(12));
-    // // println!("{:?}", store.set_struct("key", &HTTPError::new("测试1")));
-    // let result: HTTPError = store.get_struct("key").await.unwrap();
-    // println!("{result:?}");
-    // sleep(Duration::from_secs(60));
-
-    // let result: HTTPError = store.get_struct("key").await.unwrap();
-    // println!("{result:?}");
-
-    // redis_cache.set_struct("key", &HTTPError::new("测试"), None);
-    // let he: HTTPError = redis_cache.get_struct("key").unwrap();
-    // println!("{:?}", he);
-}
 
 fn init_logger() {
     let mut level = Level::INFO;
@@ -76,15 +50,7 @@ fn init_logger() {
 
 #[tokio::main]
 async fn run() {
-    cache::redis_ping().await.unwrap();
-    // cache::get_redis_conn().await.unwrap()
-    // test();
-
-    // initialize tracing
-    // tracing_subscriber::fmt::init();
     let app_state = get_app_state();
-
-    // tl_info!("abcd");
 
     // build our application with a route
     let app = Router::new()
@@ -139,7 +105,7 @@ async fn shutdown_signal() {
 fn main() {
     // Because we need to get the local offset before Tokio spawns any threads, our `main`
     // function cannot use `tokio::main`.
-
+    setup_panic!();
     init_logger();
     run();
 }
