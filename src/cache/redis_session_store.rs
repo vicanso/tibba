@@ -1,7 +1,6 @@
 // copy from async-redis-session
-
 use async_session::{async_trait, serde_json, Result, Session, SessionStore};
-use redis::{aio::Connection, AsyncCommands, Client, IntoConnectionInfo, RedisResult};
+use redis::{aio::Connection, AsyncCommands, Client, RedisResult};
 
 /// # RedisSessionStore
 #[derive(Clone, Debug)]
@@ -24,16 +23,6 @@ impl RedisSessionStore {
         }
     }
 
-    /// creates a redis store from a [`redis::IntoConnectionInfo`]
-    /// such as a [`String`], [`&str`](str), or [`Url`](../url/struct.Url.html)
-    /// ```rust
-    /// # use async_redis_session::RedisSessionStore;
-    /// let store = RedisSessionStore::new("redis://127.0.0.1").unwrap();
-    /// ```
-    pub fn new(connection_info: impl IntoConnectionInfo) -> RedisResult<Self> {
-        Ok(Self::from_client(Client::open(connection_info)?))
-    }
-
     /// sets a key prefix for this session store
     ///
     /// ```rust
@@ -50,20 +39,6 @@ impl RedisSessionStore {
     pub fn with_prefix(mut self, prefix: impl AsRef<str>) -> Self {
         self.prefix = Some(prefix.as_ref().to_owned());
         self
-    }
-
-    async fn ids(&self) -> Result<Vec<String>> {
-        Ok(self.connection().await?.keys(self.prefix_key("*")).await?)
-    }
-
-    /// returns the number of sessions in this store
-    pub async fn count(&self) -> Result<usize> {
-        if self.prefix.is_none() {
-            let mut connection = self.connection().await?;
-            Ok(redis::cmd("DBSIZE").query_async(&mut connection).await?)
-        } else {
-            Ok(self.ids().await?.len())
-        }
     }
 
     #[cfg(test)]
@@ -127,16 +102,7 @@ impl SessionStore for RedisSessionStore {
     }
 
     async fn clear_store(&self) -> Result {
-        let mut connection = self.connection().await?;
-
-        if self.prefix.is_none() {
-            let _: () = redis::cmd("FLUSHDB").query_async(&mut connection).await?;
-        } else {
-            let ids = self.ids().await?;
-            if !ids.is_empty() {
-                connection.del(ids).await?;
-            }
-        }
+        // 清除不做任何操作
         Ok(())
     }
 }
