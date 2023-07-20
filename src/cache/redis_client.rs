@@ -1,6 +1,3 @@
-use crate::config::must_new_redis_config;
-use crate::error::HTTPError;
-use crate::util::{snappy_decode, snappy_encode, zstd_decode, zstd_encode, CompressError};
 use deadpool_redis::redis::{cmd, pipe};
 use deadpool_redis::{Connection, Manager, Pool, PoolConfig, Runtime};
 use once_cell::sync::Lazy;
@@ -9,6 +6,10 @@ use redis::Client;
 use serde::{de::DeserializeOwned, Serialize};
 use snafu::{ResultExt, Snafu};
 use std::time::Duration;
+
+use crate::config::must_new_redis_config;
+use crate::error::HTTPError;
+use crate::util::{snappy_decode, snappy_encode, zstd_decode, zstd_encode, CompressError};
 
 // 如果要支持cluster，需要使用deadpool_redis_cluster
 pub fn must_new_redis_client() -> Client {
@@ -32,12 +33,6 @@ pub enum Error {
     },
     #[snafu(display("{source}"))]
     Compress { source: CompressError },
-}
-
-impl From<CompressError> for Error {
-    fn from(value: CompressError) -> Self {
-        Error::Compress { source: value }
-    }
 }
 
 impl From<Error> for HTTPError {
@@ -283,7 +278,7 @@ impl RedisCache {
         let value = serde_json::to_vec(&value).context(JsonSnafu {
             category: "set_struct_snappy",
         })?;
-        let buf = snappy_encode(&value)?;
+        let buf = snappy_encode(&value).context(CompressSnafu)?;
         let k = self.get_key(key);
         self.set(&k, buf, ttl).await?;
         Ok(())
@@ -300,7 +295,7 @@ impl RedisCache {
             return Ok(T::default());
         }
 
-        let buf = snappy_decode(value.as_slice())?;
+        let buf = snappy_decode(value.as_slice()).context(CompressSnafu)?;
 
         let deserializer = &mut serde_json::Deserializer::from_slice(&buf);
         T::deserialize(deserializer).context(JsonSnafu {
@@ -322,7 +317,7 @@ impl RedisCache {
         let value = serde_json::to_vec(&value).context(JsonSnafu {
             category: "set_struct_zstd",
         })?;
-        let buf = zstd_encode(&value)?;
+        let buf = zstd_encode(&value).context(CompressSnafu)?;
         let k = self.get_key(key);
         self.set(&k, buf, ttl).await?;
         Ok(())
@@ -339,7 +334,7 @@ impl RedisCache {
             return Ok(T::default());
         }
 
-        let buf = zstd_decode(value.as_slice())?;
+        let buf = zstd_decode(value.as_slice()).context(CompressSnafu)?;
 
         let deserializer = &mut serde_json::Deserializer::from_slice(&buf);
         T::deserialize(deserializer).context(JsonSnafu {

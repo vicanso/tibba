@@ -1,7 +1,8 @@
-use crate::error::HTTPError;
 use snafu::{ResultExt, Snafu};
 use snap::{read::FrameDecoder, write::FrameEncoder};
 use std::io::{Read, Write};
+
+use crate::error::HTTPError;
 
 #[derive(Snafu, Debug)]
 pub enum Error {

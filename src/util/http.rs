@@ -1,8 +1,9 @@
-use crate::error::{HTTPError, HTTPResult};
 use axum::body::Bytes;
 use axum::http::{header, header::HeaderName, HeaderMap, HeaderValue};
 use std::collections::HashMap;
 use std::str::FromStr;
+
+use crate::error::{HTTPError, HTTPResult};
 
 /// 插入HTTP头
 pub fn insert_header(
@@ -16,9 +17,9 @@ pub fn insert_header(
             continue;
         }
         let header_name = HeaderName::from_str(&name)
-            .map_err(|err| HTTPError::new_with_category(&err.to_string(), "invalidHeaderName"))?;
+            .map_err(|err| HTTPError::new_with_category(&err.to_string(), "invalid_header_name"))?;
         let header_value = HeaderValue::from_str(&value)
-            .map_err(|err| HTTPError::new_with_category(&err.to_string(), "invalidHeaderValue"))?;
+            .map_err(|err| HTTPError::new_with_category(&err.to_string(), "invalid_header_value"))?;
         headers.insert(header_name, header_value);
     }
     Ok(())
@@ -64,7 +65,7 @@ where
         Ok(bytes) => bytes,
         Err(err) => {
             let msg = format!("failed to read body, {err}");
-            return Err(HTTPError::new_with_category(&msg, "bodyToBytes"));
+            return Err(HTTPError::new_with_category(&msg, "body_to_bytes"));
         }
     };
     Ok(bytes)

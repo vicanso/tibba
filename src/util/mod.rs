@@ -7,7 +7,6 @@ mod string;
 use crate::config::get_env;
 
 pub use compress::Error as CompressError;
-
 pub use self::http::{
     get_header_value, insert_header, read_http_body, set_header_if_not_exist,
     set_no_cache_if_not_exist,

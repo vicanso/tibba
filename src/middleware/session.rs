@@ -1,9 +1,3 @@
-use crate::cache::must_new_redis_client;
-use crate::cache::RedisSessionStore;
-use crate::config::{must_new_session_config, SessionConfig};
-use crate::error::{HTTPError, HTTPResult};
-use crate::task_local::*;
-use crate::util::{set_account_to_context, Account};
 use axum::{http::Request, middleware::Next, response::Response};
 use axum_sessions::extractors::{ReadableSession, WritableSession};
 use axum_sessions::SessionLayer;
@@ -12,7 +6,14 @@ use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-const SESSION_KEY: &str = "info";
+use crate::cache::must_new_redis_client;
+use crate::cache::RedisSessionStore;
+use crate::config::{must_new_session_config, SessionConfig};
+use crate::error::{HTTPError, HTTPResult};
+use crate::task_local::*;
+use crate::util::{set_account_to_context, Account};
+
+const SESSION_KEY: &str = "__info";
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SessionInfo {

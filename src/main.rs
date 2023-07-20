@@ -1,11 +1,10 @@
 use axum::{error_handling::HandleErrorLayer, middleware::from_fn_with_state, Router};
-use human_panic::setup_panic;
 use std::net::SocketAddr;
 use std::time::Duration;
 use std::{env, str::FromStr};
 use tokio::signal;
 use tower::ServiceBuilder;
-use tracing::info;
+use tracing::{info, error};
 use tracing::Level;
 use tracing_subscriber::FmtSubscriber;
 
@@ -67,7 +66,7 @@ async fn run() {
     let basic_config = config::must_new_basic_config();
 
     let addr = basic_config.listen.parse().unwrap();
-    info!("listening on {}", addr);
+    info!("listening on {addr}");
     app_state.run();
     axum::Server::bind(&addr)
         .serve(app.into_make_service_with_connect_info::<SocketAddr>())
@@ -85,6 +84,7 @@ async fn shutdown_signal() {
 
     #[cfg(unix)]
     let terminate = async {
+        get_app_state().stop();
         signal::unix::signal(signal::unix::SignalKind::terminate())
             .expect("failed to install signal handler")
             .recv()
@@ -103,9 +103,13 @@ async fn shutdown_signal() {
 }
 
 fn main() {
-    // Because we need to get the local offset before Tokio spawns any threads, our `main`
-    // function cannot use `tokio::main`.
-    setup_panic!();
+    std::panic::set_hook(Box::new(|e| {
+        // TODO 发送告警通知
+        error!(
+            category = "panic",
+            message = e.to_string(),
+        );
+    }));
     init_logger();
     run();
 }

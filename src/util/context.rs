@@ -1,7 +1,8 @@
-use super::random_string;
 use axum::http::Extensions;
 use axum_extra::extract::cookie::{Cookie, CookieJar};
 use cookie::time::{Duration, OffsetDateTime};
+
+use crate::util::random_string;
 
 static DEVICE_ID_NAME: &str = "device";
 

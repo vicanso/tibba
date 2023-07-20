@@ -31,14 +31,15 @@ where
     T: Serialize,
 {
     fn into_response(self) -> Response {
-        (
-            [(
-                header::CACHE_CONTROL,
-                format!("public, max-age={}", self.0).as_str(),
-            )],
-            self.1,
-        )
-            .into_response()
+        let mut arr = vec![
+            "public".to_string(),
+            format!("max-age={}", self.0).to_string(),
+        ];
+        // 如果缓存过长，请选择更小的值，避免缓存服务器数据保存过久
+        if self.0 > 3600 {
+            arr.push("s-maxage=3600".to_string());
+        }
+        ([(header::CACHE_CONTROL, arr.join(", ").as_str())], self.1).into_response()
     }
 }
 
