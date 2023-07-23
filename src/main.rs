@@ -4,8 +4,8 @@ use std::time::Duration;
 use std::{env, str::FromStr};
 use tokio::signal;
 use tower::ServiceBuilder;
-use tracing::{info, error};
 use tracing::Level;
+use tracing::{error, info};
 use tracing_subscriber::FmtSubscriber;
 
 use controller::new_router;
@@ -105,10 +105,7 @@ async fn shutdown_signal() {
 fn main() {
     std::panic::set_hook(Box::new(|e| {
         // TODO 发送告警通知
-        error!(
-            category = "panic",
-            message = e.to_string(),
-        );
+        error!(category = "panic", message = e.to_string(),);
     }));
     init_logger();
     run();

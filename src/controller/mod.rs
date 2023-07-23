@@ -3,37 +3,37 @@ use axum::response::{IntoResponse, Response};
 use axum::{Json, Router};
 use serde::Serialize;
 
-use crate::error::HTTPResult;
+use crate::error::HttpResult;
 
 mod common;
 mod user;
 
 // json响应的result
-pub type JSONResult<T> = HTTPResult<Json<T>>;
+pub type JsonResult<T> = HttpResult<Json<T>>;
 // json响应+cache-control
-pub struct CacheJSON<T>(u32, Json<T>);
+pub struct CacheJson<T>(u32, Json<T>);
 // json响应+cache-control的result
-pub type CacheJSONResult<T> = HTTPResult<CacheJSON<T>>;
+pub type CacheJsonResult<T> = HttpResult<CacheJson<T>>;
 
 // tuple转换为cache json
-impl<T> From<(u32, T)> for CacheJSON<T>
+impl<T> From<(u32, T)> for CacheJson<T>
 where
     T: Serialize,
 {
     fn from(arr: (u32, T)) -> Self {
-        CacheJSON(arr.0, Json(arr.1))
+        CacheJson(arr.0, Json(arr.1))
     }
 }
 
 // 实现cache json转换为response
-impl<T> IntoResponse for CacheJSON<T>
+impl<T> IntoResponse for CacheJson<T>
 where
     T: Serialize,
 {
     fn into_response(self) -> Response {
         let mut arr = vec![
             "public".to_string(),
-            format!("max-age={}", self.0).to_string(),
+            format!("max-age={}", self.0),
         ];
         // 如果缓存过长，请选择更小的值，避免缓存服务器数据保存过久
         if self.0 > 3600 {

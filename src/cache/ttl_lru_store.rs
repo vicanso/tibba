@@ -19,7 +19,7 @@ impl<T: Expired + Clone> TtlLruStore<T> {
             cache: RwLock::new(cache),
         }
     }
-    async fn set(&mut self, key: &str, value: T) -> () {
+    async fn set(&mut self, key: &str, value: T) {
         let cache = &mut self.cache.write().await;
         cache.put(key.to_string(), value);
     }
@@ -34,7 +34,7 @@ impl<T: Expired + Clone> TtlLruStore<T> {
         }
         None
     }
-    async fn del(&mut self, key: &str) -> () {
+    async fn del(&mut self, key: &str) {
         let cache = &mut self.cache.write().await;
         cache.pop(key);
     }

@@ -3,13 +3,13 @@ use axum::http::{header, header::HeaderName, HeaderMap, HeaderValue};
 use std::collections::HashMap;
 use std::str::FromStr;
 
-use crate::error::{HTTPError, HTTPResult};
+use crate::error::{HttpError, HttpResult};
 
 /// 插入HTTP头
 pub fn insert_header(
     headers: &mut HeaderMap<HeaderValue>,
     values: HashMap<String, String>,
-) -> HTTPResult<()> {
+) -> HttpResult<()> {
     // 如果失败则不设置
     for (name, value) in values {
         // 为空则不处理（删除使用另外的方式）
@@ -17,9 +17,10 @@ pub fn insert_header(
             continue;
         }
         let header_name = HeaderName::from_str(&name)
-            .map_err(|err| HTTPError::new_with_category(&err.to_string(), "invalid_header_name"))?;
-        let header_value = HeaderValue::from_str(&value)
-            .map_err(|err| HTTPError::new_with_category(&err.to_string(), "invalid_header_value"))?;
+            .map_err(|err| HttpError::new_with_category(&err.to_string(), "invalid_header_name"))?;
+        let header_value = HeaderValue::from_str(&value).map_err(|err| {
+            HttpError::new_with_category(&err.to_string(), "invalid_header_value")
+        })?;
         headers.insert(header_name, header_value);
     }
     Ok(())
@@ -30,7 +31,7 @@ pub fn set_header_if_not_exist(
     headers: &mut HeaderMap<HeaderValue>,
     name: &str,
     value: &str,
-) -> HTTPResult<()> {
+) -> HttpResult<()> {
     let current = headers.get(name);
     if current.is_some() {
         return Ok(());
@@ -56,7 +57,7 @@ pub fn get_header_value(headers: &HeaderMap<HeaderValue>, key: &str) -> String {
 }
 
 /// 读取http body
-pub async fn read_http_body<B>(body: B) -> HTTPResult<Bytes>
+pub async fn read_http_body<B>(body: B) -> HttpResult<Bytes>
 where
     B: axum::body::HttpBody<Data = Bytes>,
     B::Error: std::fmt::Display,
@@ -65,7 +66,7 @@ where
         Ok(bytes) => bytes,
         Err(err) => {
             let msg = format!("failed to read body, {err}");
-            return Err(HTTPError::new_with_category(&msg, "body_to_bytes"));
+            return Err(HttpError::new_with_category(&msg, "body_to_bytes"));
         }
     };
     Ok(bytes)

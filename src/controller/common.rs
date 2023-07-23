@@ -2,10 +2,10 @@ use axum::{routing::get, Router};
 use chrono::Utc;
 use serde::Serialize;
 
-use super::CacheJSONResult;
+use super::CacheJsonResult;
 use crate::asset;
 use crate::config::get_env;
-use crate::error::{HTTPError, HTTPResult};
+use crate::error::{HttpError, HttpResult};
 use crate::state::get_app_state;
 use crate::util::duration_to_string;
 
@@ -29,15 +29,15 @@ pub fn new_router() -> Router {
     Router::new().route("/ping", get(ping)).nest("/commons", r)
 }
 
-async fn ping() -> HTTPResult<&'static str> {
+async fn ping() -> HttpResult<&'static str> {
     let state = get_app_state();
     if !state.is_running() {
-        return Err(HTTPError::new("server is not running"));
+        return Err(HttpError::new("server is not running"));
     }
     Ok("pong")
 }
 
-async fn get_application_info() -> CacheJSONResult<ApplicationInfo> {
+async fn get_application_info() -> CacheJsonResult<ApplicationInfo> {
     let app_state = get_app_state();
     let d = Utc::now().signed_duration_since(app_state.get_started_at());
     let os = os_info::get().os_type().to_string();

@@ -8,15 +8,14 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 use crate::cache::get_default_redis_cache;
-use crate::controller::JSONResult;
-use crate::error::HTTPResult;
+use crate::controller::JsonResult;
+use crate::error::HttpResult;
 use crate::middleware::{
     add_session_info, get_session_info, load_session, new_session_layer, wait2s, SessionInfo,
 };
 use crate::util::{generate_device_id_cookie, get_device_id_from_cookie};
 
 #[derive(Debug, Clone, Serialize, Default)]
-#[serde(rename_all = "camelCase")]
 struct UserMeResp {
     name: String,
     should_refresh: bool,
@@ -41,7 +40,7 @@ pub fn new_router() -> Router {
 async fn me(
     session: ReadableSession,
     mut jar: CookieJar,
-) -> HTTPResult<(CookieJar, Json<UserMeResp>)> {
+) -> HttpResult<(CookieJar, Json<UserMeResp>)> {
     let info = get_session_info(session);
     let mut should_refresh = false;
     // 如果已登录
@@ -61,7 +60,6 @@ async fn me(
 }
 
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct LoginParams {
     account: String,
 }
@@ -69,7 +67,7 @@ struct LoginParams {
 async fn login(
     session: WritableSession,
     Json(params): Json<LoginParams>,
-) -> JSONResult<UserMeResp> {
+) -> JsonResult<UserMeResp> {
     add_session_info(
         session,
         SessionInfo {
@@ -85,11 +83,10 @@ async fn login(
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
-#[serde(rename_all = "camelCase")]
 struct LoginTimesResp {
     pub count: i64,
 }
-async fn get_login_times(jar: CookieJar) -> JSONResult<LoginTimesResp> {
+async fn get_login_times(jar: CookieJar) -> JsonResult<LoginTimesResp> {
     let device_id = get_device_id_from_cookie(&jar);
     let cache = get_default_redis_cache();
     // 如果未设置device，则设置

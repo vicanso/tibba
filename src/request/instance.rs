@@ -1,4 +1,4 @@
-use crate::error::{HTTPError, HTTPResult};
+use crate::error::{HttpError, HttpResult};
 use reqwest::{Client, Response};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -20,12 +20,12 @@ pub enum Error {
     },
 }
 
-impl From<Error> for HTTPError {
+impl From<Error> for HttpError {
     fn from(err: Error) -> Self {
         // 对于部分error单独转换
         match err {
             Error::Build { service, source } => {
-                let mut he = HTTPError::new_with_category(&source.to_string(), "request");
+                let mut he = HttpError::new_with_category(&source.to_string(), "request");
                 he.add_extra(&format!("service:{service}"));
                 he.add_extra("category:build");
                 he
@@ -35,7 +35,7 @@ impl From<Error> for HTTPError {
                 path,
                 source,
             } => {
-                let mut he = HTTPError::new_with_category(&source.to_string(), "request");
+                let mut he = HttpError::new_with_category(&source.to_string(), "request");
                 he.add_extra(&format!("service:{service}"));
                 he.add_extra("category:request");
                 he.add_extra(&format!("path:{path}"));
@@ -51,7 +51,7 @@ pub struct Instance {
     timeout: Duration,
 }
 
-// fn convert_response(resp: &Response) -> HTTPResult<bytes::Bytes> {
+// fn convert_response(resp: &Response) -> HttpResult<bytes::Bytes> {
 //     if resp.status().as_u16() >= 400 {
 
 //     }
@@ -61,7 +61,7 @@ impl Instance {
     fn get_url(&self, url: &str) -> String {
         self.base_url.to_string() + url
     }
-    fn get_conn(&self) -> HTTPResult<Client> {
+    fn get_conn(&self) -> HttpResult<Client> {
         let c = Client::builder()
             .timeout(self.timeout)
             .build()
@@ -70,13 +70,13 @@ impl Instance {
             })?;
         Ok(c)
     }
-    async fn handle_response<T: DeserializeOwned>(&self, resp: Response) -> HTTPResult<T> {
+    async fn handle_response<T: DeserializeOwned>(&self, resp: Response) -> HttpResult<T> {
         let path = resp.url().path().to_string();
         // 是否可能传函数
         // 出错
         if resp.status().as_u16() >= 400 {
             // resp.bytes()
-            let he = resp.json::<HTTPError>().await.context(RequestSnafu {
+            let he = resp.json::<HttpError>().await.context(RequestSnafu {
                 service: self.service.clone(),
                 path,
             })?;
@@ -99,7 +99,7 @@ impl Instance {
         &self,
         url: &str,
         query: &P,
-    ) -> HTTPResult<T> {
+    ) -> HttpResult<T> {
         let c = self.get_conn()?;
         let resp = c
             .get(self.get_url(url))
@@ -117,7 +117,7 @@ impl Instance {
         url: &str,
         json: &P,
         query: &P,
-    ) -> HTTPResult<T> {
+    ) -> HttpResult<T> {
         let c = self.get_conn()?;
         let resp = c
             .post(self.get_url(url))

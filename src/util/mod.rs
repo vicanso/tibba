@@ -6,11 +6,11 @@ mod string;
 
 use crate::config::get_env;
 
-pub use compress::Error as CompressError;
 pub use self::http::{
     get_header_value, insert_header, read_http_body, set_header_if_not_exist,
     set_no_cache_if_not_exist,
 };
+pub use compress::Error as CompressError;
 pub use compress::{snappy_decode, snappy_encode, zstd_decode, zstd_encode};
 pub use context::{
     generate_device_id_cookie, get_account_from_context, get_device_id_from_cookie,

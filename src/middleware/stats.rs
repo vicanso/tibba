@@ -4,7 +4,7 @@ use axum_client_ip::InsecureClientIp;
 use chrono::Utc;
 use urlencoding::decode;
 
-use crate::error::HTTPResult;
+use crate::error::HttpResult;
 use crate::state::AppState;
 use crate::util::{get_account_from_context, get_header_value, json_get, read_http_body};
 use crate::{task_local::*, tl_error, tl_info};
@@ -14,7 +14,7 @@ pub async fn access_log(
     InsecureClientIp(ip): InsecureClientIp,
     mut req: Request<Body>,
     next: Next<Body>,
-) -> HTTPResult<Response<Body>> {
+) -> HttpResult<Response<Body>> {
     let start_at = STARTED_AT.with(clone_value_from_task_local);
     state.increase_processing();
     let processing_count = state.get_processing();

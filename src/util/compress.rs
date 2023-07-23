@@ -2,7 +2,7 @@ use snafu::{ResultExt, Snafu};
 use snap::{read::FrameDecoder, write::FrameEncoder};
 use std::io::{Read, Write};
 
-use crate::error::HTTPError;
+use crate::error::HttpError;
 
 #[derive(Snafu, Debug)]
 pub enum Error {
@@ -17,14 +17,14 @@ pub enum Error {
         source: Box<dyn std::error::Error + Send + Sync>,
     },
 }
-impl From<Error> for HTTPError {
+impl From<Error> for HttpError {
     fn from(err: Error) -> Self {
         match err {
             Error::Io { category, source } => {
-                HTTPError::new_with_category(&source.to_string(), &category)
+                HttpError::new_with_category(&source.to_string(), &category)
             }
             Error::Whatever { category, source } => {
-                HTTPError::new_with_category(&source.to_string(), &category)
+                HttpError::new_with_category(&source.to_string(), &category)
             }
         }
     }

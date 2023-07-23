@@ -9,7 +9,7 @@ use std::time::Duration;
 use crate::cache::must_new_redis_client;
 use crate::cache::RedisSessionStore;
 use crate::config::{must_new_session_config, SessionConfig};
-use crate::error::{HTTPError, HTTPResult};
+use crate::error::{HttpError, HttpResult};
 use crate::task_local::*;
 use crate::util::{set_account_to_context, Account};
 
@@ -58,13 +58,13 @@ pub fn get_session_info(session: ReadableSession) -> SessionInfo {
     SessionInfo::default()
 }
 
-pub fn add_session_info(mut session: WritableSession, mut info: SessionInfo) -> HTTPResult<()> {
+pub fn add_session_info(mut session: WritableSession, mut info: SessionInfo) -> HttpResult<()> {
     // 已登录的则每次设置创建时间
     if info.logged_in() {
         info.created_at = Utc::now().timestamp();
     }
     if let Err(err) = session.insert(SESSION_KEY, info) {
-        return Err(HTTPError::new(&err.to_string()));
+        return Err(HttpError::new(&err.to_string()));
     }
     Ok(())
 }
@@ -73,7 +73,7 @@ pub async fn load_session<B>(
     session: ReadableSession,
     req: Request<B>,
     next: Next<B>,
-) -> HTTPResult<Response> {
+) -> HttpResult<Response> {
     let info = get_session_info(session);
 
     let account = info.account.clone();

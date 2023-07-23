@@ -8,7 +8,7 @@ use snafu::{ResultExt, Snafu};
 use std::time::Duration;
 
 use crate::config::must_new_redis_config;
-use crate::error::HTTPError;
+use crate::error::HttpError;
 use crate::util::{snappy_decode, snappy_encode, zstd_decode, zstd_encode, CompressError};
 
 // 如果要支持cluster，需要使用deadpool_redis_cluster
@@ -35,18 +35,18 @@ pub enum Error {
     Compress { source: CompressError },
 }
 
-impl From<Error> for HTTPError {
+impl From<Error> for HttpError {
     fn from(err: Error) -> Self {
         // 对于部分error单独转换
         match err {
             Error::Redis { category, source } => {
-                HTTPError::new_with_category(&source.to_string(), &category)
+                HttpError::new_with_category(&source.to_string(), &category)
             }
             Error::Pool { source } => {
-                HTTPError::new_with_category(&source.to_string(), "redis_pool")
+                HttpError::new_with_category(&source.to_string(), "redis_pool")
             }
             Error::Json { category, source } => {
-                HTTPError::new_with_category(&source.to_string(), &category)
+                HttpError::new_with_category(&source.to_string(), &category)
             }
             Error::Compress { source } => source.into(),
         }
