@@ -46,10 +46,14 @@ pub async fn access_log(
 
     let (parts, body) = resp.into_parts();
     let data = read_http_body(body).await?;
-    let mut error_message = "".to_string();
+    let mut message = "".to_string();
     if status >= 400 {
-        error_message = std::string::String::from_utf8_lossy(&data).to_string();
+        message = json_get(&data, "message")
     }
+    if message.is_empty() {
+        message = std::string::String::from_utf8_lossy(&data).to_string();
+    }
+
     let response_body_size = data.len();
     let res = Response::from_parts(parts, Body::from(data));
 
@@ -76,10 +80,6 @@ pub async fn access_log(
 
     // 出错日志
     if status >= 400 {
-        let mut message = json_get(&error_message, "message");
-        if message.is_empty() {
-            message = error_message;
-        }
         tl_error!(category = "httpError", account = account, error = message);
     }
 
