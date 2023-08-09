@@ -1,3 +1,5 @@
+use async_trait::async_trait;
+use bytes::Bytes;
 use reqwest::{Client, Response};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -5,9 +7,12 @@ use snafu::{ResultExt, Snafu};
 use std::time::Duration;
 
 use crate::error::HttpError;
+use crate::util::json_get;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
+    #[snafu(display("Request fail, service:{service}, {message}"))]
+    Common { service: String, message: String },
     #[snafu(display("Build http request fail, service:{service}, {source}"))]
     Build {
         service: String,
@@ -19,7 +24,11 @@ pub enum Error {
         path: String,
         source: reqwest::Error,
     },
+    #[snafu(display("Json fail, {source}"))]
+    Serde { source: serde_json::Error },
 }
+
+static ERROR_CATEGORY: &str = "request";
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 impl From<Error> for HttpError {
@@ -27,9 +36,21 @@ impl From<Error> for HttpError {
         // 对于部分error单独转换
         match err {
             Error::Build { service, source } => {
-                let mut he = HttpError::new_with_category(&source.to_string(), "request");
+                let mut he = HttpError::new_with_category(&source.to_string(), ERROR_CATEGORY);
                 he.add_extra(&format!("service:{service}"));
                 he.add_extra("category:build");
+                he
+            }
+            Error::Serde { source } => {
+                let mut he = HttpError::new_with_category(&source.to_string(), ERROR_CATEGORY);
+                // he.add_extra(&format!("service:{service}"));
+                he.add_extra("category:serde");
+                he
+            }
+            Error::Common { service, message } => {
+                let mut he = HttpError::new_with_category(&message, ERROR_CATEGORY);
+                he.add_extra(&format!("service:{service}"));
+                he.add_extra("category:common");
                 he
             }
             Error::Request {
@@ -37,7 +58,7 @@ impl From<Error> for HttpError {
                 path,
                 source,
             } => {
-                let mut he = HttpError::new_with_category(&source.to_string(), "request");
+                let mut he = HttpError::new_with_category(&source.to_string(), ERROR_CATEGORY);
                 he.add_extra(&format!("service:{service}"));
                 he.add_extra("category:request");
                 he.add_extra(&format!("path:{path}"));
@@ -47,20 +68,42 @@ impl From<Error> for HttpError {
     }
 }
 
-type ErrorHandler = Box<dyn Fn(&str, &Response) -> Result<()>>;
-pub struct Instance {
+#[async_trait]
+pub trait HttpErrorHandler {
+    async fn handle(&self, service: &str, status: u16, data: &Bytes) -> Result<()>;
+}
+
+pub struct Instance<T: HttpErrorHandler> {
     service: String,
     base_url: String,
     timeout: Duration,
-    error_handler: ErrorHandler,
+    error_handler: T,
 }
 
-fn error_handler(service: &str, resp: &Response) -> Result<()> {
-    if resp.status().as_u16() >= 400 {}
+pub async fn error_handler(service: &str, status: u16, data: &Bytes) -> Result<()> {
+    if status >= 400 {
+        let mut message = json_get(data, "message");
+        if message.is_empty() {
+            message = "unknown error".to_string();
+        }
+        return Err(Error::Common {
+            service: service.to_string(),
+            message,
+        });
+    }
     Ok(())
 }
 
-impl Instance {
+pub struct CommonErrorHandler {}
+
+#[async_trait]
+impl HttpErrorHandler for CommonErrorHandler {
+    async fn handle(&self, service: &str, status: u16, data: &Bytes) -> Result<()> {
+        error_handler(service, status, data).await
+    }
+}
+
+impl<E: HttpErrorHandler> Instance<E> {
     fn get_url(&self, url: &str) -> String {
         self.base_url.to_string() + url
     }
@@ -75,27 +118,22 @@ impl Instance {
     }
     async fn handle_response<T: DeserializeOwned>(&self, resp: Response) -> Result<T> {
         let path = resp.url().path().to_string();
-        // 是否可能传函数
-        // 出错
-        self.error_handler.as_ref()(&self.service, &resp)?;
-        let result = resp.json::<T>().await.context(RequestSnafu {
+        let status = resp.status().as_u16();
+        let full = resp.bytes().await.context(RequestSnafu {
             service: self.service.clone(),
             path,
         })?;
-        Ok(result)
+
+        self.error_handler
+            .handle(&self.service, status, &full)
+            .await?;
+        serde_json::from_slice(&full).context(SerdeSnafu {})
     }
-    pub fn new(service: String, base_url: String, timeout: Duration) -> Instance {
-        Instance::new_with_error_handler(service, base_url, timeout, Box::new(error_handler))
-    }
-    pub fn new_with_error_handler(
-        service: String,
-        base_url: String,
-        timeout: Duration,
-        error_handler: ErrorHandler,
-    ) -> Instance {
+
+    pub fn new(service: &str, base_url: &str, timeout: Duration, error_handler: E) -> Instance<E> {
         Instance {
-            service,
-            base_url,
+            service: service.to_string(),
+            base_url: base_url.to_string(),
             timeout,
             error_handler,
         }
