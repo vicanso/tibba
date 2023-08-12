@@ -1,6 +1,8 @@
 use async_trait::async_trait;
+use axum::http::uri::Uri;
+use axum::http::Method;
 use bytes::Bytes;
-use reqwest::{Client, Response};
+use reqwest::Client;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use snafu::{ResultExt, Snafu};
@@ -26,6 +28,11 @@ pub enum Error {
     },
     #[snafu(display("Json fail, {source}"))]
     Serde { source: serde_json::Error },
+    #[snafu(display("Uri fail, service:{service}, {source}"))]
+    Uri {
+        service: String,
+        source: axum::http::uri::InvalidUri,
+    },
 }
 
 static ERROR_CATEGORY: &str = "request";
@@ -51,6 +58,12 @@ impl From<Error> for HttpError {
                 let mut he = HttpError::new_with_category(&message, ERROR_CATEGORY);
                 he.add_extra(&format!("service:{service}"));
                 he.add_extra("category:common");
+                he
+            }
+            Error::Uri { service, source } => {
+                let mut he = HttpError::new_with_category(&source.to_string(), ERROR_CATEGORY);
+                he.add_extra(&format!("service:{service}"));
+                he.add_extra("category:uri");
                 he
             }
             Error::Request {
@@ -103,33 +116,26 @@ impl HttpErrorHandler for CommonErrorHandler {
     }
 }
 
+static EMPTY_QUERY: Option<&[(&str, &str)]> = None;
+static EMPTY_BODY: Option<&[(&str, &str)]> = None;
+
+#[derive(Default, Clone, Debug)]
+pub struct Params<'a, Q, P>
+where
+    Q: Serialize + ?Sized,
+    P: Serialize + ?Sized,
+{
+    pub method: Method,
+    pub timeout: Option<Duration>,
+    pub query: Option<&'a Q>,
+    pub body: Option<&'a P>,
+    pub url: &'a str,
+}
+
 impl<E: HttpErrorHandler> Instance<E> {
     fn get_url(&self, url: &str) -> String {
         self.base_url.to_string() + url
     }
-    fn get_conn(&self) -> Result<Client> {
-        let c = Client::builder()
-            .timeout(self.timeout)
-            .build()
-            .context(BuildSnafu {
-                service: self.service.clone(),
-            })?;
-        Ok(c)
-    }
-    async fn handle_response<T: DeserializeOwned>(&self, resp: Response) -> Result<T> {
-        let path = resp.url().path().to_string();
-        let status = resp.status().as_u16();
-        let full = resp.bytes().await.context(RequestSnafu {
-            service: self.service.clone(),
-            path,
-        })?;
-
-        self.error_handler
-            .handle(&self.service, status, &full)
-            .await?;
-        serde_json::from_slice(&full).context(SerdeSnafu {})
-    }
-
     pub fn new(service: &str, base_url: &str, timeout: Duration, error_handler: E) -> Instance<E> {
         Instance {
             service: service.to_string(),
@@ -138,40 +144,106 @@ impl<E: HttpErrorHandler> Instance<E> {
             error_handler,
         }
     }
-    pub async fn get<P: Serialize + ?Sized, T: DeserializeOwned>(
+    pub async fn request<Q: Serialize + ?Sized, P: Serialize + ?Sized, T: DeserializeOwned>(
+        &self,
+        params: Params<'_, Q, P>,
+    ) -> Result<T> {
+        let timeout = params.timeout.unwrap_or(self.timeout);
+        let c = Client::builder()
+            .timeout(timeout)
+            .build()
+            .context(BuildSnafu {
+                service: &self.service,
+            })?;
+        let url = self.get_url(params.url);
+        let uri = url.parse::<Uri>().context(UriSnafu {
+            service: &self.service,
+        })?;
+
+        let mut req = match params.method {
+            Method::POST => c.post(url),
+            Method::PUT => c.put(url),
+            Method::PATCH => c.patch(url),
+            Method::DELETE => c.delete(url),
+            _ => c.get(url),
+        };
+        if let Some(value) = params.query {
+            req = req.query(value);
+        }
+        if let Some(value) = params.body {
+            req = req.json(value);
+        }
+        let resp = req.send().await.context(RequestSnafu {
+            service: &self.service,
+            path: uri.path(),
+        })?;
+        let path = resp.url().path().to_string();
+        let status = resp.status().as_u16();
+        let full = resp.bytes().await.context(RequestSnafu {
+            service: &self.service,
+            path,
+        })?;
+
+        self.error_handler
+            .handle(&self.service, status, &full)
+            .await?;
+        serde_json::from_slice(&full).context(SerdeSnafu {})
+    }
+    pub async fn get<T: DeserializeOwned>(&self, url: &str) -> Result<T> {
+        self.request(Params {
+            timeout: None,
+            method: Method::GET,
+            url,
+            query: EMPTY_QUERY,
+            body: EMPTY_BODY,
+        })
+        .await
+    }
+    async fn get_with_query<P: Serialize + ?Sized, T: DeserializeOwned>(
         &self,
         url: &str,
         query: &P,
     ) -> Result<T> {
-        let c = self.get_conn()?;
-        let resp = c
-            .get(self.get_url(url))
-            .query(query)
-            .send()
-            .await
-            .context(RequestSnafu {
-                service: self.service.clone(),
-                path: url.to_string(),
-            })?;
-        self.handle_response(resp).await
+        self.request(Params {
+            timeout: None,
+            method: Method::GET,
+            url,
+            query: Some(query),
+            body: EMPTY_BODY,
+        })
+        .await
     }
     pub async fn post<P: Serialize + ?Sized, T: DeserializeOwned>(
         &self,
         url: &str,
         json: &P,
-        query: &P,
     ) -> Result<T> {
-        let c = self.get_conn()?;
-        let resp = c
-            .post(self.get_url(url))
-            .json(json)
-            .query(query)
-            .send()
-            .await
-            .context(RequestSnafu {
-                service: self.service.clone(),
-                path: url.to_string(),
-            })?;
-        self.handle_response(resp).await
+        self.request(Params {
+            timeout: None,
+            method: Method::POST,
+            url,
+            query: EMPTY_QUERY,
+            body: Some(json),
+        })
+        .await
+    }
+    pub async fn post_with_query<
+        P: Serialize + ?Sized,
+        Q: Serialize + ?Sized,
+        T: DeserializeOwned,
+    >(
+        &self,
+        url: &str,
+        json: &P,
+        query: &Q,
+    ) -> Result<T> {
+        self.request(Params {
+            timeout: None,
+            method: Method::POST,
+            url,
+            query: Some(query),
+            body: Some(json),
+        })
+        .await
     }
 }

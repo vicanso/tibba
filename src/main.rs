@@ -1,4 +1,6 @@
 use axum::{error_handling::HandleErrorLayer, middleware::from_fn_with_state, Router};
+use base64_serde::base64_serde_type;
+use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::time::Duration;
 use std::{env, str::FromStr};
@@ -47,8 +49,60 @@ fn init_logger() {
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 }
 
+async fn test() {
+    #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct FamilyResult {
+        pub families: Vec<String>,
+    }
+    #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct ImageOptimParams {
+        pub data: String,
+        pub data_type: String,
+        pub output_type: String,
+        pub quality: i64,
+        pub speed: i64,
+    }
+
+    base64_serde_type!(Base64Standard, base64::engine::general_purpose::STANDARD);
+    #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct ImageOptimResult {
+        pub diff: f64,
+        #[serde(with = "Base64Standard")]
+        pub data: Vec<u8>,
+        pub output_type: String,
+        pub ratio: i64,
+    }
+    let result: FamilyResult = request::get_charts_instance()
+        .get("/font-families")
+        .await
+        .unwrap();
+    println!("{result:?}");
+
+    let result: ImageOptimResult = request::get_image_optim_instance()
+        .post(
+            "/optim-images",
+            &ImageOptimParams {
+                data: "https://img2.baidu.com/it/u=3012806272,1276873993&fm=253&fmt=auto&app=138&f=JPEG".to_string(),
+                output_type: "avif".to_string(),
+                quality: 90,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+    println!("{result:?}");
+}
+
+async fn check_dependencies() {
+    // 检查依赖服务
+}
+
 #[tokio::main]
 async fn run() {
+    test().await;
     let app_state = get_app_state();
 
     // build our application with a route

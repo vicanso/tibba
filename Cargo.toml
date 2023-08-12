@@ -7,11 +7,13 @@ edition = "2021"
 
 [dependencies]
 async-session = "3.0.0"
-async-trait = "0.1.72"
+async-trait = "0.1.73"
 axum = "0.6.20"
 axum-client-ip = "0.4.1"
 axum-extra = { version = "0.7.7", features = ["cookie"] }
 axum-sessions = "0.5.0"
+base64 = "0.21.2"
+base64-serde = "0.7.0"
 bytes = "1.4.0"
 chrono = "0.4.26"
 config = { version = "0.13.3", features = ["yaml"] }
@@ -20,7 +22,7 @@ deadpool-redis = "0.12.0"
 hex = "0.4.3"
 humantime = "2.1.0"
 hyper = "0.14.27"
-lru = "0.10.0"
+lru = "0.11.0"
 mime_guess = "2.0.4"
 nanoid = "0.4.0"
 once_cell = "1.18.0"
@@ -33,12 +35,12 @@ serde_json = "1.0.104"
 snafu = "0.7.5"
 snap = "1.1.0"
 substring = "1.4.5"
-time = "0.3.23"
-tokio = { version = "1.29.1", features = ["macros", "rt", "rt-multi-thread", "net", "signal"] }
+time = "0.3.25"
+tokio = { version = "1.30.0", features = ["macros", "rt", "rt-multi-thread", "net", "signal"] }
 tower = { version = "0.4.13", features = ["timeout"]}
 tracing = "0.1.37"
 tracing-subscriber = { version = "0.3.17", features = ["local-time"] }
-url = "2.3.1"
+url = "2.4.0"
 urlencoding = "2.1.3"
 validator = { version = "0.16.1", features = ["derive"] }
 zstd = "0.12.4"
