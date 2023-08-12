@@ -80,20 +80,20 @@ async fn test() {
         .unwrap();
     println!("{result:?}");
 
-    let result: ImageOptimResult = request::get_image_optim_instance()
-        .post(
-            "/optim-images",
-            &ImageOptimParams {
-                data: "https://img2.baidu.com/it/u=3012806272,1276873993&fm=253&fmt=auto&app=138&f=JPEG".to_string(),
-                output_type: "avif".to_string(),
-                quality: 90,
-                ..Default::default()
-            },
-        )
-        .await
-        .unwrap();
+    // let result: ImageOptimResult = request::get_image_optim_instance()
+    //     .post(
+    //         "/optim-images",
+    //         &ImageOptimParams {
+    //             data: "https://img2.baidu.com/it/u=3012806272,1276873993&fm=253&fmt=auto&app=138&f=JPEG".to_string(),
+    //             output_type: "avif".to_string(),
+    //             quality: 90,
+    //             ..Default::default()
+    //         },
+    //     )
+    //     .await
+    //     .unwrap();
 
-    println!("{result:?}");
+    // println!("{result:?}");
 }
 
 async fn check_dependencies() {

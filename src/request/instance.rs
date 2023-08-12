@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use axum::http::uri::Uri;
 use axum::http::Method;
 use bytes::Bytes;
-use reqwest::Client;
+use reqwest::{Client, RequestBuilder};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use snafu::{ResultExt, Snafu};
@@ -26,8 +26,11 @@ pub enum Error {
         path: String,
         source: reqwest::Error,
     },
-    #[snafu(display("Json fail, {source}"))]
-    Serde { source: serde_json::Error },
+    #[snafu(display("Json fail, service:{service}, {source}"))]
+    Serde {
+        service: String,
+        source: serde_json::Error,
+    },
     #[snafu(display("Uri fail, service:{service}, {source}"))]
     Uri {
         service: String,
@@ -48,9 +51,9 @@ impl From<Error> for HttpError {
                 he.add_extra("category:build");
                 he
             }
-            Error::Serde { source } => {
+            Error::Serde { service, source } => {
                 let mut he = HttpError::new_with_category(&source.to_string(), ERROR_CATEGORY);
-                // he.add_extra(&format!("service:{service}"));
+                he.add_extra(&format!("service:{service}"));
                 he.add_extra("category:serde");
                 he
             }
@@ -82,18 +85,20 @@ impl From<Error> for HttpError {
 }
 
 #[async_trait]
-pub trait HttpErrorHandler {
-    async fn handle(&self, service: &str, status: u16, data: &Bytes) -> Result<()>;
+pub trait HttpInterceptor {
+    async fn error(&self, status: u16, data: &Bytes) -> Result<()>;
+    async fn request(&self, mut req: RequestBuilder) -> Result<RequestBuilder>;
+    async fn response(&self, data: Bytes) -> Result<Bytes>;
 }
 
-pub struct Instance<T: HttpErrorHandler> {
+pub struct Instance<T: HttpInterceptor> {
     service: String,
     base_url: String,
     timeout: Duration,
-    error_handler: T,
+    interceptor: T,
 }
 
-pub async fn error_handler(service: &str, status: u16, data: &Bytes) -> Result<()> {
+pub async fn handle_error(service: &str, status: u16, data: &Bytes) -> Result<()> {
     if status >= 400 {
         let mut message = json_get(data, "message");
         if message.is_empty() {
@@ -107,12 +112,28 @@ pub async fn error_handler(service: &str, status: u16, data: &Bytes) -> Result<(
     Ok(())
 }
 
-pub struct CommonErrorHandler {}
+pub struct CommonInterceptor {
+    service: String,
+}
+
+impl CommonInterceptor {
+    pub fn new(service: &str) -> CommonInterceptor {
+        CommonInterceptor {
+            service: service.to_string(),
+        }
+    }
+}
 
 #[async_trait]
-impl HttpErrorHandler for CommonErrorHandler {
-    async fn handle(&self, service: &str, status: u16, data: &Bytes) -> Result<()> {
-        error_handler(service, status, data).await
+impl HttpInterceptor for CommonInterceptor {
+    async fn error(&self, status: u16, data: &Bytes) -> Result<()> {
+        handle_error(&self.service, status, data).await
+    }
+    async fn request(&self, req: RequestBuilder) -> Result<RequestBuilder> {
+        Ok(req)
+    }
+    async fn response(&self, data: Bytes) -> Result<Bytes> {
+        Ok(data)
     }
 }
 
@@ -132,22 +153,35 @@ where
     pub url: &'a str,
 }
 
-impl<E: HttpErrorHandler> Instance<E> {
+#[derive(Default, Clone, Debug)]
+struct HttpStats {
+    path: String,
+}
+
+impl<H: HttpInterceptor> Instance<H> {
     fn get_url(&self, url: &str) -> String {
         self.base_url.to_string() + url
     }
-    pub fn new(service: &str, base_url: &str, timeout: Duration, error_handler: E) -> Instance<E> {
+    pub fn new(service: &str, base_url: &str, timeout: Duration, interceptor: H) -> Instance<H> {
         Instance {
             service: service.to_string(),
             base_url: base_url.to_string(),
             timeout,
-            error_handler,
+            interceptor,
         }
     }
-    pub async fn request<Q: Serialize + ?Sized, P: Serialize + ?Sized, T: DeserializeOwned>(
+    async fn do_request<Q: Serialize + ?Sized, P: Serialize + ?Sized, T: DeserializeOwned>(
         &self,
+        stats: &mut HttpStats,
         params: Params<'_, Q, P>,
     ) -> Result<T> {
+        let url = self.get_url(params.url);
+        let uri = url.parse::<Uri>().context(UriSnafu {
+            service: &self.service,
+        })?;
+        let path = uri.path();
+        stats.path = path.to_string();
+
         let timeout = params.timeout.unwrap_or(self.timeout);
         let c = Client::builder()
             .timeout(timeout)
@@ -155,10 +189,6 @@ impl<E: HttpErrorHandler> Instance<E> {
             .context(BuildSnafu {
                 service: &self.service,
             })?;
-        let url = self.get_url(params.url);
-        let uri = url.parse::<Uri>().context(UriSnafu {
-            service: &self.service,
-        })?;
 
         let mut req = match params.method {
             Method::POST => c.post(url),
@@ -173,21 +203,40 @@ impl<E: HttpErrorHandler> Instance<E> {
         if let Some(value) = params.body {
             req = req.json(value);
         }
+        req = self.interceptor.request(req).await?;
+    
         let resp = req.send().await.context(RequestSnafu {
             service: &self.service,
-            path: uri.path(),
+            path,
         })?;
-        let path = resp.url().path().to_string();
         let status = resp.status().as_u16();
-        let full = resp.bytes().await.context(RequestSnafu {
+        let mut full = resp.bytes().await.context(RequestSnafu {
             service: &self.service,
             path,
         })?;
 
-        self.error_handler
-            .handle(&self.service, status, &full)
-            .await?;
-        serde_json::from_slice(&full).context(SerdeSnafu {})
+        self.interceptor.error(status, &full).await?;
+        full = self.interceptor.response(full).await?;
+        serde_json::from_slice(&full).context(SerdeSnafu {
+            service: &self.service,
+        })
+    }
+    async fn request<Q: Serialize + ?Sized, P: Serialize + ?Sized, T: DeserializeOwned>(
+        &self,
+        params: Params<'_, Q, P>,
+    ) -> Result<T> {
+        let mut stats = HttpStats{
+            ..Default::default()
+        };
+        // TODO on done
+        let result = self.do_request(&mut stats, params).await;
+        // TODO on error
+        if let Err(ref err) = result {
+            println!("{:?}", err.to_string())
+        }
+        println!("{stats:?}");
+
+        result
     }
     pub async fn get<T: DeserializeOwned>(&self, url: &str) -> Result<T> {
         self.request(Params {
