@@ -97,6 +97,7 @@ async fn test() {
 }
 
 async fn check_dependencies() {
+    request::get_charts_instance();
     // 检查依赖服务
 }
 

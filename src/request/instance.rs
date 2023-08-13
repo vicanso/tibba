@@ -2,6 +2,8 @@ use async_trait::async_trait;
 use axum::http::uri::Uri;
 use axum::http::Method;
 use bytes::Bytes;
+use chrono::Local;
+use hyper::client::connect::HttpInfo;
 use reqwest::{Client, RequestBuilder};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -89,12 +91,13 @@ pub trait HttpInterceptor {
     async fn error(&self, status: u16, data: &Bytes) -> Result<()>;
     async fn request(&self, mut req: RequestBuilder) -> Result<RequestBuilder>;
     async fn response(&self, data: Bytes) -> Result<Bytes>;
+    async fn on_done(&self, stats: HttpStats, err: Option<&Error>) -> Result<()>;
 }
 
 pub struct Instance<T: HttpInterceptor> {
+    c: Client,
     service: String,
     base_url: String,
-    timeout: Duration,
     interceptor: T,
 }
 
@@ -135,6 +138,9 @@ impl HttpInterceptor for CommonInterceptor {
     async fn response(&self, data: Bytes) -> Result<Bytes> {
         Ok(data)
     }
+    async fn on_done(&self, _: HttpStats, _: Option<&Error>) -> Result<()> {
+        Ok(())
+    }
 }
 
 static EMPTY_QUERY: Option<&[(&str, &str)]> = None;
@@ -154,21 +160,47 @@ where
 }
 
 #[derive(Default, Clone, Debug)]
-struct HttpStats {
-    path: String,
+pub struct HttpStats {
+    pub path: String,
+    pub remote_addr: String,
+    pub local_addr: String,
+    pub content_length: u64,
+    pub serde_time: u32,
+    pub process_time: u32,
+    pub time: u32,
+}
+
+fn new_get_duration() -> impl FnOnce() -> u32 {
+    let start = Local::now().timestamp_millis();
+    move || -> u32 {
+        let value = (Local::now().timestamp_millis() - start) as u32;
+        // 只要有处理则最小为1，避免与默认值一致
+        value.max(1)
+    }
 }
 
 impl<H: HttpInterceptor> Instance<H> {
     fn get_url(&self, url: &str) -> String {
         self.base_url.to_string() + url
     }
-    pub fn new(service: &str, base_url: &str, timeout: Duration, interceptor: H) -> Instance<H> {
-        Instance {
+    pub fn new(
+        service: &str,
+        base_url: &str,
+        timeout: Duration,
+        interceptor: H,
+    ) -> Result<Instance<H>> {
+        let c = Client::builder()
+            .timeout(timeout)
+            .pool_max_idle_per_host(10)
+            .connect_timeout(Duration::from_secs(5))
+            .build()
+            .context(BuildSnafu { service })?;
+        Ok(Instance {
             service: service.to_string(),
             base_url: base_url.to_string(),
-            timeout,
+            c,
             interceptor,
-        }
+        })
     }
     async fn do_request<Q: Serialize + ?Sized, P: Serialize + ?Sized, T: DeserializeOwned>(
         &self,
@@ -182,21 +214,17 @@ impl<H: HttpInterceptor> Instance<H> {
         let path = uri.path();
         stats.path = path.to_string();
 
-        let timeout = params.timeout.unwrap_or(self.timeout);
-        let c = Client::builder()
-            .timeout(timeout)
-            .build()
-            .context(BuildSnafu {
-                service: &self.service,
-            })?;
-
         let mut req = match params.method {
-            Method::POST => c.post(url),
-            Method::PUT => c.put(url),
-            Method::PATCH => c.patch(url),
-            Method::DELETE => c.delete(url),
-            _ => c.get(url),
+            Method::POST => self.c.post(url),
+            Method::PUT => self.c.put(url),
+            Method::PATCH => self.c.patch(url),
+            Method::DELETE => self.c.delete(url),
+            _ => self.c.get(url),
         };
+        if let Some(value) = params.timeout {
+            req = req.timeout(value);
+        }
+
         if let Some(value) = params.query {
             req = req.query(value);
         }
@@ -204,37 +232,52 @@ impl<H: HttpInterceptor> Instance<H> {
             req = req.json(value);
         }
         req = self.interceptor.request(req).await?;
-    
-        let resp = req.send().await.context(RequestSnafu {
+        // TODO dns tcp tls process
+        let process_done = new_get_duration();
+        let res = req.send().await.context(RequestSnafu {
             service: &self.service,
             path,
         })?;
-        let status = resp.status().as_u16();
-        let mut full = resp.bytes().await.context(RequestSnafu {
+        stats.process_time = process_done();
+        if let Some(value) = res.extensions().get::<HttpInfo>() {
+            stats.remote_addr = value.remote_addr().to_string();
+            stats.local_addr = value.local_addr().to_string();
+        }
+
+        if let Some(value) = res.content_length() {
+            stats.content_length = value;
+        }
+
+        let status = res.status().as_u16();
+        let mut full = res.bytes().await.context(RequestSnafu {
             service: &self.service,
             path,
         })?;
 
         self.interceptor.error(status, &full).await?;
         full = self.interceptor.response(full).await?;
-        serde_json::from_slice(&full).context(SerdeSnafu {
+        let serde_done = new_get_duration();
+        let data = serde_json::from_slice(&full).context(SerdeSnafu {
             service: &self.service,
-        })
+        })?;
+        stats.serde_time = serde_done();
+        Ok(data)
     }
     async fn request<Q: Serialize + ?Sized, P: Serialize + ?Sized, T: DeserializeOwned>(
         &self,
         params: Params<'_, Q, P>,
     ) -> Result<T> {
-        let mut stats = HttpStats{
+        let mut stats = HttpStats {
             ..Default::default()
         };
-        // TODO on done
+        let done = new_get_duration();
         let result = self.do_request(&mut stats, params).await;
-        // TODO on error
-        if let Err(ref err) = result {
-            println!("{:?}", err.to_string())
+        stats.time = done();
+        let mut err = None;
+        if let Err(ref e) = result {
+            err = Some(e)
         }
-        println!("{stats:?}");
+        self.interceptor.on_done(stats, err).await?;
 
         result
     }
