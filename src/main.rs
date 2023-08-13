@@ -96,14 +96,16 @@ async fn test() {
     // println!("{result:?}");
 }
 
+// 检查依赖服务失败直接panic
 async fn check_dependencies() {
     request::get_charts_instance();
-    // 检查依赖服务
+    cache::redis_ping().await.unwrap();
 }
 
 #[tokio::main]
 async fn run() {
     test().await;
+    check_dependencies().await;
     let app_state = get_app_state();
 
     // build our application with a route

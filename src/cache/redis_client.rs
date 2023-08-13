@@ -2,7 +2,6 @@ use deadpool_redis::redis::{cmd, pipe};
 use deadpool_redis::{Connection, Manager, Pool, PoolConfig, Runtime};
 use once_cell::sync::Lazy;
 use once_cell::sync::OnceCell;
-use redis::Client;
 use serde::{de::DeserializeOwned, Serialize};
 use snafu::{ResultExt, Snafu};
 use std::time::Duration;
@@ -10,12 +9,6 @@ use std::time::Duration;
 use crate::config::must_new_redis_config;
 use crate::error::HttpError;
 use crate::util::{snappy_decode, snappy_encode, zstd_decode, zstd_encode, CompressError};
-
-// 如果要支持cluster，需要使用deadpool_redis_cluster
-pub fn must_new_redis_client() -> Client {
-    let config = must_new_redis_config();
-    Client::open(config.nodes[0].as_str()).unwrap()
-}
 
 #[derive(Debug, Snafu)]
 pub enum Error {

@@ -6,7 +6,6 @@ use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-use crate::cache::must_new_redis_client;
 use crate::cache::RedisSessionStore;
 use crate::config::{must_new_session_config, SessionConfig};
 use crate::error::{HttpError, HttpResult};
@@ -39,8 +38,7 @@ impl SessionInfo {
 static SESSION_CONFIG: Lazy<SessionConfig> = Lazy::new(must_new_session_config);
 
 pub fn new_session_layer() -> SessionLayer<RedisSessionStore> {
-    let store = RedisSessionStore::from_client(must_new_redis_client())
-        .with_prefix(SESSION_CONFIG.prefix.clone());
+    let store = RedisSessionStore::new(Some(SESSION_CONFIG.prefix.clone()));
     let ttl = SESSION_CONFIG.ttl as u64;
     SessionLayer::new(store, SESSION_CONFIG.secret.as_bytes())
         .with_secure(false)
