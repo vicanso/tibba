@@ -42,6 +42,7 @@ pub fn new_session_layer() -> SessionLayer<RedisSessionStore> {
     let ttl = SESSION_CONFIG.ttl as u64;
     SessionLayer::new(store, SESSION_CONFIG.secret.as_bytes())
         .with_secure(false)
+        .with_http_only(true)
         .with_cookie_name(SESSION_CONFIG.cookie.clone())
         .with_session_ttl(Some(Duration::from_secs(ttl)))
         // 仅在变化时写入

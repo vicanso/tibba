@@ -9,11 +9,11 @@ mod common;
 mod user;
 
 // json响应的result
-pub type JsonResult<T> = HttpResult<Json<T>>;
+pub(crate) type JsonResult<T> = HttpResult<Json<T>>;
 // json响应+cache-control
-pub struct CacheJson<T>(u32, Json<T>);
+pub(crate) struct CacheJson<T>(u32, Json<T>);
 // json响应+cache-control的result
-pub type CacheJsonResult<T> = HttpResult<CacheJson<T>>;
+pub(crate) type CacheJsonResult<T> = HttpResult<CacheJson<T>>;
 
 // tuple转换为cache json
 impl<T> From<(u32, T)> for CacheJson<T>

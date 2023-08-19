@@ -97,15 +97,19 @@ async fn test() {
 }
 
 // 检查依赖服务失败直接panic
-async fn check_dependencies() {
+async fn check_dependencies() -> Result<(), String> {
     request::get_charts_instance();
-    cache::redis_ping().await.unwrap();
+    cache::redis_ping().await.map_err(|err| err.to_string())?;
+    Ok(())
 }
 
 #[tokio::main]
 async fn run() {
     test().await;
-    check_dependencies().await;
+    if let Err(err) = check_dependencies().await {
+        error!(err, "check dependencies fail");
+        std::process::exit(1);
+    }
     let app_state = get_app_state();
 
     // build our application with a route

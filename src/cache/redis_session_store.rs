@@ -14,15 +14,6 @@ impl RedisSessionStore {
     pub fn new(prefix: Option<String>) -> Self {
         RedisSessionStore { prefix }
     }
-
-    #[cfg(test)]
-    async fn ttl_for_session(&self, session: &Session) -> Result<usize> {
-        Ok(get_redis_conn()
-            .await?
-            .ttl(self.prefix_key(session.id()))
-            .await?)
-    }
-
     fn prefix_key(&self, key: impl AsRef<str>) -> String {
         if let Some(ref prefix) = self.prefix {
             format!("{}{}", prefix, key.as_ref())

@@ -15,25 +15,25 @@ use crate::util::json_get;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
-    #[snafu(display("Request fail, service:{service}, {message}"))]
+    #[snafu(display("Request {service} fail, {message}"))]
     Common { service: String, message: String },
-    #[snafu(display("Build http request fail, service:{service}, {source}"))]
+    #[snafu(display("Build {service} http request fail, {source}"))]
     Build {
         service: String,
         source: reqwest::Error,
     },
-    #[snafu(display("Http request fail, service:{service}, path:{path} {source}"))]
+    #[snafu(display("Http {service} request fail, {path} {source}"))]
     Request {
         service: String,
         path: String,
         source: reqwest::Error,
     },
-    #[snafu(display("Json fail, service:{service}, {source}"))]
+    #[snafu(display("Json {service} fail, {source}"))]
     Serde {
         service: String,
         source: serde_json::Error,
     },
-    #[snafu(display("Uri fail, service:{service}, {source}"))]
+    #[snafu(display("Uri {service} fail, {source}"))]
     Uri {
         service: String,
         source: axum::http::uri::InvalidUri,

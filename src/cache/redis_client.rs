@@ -30,7 +30,6 @@ pub enum Error {
 
 impl From<Error> for HttpError {
     fn from(err: Error) -> Self {
-        // 对于部分error单独转换
         match err {
             Error::Redis { category, source } => {
                 HttpError::new_with_category(&source.to_string(), &category)
@@ -162,7 +161,7 @@ impl RedisCache {
         Ok(count)
     }
     /// 将数据设置至redis中，如果未设置ttl则使用默认值
-    async fn set(&self, key: &str, value: Vec<u8>, ttl: Option<Duration>) -> Result<()> {
+    async fn set(&self, key: &str, value: &[u8], ttl: Option<Duration>) -> Result<()> {
         let mut conn = get_redis_conn().await?;
 
         let seconds = ttl.unwrap_or(self.ttl).as_secs();
@@ -178,7 +177,7 @@ impl RedisCache {
         Ok(())
     }
     /// 将数据设置至redis中，如果未设置ttl则使用默认值
-    pub async fn set_bytes(&self, key: &str, value: Vec<u8>, ttl: Option<Duration>) -> Result<()> {
+    pub async fn set_bytes(&self, key: &str, value: &[u8], ttl: Option<Duration>) -> Result<()> {
         let k = self.get_key(key);
         self.set(&k, value, ttl).await
     }
@@ -209,7 +208,7 @@ impl RedisCache {
             category: "set_struct",
         })?;
         let k = self.get_key(key);
-        self.set(&k, value, ttl).await?;
+        self.set(&k, &value, ttl).await?;
         Ok(())
     }
     /// 从redis中获取数据并转换为struct，如果缓存中无数据则使用struct的默认值返回
@@ -273,7 +272,7 @@ impl RedisCache {
         })?;
         let buf = snappy_encode(&value).context(CompressSnafu)?;
         let k = self.get_key(key);
-        self.set(&k, buf, ttl).await?;
+        self.set(&k, &buf, ttl).await?;
         Ok(())
     }
     /// 从redis获取数据后使用snappy解压，并转换为对应的struct
@@ -312,7 +311,7 @@ impl RedisCache {
         })?;
         let buf = zstd_encode(&value).context(CompressSnafu)?;
         let k = self.get_key(key);
-        self.set(&k, buf, ttl).await?;
+        self.set(&k, &buf, ttl).await?;
         Ok(())
     }
     /// 从redis获取数据后使用zstd解压，并转换为对应的struct

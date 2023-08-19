@@ -12,7 +12,6 @@ use crate::util::duration_to_string;
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
 struct ApplicationInfo {
     builded_at: String,
     commit: String,

@@ -31,12 +31,12 @@ redis = { version = "0.23.1", features = ["tokio-comp", "aio"] }
 reqwest = { version = "0.11.18", default-features = false, features = ["rustls-tls", "json"] }
 rust-embed = { version = "6.8.1", features = ["mime-guess"] }
 serde = { version = "1.0.183", features = ["derive"] }
-serde_json = "1.0.104"
+serde_json = "1.0.105"
 snafu = "0.7.5"
 snap = "1.1.0"
 substring = "1.4.5"
 time = "0.3.25"
-tokio = { version = "1.30.0", features = ["macros", "rt", "rt-multi-thread", "net", "signal"] }
+tokio = { version = "1.32.0", features = ["macros", "rt", "rt-multi-thread", "net", "signal"] }
 tower = { version = "0.4.13", features = ["timeout"]}
 tracing = "0.1.37"
 tracing-subscriber = { version = "0.3.17", features = ["local-time"] }
