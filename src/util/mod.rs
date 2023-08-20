@@ -11,7 +11,7 @@ pub use self::http::{
     set_no_cache_if_not_exist,
 };
 pub use compress::Error as CompressError;
-pub use compress::{snappy_decode, snappy_encode, zstd_decode, zstd_encode};
+pub use compress::{lz4_decode, lz4_encode, zstd_decode, zstd_encode};
 pub use context::{
     generate_device_id_cookie, get_account_from_context, get_device_id_from_cookie,
     set_account_to_context, Account,

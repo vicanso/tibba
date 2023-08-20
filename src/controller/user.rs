@@ -11,7 +11,7 @@ use crate::cache::get_default_redis_cache;
 use crate::controller::JsonResult;
 use crate::error::HttpResult;
 use crate::middleware::{
-    add_session_info, get_session_info, load_session, new_session_layer, wait2s, SessionInfo,
+    add_session_info, get_session_info, load_session, new_session_layer, wait1s, SessionInfo,
 };
 use crate::util::{generate_device_id_cookie, get_device_id_from_cookie};
 
@@ -26,7 +26,7 @@ pub fn new_router() -> Router {
     let login_router = Router::new()
         .route("/v1/login", post(login))
         // 登录设置为最少等待x秒，避免快速尝试
-        .layer(from_fn(wait2s));
+        .layer(from_fn(wait1s));
     let r = Router::new()
         .route("/v1/me", get(me))
         .route("/v1/login-times", get(get_login_times))

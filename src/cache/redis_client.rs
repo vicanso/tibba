@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use crate::config::must_new_redis_config;
 use crate::error::HttpError;
-use crate::util::{snappy_decode, snappy_encode, zstd_decode, zstd_encode, CompressError};
+use crate::util::{lz4_decode, lz4_encode, zstd_decode, zstd_encode, CompressError};
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -85,7 +85,7 @@ pub struct RedisCache {
 pub fn get_default_redis_cache() -> &'static RedisCache {
     static DEFAULT_REDIS_CACHE: OnceCell<RedisCache> = OnceCell::new();
 
-    DEFAULT_REDIS_CACHE.get_or_init(|| -> RedisCache { RedisCache::new() })
+    DEFAULT_REDIS_CACHE.get_or_init(RedisCache::new)
 }
 
 impl RedisCache {
@@ -255,28 +255,23 @@ impl RedisCache {
             })?;
         Ok(value)
     }
-    /// 将struct转换为json后使用snappy压缩，
+    /// 将struct转换为json后使用lz4压缩，
     /// 再将压缩后的数据设置至redis中，若未指定ttl，
     /// 则使用默认的有效期
-    pub async fn set_struct_snappy<T>(
-        &self,
-        key: &str,
-        value: &T,
-        ttl: Option<Duration>,
-    ) -> Result<()>
+    pub async fn set_struct_lz4<T>(&self, key: &str, value: &T, ttl: Option<Duration>) -> Result<()>
     where
         T: ?Sized + Serialize,
     {
         let value = serde_json::to_vec(&value).context(JsonSnafu {
             category: "set_struct_snappy",
         })?;
-        let buf = snappy_encode(&value).context(CompressSnafu)?;
+        let buf = lz4_encode(&value);
         let k = self.get_key(key);
         self.set(&k, &buf, ttl).await?;
         Ok(())
     }
-    /// 从redis获取数据后使用snappy解压，并转换为对应的struct
-    pub async fn get_struct_snappy<'a, T>(&self, key: &str) -> Result<T>
+    /// 从redis获取数据后使用lz4解压，并转换为对应的struct
+    pub async fn get_struct_lz4<'a, T>(&self, key: &str) -> Result<T>
     where
         T: Default + DeserializeOwned,
     {
@@ -287,7 +282,7 @@ impl RedisCache {
             return Ok(T::default());
         }
 
-        let buf = snappy_decode(value.as_slice()).context(CompressSnafu)?;
+        let buf = lz4_decode(value.as_slice()).context(CompressSnafu)?;
 
         let deserializer = &mut serde_json::Deserializer::from_slice(&buf);
         T::deserialize(deserializer).context(JsonSnafu {

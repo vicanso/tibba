@@ -1,4 +1,7 @@
-use axum::{http::Request, middleware::Next, response::Response};
+use axum::http::Request;
+use axum::http::StatusCode;
+use axum::middleware::Next;
+use axum::response::Response;
 use axum_sessions::extractors::{ReadableSession, WritableSession};
 use axum_sessions::SessionLayer;
 use chrono::Utc;
@@ -85,4 +88,21 @@ pub async fn load_session<B>(
             Ok(resp)
         })
         .await
+}
+
+pub async fn should_be_login<B>(
+    session: ReadableSession,
+    req: Request<B>,
+    next: Next<B>,
+) -> HttpResult<Response> {
+    let info = get_session_info(session);
+    if info.account.is_empty() {
+        return Err(HttpError {
+            message: "Should be login first".to_string(),
+            status: StatusCode::UNAUTHORIZED.as_u16(),
+            ..Default::default()
+        });
+    }
+    let resp = next.run(req).await;
+    Ok(resp)
 }

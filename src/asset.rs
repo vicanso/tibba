@@ -38,10 +38,13 @@ impl IntoResponse for StaticFile {
             None
         };
 
-        let mut max_age = format!("public, max-age={}", max_age);
-        if let Some(s_max_age) = s_max_age {
-            max_age = format!("{max_age}, s-maxage={s_max_age}");
-        }
+        let cache_control = if max_age <= 0 {
+            "no-cache".to_string()
+        } else if let Some(s_max_age) = s_max_age {
+            format!("public, max-age={max_age}, s-maxage={s_max_age}")
+        } else {
+            format!("public, max-age={max_age}")
+        };
         // 静态文件压缩由前置缓存服务器处理
         (
             [
@@ -52,7 +55,7 @@ impl IntoResponse for StaticFile {
                 // e tag
                 (header::ETAG, entity_tag),
                 // max age
-                (header::CACHE_CONTROL, max_age),
+                (header::CACHE_CONTROL, cache_control),
             ],
             file.data,
         )
