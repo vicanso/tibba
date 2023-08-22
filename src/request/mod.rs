@@ -4,7 +4,7 @@ use std::time::Duration;
 mod instance;
 use instance::CommonInterceptor;
 
-pub fn get_charts_instance() -> &'static Instance<CommonInterceptor> {
+pub fn must_get_charts_instance() -> &'static Instance<CommonInterceptor> {
     static CHARTS: OnceCell<Instance<CommonInterceptor>> = OnceCell::new();
     CHARTS
         .get_or_try_init(|| {
@@ -19,7 +19,7 @@ pub fn get_charts_instance() -> &'static Instance<CommonInterceptor> {
         .unwrap()
 }
 
-pub fn get_image_optim_instance() -> &'static Instance<CommonInterceptor> {
+pub fn must_get_image_optim_instance() -> &'static Instance<CommonInterceptor> {
     static OPTIM: OnceCell<Instance<CommonInterceptor>> = OnceCell::new();
     OPTIM
         .get_or_try_init(|| {

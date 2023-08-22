@@ -28,7 +28,7 @@ impl Default for HttpError {
             message: "".to_string(),
             category: "".to_string(),
             // 默认使用400为状态码
-            status: 400,
+            status: StatusCode::BAD_REQUEST.as_u16(),
             code: "".to_string(),
             extra: None,
         }

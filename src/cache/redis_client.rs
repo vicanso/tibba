@@ -1,6 +1,5 @@
 use deadpool_redis::redis::{cmd, pipe};
 use deadpool_redis::{Connection, Manager, Pool, PoolConfig, Runtime};
-use once_cell::sync::Lazy;
 use once_cell::sync::OnceCell;
 use serde::{de::DeserializeOwned, Serialize};
 use snafu::{ResultExt, Snafu};
@@ -47,24 +46,28 @@ impl From<Error> for HttpError {
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
-static REDIS_POOL: Lazy<Pool> = Lazy::new(|| {
-    let config = must_new_redis_config();
-    let p = Pool::builder(Manager::new(config.nodes[0].as_str()).unwrap());
-    p.config(PoolConfig {
-        max_size: config.pool_size as usize,
-        timeouts: deadpool_redis::Timeouts {
-            wait: Some(config.wait_timeout),
-            create: Some(config.connection_timeout),
-            recycle: Some(config.recycle_timeout),
-        },
-    })
-    .runtime(Runtime::Tokio1)
-    .build()
-    .unwrap()
-});
+pub fn must_get_redis_pool() -> &'static Pool {
+    static REDIS_POOL: OnceCell<Pool> = OnceCell::new();
+    REDIS_POOL
+        .get_or_try_init(|| {
+            let config = must_new_redis_config();
+            let p = Pool::builder(Manager::new(config.nodes[0].as_str()).unwrap());
+            p.config(PoolConfig {
+                max_size: config.pool_size as usize,
+                timeouts: deadpool_redis::Timeouts {
+                    wait: Some(config.wait_timeout),
+                    create: Some(config.connection_timeout),
+                    recycle: Some(config.recycle_timeout),
+                },
+            })
+            .runtime(Runtime::Tokio1)
+            .build()
+        })
+        .unwrap()
+}
 
 pub async fn get_redis_conn() -> Result<Connection> {
-    REDIS_POOL.get().await.context(PoolSnafu {})
+    must_get_redis_pool().get().await.context(PoolSnafu {})
 }
 
 pub async fn redis_ping() -> Result<String> {
@@ -263,7 +266,7 @@ impl RedisCache {
         T: ?Sized + Serialize,
     {
         let value = serde_json::to_vec(&value).context(JsonSnafu {
-            category: "set_struct_snappy",
+            category: "set_struct_lz4",
         })?;
         let buf = lz4_encode(&value);
         let k = self.get_key(key);
@@ -286,7 +289,7 @@ impl RedisCache {
 
         let deserializer = &mut serde_json::Deserializer::from_slice(&buf);
         T::deserialize(deserializer).context(JsonSnafu {
-            category: "get_struct_snappy",
+            category: "get_struct_lz4",
         })
     }
     /// 将struct转换为json后使用zstd压缩，

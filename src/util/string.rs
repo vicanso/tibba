@@ -13,7 +13,7 @@ pub fn json_get(data: &Bytes, key: &str) -> String {
         "".to_string()
     };
     // 处理为""
-    if message.to_uppercase() == "null" {
+    if message.to_lowercase() == "null" {
         return "".to_string();
     }
     message

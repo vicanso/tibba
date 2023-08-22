@@ -9,11 +9,11 @@ mod common;
 mod user;
 
 // json响应的result
-pub(crate) type JsonResult<T> = HttpResult<Json<T>>;
+pub(self) type JsonResult<T> = HttpResult<Json<T>>;
 // json响应+cache-control
-pub(crate) struct CacheJson<T>(u32, Json<T>);
+pub(self) struct CacheJson<T>(u32, Json<T>);
 // json响应+cache-control的result
-pub(crate) type CacheJsonResult<T> = HttpResult<CacheJson<T>>;
+pub(self) type CacheJsonResult<T> = HttpResult<CacheJson<T>>;
 
 // tuple转换为cache json
 impl<T> From<(u32, T)> for CacheJson<T>
@@ -32,7 +32,7 @@ where
 {
     fn into_response(self) -> Response {
         let mut arr = vec!["public".to_string(), format!("max-age={}", self.0)];
-        // 如果缓存过长，请选择更小的值，避免缓存服务器数据保存过久
+        // 如果缓存过长，选择更小的值，避免缓存服务器数据保存过久
         if self.0 > 3600 {
             arr.push("s-maxage=3600".to_string());
         }

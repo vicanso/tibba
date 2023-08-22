@@ -191,8 +191,8 @@ impl<H: HttpInterceptor> Instance<H> {
     ) -> Result<Instance<H>> {
         let c = Client::builder()
             .timeout(timeout)
-            .pool_max_idle_per_host(10)
-            .connect_timeout(Duration::from_secs(5))
+            .pool_max_idle_per_host(2)
+            .connect_timeout(Duration::from_secs(10))
             .build()
             .context(BuildSnafu { service })?;
         Ok(Instance {

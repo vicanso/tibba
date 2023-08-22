@@ -165,14 +165,19 @@ pub struct BasicConfig {
     pub listen: String,
     // 请求连接限制
     #[validate(range(min = 0, max = 100000))]
-    pub request_limit: i32,
+    pub processing_limit: i32,
+    // 超时
+    pub timeout: Duration,
 }
 
 pub fn must_new_basic_config() -> BasicConfig {
     let config = must_new_config().set_prefix("basic");
     let basic_config = BasicConfig {
         listen: config.get_value_from_env_first("listen"),
-        request_limit: config.get_int_value_default("requestLimit", 5000),
+        processing_limit: config.get_int_value_default("processing_limit", 5000),
+        timeout: Duration::from_secs(
+            config.get_int_value_from_env_first_default("timeout", 60) as u64
+        ),
     };
     basic_config.validate().unwrap();
     basic_config

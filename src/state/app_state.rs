@@ -2,8 +2,11 @@ use chrono::{DateTime, Utc};
 use once_cell::sync::OnceCell;
 use std::sync::atomic::{AtomicI32, AtomicI8, Ordering};
 
+use crate::config::must_new_basic_config;
+
 #[derive(Debug)]
 pub struct AppState {
+    pub processing_limit: i32,
     status: AtomicI8,
     processing: AtomicI32,
     started_at: DateTime<Utc>,
@@ -39,9 +42,14 @@ impl AppState {
 
 pub fn get_app_state() -> &'static AppState {
     static APP_STATE: OnceCell<AppState> = OnceCell::new();
-    APP_STATE.get_or_init(|| AppState {
-        started_at: Utc::now(),
-        status: AtomicI8::new(0),
-        processing: AtomicI32::new(0),
+    APP_STATE.get_or_init(|| {
+        // 在main时已调用，因此不会unwrap
+        let basic_config = must_new_basic_config();
+        AppState {
+            processing_limit: basic_config.processing_limit,
+            started_at: Utc::now(),
+            status: AtomicI8::new(0),
+            processing: AtomicI32::new(0),
+        }
     })
 }

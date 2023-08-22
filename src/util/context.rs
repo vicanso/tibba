@@ -1,6 +1,6 @@
 use axum::http::Extensions;
 use axum_extra::extract::cookie::{Cookie, CookieJar};
-use cookie::time::{Duration, OffsetDateTime};
+use time::{Duration, OffsetDateTime};
 
 use crate::util::random_string;
 

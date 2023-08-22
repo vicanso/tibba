@@ -31,7 +31,7 @@ pub fn new_router() -> Router {
 async fn ping() -> HttpResult<&'static str> {
     let state = get_app_state();
     if !state.is_running() {
-        return Err(HttpError::new("server is not running"));
+        return Err(HttpError::new("Server is not running"));
     }
     Ok("pong")
 }

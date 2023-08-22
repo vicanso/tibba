@@ -1,4 +1,6 @@
 # 需要注意配置仅支持两层级形式
 basic:
+  # 超时时间(秒)
+  timeout: 30
   listen: 127.0.0.1:5000
-  requestLimit: 1000
+  processing_limit: 1000

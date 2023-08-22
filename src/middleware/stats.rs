@@ -16,8 +16,7 @@ pub async fn access_log(
     next: Next<Body>,
 ) -> HttpResult<Response<Body>> {
     let start_at = STARTED_AT.with(clone_value_from_task_local);
-    state.increase_processing();
-    let processing_count = state.get_processing();
+    let processing = state.get_processing();
 
     let mut uri = req.uri().to_string();
     // decode成功则替换
@@ -64,25 +63,24 @@ pub async fn access_log(
     let cost = Utc::now().timestamp_millis() - start_at;
 
     tl_info!(
-        category = "accessLog",
+        category = "access",
         account = account,
         ip = ip.to_string(),
-        xForwardedFor = x_forwarded_for,
+        x_forwarded_for,
         referrer,
         method,
         uri,
         status,
         cost,
-        processing = processing_count,
-        requestBodySize = request_body_size,
-        responseBodySize = response_body_size,
+        processing,
+        request_body_size,
+        response_body_size,
     );
 
     // 出错日志
     if status >= 400 {
-        tl_error!(category = "httpError", account = account, error = message);
+        tl_error!(category = "http_error", account, error = message);
     }
 
-    state.decrease_processing();
     Ok(res)
 }

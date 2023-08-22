@@ -7,9 +7,11 @@ mod redis_session_store;
 /// 封装好的各类redis操作函数
 mod ttl_lru_store;
 
-pub use redis_client::{get_default_redis_cache, get_redis_conn, redis_ping, RedisCache};
+pub use redis_client::{get_default_redis_cache, must_get_redis_pool, redis_ping, RedisCache};
 pub use redis_session_store::RedisSessionStore;
 pub use ttl_lru_store::TtlLruStore;
+
+pub(self) use redis_client::get_redis_conn;
 
 // 根据当前时间以及unit计算有效期，让有效期尽可能落在间隔点
 pub fn get_ttl_by_unit(unit: Duration) -> Duration {

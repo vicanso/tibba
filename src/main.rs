@@ -2,7 +2,6 @@ use axum::{error_handling::HandleErrorLayer, middleware::from_fn_with_state, Rou
 use base64_serde::base64_serde_type;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
-use std::time::Duration;
 use std::{env, str::FromStr};
 use tokio::signal;
 use tower::ServiceBuilder;
@@ -11,7 +10,7 @@ use tracing::{error, info};
 use tracing_subscriber::FmtSubscriber;
 
 use controller::new_router;
-use middleware::{access_log, entry};
+use middleware::{access_log, entry, processing_limit};
 use state::get_app_state;
 use util::is_development;
 
@@ -74,7 +73,7 @@ async fn test() {
         pub output_type: String,
         pub ratio: i64,
     }
-    let result: FamilyResult = request::get_charts_instance()
+    let result: FamilyResult = request::must_get_charts_instance()
         .get("/font-families")
         .await
         .unwrap();
@@ -98,8 +97,8 @@ async fn test() {
 
 // 检查依赖服务失败直接panic
 async fn check_dependencies() -> Result<(), String> {
-    request::get_charts_instance();
-    cache::redis_ping().await.map_err(|err| err.to_string())?;
+    request::must_get_charts_instance();
+    cache::must_get_redis_pool();
     Ok(())
 }
 
@@ -110,6 +109,7 @@ async fn run() {
         error!(err, "check dependencies fail");
         std::process::exit(1);
     }
+    let basic_config = config::must_new_basic_config();
     let app_state = get_app_state();
 
     // build our application with a route
@@ -118,13 +118,12 @@ async fn run() {
         .layer(
             ServiceBuilder::new()
                 .layer(HandleErrorLayer::new(error::handle_error))
-                .timeout(Duration::from_secs(30)),
+                .timeout(basic_config.timeout),
         )
         // 后面的layer先执行
+        .layer(from_fn_with_state(app_state, processing_limit))
         .layer(from_fn_with_state(app_state, access_log))
         .layer(from_fn_with_state(app_state, entry));
-
-    let basic_config = config::must_new_basic_config();
 
     let addr = basic_config.listen.parse().unwrap();
     info!("listening on http://{addr}/");

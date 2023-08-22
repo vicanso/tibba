@@ -33,7 +33,7 @@ impl SessionInfo {
         }
         false
     }
-    pub fn logged_in(&self) -> bool {
+    pub fn is_login(&self) -> bool {
         !self.account.is_empty()
     }
 }
@@ -62,7 +62,7 @@ pub fn get_session_info(session: ReadableSession) -> SessionInfo {
 
 pub fn add_session_info(mut session: WritableSession, mut info: SessionInfo) -> HttpResult<()> {
     // 已登录的则每次设置创建时间
-    if info.logged_in() {
+    if info.is_login() {
         info.created_at = Utc::now().timestamp();
     }
     if let Err(err) = session.insert(SESSION_KEY, info) {
@@ -96,7 +96,7 @@ pub async fn should_be_login<B>(
     next: Next<B>,
 ) -> HttpResult<Response> {
     let info = get_session_info(session);
-    if info.account.is_empty() {
+    if !info.is_login() {
         return Err(HttpError {
             message: "Should be login first".to_string(),
             status: StatusCode::UNAUTHORIZED.as_u16(),
