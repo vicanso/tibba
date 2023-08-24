@@ -1,7 +1,6 @@
+use crate::error::HttpError;
 use lz4_flex::block::{compress_prepend_size, decompress_size_prepended, DecompressError};
 use snafu::{ResultExt, Snafu};
-
-use crate::error::HttpError;
 
 #[derive(Snafu, Debug)]
 pub enum Error {

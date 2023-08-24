@@ -1,13 +1,12 @@
+use crate::config::must_new_redis_config;
+use crate::error::HttpError;
+use crate::util::{lz4_decode, lz4_encode, zstd_decode, zstd_encode, CompressError};
 use deadpool_redis::redis::{cmd, pipe};
 use deadpool_redis::{Connection, Manager, Pool, PoolConfig, Runtime};
 use once_cell::sync::OnceCell;
 use serde::{de::DeserializeOwned, Serialize};
 use snafu::{ResultExt, Snafu};
 use std::time::Duration;
-
-use crate::config::must_new_redis_config;
-use crate::error::HttpError;
-use crate::util::{lz4_decode, lz4_encode, zstd_decode, zstd_encode, CompressError};
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -215,21 +214,23 @@ impl RedisCache {
         Ok(())
     }
     /// 从redis中获取数据并转换为struct，如果缓存中无数据则使用struct的默认值返回
-    pub async fn get_struct<'a, T>(&self, key: &str) -> Result<T>
+    pub async fn get_struct<'a, T>(&self, key: &str) -> Result<Option<T>>
     where
-        T: Default + DeserializeOwned,
+        T: DeserializeOwned,
     {
         let k = self.get_key(key);
         let buf = self.get(&k).await?;
 
         if buf.is_empty() {
-            return Ok(T::default());
+            return Ok(None);
         }
 
         let deserializer = &mut serde_json::Deserializer::from_slice(&buf);
-        T::deserialize(deserializer).context(JsonSnafu {
+        let result = T::deserialize(deserializer).context(JsonSnafu {
             category: "get_struct",
-        })
+        })?;
+
+        Ok(Some(result))
     }
     /// 返回该key在redis中的有效期
     pub async fn ttl(&self, key: &str) -> Result<i32> {

@@ -2,6 +2,7 @@ mod compress;
 mod context;
 mod duration;
 mod http;
+mod number;
 mod string;
 
 use crate::config::get_env;
@@ -16,7 +17,8 @@ pub use context::{
     generate_device_id_cookie, get_account_from_context, get_device_id_from_cookie,
     set_account_to_context, Account,
 };
-pub use duration::duration_to_string;
+pub use duration::{duration_to_string, now};
+pub use number::float_to_fixed;
 pub use string::{json_get, random_string};
 
 /// 是否开发环境

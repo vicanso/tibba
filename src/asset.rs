@@ -1,9 +1,9 @@
 use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
 use hex::encode;
-/// 项目相关静态资源数据
 use rust_embed::{EmbeddedFile, RustEmbed};
 
+/// 项目相关静态资源数据
 #[derive(RustEmbed)]
 #[folder = "assets/"]
 struct Assets;

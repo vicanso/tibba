@@ -1,8 +1,7 @@
 // copy from async-redis-session
+use super::get_redis_conn;
 use async_session::{async_trait, serde_json, Result, Session, SessionStore};
 use redis::AsyncCommands;
-
-use super::get_redis_conn;
 
 /// # RedisSessionStore
 #[derive(Clone, Debug)]

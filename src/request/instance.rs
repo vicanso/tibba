@@ -1,3 +1,5 @@
+use crate::error::HttpError;
+use crate::util::json_get;
 use async_trait::async_trait;
 use axum::http::uri::Uri;
 use axum::http::Method;
@@ -9,9 +11,6 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use snafu::{ResultExt, Snafu};
 use std::time::Duration;
-
-use crate::error::HttpError;
-use crate::util::json_get;
 
 #[derive(Debug, Snafu)]
 pub enum Error {

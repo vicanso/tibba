@@ -1,9 +1,8 @@
+use crate::error::HttpResult;
 use axum::http::header;
 use axum::response::{IntoResponse, Response};
 use axum::{Json, Router};
 use serde::Serialize;
-
-use crate::error::HttpResult;
 
 mod common;
 mod user;

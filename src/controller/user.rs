@@ -1,3 +1,10 @@
+use crate::cache::get_default_redis_cache;
+use crate::controller::JsonResult;
+use crate::error::HttpResult;
+use crate::middleware::{
+    add_session_info, get_session_info, load_session, new_session_layer, wait1s, SessionInfo,
+};
+use crate::util::{generate_device_id_cookie, get_device_id_from_cookie, now};
 use axum::middleware::from_fn;
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -6,14 +13,6 @@ use axum_sessions::extractors::{ReadableSession, WritableSession};
 use chrono::Local;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
-
-use crate::cache::get_default_redis_cache;
-use crate::controller::JsonResult;
-use crate::error::HttpResult;
-use crate::middleware::{
-    add_session_info, get_session_info, load_session, new_session_layer, wait1s, SessionInfo,
-};
-use crate::util::{generate_device_id_cookie, get_device_id_from_cookie};
 
 #[derive(Debug, Clone, Serialize, Default)]
 struct UserMeResp {
@@ -50,7 +49,7 @@ async fn me(
     let me = UserMeResp {
         name: info.account,
         should_refresh,
-        time: Local::now().to_rfc3339(),
+        time: now(),
     };
     // 如果未设置device，则设置
     if get_device_id_from_cookie(&jar).is_empty() {

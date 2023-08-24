@@ -1,8 +1,7 @@
+use crate::config::must_new_basic_config;
 use chrono::{DateTime, Utc};
 use once_cell::sync::OnceCell;
 use std::sync::atomic::{AtomicI32, AtomicI8, Ordering};
-
-use crate::config::must_new_basic_config;
 
 #[derive(Debug)]
 pub struct AppState {

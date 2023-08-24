@@ -1,5 +1,6 @@
 use axum::{error_handling::HandleErrorLayer, middleware::from_fn_with_state, Router};
 use base64_serde::base64_serde_type;
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::{env, str::FromStr};
@@ -48,6 +49,19 @@ fn init_logger() {
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 }
 
+#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct DataTest {
+    pub name: String,
+}
+
+static USER_CACHE: Lazy<cache::TwoLevelStore<DataTest>> = Lazy::new(|| {
+    cache::TwoLevelStore::new(
+        std::num::NonZeroUsize::new(1024).unwrap(),
+        std::time::Duration::from_secs(60),
+        "test:".to_string(),
+    )
+});
+
 async fn test() {
     #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
     pub struct FamilyResult {
@@ -77,6 +91,19 @@ async fn test() {
         .get("/font-families")
         .await
         .unwrap();
+    println!("{result:?}");
+    let result = USER_CACHE.get("abc").await.unwrap();
+    println!("{result:?}");
+    USER_CACHE
+        .set(
+            "abc",
+            DataTest {
+                name: "Helloworld".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+    let result = USER_CACHE.get("abc").await.unwrap();
     println!("{result:?}");
 
     // let result: ImageOptimResult = request::get_image_optim_instance()
@@ -115,15 +142,19 @@ async fn run() {
     // build our application with a route
     let app = Router::new()
         .merge(new_router())
+        // 后面的layer先执行
         .layer(
+            // service build的则是按顺序
             ServiceBuilder::new()
                 .layer(HandleErrorLayer::new(error::handle_error))
-                .timeout(basic_config.timeout),
-        )
-        // 后面的layer先执行
-        .layer(from_fn_with_state(app_state, processing_limit))
-        .layer(from_fn_with_state(app_state, access_log))
-        .layer(from_fn_with_state(app_state, entry));
+                .timeout(basic_config.timeout)
+                // 入口初始化(task local等)
+                .layer(from_fn_with_state(app_state, entry))
+                // 记录访问日志
+                .layer(from_fn_with_state(app_state, access_log))
+                // 正在处理请求的限制
+                .layer(from_fn_with_state(app_state, processing_limit)),
+        );
 
     let addr = basic_config.listen.parse().unwrap();
     info!("listening on http://{addr}/");
@@ -166,6 +197,7 @@ fn main() {
     std::panic::set_hook(Box::new(|e| {
         // TODO 发送告警通知
         error!(category = "panic", message = e.to_string(),);
+        std::process::exit(1);
     }));
     init_logger();
     run();
