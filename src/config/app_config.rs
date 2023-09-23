@@ -48,48 +48,54 @@ impl APPConfig {
         }
         format!("{}.{key}", self.prefix)
     }
-    /// 从配置中获取对应的值(字符串)
-    fn get_value(&self, key: &str) -> String {
-        let k = self.get_key(key);
-        let arr: Vec<&str> = k.split('.').collect();
-        if arr.len() != 2 {
-            return "".to_string();
-        }
-        if let Some(value) = self.settings.get(arr[0]) {
-            if let Some(v) = value.get(arr[1]) {
-                return v.clone();
-            }
-        }
-        "".to_string()
-    }
     /// 从配置中获取对应的值(字符串)，
     /// 如果为空则使用默认值返回
-    fn get_value_default(&self, key: &str, default_value: &str) -> String {
-        let value = self.get_value(key);
-        if !value.is_empty() {
-            return value;
+    fn get(&self, key: &str, default_value: Option<String>) -> String {
+        let mut s = "".to_string();
+        let k = self.get_key(key);
+        let arr: Vec<&str> = k.split('.').collect();
+        if arr.len() == 2 {
+            if let Some(value) = self.settings.get(arr[0]) {
+                if let Some(v) = value.get(arr[1]) {
+                    s = v.clone();
+                }
+            }
         }
-        default_value.to_string()
+        if !s.is_empty() {
+            return s;
+        }
+        default_value.unwrap_or(s)
     }
     /// 从配置中获取对应的值(i32)
-    fn get_int_value(&self, key: &str) -> i32 {
-        convert_string_to_i32(self.get_value(key))
-    }
-    /// 从配置中获取对应的值(i32)，
-    /// 如果为0则使用默认值返回
-    fn get_int_value_default(&self, key: &str, default_value: i32) -> i32 {
-        let value = self.get_int_value(key);
-        if value != 0 {
-            return value;
+    fn get_int(&self, key: &str, default_value: Option<i32>) -> i32 {
+        let value = self.get(key, None);
+        if !value.is_empty() {
+            return convert_string_to_i32(value);
         }
-        default_value
+        default_value.unwrap_or_default()
+    }
+    /// 从配置中获取duration
+    fn get_duration(
+        &self,
+        key: &str,
+        default_value: Option<Duration>,
+    ) -> Result<Duration, humantime::DurationError> {
+        let value = self.get(key, None);
+        if !value.is_empty() {
+            return humantime::parse_duration(&value);
+        }
+        Ok(default_value.unwrap_or_default())
     }
     /// 从配置中获取对应的值(bool)
-    fn get_bool_value(&self, key: &str) -> bool {
-        convert_string_to_bool(self.get_value(key))
+    fn get_bool(&self, key: &str, default_value: Option<bool>) -> bool {
+        let value = self.get(key, None);
+        if !value.is_empty() {
+            return convert_string_to_bool(value);
+        }
+        default_value.unwrap_or_default()
     }
     /// 优先从env中获取配置的值，如果env中未配置则调用get_value获取
-    fn get_value_from_env_first(&self, key: &str) -> String {
+    fn get_from_env_first(&self, key: &str, default_value: Option<String>) -> String {
         let k = self.get_key(key);
         let mut env_key = k.replace('.', "_").to_uppercase();
         if !self.env_prefix.is_empty() {
@@ -98,34 +104,35 @@ impl APPConfig {
         if let Ok(value) = env::var(env_key) {
             return value;
         }
-        self.get_value(key)
-    }
-    /// 使用get_value_from_env_first获取配置的值，
-    /// 如果为空则使用默认值返回
-    fn get_value_from_env_first_default(&self, key: &str, default_value: &str) -> String {
-        let value = self.get_value_from_env_first(key);
-        if !value.is_empty() {
-            return value;
-        }
-        default_value.to_string()
+        self.get(key, default_value)
     }
     /// 使用get_value_from_env_first获取配置的值，
     /// 并转换为 i32(转换失败则返回0)
-    fn get_int_value_from_env_first(&self, key: &str) -> i32 {
-        convert_string_to_i32(self.get_value_from_env_first(key))
-    }
-    /// 使用get_int_value_from_env_first获取配置的值，如果为0则返回默认值
-    fn get_int_value_from_env_first_default(&self, key: &str, default_value: i32) -> i32 {
-        let value = self.get_int_value_from_env_first(key);
-        if value != 0 {
-            return value;
+    fn get_int_from_env_first(&self, key: &str, default_value: Option<i32>) -> i32 {
+        let value = self.get_from_env_first(key, None);
+        if !value.is_empty() {
+            return convert_string_to_i32(value);
         }
-        default_value
+        default_value.unwrap_or_default()
     }
     /// 使用get_value_from_env_first获取配置的值，
     /// 并转换为bool(转换失败则返回false)
-    fn get_bool_value_from_env_first(&self, key: &str) -> bool {
-        convert_string_to_bool(self.get_value_from_env_first(key))
+    fn get_bool_from_env_first(&self, key: &str, default_value: Option<bool>) -> bool {
+        let value = self.get_from_env_first(key, None);
+        if !value.is_empty() {
+            return convert_string_to_bool(value);
+        }
+        default_value.unwrap_or_default()
+    }
+    /// 从配置中获取duration
+    /// 如果获取失败则使用默认值返回
+    fn get_duration_from_env_first(&self, key: &str, default_value: Option<Duration>) -> Duration {
+        let value = self.get_from_env_first(key, None);
+        let v = default_value.unwrap_or_default();
+        if !value.is_empty() {
+            return humantime::parse_duration(&value).unwrap_or(v);
+        }
+        v
     }
 }
 
@@ -172,12 +179,11 @@ pub struct BasicConfig {
 
 pub fn must_new_basic_config() -> BasicConfig {
     let config = must_new_config().set_prefix("basic");
+    let timeout = config.get_duration_from_env_first("timeout", Some(Duration::from_secs(60)));
     let basic_config = BasicConfig {
-        listen: config.get_value_from_env_first("listen"),
-        processing_limit: config.get_int_value_default("processing_limit", 5000),
-        timeout: Duration::from_secs(
-            config.get_int_value_from_env_first_default("timeout", 60) as u64
-        ),
+        listen: config.get_from_env_first("listen", None),
+        processing_limit: config.get_int_from_env_first("processing_limit", Some(5000)),
+        timeout,
     };
     basic_config.validate().unwrap();
     basic_config
@@ -201,7 +207,7 @@ pub struct RedisConfig {
 // 获取redis的配置
 pub fn must_new_redis_config() -> RedisConfig {
     let config = must_new_config().set_prefix("redis");
-    let uri = config.get_value_from_env_first("uri");
+    let uri = config.get_from_env_first("uri", None);
     let start = if let Some(index) = uri.find('@') {
         index + 1
     } else {
@@ -258,24 +264,17 @@ pub fn must_new_redis_config() -> RedisConfig {
 pub struct SessionConfig {
     // session有效期
     #[validate(range(min = 60, max = 2592000))]
-    pub ttl: i32,
-    // cookie名称
-    #[validate(length(min = 1))]
-    pub cookie: String,
-    // session存储的key前缀
-    #[validate(length(min = 1))]
-    pub prefix: String,
+    pub ttl: usize,
     // session的secret，长度最少64
     #[validate(length(min = 64))]
     pub secret: String,
 }
 pub fn must_new_session_config() -> SessionConfig {
     let config = must_new_config().set_prefix("session");
+    let ttl = config.get_duration_from_env_first("ttl", Some(Duration::from_secs(7 * 24 * 3600)));
     let session_config = SessionConfig {
-        ttl: config.get_int_value_default("ttl", 7 * 24 * 3600),
-        cookie: config.get_value_from_env_first_default("cookie", "tibba"),
-        prefix: config.get_value_from_env_first_default("prefix", "ss:"),
-        secret: config.get_value_from_env_first("secret"),
+        ttl: ttl.as_secs() as usize,
+        secret: config.get_from_env_first("secret", None),
     };
     session_config.validate().unwrap();
     session_config

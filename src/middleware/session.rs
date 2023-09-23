@@ -1,85 +1,139 @@
-use crate::cache::RedisSessionStore;
 use crate::config::{must_new_session_config, SessionConfig};
 use crate::error::{HttpError, HttpResult};
 use crate::task_local::*;
-use crate::util::{set_account_to_context, Account};
+use crate::util::{from_timestamp, set_account_to_context, Account};
+use axum::async_trait;
+use axum::extract::FromRequestParts;
+use axum::headers::authorization::Bearer;
+use axum::headers::{Authorization, Header};
+use axum::http::header::{HeaderMap, HeaderValue};
+use axum::http::request::Parts;
 use axum::http::Request;
 use axum::http::StatusCode;
 use axum::middleware::Next;
 use axum::response::Response;
-use axum_sessions::extractors::{ReadableSession, WritableSession};
-use axum_sessions::SessionLayer;
-use chrono::Utc;
+use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Validation};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
-
-const SESSION_KEY: &str = "__info";
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct SessionInfo {
-    pub account: String,
-    // 创建时间（时间戳)
-    pub created_at: i64,
-}
-
-impl SessionInfo {
-    // 是否应该刷新
-    pub fn should_refresh(&self) -> bool {
-        // 如果创建已超过一天
-        if Utc::now().timestamp() - self.created_at > 24 * 3600 {
-            return true;
-        }
-        false
-    }
-    pub fn is_login(&self) -> bool {
-        !self.account.is_empty()
-    }
-}
 
 static SESSION_CONFIG: Lazy<SessionConfig> = Lazy::new(must_new_session_config);
 
-pub fn new_session_layer() -> SessionLayer<RedisSessionStore> {
-    let store = RedisSessionStore::new(Some(SESSION_CONFIG.prefix.clone()));
-    let ttl = SESSION_CONFIG.ttl as u64;
-    SessionLayer::new(store, SESSION_CONFIG.secret.as_bytes())
-        .with_secure(false)
-        .with_http_only(true)
-        .with_cookie_name(SESSION_CONFIG.cookie.clone())
-        .with_session_ttl(Some(Duration::from_secs(ttl)))
-        // 仅在变化时写入
-        .with_persistence_policy(axum_sessions::PersistencePolicy::ChangedOnly)
+static KEYS: Lazy<Keys> = Lazy::new(|| Keys::new(SESSION_CONFIG.secret.as_bytes()));
+
+static JWT_ERROR_CATEGORY: &str = "jwt";
+
+struct Keys {
+    encoding: EncodingKey,
+    decoding: DecodingKey,
 }
 
-pub fn get_session_info(session: ReadableSession) -> SessionInfo {
-    let result: Option<SessionInfo> = session.get(SESSION_KEY);
-    if let Some(info) = result {
-        return info;
+impl Keys {
+    fn new(secret: &[u8]) -> Self {
+        Self {
+            encoding: EncodingKey::from_secret(secret),
+            decoding: DecodingKey::from_secret(secret),
+        }
     }
-    SessionInfo::default()
 }
 
-pub fn add_session_info(mut session: WritableSession, mut info: SessionInfo) -> HttpResult<()> {
-    // 已登录的则每次设置创建时间
-    if info.is_login() {
-        info.created_at = Utc::now().timestamp();
-    }
-    if let Err(err) = session.insert(SESSION_KEY, info) {
-        return Err(HttpError::new(&err.to_string()));
-    }
-    Ok(())
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Claims {
+    // Required (validate_exp defaults to true in validation). Expiration time (as UTC timestamp)
+    exp: usize,
+    // Optional. Issued at (as UTC timestamp)
+    iat: usize,
+    account: String,
 }
 
-pub async fn load_session<B>(
-    session: ReadableSession,
-    req: Request<B>,
-    next: Next<B>,
-) -> HttpResult<Response> {
-    let info = get_session_info(session);
+impl Claims {
+    pub fn new(account: &str) -> Self {
+        let iat = now();
+        Claims {
+            exp: iat + SESSION_CONFIG.ttl,
+            iat,
+            account: account.to_string(),
+        }
+    }
+    pub fn get_account(&self) -> String {
+        self.account.clone()
+    }
+    pub fn get_expired_at(&self) -> String {
+        from_timestamp(self.exp as i64, 0)
+    }
+    pub fn get_issued_at(&self) -> String {
+        from_timestamp(self.iat as i64, 0)
+    }
+    pub fn refresh(&mut self) {
+        // TODO 如果已创建太久的则不刷新
+        self.exp = now() + SESSION_CONFIG.ttl;
+    }
+}
 
-    let account = info.account.clone();
+#[derive(Debug, Serialize)]
+pub struct AuthResp {
+    access_token: String,
+    token_type: String,
+}
+
+impl TryFrom<&Claims> for AuthResp {
+    type Error = HttpError;
+    fn try_from(value: &Claims) -> Result<Self, Self::Error> {
+        let access_token = encode(&jsonwebtoken::Header::default(), value, &KEYS.encoding)
+            .map_err(|_| {
+                HttpError::new_with_category("Token creation error", JWT_ERROR_CATEGORY)
+            })?;
+        Ok(Self {
+            access_token,
+            token_type: "Bearer".to_string(),
+        })
+    }
+}
+fn now() -> usize {
+    chrono::Utc::now().timestamp() as usize
+}
+
+pub fn get_claims_from_headers(headers: &HeaderMap<HeaderValue>) -> HttpResult<Claims> {
+    let mut values = headers.get_all(Authorization::<Bearer>::name()).iter();
+    let is_missing = values.size_hint() == (0, Some(0));
+    if is_missing {
+        return Err(HttpError::new_with_category(
+            "Missing credentials",
+            JWT_ERROR_CATEGORY,
+        ));
+    }
+
+    let bearer = Authorization::<Bearer>::decode(&mut values)
+        .map_err(|err| HttpError::new_with_category(&err.to_string(), JWT_ERROR_CATEGORY))?;
+    let result = decode::<Claims>(bearer.token(), &KEYS.decoding, &Validation::default())
+        .map_err(|_| HttpError::new_with_category("Invalid token", JWT_ERROR_CATEGORY))?;
+    Ok(result.claims)
+}
+
+#[async_trait]
+impl<S> FromRequestParts<S> for Claims
+where
+    S: Send + Sync,
+{
+    type Rejection = HttpError;
+
+    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+        get_claims_from_headers(&parts.headers)
+    }
+}
+
+pub async fn load_session<B>(req: Request<B>, next: Next<B>) -> HttpResult<Response> {
+    let claims = get_claims_from_headers(req.headers())?;
+    if claims.account.is_empty() {
+        return Err(HttpError {
+            message: "Should be login first".to_string(),
+            status: StatusCode::UNAUTHORIZED.as_u16(),
+            ..Default::default()
+        });
+    }
+    let account = claims.get_account();
+
     ACCOUNT
-        .scope(info.account, async {
+        .scope(account.clone(), async {
             let mut resp = next.run(req).await;
             // 由于在session之前的中间件无法获取account的值
             // 因此又将account设置至resp extension中
@@ -87,21 +141,4 @@ pub async fn load_session<B>(
             Ok(resp)
         })
         .await
-}
-
-pub async fn should_be_login<B>(
-    session: ReadableSession,
-    req: Request<B>,
-    next: Next<B>,
-) -> HttpResult<Response> {
-    let info = get_session_info(session);
-    if !info.is_login() {
-        return Err(HttpError {
-            message: "Should be login first".to_string(),
-            status: StatusCode::UNAUTHORIZED.as_u16(),
-            ..Default::default()
-        });
-    }
-    let resp = next.run(req).await;
-    Ok(resp)
 }

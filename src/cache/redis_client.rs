@@ -45,7 +45,7 @@ impl From<Error> for HttpError {
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
-pub fn must_get_redis_pool() -> &'static Pool {
+fn must_get_redis_pool() -> &'static Pool {
     static REDIS_POOL: OnceCell<Pool> = OnceCell::new();
     REDIS_POOL
         .get_or_try_init(|| {
@@ -65,7 +65,7 @@ pub fn must_get_redis_pool() -> &'static Pool {
         .unwrap()
 }
 
-pub async fn get_redis_conn() -> Result<Connection> {
+async fn get_redis_conn() -> Result<Connection> {
     must_get_redis_pool().get().await.context(PoolSnafu {})
 }
 

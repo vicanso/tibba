@@ -1,5 +1,6 @@
 mod compress;
 mod context;
+mod datetime;
 mod duration;
 mod http;
 mod number;
@@ -17,7 +18,8 @@ pub use context::{
     generate_device_id_cookie, get_account_from_context, get_device_id_from_cookie,
     set_account_to_context, Account,
 };
-pub use duration::{duration_to_string, now};
+pub use datetime::{from_timestamp, now};
+pub use duration::duration_to_string;
 pub use number::float_to_fixed;
 pub use string::{json_get, random_string};
 

@@ -88,7 +88,7 @@ async fn test() {
         pub ratio: i64,
     }
     let result: FamilyResult = request::must_get_charts_instance()
-        .get("/font-families")
+        .get("/basic-info")
         .await
         .unwrap();
     println!("{result:?}");
@@ -125,7 +125,7 @@ async fn test() {
 // 检查依赖服务失败直接panic
 async fn check_dependencies() -> Result<(), String> {
     request::must_get_charts_instance();
-    cache::must_get_redis_pool();
+    cache::redis_ping().await.map_err(|err| err.to_string())?;
     Ok(())
 }
 
