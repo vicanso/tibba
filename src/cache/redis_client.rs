@@ -66,7 +66,7 @@ fn must_get_redis_pool() -> &'static Pool {
 }
 
 async fn get_redis_conn() -> Result<Connection> {
-    must_get_redis_pool().get().await.context(PoolSnafu {})
+    must_get_redis_pool().get().await.context(PoolSnafu)
 }
 
 pub async fn redis_ping() -> Result<String> {
@@ -213,7 +213,7 @@ impl RedisCache {
         self.set(&k, &value, ttl).await?;
         Ok(())
     }
-    /// 从redis中获取数据并转换为struct，如果缓存中无数据则使用struct的默认值返回
+    /// 从redis中获取数据并转换为struct，如果缓存中无数据则返回None
     pub async fn get_struct<'a, T>(&self, key: &str) -> Result<Option<T>>
     where
         T: DeserializeOwned,
@@ -275,23 +275,24 @@ impl RedisCache {
         Ok(())
     }
     /// 从redis获取数据后使用lz4解压，并转换为对应的struct
-    pub async fn get_struct_lz4<'a, T>(&self, key: &str) -> Result<T>
+    pub async fn get_struct_lz4<'a, T>(&self, key: &str) -> Result<Option<T>>
     where
-        T: Default + DeserializeOwned,
+        T: DeserializeOwned,
     {
         let k = self.get_key(key);
         let value = self.get(&k).await?;
 
         if value.is_empty() {
-            return Ok(T::default());
+            return Ok(None);
         }
 
         let buf = lz4_decode(value.as_slice()).context(CompressSnafu)?;
 
         let deserializer = &mut serde_json::Deserializer::from_slice(&buf);
-        T::deserialize(deserializer).context(JsonSnafu {
+        let result = T::deserialize(deserializer).context(JsonSnafu {
             category: "get_struct_lz4",
-        })
+        })?;
+        Ok(Some(result))
     }
     /// 将struct转换为json后使用zstd压缩，
     /// 再将压缩后的数据设置至redis中，若未指定ttl，
@@ -314,22 +315,23 @@ impl RedisCache {
         Ok(())
     }
     /// 从redis获取数据后使用zstd解压，并转换为对应的struct
-    pub async fn get_struct_zstd<T>(&self, key: &str) -> Result<T>
+    pub async fn get_struct_zstd<T>(&self, key: &str) -> Result<Option<T>>
     where
-        T: Default + DeserializeOwned,
+        T: DeserializeOwned,
     {
         let k = self.get_key(key);
         let value = self.get_bytes(&k).await?;
 
         if value.is_empty() {
-            return Ok(T::default());
+            return Ok(None);
         }
 
         let buf = zstd_decode(value.as_slice()).context(CompressSnafu)?;
 
         let deserializer = &mut serde_json::Deserializer::from_slice(&buf);
-        T::deserialize(deserializer).context(JsonSnafu {
+        let result = T::deserialize(deserializer).context(JsonSnafu {
             category: "get_struct_zstd",
-        })
+        })?;
+        Ok(Some(result))
     }
 }

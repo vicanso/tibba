@@ -27,14 +27,14 @@ nanoid = "0.4.0"
 once_cell = "1.18.0"
 os_info = "3.7.0"
 redis = { version = "0.23.3", features = ["tokio-comp", "aio"] }
-reqwest = { version = "0.11.20", default-features = false, features = ["rustls-tls", "json"] }
+reqwest = { version = "0.11.22", default-features = false, features = ["rustls-tls", "json"] }
 rust-embed = { version = "6.8.1", features = ["mime-guess"] }
-serde = { version = "1.0.188", features = ["derive"] }
+serde = { version = "1.0.189", features = ["derive"] }
 serde_json = "1.0.107"
 snafu = "0.7.5"
 substring = "1.4.5"
-time = "0.3.25"
-tokio = { version = "1.32.0", features = ["macros", "rt", "rt-multi-thread", "net", "signal"] }
+time = "0.3.29"
+tokio = { version = "1.33.0", features = ["macros", "rt", "rt-multi-thread", "net", "signal"] }
 tower = { version = "0.4.13", features = ["timeout"] }
 tracing = "0.1.37"
 tracing-subscriber = { version = "0.3.17", features = ["local-time"] }

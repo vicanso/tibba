@@ -26,14 +26,13 @@ pub fn new_router() -> Router {
         .route("/v1/login", post(login))
         // 登录设置为最少等待x秒，避免快速尝试
         .layer(from_fn(wait1s));
-    let me_router = Router::new()
-        .route("/v1/me", get(me))
-        .route("/v1/refresh", get(refresh));
     let r = Router::new()
+        .route("/v1/me", get(me))
+        .route("/v1/refresh", get(refresh))
         .route("/v1/login-times", get(get_login_times))
         .layer(from_fn(load_session));
 
-    Router::new().nest("/users", r.merge(login_router).merge(me_router))
+    Router::new().nest("/users", r.merge(login_router))
 }
 
 async fn refresh(mut claims: Claims) -> JsonResult<AuthResp> {
