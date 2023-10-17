@@ -32,11 +32,9 @@ pub fn get_device_id_from_cookie(jar: &CookieJar) -> String {
 }
 
 pub fn generate_device_id_cookie() -> Cookie<'static> {
-    let mut now = OffsetDateTime::now_utc();
-    now += Duration::weeks(52);
     Cookie::build(DEVICE_ID_NAME, random_string(10))
         .http_only(true)
-        .expires(now)
+        .expires(OffsetDateTime::now_utc() + Duration::weeks(52))
         .path("/")
         .finish()
 }

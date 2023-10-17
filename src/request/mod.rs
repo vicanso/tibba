@@ -4,29 +4,14 @@ use std::time::Duration;
 mod instance;
 use instance::CommonInterceptor;
 
-pub fn must_get_charts_instance() -> &'static Instance<CommonInterceptor> {
+pub fn must_get_httpbin_instance() -> &'static Instance<CommonInterceptor> {
     static CHARTS: OnceCell<Instance<CommonInterceptor>> = OnceCell::new();
     CHARTS
         .get_or_try_init(|| {
-            let service = "charts";
+            let service = "httpbin";
             Instance::new(
                 service,
-                "https://charts.npmtrend.com/api",
-                Duration::from_secs(60),
-                CommonInterceptor::new(service),
-            )
-        })
-        .unwrap()
-}
-
-pub fn must_get_image_optim_instance() -> &'static Instance<CommonInterceptor> {
-    static OPTIM: OnceCell<Instance<CommonInterceptor>> = OnceCell::new();
-    OPTIM
-        .get_or_try_init(|| {
-            let service = "image-optim";
-            Instance::new(
-                service,
-                "http://rasp:6011",
+                "https://httpbin.org",
                 Duration::from_secs(60),
                 CommonInterceptor::new(service),
             )

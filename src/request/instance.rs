@@ -1,4 +1,5 @@
 use crate::error::HttpError;
+use crate::httptrace::{get_http_trace_info, new_default_http_trace, HTTP_TRACE};
 use crate::util::json_get;
 use async_trait::async_trait;
 use axum::http::uri::Uri;
@@ -164,8 +165,7 @@ pub struct HttpStats {
     pub remote_addr: String,
     pub local_addr: String,
     pub content_length: u64,
-    pub serde_time: u32,
-    pub process_time: u32,
+    pub serde_struct: u32,
     pub time: u32,
 }
 
@@ -191,6 +191,7 @@ impl<H: HttpInterceptor> Instance<H> {
         let c = Client::builder()
             .timeout(timeout)
             .pool_max_idle_per_host(2)
+            .tls_info(true)
             .connect_timeout(Duration::from_secs(10))
             .build()
             .context(BuildSnafu { service })?;
@@ -232,12 +233,11 @@ impl<H: HttpInterceptor> Instance<H> {
         }
         req = self.interceptor.request(req).await?;
         // TODO dns tcp tls process
-        let process_done = new_get_duration();
         let res = req.send().await.context(RequestSnafu {
             service: &self.service,
             path,
         })?;
-        stats.process_time = process_done();
+
         if let Some(value) = res.extensions().get::<HttpInfo>() {
             stats.remote_addr = value.remote_addr().to_string();
             stats.local_addr = value.local_addr().to_string();
@@ -259,7 +259,7 @@ impl<H: HttpInterceptor> Instance<H> {
         let data = serde_json::from_slice(&full).context(SerdeSnafu {
             service: &self.service,
         })?;
-        stats.serde_time = serde_done();
+        stats.serde_struct = serde_done();
         Ok(data)
     }
     async fn request<Q: Serialize + ?Sized, P: Serialize + ?Sized, T: DeserializeOwned>(

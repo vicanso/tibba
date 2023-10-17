@@ -1,7 +1,7 @@
 use crate::config::{must_new_session_config, SessionConfig};
 use crate::error::{HttpError, HttpResult};
 use crate::task_local::*;
-use crate::util::{from_timestamp, set_account_to_context, Account, random_string};
+use crate::util::{from_timestamp, random_string, set_account_to_context, Account};
 use axum::async_trait;
 use axum::extract::FromRequestParts;
 use axum::headers::authorization::Bearer;

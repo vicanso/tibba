@@ -1,5 +1,4 @@
 use axum::{error_handling::HandleErrorLayer, middleware::from_fn_with_state, Router};
-use base64_serde::base64_serde_type;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
@@ -8,6 +7,8 @@ use tokio::signal;
 use tower::ServiceBuilder;
 use tracing::Level;
 use tracing::{error, info};
+use tracing_subscriber::prelude::__tracing_subscriber_SubscriberExt;
+use tracing_subscriber::prelude::*;
 use tracing_subscriber::FmtSubscriber;
 
 use controller::new_router;
@@ -20,6 +21,7 @@ mod cache;
 mod config;
 mod controller;
 mod error;
+mod httptrace;
 mod middleware;
 mod request;
 mod state;
@@ -41,6 +43,8 @@ fn init_logger() {
         )
     });
 
+    // TODO HTTPTraceLayer 需要通过trace的记录，有无可能仅针对此layer处理
+    // .with(httptrace::HTTPTraceLayer)
     let subscriber = FmtSubscriber::builder()
         .with_max_level(level)
         .with_timer(timer)
@@ -64,31 +68,11 @@ static USER_CACHE: Lazy<cache::TwoLevelStore<DataTest>> = Lazy::new(|| {
 
 async fn test() {
     #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
-    pub struct FamilyResult {
-        pub families: Vec<String>,
+    pub struct IpResult {
+        pub origin: String,
     }
-    #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    pub struct ImageOptimParams {
-        pub data: String,
-        pub data_type: String,
-        pub output_type: String,
-        pub quality: i64,
-        pub speed: i64,
-    }
-
-    base64_serde_type!(Base64Standard, base64::engine::general_purpose::STANDARD);
-    #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    pub struct ImageOptimResult {
-        pub diff: f64,
-        #[serde(with = "Base64Standard")]
-        pub data: Vec<u8>,
-        pub output_type: String,
-        pub ratio: i64,
-    }
-    let result: FamilyResult = request::must_get_charts_instance()
-        .get("/basic-info")
+    let result: IpResult = request::must_get_httpbin_instance()
+        .get("/ip")
         .await
         .unwrap();
     println!("{result:?}");
@@ -105,26 +89,11 @@ async fn test() {
         .unwrap();
     let result = USER_CACHE.get("abc").await.unwrap();
     println!("{result:?}");
-
-    // let result: ImageOptimResult = request::get_image_optim_instance()
-    //     .post(
-    //         "/optim-images",
-    //         &ImageOptimParams {
-    //             data: "https://img2.baidu.com/it/u=3012806272,1276873993&fm=253&fmt=auto&app=138&f=JPEG".to_string(),
-    //             output_type: "avif".to_string(),
-    //             quality: 90,
-    //             ..Default::default()
-    //         },
-    //     )
-    //     .await
-    //     .unwrap();
-
-    // println!("{result:?}");
 }
 
 // 检查依赖服务失败直接panic
 async fn check_dependencies() -> Result<(), String> {
-    request::must_get_charts_instance();
+    request::must_get_httpbin_instance();
     cache::redis_ping().await.map_err(|err| err.to_string())?;
     Ok(())
 }
