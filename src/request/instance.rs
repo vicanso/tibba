@@ -1,5 +1,4 @@
 use crate::error::HttpError;
-use crate::httptrace::{get_http_trace_info, new_default_http_trace, HTTP_TRACE};
 use crate::util::json_get;
 use async_trait::async_trait;
 use axum::http::uri::Uri;
@@ -12,6 +11,7 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use snafu::{ResultExt, Snafu};
 use std::time::Duration;
+use tracing::info;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -138,7 +138,24 @@ impl HttpInterceptor for CommonInterceptor {
     async fn response(&self, data: Bytes) -> Result<Bytes> {
         Ok(data)
     }
-    async fn on_done(&self, _: HttpStats, _: Option<&Error>) -> Result<()> {
+    async fn on_done(&self, stats: HttpStats, err: Option<&Error>) -> Result<()> {
+        let mut error = "".to_string();
+        if let Some(value) = err {
+            error = value.to_string();
+        }
+        info!(
+            service = self.service,
+            method = stats.method,
+            path = stats.path,
+            status = stats.status,
+            remote_addr = stats.remote_addr,
+            content_length = stats.content_length,
+            processing = stats.processing,
+            transfer = stats.transfer,
+            serde = stats.serde,
+            total = stats.total,
+            error,
+        );
         Ok(())
     }
 }
@@ -161,12 +178,16 @@ where
 
 #[derive(Default, Clone, Debug)]
 pub struct HttpStats {
+    pub method: String,
     pub path: String,
     pub remote_addr: String,
     pub local_addr: String,
-    pub content_length: u64,
-    pub serde_struct: u32,
-    pub time: u32,
+    pub status: u16,
+    pub content_length: usize,
+    pub processing: u32,
+    pub transfer: u32,
+    pub serde: u32,
+    pub total: u32,
 }
 
 fn new_get_duration() -> impl FnOnce() -> u32 {
@@ -213,6 +234,7 @@ impl<H: HttpInterceptor> Instance<H> {
         })?;
         let path = uri.path();
         stats.path = path.to_string();
+        stats.method = params.method.to_string();
 
         let mut req = match params.method {
             Method::POST => self.c.post(url),
@@ -233,25 +255,30 @@ impl<H: HttpInterceptor> Instance<H> {
         }
         req = self.interceptor.request(req).await?;
         // TODO dns tcp tls process
+        let process_done = new_get_duration();
         let res = req.send().await.context(RequestSnafu {
             service: &self.service,
             path,
         })?;
+        stats.processing = process_done();
 
         if let Some(value) = res.extensions().get::<HttpInfo>() {
             stats.remote_addr = value.remote_addr().to_string();
             stats.local_addr = value.local_addr().to_string();
         }
-
-        if let Some(value) = res.content_length() {
-            stats.content_length = value;
-        }
+        // if let Some(value) = res.extensions().get::<TlsInfo>() {
+        //     println!("{:?}", value.peer_certificate())
+        // }
 
         let status = res.status().as_u16();
+        let transfer_done = new_get_duration();
         let mut full = res.bytes().await.context(RequestSnafu {
             service: &self.service,
             path,
         })?;
+        stats.transfer = transfer_done();
+        stats.content_length = full.len();
+        stats.status = status;
 
         self.interceptor.error(status, &full).await?;
         full = self.interceptor.response(full).await?;
@@ -259,7 +286,7 @@ impl<H: HttpInterceptor> Instance<H> {
         let data = serde_json::from_slice(&full).context(SerdeSnafu {
             service: &self.service,
         })?;
-        stats.serde_struct = serde_done();
+        stats.serde = serde_done();
         Ok(data)
     }
     async fn request<Q: Serialize + ?Sized, P: Serialize + ?Sized, T: DeserializeOwned>(
@@ -271,7 +298,7 @@ impl<H: HttpInterceptor> Instance<H> {
         };
         let done = new_get_duration();
         let result = self.do_request(&mut stats, params).await;
-        stats.time = done();
+        stats.total = done();
         let mut err = None;
         if let Err(ref e) = result {
             err = Some(e)

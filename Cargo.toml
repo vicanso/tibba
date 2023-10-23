@@ -5,12 +5,11 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-async-trait = "0.1.73"
+async-trait = "0.1.74"
 axum = { version = "0.6.20", features = ["headers"] }
 axum-client-ip = "0.4.2"
 axum-extra = { version = "0.8.0", features = ["cookie"] }
-base64 = "0.21.4"
-base64-serde = "0.7.0"
+base64 = "0.21.5"
 bytes = "1.5.0"
 chrono = "0.4.31"
 config = { version = "0.13.3", features = ["yaml"] }
@@ -33,10 +32,10 @@ serde = { version = "1.0.189", features = ["derive"] }
 serde_json = "1.0.107"
 snafu = "0.7.5"
 substring = "1.4.5"
-time = "0.3.29"
+time = "0.3.30"
 tokio = { version = "1.33.0", features = ["macros", "rt", "rt-multi-thread", "net", "signal"] }
 tower = { version = "0.4.13", features = ["timeout"] }
-tracing = "0.1.37"
+tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.17", features = ["local-time"] }
 url = "2.4.1"
 urlencoding = "2.1.3"

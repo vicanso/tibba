@@ -7,8 +7,6 @@ use tokio::signal;
 use tower::ServiceBuilder;
 use tracing::Level;
 use tracing::{error, info};
-use tracing_subscriber::prelude::__tracing_subscriber_SubscriberExt;
-use tracing_subscriber::prelude::*;
 use tracing_subscriber::FmtSubscriber;
 
 use controller::new_router;
@@ -53,20 +51,20 @@ fn init_logger() {
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
-struct DataTest {
-    pub name: String,
-}
-
-static USER_CACHE: Lazy<cache::TwoLevelStore<DataTest>> = Lazy::new(|| {
-    cache::TwoLevelStore::new(
-        std::num::NonZeroUsize::new(1024).unwrap(),
-        std::time::Duration::from_secs(60),
-        "test:".to_string(),
-    )
-});
-
 async fn test() {
+    #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+    struct DataTest {
+        pub name: String,
+    }
+
+    static USER_CACHE: Lazy<cache::TwoLevelStore<DataTest>> = Lazy::new(|| {
+        cache::TwoLevelStore::new(
+            std::num::NonZeroUsize::new(1024).unwrap(),
+            std::time::Duration::from_secs(60),
+            "test:".to_string(),
+        )
+    });
+
     #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
     pub struct IpResult {
         pub origin: String,
