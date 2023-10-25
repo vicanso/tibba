@@ -18,6 +18,7 @@ mod asset;
 mod cache;
 mod config;
 mod controller;
+mod db;
 mod error;
 mod httptrace;
 mod middleware;
@@ -52,6 +53,7 @@ fn init_logger() {
 }
 
 async fn test() {
+    println!("{}:{}", util::uuid(), util::uuid());
     #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
     struct DataTest {
         pub name: String,
@@ -91,6 +93,11 @@ async fn test() {
 
 // 检查依赖服务失败直接panic
 async fn check_dependencies() -> Result<(), String> {
+    db::get_database()
+        .await
+        .ping()
+        .await
+        .map_err(|err| err.to_string())?;
     request::must_get_httpbin_instance();
     cache::redis_ping().await.map_err(|err| err.to_string())?;
     Ok(())

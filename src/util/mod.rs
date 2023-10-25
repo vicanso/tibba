@@ -21,7 +21,7 @@ pub use context::{
 pub use datetime::{from_timestamp, now};
 pub use duration::duration_to_string;
 pub use number::float_to_fixed;
-pub use string::{json_get, random_string};
+pub use string::{json_get, random_string, uuid};
 
 /// 是否开发环境
 /// 用于针对本地开发时的判断
