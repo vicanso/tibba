@@ -238,18 +238,18 @@ pub fn must_new_redis_config() -> RedisConfig {
                 }
             }
             "connection_timeout" => {
-                if let Ok(num) = value.parse::<u64>() {
-                    redis_config.connection_timeout = Duration::from_millis(num);
+                if let Ok(value) = humantime::parse_duration(&value) {
+                    redis_config.connection_timeout = value;
                 }
             }
             "wait_timeout" => {
-                if let Ok(num) = value.parse::<u64>() {
-                    redis_config.wait_timeout = Duration::from_millis(num);
+                if let Ok(value) = humantime::parse_duration(&value) {
+                    redis_config.wait_timeout = value;
                 }
             }
             "recycle_timeout" => {
-                if let Ok(num) = value.parse::<u64>() {
-                    redis_config.recycle_timeout = Duration::from_millis(num);
+                if let Ok(value) = humantime::parse_duration(&value) {
+                    redis_config.recycle_timeout = value;
                 }
             }
             _ => (),

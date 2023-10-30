@@ -5,6 +5,7 @@ use axum::{Json, Router};
 use serde::Serialize;
 
 mod common;
+mod inner;
 mod user;
 
 // json响应的result
@@ -41,5 +42,7 @@ where
 
 pub fn new_router() -> Router {
     let r = Router::new();
-    r.merge(common::new_router()).merge(user::new_router())
+    r.merge(common::new_router())
+        .merge(user::new_router())
+        .merge(inner::new_router())
 }

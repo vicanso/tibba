@@ -1,4 +1,5 @@
 use crate::config::must_new_database_config;
+use crate::util::is_development;
 use regex::Regex;
 use sea_orm::{ConnectOptions, Database, DatabaseConnection};
 use tokio::sync::OnceCell;
@@ -11,8 +12,8 @@ async fn get_conn() -> DatabaseConnection {
         .min_connections(config.min_connections)
         .connect_timeout(config.connect_timeout)
         .acquire_timeout(config.acquire_timeout)
-        .idle_timeout(config.idle_timeout);
-    // .sqlx_logging(true);
+        .idle_timeout(config.idle_timeout)
+        .sqlx_logging(is_development());
 
     // opt.sqlx_logging(false) // Disabling SQLx log
     // .sqlx_logging_level(log::LevelFilter::Info);

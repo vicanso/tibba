@@ -5,6 +5,7 @@ mod duration;
 mod http;
 mod number;
 mod string;
+mod value;
 
 use crate::config::get_env;
 
@@ -21,7 +22,8 @@ pub use context::{
 pub use datetime::{from_timestamp, now};
 pub use duration::duration_to_string;
 pub use number::float_to_fixed;
-pub use string::{json_get, random_string, uuid};
+pub use string::{random_string, uuid};
+pub use value::{json_get, json_get_date_time, json_get_i64, json_get_string};
 
 /// 是否开发环境
 /// 用于针对本地开发时的判断

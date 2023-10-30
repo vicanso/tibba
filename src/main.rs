@@ -1,5 +1,6 @@
 use axum::{error_handling::HandleErrorLayer, middleware::from_fn_with_state, Router};
 use once_cell::sync::Lazy;
+use sea_orm::{ActiveModelTrait, ActiveValue};
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::{env, str::FromStr};
@@ -19,6 +20,7 @@ mod cache;
 mod config;
 mod controller;
 mod db;
+mod entities;
 mod error;
 mod httptrace;
 mod middleware;
@@ -89,6 +91,20 @@ async fn test() {
         .unwrap();
     let result = USER_CACHE.get("abc").await.unwrap();
     println!("{result:?}");
+
+    // entities::settings::ActiveModel::from_json(json)
+    let data = entities::settings::ActiveModel {
+        // status: ActiveValue::set(0),
+        // name: ActiveValue::set("date".to_string()),
+        // category: ActiveValue::set("test".to_string()),
+        data: ActiveValue::set("2023-01-01".to_string()),
+        remark: ActiveValue::set("测试".to_string()),
+        creator: ActiveValue::set("vicanso".to_string()),
+        ..Default::default()
+    };
+
+    data.save(db::get_database().await).await.unwrap();
+    // data.save(db)
 }
 
 // 检查依赖服务失败直接panic
@@ -105,7 +121,7 @@ async fn check_dependencies() -> Result<(), String> {
 
 #[tokio::main]
 async fn run() {
-    test().await;
+    // test().await;
     if let Err(err) = check_dependencies().await {
         error!(err, "check dependencies fail");
         std::process::exit(1);

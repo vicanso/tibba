@@ -11,4 +11,4 @@ session:
 
 # 数据库配置
 database:
-  url: postgres://vicanso:A123456@127.0.0.1:5432/cybertect?max_connections=100
+  url: mysql://vicanso:A123456@127.0.0.1:3306/tibba?max_connections=100

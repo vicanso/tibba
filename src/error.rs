@@ -2,6 +2,7 @@ use axum::http::HeaderValue;
 use axum::http::{header, Method, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use axum::{BoxError, Json};
+use sea_orm::DbErr;
 use serde::{Deserialize, Serialize};
 use tracing::error;
 
@@ -32,6 +33,17 @@ impl Default for HttpError {
             code: "".to_string(),
             extra: None,
         }
+    }
+}
+
+impl From<DbErr> for HttpError {
+    fn from(err: DbErr) -> Self {
+        HttpError::new_with_category(&err.to_string(), "db")
+    }
+}
+impl From<serde_json::Error> for HttpError {
+    fn from(err: serde_json::Error) -> Self {
+        HttpError::new_with_category(&err.to_string(), "json")
     }
 }
 
