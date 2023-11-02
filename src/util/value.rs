@@ -1,10 +1,6 @@
 use crate::error::HttpError;
-use axum::async_trait;
-use axum::extract::FromRequestParts;
-use axum::http::request::Parts;
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
-use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 pub type Result<T, E = HttpError> = std::result::Result<T, E>;
@@ -52,23 +48,4 @@ pub fn json_get_date_time(value: &Value, key: &str) -> Result<Option<DateTime<Ut
         return Ok(Some(value));
     }
     Ok(None)
-}
-
-#[derive(Debug, Clone, Copy, Default)]
-pub struct Query<T>(pub T);
-
-#[async_trait]
-impl<T, S> FromRequestParts<S> for Query<T>
-where
-    T: DeserializeOwned,
-    S: Send + Sync,
-{
-    type Rejection = HttpError;
-
-    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        let query = parts.uri.query().unwrap_or_default();
-        let params = serde_urlencoded::from_str(query)
-            .map_err(|err| HttpError::new_with_category(&err.to_string(), "query"))?;
-        Ok(Query(params))
-    }
 }

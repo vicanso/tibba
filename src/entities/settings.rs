@@ -4,12 +4,16 @@ use crate::error::HttpError;
 use crate::util::{json_get_date_time, json_get_i64, json_get_string};
 use async_trait::async_trait;
 use chrono::{Duration, Utc};
-use sea_orm::{entity::prelude::*, ActiveValue};
+use sea_orm::query::{Order, Select};
+use sea_orm::{entity::prelude::*, ActiveValue, QueryOrder};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::ops::Add;
+use substring::Substring;
 
 pub type Result<T, E = HttpError> = std::result::Result<T, E>;
+
+const ERROR_CATEGORY: &str = "entity_settings";
 
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Eq, Serialize, Deserialize)]
 #[sea_orm(table_name = "settings")]
@@ -28,6 +32,41 @@ pub struct Model {
     pub started_at: DateTimeUtc,
     pub ended_at: DateTimeUtc,
     pub creator: String,
+}
+
+// fn order_by<C>(mut self, col: C, ord: Order) -> Self
+// where
+// C: IntoSimpleExpr,
+
+pub fn order_by<E>(sql: Select<E>, orders: &str) -> Result<Select<E>>
+where
+    E: EntityTrait,
+{
+    if orders.is_empty() {
+        return Ok(sql);
+    }
+    let mut s = sql;
+    // TODO 是否有办法字符串转换为column
+    for order in orders.split(",").into_iter() {
+        let mut order_type = Order::Asc;
+        let key = if order.starts_with("-") {
+            order_type = Order::Desc;
+            order.substring(1, order.len())
+        } else {
+            order
+        };
+
+        match key {
+            "id" => s = s.order_by(Column::Id, order_type),
+            "updated_at" => s = s.order_by(Column::UpdatedAt, order_type),
+            "status" => s = s.order_by(Column::Status, order_type),
+            _ => {
+                let msg = format!("Order by {key} is unsupported");
+                return Err(HttpError::new_with_category(&msg, ERROR_CATEGORY));
+            }
+        }
+    }
+    Ok(s)
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
