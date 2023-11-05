@@ -6,12 +6,13 @@ use axum::http::Method;
 use bytes::Bytes;
 use chrono::Local;
 use hyper::client::connect::HttpInfo;
-use reqwest::{Client, RequestBuilder};
+use reqwest::{tls::TlsInfo, Client, RequestBuilder};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use snafu::{ResultExt, Snafu};
 use std::time::Duration;
 use tracing::info;
+use x509_parser::prelude::*;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -188,6 +189,9 @@ pub struct HttpStats {
     pub transfer: u32,
     pub serde: u32,
     pub total: u32,
+    pub tls_version: String,
+    pub tls_not_before: String,
+    pub tls_not_after: String,
 }
 
 fn new_get_duration() -> impl FnOnce() -> u32 {
@@ -266,9 +270,15 @@ impl<H: HttpInterceptor> Instance<H> {
             stats.remote_addr = value.remote_addr().to_string();
             stats.local_addr = value.local_addr().to_string();
         }
-        // if let Some(value) = res.extensions().get::<TlsInfo>() {
-        //     println!("{:?}", value.peer_certificate())
-        // }
+        if let Some(value) = res.extensions().get::<TlsInfo>() {
+            if let Ok((_, cert)) =
+                X509Certificate::from_der(value.peer_certificate().unwrap_or_default())
+            {
+                stats.tls_version = cert.version.to_string();
+                stats.tls_not_before = cert.validity.not_before.to_string();
+                stats.tls_not_after = cert.validity.not_after.to_string();
+            }
+        }
 
         let status = res.status().as_u16();
         let transfer_done = new_get_duration();

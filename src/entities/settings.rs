@@ -47,9 +47,9 @@ where
     }
     let mut s = sql;
     // TODO 是否有办法字符串转换为column
-    for order in orders.split(",").into_iter() {
+    for order in orders.split(',').into_iter() {
         let mut order_type = Order::Asc;
-        let key = if order.starts_with("-") {
+        let key = if order.starts_with('-') {
             order_type = Order::Desc;
             order.substring(1, order.len())
         } else {
