@@ -264,6 +264,7 @@ impl<H: HttpInterceptor> Instance<H> {
             service: &self.service,
             path,
         })?;
+
         stats.processing = process_done();
 
         if let Some(value) = res.extensions().get::<HttpInfo>() {

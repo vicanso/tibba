@@ -122,7 +122,7 @@ async fn check_dependencies() -> Result<(), String> {
 
 #[tokio::main]
 async fn run() {
-    // test().await;
+    test().await;
     if let Err(err) = check_dependencies().await {
         error!(err, "check dependencies fail");
         std::process::exit(1);
