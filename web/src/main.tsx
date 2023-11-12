@@ -1,22 +1,15 @@
-import React from 'react'
-import ReactDOM from 'react-dom/client'
-import App from './App.tsx'
-import {
-  createHashRouter,
-  RouterProvider,
-} from "react-router-dom";
-import './index.css'
+import React from "react";
+import ReactDOM from "react-dom/client";
+import { RouterProvider } from "react-router-dom";
+import "@/app/globals.css";
+import "@/index.css";
+import router from "@/router.tsx";
+import { ThemeProvider } from "@/components/theme-provider";
 
-const router = createHashRouter([
-  {
-    path: "/",
-    element: <App />,
-  },
-]);
-
-
-ReactDOM.createRoot(document.getElementById('root')!).render(
+ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <RouterProvider router={router} />
+    <ThemeProvider defaultTheme="dark" storageKey="vite-ui-theme">
+      <RouterProvider router={router} />
+    </ThemeProvider>
   </React.StrictMode>,
-)
+);

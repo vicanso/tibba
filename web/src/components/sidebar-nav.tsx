@@ -1,38 +1,42 @@
-import { cn } from "@/lib/utils"
-import { buttonVariants } from "@/components/ui/button"
+import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
 import { Link } from "react-router-dom";
 
-interface SidebarNavProps extends React.HTMLAttributes<HTMLElement> {
-  items: {
-    href: string
-    title: string
-  }[]
+import router, { NavItemList } from "@/router";
+
+interface SidebarProps extends React.HTMLAttributes<HTMLDivElement> {
+  navItemList: NavItemList[];
 }
 
-export function SidebarNav({ className, items, ...props }: SidebarNavProps) {
-
-  return (
-    <nav
-      className={cn(
-        "flex space-x-2 lg:flex-col lg:space-x-0 lg:space-y-1",
-        className
-      )}
-      {...props}
-    >
-      {items.map((item) => (
-        <Link
-          to={item.href}
-          className={cn(
-            buttonVariants({ variant: "ghost" }),
-            pathname === item.href
-              ? "bg-muted hover:bg-muted"
-              : "hover:bg-transparent hover:underline",
-            "justify-start"
-          )}
+export function Sidebar({ className, navItemList }: SidebarProps) {
+  const {
+    pathname
+  } = router.state.location;
+  const arr = navItemList.map((item) => {
+    const subItems = item.items.map((subItem) => {
+      const variant = pathname == subItem.url ? "secondary" : "ghost";
+      return (
+        <Button
+          variant={variant}
+          className="w-full justify-start"
+          key={`${item.name}-${subItem.name}`}
         >
-          {item.title}
-        </Link>
-      ))}
-    </nav>
-  )
+          <Link to={subItem.url}>{subItem.name}</Link>
+        </Button>
+      );
+    });
+    return (
+      <div className="px-3 py-2" key={item.name}>
+        <h2 className="mb-2 px-4 text-lg">
+          {item.name}
+          <div className="space-y-1">{subItems}</div>
+        </h2>
+      </div>
+    );
+  });
+  return (
+    <div className={cn("pb-12", className)}>
+      <div className="space-y-4 py-4">{arr}</div>
+    </div>
+  );
 }
