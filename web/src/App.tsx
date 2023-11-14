@@ -1,18 +1,13 @@
-import { Button } from "@/components/ui/button";
-import { Link } from "react-router-dom";
-import { cn } from "@/lib/utils";
-import { Sidebar } from "@/components/sidebar-nav";
-import { navItemList } from "@/router.tsx";
+import { MainSidebar } from "@/components/sidebar-nav";
+import { MainHeader } from "@/components/header";
 
 export default function Home() {
   return (
     <div>
+      <MainHeader />
       <div className="grid lg:grid-cols-5">
-        <Sidebar navItemList={navItemList} />
-      </div>
-      <div>
-        <Button>Click me</Button>
-        <Link to={"/test"}>abc</Link>
+        <MainSidebar className="h-screen" />
+        <div className="col-span-3 lg:col-span-4 lg:border-l"></div>
       </div>
     </div>
   );

@@ -2,16 +2,13 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Link } from "react-router-dom";
 
-import router, { NavItemList } from "@/router";
+import router from "@/router";
+import { navItemList } from "@/router.tsx";
 
-interface SidebarProps extends React.HTMLAttributes<HTMLDivElement> {
-  navItemList: NavItemList[];
-}
+interface MainSidebarProps extends React.HTMLAttributes<HTMLDivElement> {}
 
-export function Sidebar({ className, navItemList }: SidebarProps) {
-  const {
-    pathname
-  } = router.state.location;
+export function MainSidebar({ className }: MainSidebarProps) {
+  const { pathname } = router.state.location;
   const arr = navItemList.map((item) => {
     const subItems = item.items.map((subItem) => {
       const variant = pathname == subItem.url ? "secondary" : "ghost";
@@ -21,7 +18,9 @@ export function Sidebar({ className, navItemList }: SidebarProps) {
           className="w-full justify-start"
           key={`${item.name}-${subItem.name}`}
         >
-          <Link to={subItem.url}>{subItem.name}</Link>
+          <Link className="block text-left w-full" to={subItem.url}>
+            {subItem.name}
+          </Link>
         </Button>
       );
     });
