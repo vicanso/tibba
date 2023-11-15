@@ -46,6 +46,11 @@ impl From<serde_json::Error> for HttpError {
         HttpError::new_with_category(&err.to_string(), "json")
     }
 }
+impl From<validator::ValidationErrors> for HttpError {
+    fn from(err: validator::ValidationErrors) -> Self {
+        HttpError::new_with_category(&err.to_string(), "validate")
+    }
+}
 
 impl HttpError {
     pub fn new(message: &str) -> Self {

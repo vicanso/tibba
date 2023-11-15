@@ -19,10 +19,10 @@ pub use context::{
     generate_device_id_cookie, get_account_from_context, get_device_id_from_cookie,
     set_account_to_context, Account,
 };
-pub use datetime::{from_timestamp, now};
+pub use datetime::{from_timestamp, now, timestamp};
 pub use duration::duration_to_string;
 pub use number::float_to_fixed;
-pub use string::{random_string, uuid};
+pub use string::{random_string, sha256, uuid};
 pub use value::{json_get, json_get_date_time, json_get_i64, json_get_string};
 
 /// 是否开发环境

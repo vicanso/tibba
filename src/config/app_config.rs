@@ -175,6 +175,8 @@ pub struct BasicConfig {
     pub processing_limit: i32,
     // 超时
     pub timeout: Duration,
+    #[validate(length(min = 1))]
+    pub secret: String,
 }
 
 pub fn must_new_basic_config() -> BasicConfig {
@@ -184,6 +186,7 @@ pub fn must_new_basic_config() -> BasicConfig {
         listen: config.get_from_env_first("listen", None),
         processing_limit: config.get_int_from_env_first("processing_limit", Some(5000)),
         timeout,
+        secret: config.get_from_env_first("secret", None),
     };
     basic_config.validate().unwrap();
     basic_config

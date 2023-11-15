@@ -4,6 +4,7 @@ basic:
   timeout: 60
   listen: 127.0.0.1:5000
   processing_limit: 1000
+  secret: osbhdlycJ0
 
 session:
   # 单位秒

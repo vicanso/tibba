@@ -8,53 +8,108 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from "@/components/ui/form";
 import { Button } from "@/components/ui/button";
-import router from "@/router";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { useForm } from "react-hook-form";
+import * as z from "zod";
+import { useState } from "react";
+
+const loginSchema = z.object({
+  account: z.string().min(2).max(50),
+  password: z.string().min(6).max(50),
+});
 
 export default function Login() {
+  const [processing, setProcessing] = useState<boolean>(false)
+
+  const form = useForm<z.infer<typeof loginSchema>>({
+    resolver: zodResolver(loginSchema),
+    defaultValues: {
+      account: "",
+      password: "",
+    },
+  });
+  async function onSubmit(values: z.infer<typeof loginSchema>) {
+    if (processing) {
+      return;
+    }
+    setProcessing(true);
+    try {
+      await new Promise(resolve => setTimeout(resolve, 3000));
+    } finally {
+      setProcessing(false);
+    }
+    console.log(values);
+  }
+
   return (
     <div>
       <MainHeader />
       <div className="flex w-full justify-center pt-20 items-center">
         <Card className="w-[500px]">
-          <CardHeader>
-            <CardTitle>Login</CardTitle>
-            <CardDescription>Please login your account first.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <form>
-              <div className="grid w-full items-center gap-4">
-                <div className="flex flex-col space-y-1.5">
-                  <Label htmlFor="name">Account</Label>
-                  <Input
-                    id="account"
-                    autoFocus
-                    placeholder="Please input your account"
-                  />
+          <Form {...form}>
+            <form onSubmit={form.handleSubmit(onSubmit)}>
+              <CardHeader>
+                <CardTitle>Login</CardTitle>
+                <CardDescription>
+                  Please login your account first.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="grid w-full items-center gap-4">
+                  <div className="flex flex-col space-y-1.5">
+                    <FormField
+                      control={form.control}
+                      name="account"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Account</FormLabel>
+                          <FormControl>
+                            <Input
+                              autoFocus
+                              placeholder="Please input your account"
+                              {...field}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+                  <div className="flex flex-col space-y-1.5">
+                    <FormField
+                      control={form.control}
+                      name="password"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Password</FormLabel>
+                          <FormControl>
+                            <Input
+                              type="password"
+                              placeholder="Please input your password"
+                              {...field}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </div>
                 </div>
-                <div className="flex flex-col space-y-1.5">
-                  <Label htmlFor="name">Password</Label>
-                  <Input
-                    type="password"
-                    id="password"
-                    placeholder="Please input your password"
-                  />
-                </div>
-              </div>
+              </CardContent>
+              <CardFooter className="flex justify-between">
+                <Button type="submit" className="w-full">{ processing ? "Login..." : "Login"}</Button>
+              </CardFooter>
             </form>
-          </CardContent>
-          <CardFooter className="flex justify-between">
-            <Button
-              variant="outline"
-              onClick={() => {
-                router.navigate(-1);
-              }}
-            >
-              Cancel
-            </Button>
-            <Button>Login</Button>
-          </CardFooter>
+          </Form>
         </Card>
       </div>
     </div>

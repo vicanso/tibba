@@ -10,6 +10,7 @@ use axum::BoxError;
 use axum::{Json, Router};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
+use validator::Validate;
 
 mod common;
 mod inner;
@@ -66,12 +67,12 @@ where
     }
 }
 
-struct Params<T>(pub T);
+struct JsonParams<T>(pub T);
 
 #[async_trait]
-impl<T, S, B> FromRequest<S, B> for Params<T>
+impl<T, S, B> FromRequest<S, B> for JsonParams<T>
 where
-    T: DeserializeOwned,
+    T: DeserializeOwned + Validate,
     B: HttpBody + Send + 'static,
     B::Data: Send,
     B::Error: Into<BoxError>,
@@ -86,7 +87,7 @@ where
             })?;
             let deserializer = &mut serde_json::Deserializer::from_slice(&bytes);
 
-            let value = match serde_path_to_error::deserialize(deserializer) {
+            let value: T = match serde_path_to_error::deserialize(deserializer) {
                 Ok(value) => value,
                 Err(err) => {
                     return Err(HttpError::new_with_category(
@@ -95,8 +96,9 @@ where
                     ));
                 }
             };
+            value.validate()?;
 
-            Ok(Params(value))
+            Ok(JsonParams(value))
         } else {
             Err(HttpError::new_with_category(
                 "Missing json content type",

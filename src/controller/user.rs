@@ -1,18 +1,23 @@
+use super::JsonParams;
 use crate::cache::get_default_redis_cache;
 use crate::controller::JsonResult;
-use crate::error::HttpResult;
+use crate::error::{HttpError, HttpResult};
 use crate::middleware::{get_claims_from_headers, wait1s};
 use crate::middleware::{load_session, AuthResp, Claims};
-use crate::util::{generate_device_id_cookie, get_device_id_from_cookie, now};
-use crate::{task_local::*, tl_error};
+use crate::util;
+use crate::{config, task_local::*, tl_error};
 use axum::http::Request;
 use axum::middleware::from_fn;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use axum_extra::extract::cookie::CookieJar;
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
+use tracing_subscriber::fmt::format;
+use validator::Validate;
 
+static APP_SECRET: Lazy<String> = Lazy::new(|| config::must_new_basic_config().secret);
 #[derive(Debug, Clone, Serialize, Default)]
 struct UserMeResp {
     name: String,
@@ -23,13 +28,13 @@ struct UserMeResp {
 
 pub fn new_router() -> Router {
     let login_router = Router::new()
-        .route("/v1/login", post(login))
+        .route("/login-token", get(login_token))
         // 登录设置为最少等待x秒，避免快速尝试
-        .layer(from_fn(wait1s));
+        .route("/login", post(login).layer(from_fn(wait1s)));
     let r = Router::new()
-        .route("/v1/me", get(me))
-        .route("/v1/refresh", get(refresh))
-        .route("/v1/login-times", get(get_login_times))
+        .route("/me", get(me))
+        .route("/refresh", get(refresh))
+        .route("/login-times", get(get_login_times))
         .layer(from_fn(load_session));
 
     Router::new().nest("/users", r.merge(login_router))
@@ -60,25 +65,62 @@ async fn me<B>(mut jar: CookieJar, req: Request<B>) -> HttpResult<(CookieJar, Js
         name: account,
         expired_at,
         issued_at,
-        time: now(),
+        time: util::now(),
     };
     // 如果未设置device，则设置
-    if get_device_id_from_cookie(&jar).is_empty() {
-        jar = jar.add(generate_device_id_cookie());
+    if util::get_device_id_from_cookie(&jar).is_empty() {
+        jar = jar.add(util::generate_device_id_cookie());
     }
 
     Ok((jar, Json(me)))
 }
 
-#[derive(Deserialize)]
-struct LoginParams {
-    account: String,
+fn generate_login_toke(timestamp: i64) -> String {
+    let msg = format!("{}:{}", timestamp, APP_SECRET.as_str());
+    util::sha256(msg.as_bytes())
 }
 
-async fn login(Json(params): Json<LoginParams>) -> JsonResult<AuthResp> {
+#[derive(Deserialize, Validate)]
+struct LoginParams {
+    timestamp: i64,
+    #[validate(length(min = 32))]
+    token: String,
+    #[validate(length(min = 2))]
+    account: String,
+    #[validate(length(min = 32))]
+    password: String,
+}
+
+async fn login(JsonParams(params): JsonParams<LoginParams>) -> JsonResult<AuthResp> {
+    if (params.timestamp - util::timestamp()).abs() > 60 {
+        return Err(HttpError::new("Timestamp is invalid"));
+    }
+    if generate_login_toke(params.timestamp) != params.token {
+        return Err(HttpError::new("Token is invalid"));
+    }
+    // find by account
+    let password = "".to_string();
+    let msg = format!("{}:{password}", params.token);
+    if util::sha256(msg.as_bytes()) != params.password {
+        return Err(HttpError::new("Account or password is wrong"));
+    }
     // TODO 账号校验
     let resp = (&Claims::new(&params.account)).try_into()?;
     Ok(Json(resp))
+}
+
+#[derive(Serialize)]
+struct LoginTokenResp {
+    timestamp: i64,
+    token: String,
+}
+async fn login_token() -> JsonResult<LoginTokenResp> {
+    let timestamp = util::timestamp();
+
+    Ok(Json(LoginTokenResp {
+        timestamp,
+        token: generate_login_toke(timestamp),
+    }))
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -86,7 +128,7 @@ struct LoginTimesResp {
     pub count: i64,
 }
 async fn get_login_times(jar: CookieJar) -> JsonResult<LoginTimesResp> {
-    let device_id = get_device_id_from_cookie(&jar);
+    let device_id = util::get_device_id_from_cookie(&jar);
     let cache = get_default_redis_cache();
     // 如果未设置device，则设置
     let mut count: i64 = 0;

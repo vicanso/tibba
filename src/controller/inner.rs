@@ -1,4 +1,4 @@
-use super::{JsonResult, Params, Query};
+use super::{JsonResult, Query};
 use crate::db::get_database;
 use crate::entities::settings;
 use crate::error::HttpError;
@@ -29,7 +29,7 @@ struct AddRecordResp {
     id: i64,
 }
 
-async fn add(claims: Claims, Params(value): Params<Value>) -> JsonResult<AddRecordResp> {
+async fn add(claims: Claims, Json(value): Json<Value>) -> JsonResult<AddRecordResp> {
     let table_name = json_get_string(&value, "table")?.ok_or(HttpError::new("Table is nil"))?;
     let conn = get_database().await;
     let id = match table_name.as_str() {
