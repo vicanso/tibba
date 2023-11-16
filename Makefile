@@ -10,8 +10,8 @@ dev:
 udeps:
 	cargo +nightly udeps
 	
-# entity:
-# 	sea-orm-cli generate entity --with-serde=both -u mysql://vicanso:A123456@127.0.0.1:3306/tibba -o src/entities
+entity:
+	sea-orm-cli generate entity --with-serde=both -u mysql://vicanso:A123456@127.0.0.1:3306/tibba -o src/entities
 
 release:
 	date > assets/build_date

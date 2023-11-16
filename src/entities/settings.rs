@@ -34,10 +34,6 @@ pub struct Model {
     pub creator: String,
 }
 
-// fn order_by<C>(mut self, col: C, ord: Order) -> Self
-// where
-// C: IntoSimpleExpr,
-
 pub fn order_by<E>(sql: Select<E>, orders: &str) -> Result<Select<E>>
 where
     E: EntityTrait,

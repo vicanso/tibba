@@ -10,7 +10,7 @@ CREATE TABLE `settings` (
   `started_at` timestamp NOT NULL comment '配置启用时间',
   `ended_at` timestamp NOT NULL comment '配置结束时间',
   `creator` varchar(255) COLLATE utf8mb4_bin NOT NULL,
-  PRIMARY KEY (`id`) comment '配置创建人',
+  PRIMARY KEY (`id`) comment '主键',
   UNIQUE KEY `setting_name` (`name`),
   KEY `setting_created_at` (`created_at`),
   KEY `setting_updated_at` (`updated_at`),

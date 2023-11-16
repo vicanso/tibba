@@ -1,6 +1,8 @@
 use super::JsonParams;
 use crate::cache::get_default_redis_cache;
 use crate::controller::JsonResult;
+use crate::db::get_database;
+use crate::entities::users;
 use crate::error::{HttpError, HttpResult};
 use crate::middleware::{get_claims_from_headers, wait1s};
 use crate::middleware::{load_session, AuthResp, Claims};
@@ -12,9 +14,9 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use axum_extra::extract::cookie::CookieJar;
 use once_cell::sync::Lazy;
+use sea_orm::{ActiveModelTrait, ActiveValue, ColumnTrait, EntityTrait, QueryFilter};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
-use tracing_subscriber::fmt::format;
 use validator::Validate;
 
 static APP_SECRET: Lazy<String> = Lazy::new(|| config::must_new_basic_config().secret);
@@ -29,6 +31,7 @@ struct UserMeResp {
 pub fn new_router() -> Router {
     let login_router = Router::new()
         .route("/login-token", get(login_token))
+        .route("/register", post(register))
         // 登录设置为最少等待x秒，避免快速尝试
         .route("/login", post(login).layer(from_fn(wait1s)));
     let r = Router::new()
@@ -91,21 +94,40 @@ struct LoginParams {
     password: String,
 }
 
+impl LoginParams {
+    fn validate_token(&self) -> HttpResult<()> {
+        // 测试环境需要，设置为0则跳过
+        if self.timestamp == -1 && (util::is_development() || util::is_test()) {
+            return Ok(());
+        }
+        if (self.timestamp - util::timestamp()).abs() > 60 {
+            return Err(HttpError::new("Timestamp is invalid"));
+        }
+        if generate_login_toke(self.timestamp) != self.token {
+            return Err(HttpError::new("Token is invalid"));
+        }
+        Ok(())
+    }
+}
+
 async fn login(JsonParams(params): JsonParams<LoginParams>) -> JsonResult<AuthResp> {
-    if (params.timestamp - util::timestamp()).abs() > 60 {
-        return Err(HttpError::new("Timestamp is invalid"));
+    params.validate_token()?;
+
+    let account = params.account;
+    let result = users::Entity::find()
+        .filter(users::Column::Account.eq(&account))
+        .one(get_database().await)
+        .await?;
+    let account_password_err = HttpError::new("Account or password is wrong");
+    if result.is_none() {
+        return Err(account_password_err);
     }
-    if generate_login_toke(params.timestamp) != params.token {
-        return Err(HttpError::new("Token is invalid"));
-    }
-    // find by account
-    let password = "".to_string();
+    let password = result.unwrap().password;
     let msg = format!("{}:{password}", params.token);
     if util::sha256(msg.as_bytes()) != params.password {
-        return Err(HttpError::new("Account or password is wrong"));
+        return Err(account_password_err);
     }
-    // TODO 账号校验
-    let resp = (&Claims::new(&params.account)).try_into()?;
+    let resp = (&Claims::new(&account)).try_into()?;
     Ok(Json(resp))
 }
 
@@ -120,6 +142,34 @@ async fn login_token() -> JsonResult<LoginTokenResp> {
     Ok(Json(LoginTokenResp {
         timestamp,
         token: generate_login_toke(timestamp),
+    }))
+}
+
+#[derive(Deserialize, Validate)]
+struct RegisterParams {
+    #[validate(length(min = 2))]
+    account: String,
+    #[validate(length(min = 32))]
+    password: String,
+}
+#[derive(Serialize)]
+struct RegisterResp {
+    id: i64,
+    account: String,
+}
+
+async fn register(JsonParams(params): JsonParams<RegisterParams>) -> JsonResult<RegisterResp> {
+    let conn = get_database().await;
+    let result = users::ActiveModel {
+        account: ActiveValue::set(params.account),
+        password: ActiveValue::set(params.password),
+        ..Default::default()
+    }
+    .insert(conn)
+    .await?;
+    Ok(Json(RegisterResp {
+        id: result.id,
+        account: result.account,
     }))
 }
 
