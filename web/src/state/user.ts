@@ -16,7 +16,7 @@ interface UserState {
   fetch: () => Promise<boolean>;
 }
 
-const refresh = async (expiredAt: string) => {
+const refresh = (expiredAt: string) => {
   // 如果准备要过期
   const offset = 2 * 24 * 3600;
   if (dayjs(expiredAt).unix() - dayjs().unix() > offset) {
@@ -33,7 +33,8 @@ const refresh = async (expiredAt: string) => {
         const authorization = `${token_type} ${access_token}`;
         saveAuthorization(authorization);
       }
-    });
+    })
+    .catch(console.error);
 };
 
 const useUserStore = create<UserState>()((set, get) => ({
