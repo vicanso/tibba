@@ -7,17 +7,32 @@ import useUserStore from "@/state/user";
 interface MainHeaderProps extends React.HTMLAttributes<HTMLDivElement> {}
 
 export function MainHeader({ className }: MainHeaderProps) {
-  const account = useUserStore((state) => state.account);
-  const loading = useUserStore((state) => state.loading);
+  const [account, loading] = useUserStore((state) => [
+    state.account,
+    state.loading,
+  ]);
+  const logout = useUserStore((state) => state.logout);
   let tips = <span className="mr-2">Loading...</span>;
   if (!loading) {
     if (account) {
-      tips = <span className="mr-2">{account}</span>;
+      tips = (
+        <>
+          {account}
+          <Button
+            variant="link"
+            onClick={() => {
+              logout();
+            }}
+          >
+            Logout
+          </Button>
+        </>
+      );
     } else {
       tips = (
-        <Link className="mr-5" to={LOGIN}>
-          Login
-        </Link>
+        <Button variant="link">
+          <Link to={LOGIN}>Login</Link>
+        </Button>
       );
     }
   }

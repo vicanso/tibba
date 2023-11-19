@@ -68,8 +68,8 @@ impl Claims {
     pub fn is_expired(&self) -> bool {
         // 如果创建时间已超过30天，则认为过期
         if now() - self.iat > 30 * 24 * 3600 {
-            return true
-        } 
+            return true;
+        }
         false
     }
     pub fn refresh(&mut self) {

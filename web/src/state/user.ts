@@ -12,6 +12,7 @@ interface UserState {
   loading: boolean;
   account: string;
   login: (account: string, password: string) => Promise<void>;
+  logout: () => void;
   fetch: () => Promise<boolean>;
 }
 
@@ -71,13 +72,19 @@ const useUserStore = create<UserState>()((set, get) => ({
         account,
         anonymous: account == "",
       });
-      return true;
     } finally {
       set({
         loading: false,
       });
     }
-    return false;
+    return get().account != "";
+  },
+  logout: () => {
+    removeAuthorization();
+    set({
+      account: "",
+      anonymous: true,
+    });
   },
 }));
 

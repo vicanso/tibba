@@ -22,7 +22,7 @@ export default function App() {
   }, []);
   return (
     <React.StrictMode>
-      <ThemeProvider defaultTheme="dark" storageKey="vite-ui-theme">
+      <ThemeProvider storageKey="vite-ui-theme">
         <RouterProvider router={router} />
       </ThemeProvider>
     </React.StrictMode>
