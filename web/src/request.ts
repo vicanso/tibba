@@ -11,7 +11,6 @@ const authorizationKey = "authorization";
 let authorization = window.localStorage.getItem(authorizationKey) || "";
 
 export function saveAuthorization(value: string) {
-  console.dir(value);
   authorization = value;
   window.localStorage.setItem(authorizationKey, authorization);
 }
@@ -81,7 +80,7 @@ request.interceptors.response.use(
   async (res) => {
     addRequestStats(res.config, res, undefined);
     // 根据请求开始时间计算耗时，并判断是否需要延时响应
-    if (res.config.headers) {
+    if (res.config.method != "get" && res.config.headers) {
       const value = res.config.headers[requestedAt];
       if (value) {
         const use = Date.now() - Number(value);

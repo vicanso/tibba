@@ -1,17 +1,19 @@
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-
+import { LogOut, Check, User2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { HOME, LOGIN } from "@/data/route";
 import useUserStore from "@/state/user";
-import { useTheme, Theme } from "@/components/theme-provider";
+import { useTheme } from "@/components/theme-provider";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 interface MainHeaderProps extends React.HTMLAttributes<HTMLDivElement> {}
 
@@ -27,17 +29,59 @@ export function MainHeader({ className }: MainHeaderProps) {
   if (!loading) {
     if (account) {
       tips = (
-        <>
-          {account}
-          <Button
-            variant="link"
-            onClick={() => {
-              logout();
-            }}
-          >
-            Logout
-          </Button>
-        </>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="link">
+              <User2 className="mr-2 h-4 w-4" />
+              {account}
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent className="w-56">
+            <DropdownMenuLabel>My Account</DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            <DropdownMenuGroup>
+              <DropdownMenuItem
+                className="cursor-pointer"
+                onClick={() => {
+                  logout();
+                }}
+              >
+                <LogOut className="mr-2 h-4 w-4" />
+                <span>Log out</span>
+              </DropdownMenuItem>
+            </DropdownMenuGroup>
+            <DropdownMenuSeparator />
+            <DropdownMenuGroup>
+              <DropdownMenuItem
+                className="cursor-pointer"
+                onClick={() => {
+                  setTheme("system");
+                }}
+              >
+                {theme == "system" && <Check className="mr-2 h-4 w-4" />}
+                <span>System Theme</span>
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                className="cursor-pointer"
+                onClick={() => {
+                  setTheme("dark");
+                }}
+              >
+                {theme == "dark" && <Check className="mr-2 h-4 w-4" />}
+                <span>Dark Theme</span>
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                className="cursor-pointer"
+                onClick={() => {
+                  setTheme("light");
+                }}
+              >
+                {theme == "light" && <Check className="mr-2 h-4 w-4" />}
+                <span>Light Theme</span>
+              </DropdownMenuItem>
+            </DropdownMenuGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
       );
     } else {
       tips = (
@@ -61,21 +105,6 @@ export function MainHeader({ className }: MainHeaderProps) {
         </Link>
         <div className="flex flex-1 items-center justify-between space-x-2 md:justify-end mr-20">
           {tips}
-          <Select
-            defaultValue={theme}
-            onValueChange={(value) => {
-              setTheme(value as Theme);
-            }}
-          >
-            <SelectTrigger className="w-[120px]">
-              <SelectValue placeholder="Theme" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="light">Light</SelectItem>
-              <SelectItem value="dark">Dark</SelectItem>
-              <SelectItem value="system">System</SelectItem>
-            </SelectContent>
-          </Select>
         </div>
       </div>
     </header>
