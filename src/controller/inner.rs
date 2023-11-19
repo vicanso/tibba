@@ -2,7 +2,7 @@ use super::{JsonResult, Query};
 use crate::db::get_database;
 use crate::entities::settings;
 use crate::error::HttpError;
-use crate::middleware::{load_session, Claims};
+use crate::middleware::{load_session, Claim};
 use crate::util::json_get_string;
 use axum::middleware::from_fn;
 use axum::routing::{get, post};
@@ -29,7 +29,7 @@ struct AddRecordResp {
     id: i64,
 }
 
-async fn add(claims: Claims, Json(value): Json<Value>) -> JsonResult<AddRecordResp> {
+async fn add(claims: Claim, Json(value): Json<Value>) -> JsonResult<AddRecordResp> {
     let table_name = json_get_string(&value, "table")?.ok_or(HttpError::new("Table is nil"))?;
     let conn = get_database().await;
     let id = match table_name.as_str() {

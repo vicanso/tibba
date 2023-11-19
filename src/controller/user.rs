@@ -5,7 +5,7 @@ use crate::db::get_database;
 use crate::entities::users;
 use crate::error::{HttpError, HttpResult};
 use crate::middleware::{get_claims_from_headers, wait1s};
-use crate::middleware::{load_session, AuthResp, Claims};
+use crate::middleware::{load_session, AuthResp, Claim};
 use crate::util;
 use crate::{config, task_local::*, tl_error};
 use axum::http::Request;
@@ -43,7 +43,7 @@ pub fn new_router() -> Router {
     Router::new().nest("/users", r.merge(login_router))
 }
 
-async fn refresh(mut claims: Claims) -> JsonResult<AuthResp> {
+async fn refresh(mut claims: Claim) -> JsonResult<AuthResp> {
     claims.refresh();
     let resp = (&claims).try_into()?;
     Ok(Json(resp))
@@ -127,7 +127,7 @@ async fn login(JsonParams(params): JsonParams<LoginParams>) -> JsonResult<AuthRe
     if util::sha256(msg.as_bytes()) != params.password {
         return Err(account_password_err);
     }
-    let resp = (&Claims::new(&account)).try_into()?;
+    let resp = (&Claim::new(&account)).try_into()?;
     Ok(Json(resp))
 }
 

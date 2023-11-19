@@ -11,6 +11,7 @@ const authorizationKey = "authorization";
 let authorization = window.localStorage.getItem(authorizationKey) || "";
 
 export function saveAuthorization(value: string) {
+  console.dir(value);
   authorization = value;
   window.localStorage.setItem(authorizationKey, authorization);
 }

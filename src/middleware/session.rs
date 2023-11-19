@@ -37,7 +37,7 @@ impl Keys {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct Claims {
+pub struct Claim {
     // Required (validate_exp defaults to true in validation). Expiration time (as UTC timestamp)
     exp: usize,
     // Optional. Issued at (as UTC timestamp)
@@ -46,10 +46,10 @@ pub struct Claims {
     account: String,
 }
 
-impl Claims {
+impl Claim {
     pub fn new(account: &str) -> Self {
         let iat = now();
-        Claims {
+        Claim {
             exp: iat + SESSION_CONFIG.ttl,
             iat,
             id: random_string(8),
@@ -66,8 +66,13 @@ impl Claims {
         from_timestamp(self.iat as i64, 0)
     }
     pub fn is_expired(&self) -> bool {
+        let value = now();
+        // 已过期
+        if self.exp < value {
+            return false;
+        }
         // 如果创建时间已超过30天，则认为过期
-        if now() - self.iat > 30 * 24 * 3600 {
+        if value - self.iat > 30 * 24 * 3600 {
             return true;
         }
         false
@@ -83,9 +88,9 @@ pub struct AuthResp {
     token_type: String,
 }
 
-impl TryFrom<&Claims> for AuthResp {
+impl TryFrom<&Claim> for AuthResp {
     type Error = HttpError;
-    fn try_from(value: &Claims) -> Result<Self, Self::Error> {
+    fn try_from(value: &Claim) -> Result<Self, Self::Error> {
         let access_token = encode(&jsonwebtoken::Header::default(), value, &KEYS.encoding)
             .map_err(|_| {
                 HttpError::new_with_category("Token creation error", JWT_ERROR_CATEGORY)
@@ -100,7 +105,7 @@ fn now() -> usize {
     chrono::Utc::now().timestamp() as usize
 }
 
-pub fn get_claims_from_headers(headers: &HeaderMap<HeaderValue>) -> HttpResult<Claims> {
+pub fn get_claims_from_headers(headers: &HeaderMap<HeaderValue>) -> HttpResult<Claim> {
     let mut values = headers.get_all(Authorization::<Bearer>::name()).iter();
     let is_missing = values.size_hint() == (0, Some(0));
     if is_missing {
@@ -112,7 +117,7 @@ pub fn get_claims_from_headers(headers: &HeaderMap<HeaderValue>) -> HttpResult<C
 
     let bearer = Authorization::<Bearer>::decode(&mut values)
         .map_err(|err| HttpError::new_with_category(&err.to_string(), JWT_ERROR_CATEGORY))?;
-    let result = decode::<Claims>(bearer.token(), &KEYS.decoding, &Validation::default())
+    let result = decode::<Claim>(bearer.token(), &KEYS.decoding, &Validation::default())
         .map_err(|_| HttpError::new_with_category("Invalid token", JWT_ERROR_CATEGORY))?;
     let claims = result.claims;
     if claims.is_expired() {
@@ -125,7 +130,7 @@ pub fn get_claims_from_headers(headers: &HeaderMap<HeaderValue>) -> HttpResult<C
 }
 
 #[async_trait]
-impl<S> FromRequestParts<S> for Claims
+impl<S> FromRequestParts<S> for Claim
 where
     S: Send + Sync,
 {

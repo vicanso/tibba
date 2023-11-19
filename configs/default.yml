@@ -7,8 +7,8 @@ basic:
   secret: osbhdlycJ0
 
 session:
-  # 单位秒
-  ttl: 604800
+  # session有效期
+  ttl: 7d
 
 # 数据库配置
 database:

@@ -16,6 +16,26 @@ interface UserState {
   fetch: () => Promise<boolean>;
 }
 
+const refresh = async (expiredAt: string) => {
+  // 如果准备要过期
+  const offset = 2 * 24 * 3600;
+  if (dayjs(expiredAt).unix() - dayjs().unix() > offset) {
+    return;
+  }
+  request
+    .get<{
+      access_token: string;
+      token_type: string;
+    }>("/users/refresh")
+    .then((res) => {
+      const { token_type, access_token } = res.data;
+      if (access_token) {
+        const authorization = `${token_type} ${access_token}`;
+        saveAuthorization(authorization);
+      }
+    });
+};
+
 const useUserStore = create<UserState>()((set, get) => ({
   anonymous: false,
   account: "",
@@ -72,6 +92,10 @@ const useUserStore = create<UserState>()((set, get) => ({
         account,
         anonymous: account == "",
       });
+      // 如果已登录，触发刷新ttl
+      if (account) {
+        refresh(data.expired_at);
+      }
     } finally {
       set({
         loading: false,

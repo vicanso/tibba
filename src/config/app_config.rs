@@ -274,7 +274,7 @@ pub struct SessionConfig {
 }
 pub fn must_new_session_config() -> SessionConfig {
     let config = must_new_config().set_prefix("session");
-    let ttl = config.get_duration_from_env_first("ttl", Some(Duration::from_secs(7 * 24 * 3600)));
+    let ttl = config.get_duration_from_env_first("ttl", Some(Duration::from_secs(2 * 24 * 3600)));
     let session_config = SessionConfig {
         ttl: ttl.as_secs() as usize,
         secret: config.get_from_env_first("secret", None),
