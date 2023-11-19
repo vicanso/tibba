@@ -21,6 +21,8 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import * as z from "zod";
 import { useState } from "react";
+import useUserStore from "@/state/user";
+import { goBack } from "@/router";
 
 const loginSchema = z.object({
   account: z.string().min(2).max(50),
@@ -28,7 +30,8 @@ const loginSchema = z.object({
 });
 
 export default function Login() {
-  const [processing, setProcessing] = useState<boolean>(false)
+  const [processing, setProcessing] = useState<boolean>(false);
+  const [login, fetch] = useUserStore((state) => [state.login, state.fetch]);
 
   const form = useForm<z.infer<typeof loginSchema>>({
     resolver: zodResolver(loginSchema),
@@ -43,11 +46,17 @@ export default function Login() {
     }
     setProcessing(true);
     try {
-      await new Promise(resolve => setTimeout(resolve, 3000));
+      await login(values.account, values.password);
+      const isLogin = await fetch();
+      if (isLogin) {
+        goBack();
+      }
+    } catch (err) {
+      // TODO 出错处理
+      console.error(err);
     } finally {
       setProcessing(false);
     }
-    console.log(values);
   }
 
   return (
@@ -106,7 +115,9 @@ export default function Login() {
                 </div>
               </CardContent>
               <CardFooter className="flex justify-between">
-                <Button type="submit" className="w-full">{ processing ? "Login..." : "Login"}</Button>
+                <Button type="submit" className="w-full">
+                  {processing ? "Login..." : "Login"}
+                </Button>
               </CardFooter>
             </form>
           </Form>

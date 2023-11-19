@@ -1,6 +1,6 @@
 import { createHashRouter } from "react-router-dom";
 
-import App from "@/App.tsx";
+import Home from "@/pages/Home";
 import Login from "@/pages/Login";
 import { LOGIN, HOME } from "@/data/route";
 
@@ -34,16 +34,24 @@ export const navItemList = [
 const router = createHashRouter([
   {
     path: HOME,
-    element: <App />,
+    element: <Home />,
   },
   {
     path: "/users",
-    element: <App />,
+    element: <Home />,
   },
   {
     path: LOGIN,
     element: <Login />,
   },
 ]);
+
+export function goToLogin() {
+  router.navigate(LOGIN);
+}
+
+export function goBack() {
+  router.navigate(-1);
+}
 
 export default router;

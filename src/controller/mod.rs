@@ -125,8 +125,11 @@ fn json_content_type(headers: &HeaderMap) -> bool {
 }
 
 pub fn new_router() -> Router {
-    let r = Router::new();
-    r.merge(common::new_router())
-        .merge(user::new_router())
-        .merge(inner::new_router())
+    Router::new().nest(
+        "/api",
+        Router::new()
+            .merge(common::new_router())
+            .merge(user::new_router())
+            .merge(inner::new_router()),
+    )
 }

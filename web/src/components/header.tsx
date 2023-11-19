@@ -2,10 +2,26 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Link } from "react-router-dom";
 import { HOME, LOGIN } from "@/data/route";
+import useUserStore from "@/state/user";
 
 interface MainHeaderProps extends React.HTMLAttributes<HTMLDivElement> {}
 
 export function MainHeader({ className }: MainHeaderProps) {
+  const account = useUserStore((state) => state.account);
+  const loading = useUserStore((state) => state.loading);
+  let tips = <span className="mr-2">Loading...</span>;
+  if (!loading) {
+    if (account) {
+      tips = <span className="mr-2">{account}</span>;
+    } else {
+      tips = (
+        <Link className="mr-5" to={LOGIN}>
+          Login
+        </Link>
+      );
+    }
+  }
+
   return (
     <header
       className={cn(
@@ -18,9 +34,7 @@ export function MainHeader({ className }: MainHeaderProps) {
           Tibba
         </Link>
         <div className="flex flex-1 items-center justify-between space-x-2 md:justify-end mr-20">
-          <Link className="mr-5" to={LOGIN}>
-            Login
-          </Link>
+          {tips}
           <Button className="inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 hover:bg-accent hover:text-accent-foreground h-9 py-2 w-9 px-0">
             <svg
               width="15"

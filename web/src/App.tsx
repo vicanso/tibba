@@ -1,14 +1,30 @@
-import { MainSidebar } from "@/components/sidebar-nav";
-import { MainHeader } from "@/components/header";
+import React from "react";
+import { RouterProvider } from "react-router-dom";
+import "@/app/globals.css";
+import "@/index.css";
+import router, { goToLogin } from "@/router.tsx";
+import { ThemeProvider } from "@/components/theme-provider";
+import { useAsync } from "react-async-hook";
+import useUserStore from "./state/user";
 
-export default function Home() {
+export default function App() {
+  const fetch = useUserStore((state) => state.fetch);
+  useAsync(async () => {
+    try {
+      const isLogin = await fetch();
+      if (!isLogin) {
+        goToLogin();
+      }
+    } catch (err) {
+      // TODO 出错提示
+      console.error(err);
+    }
+  }, []);
   return (
-    <div>
-      <MainHeader />
-      <div className="grid lg:grid-cols-5">
-        <MainSidebar className="h-screen" />
-        <div className="col-span-3 lg:col-span-4 lg:border-l"></div>
-      </div>
-    </div>
+    <React.StrictMode>
+      <ThemeProvider defaultTheme="dark" storageKey="vite-ui-theme">
+        <RouterProvider router={router} />
+      </ThemeProvider>
+    </React.StrictMode>
   );
 }

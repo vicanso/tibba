@@ -65,8 +65,14 @@ impl Claims {
     pub fn get_issued_at(&self) -> String {
         from_timestamp(self.iat as i64, 0)
     }
+    pub fn is_expired(&self) -> bool {
+        // 如果创建时间已超过30天，则认为过期
+        if now() - self.iat > 30 * 24 * 3600 {
+            return true
+        } 
+        false
+    }
     pub fn refresh(&mut self) {
-        // TODO 如果已创建太久的则不刷新
         self.exp = now() + SESSION_CONFIG.ttl;
     }
 }
@@ -108,7 +114,14 @@ pub fn get_claims_from_headers(headers: &HeaderMap<HeaderValue>) -> HttpResult<C
         .map_err(|err| HttpError::new_with_category(&err.to_string(), JWT_ERROR_CATEGORY))?;
     let result = decode::<Claims>(bearer.token(), &KEYS.decoding, &Validation::default())
         .map_err(|_| HttpError::new_with_category("Invalid token", JWT_ERROR_CATEGORY))?;
-    Ok(result.claims)
+    let claims = result.claims;
+    if claims.is_expired() {
+        return Err(HttpError::new_with_category(
+            "Claim is expired",
+            JWT_ERROR_CATEGORY,
+        ));
+    }
+    Ok(claims)
 }
 
 #[async_trait]
