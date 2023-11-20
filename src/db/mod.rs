@@ -1,31 +1,17 @@
-use crate::config::must_new_database_config;
-use crate::util::is_development;
-use regex::Regex;
-use sea_orm::{ConnectOptions, Database, DatabaseConnection};
-use tokio::sync::OnceCell;
-use tracing::info;
+use serde::Deserialize;
 
-async fn get_conn() -> DatabaseConnection {
-    let config = must_new_database_config();
-    let mut opt = ConnectOptions::new(&config.url);
-    opt.max_connections(config.max_connections)
-        .min_connections(config.min_connections)
-        .connect_timeout(config.connect_timeout)
-        .acquire_timeout(config.acquire_timeout)
-        .idle_timeout(config.idle_timeout)
-        .sqlx_logging(is_development());
+mod conn;
+mod settings;
+mod users;
 
-    // opt.sqlx_logging(false) // Disabling SQLx log
-    // .sqlx_logging_level(log::LevelFilter::Info);
-    let re = Regex::new(r"\:\S+?@").unwrap();
-    let url = re.replace(&config.origin_url, ":***@");
-    let db = Database::connect(opt).await.unwrap();
-    info!(url = url.to_string(), "connect to database success");
-
-    db
+#[derive(Debug, Deserialize)]
+pub struct FindRecordParams {
+    pub table: String,
+    pub orders: Option<String>,
+    pub page: u64,
+    pub page_size: u64,
 }
 
-pub async fn get_database() -> &'static DatabaseConnection {
-    static DB: OnceCell<DatabaseConnection> = OnceCell::const_new();
-    DB.get_or_init(get_conn).await
-}
+pub use conn::get_database;
+pub use settings::*;
+pub use users::*;

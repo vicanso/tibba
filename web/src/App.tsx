@@ -5,9 +5,13 @@ import "@/index.css";
 import router, { goToLogin } from "@/router.tsx";
 import { ThemeProvider } from "@/components/theme-provider";
 import { useAsync } from "react-async-hook";
-import useUserStore from "./state/user";
+import { Toaster } from "@/components/ui/toaster";
+import useUserStore from "@/state/user";
+import { useToast } from "@/components/ui/use-toast";
+import { formatError } from "@/helpers/util";
 
 export default function App() {
+  const { toast } = useToast();
   const fetch = useUserStore((state) => state.fetch);
   useAsync(async () => {
     try {
@@ -16,7 +20,10 @@ export default function App() {
         goToLogin();
       }
     } catch (err) {
-      // TODO 出错提示
+      toast({
+        title: "Fetch Fail",
+        description: formatError(err),
+      });
       console.error(err);
     }
   }, []);
@@ -24,6 +31,7 @@ export default function App() {
     <React.StrictMode>
       <ThemeProvider storageKey="vite-ui-theme">
         <RouterProvider router={router} />
+        <Toaster />
       </ThemeProvider>
     </React.StrictMode>
   );

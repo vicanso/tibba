@@ -141,7 +141,7 @@ where
     }
 }
 
-pub async fn load_session<B>(req: Request<B>, next: Next<B>) -> HttpResult<Response> {
+pub async fn load_session<B>(mut req: Request<B>, next: Next<B>) -> HttpResult<Response> {
     let claims = get_claims_from_headers(req.headers())?;
     if claims.account.is_empty() {
         return Err(HttpError {
@@ -154,6 +154,7 @@ pub async fn load_session<B>(req: Request<B>, next: Next<B>) -> HttpResult<Respo
 
     ACCOUNT
         .scope(account.clone(), async {
+            set_account_to_context(req.extensions_mut(), Account::new(account.clone()));
             let mut resp = next.run(req).await;
             // 由于在session之前的中间件无法获取account的值
             // 因此又将account设置至resp extension中

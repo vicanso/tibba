@@ -6,6 +6,7 @@ import request, {
 } from "@/request";
 import sha256 from "crypto-js/sha256";
 import dayjs from "dayjs";
+import HTTPError from "@/http-error";
 
 interface UserState {
   anonymous: boolean;
@@ -97,6 +98,12 @@ const useUserStore = create<UserState>()((set, get) => ({
       if (account) {
         refresh(data.expired_at);
       }
+    } catch (err) {
+      const e = err as HTTPError;
+      if (e.category !== "jwt") {
+        throw err;
+      }
+      console.error(err);
     } finally {
       set({
         loading: false,

@@ -1,6 +1,6 @@
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { LogOut, Check, User2 } from "lucide-react";
+import { LogIn, LogOut, Check, User2, Sun, Moon, SunMoon } from "lucide-react";
 import { Link } from "react-router-dom";
 import { HOME, LOGIN } from "@/data/route";
 import useUserStore from "@/state/user";
@@ -26,18 +26,18 @@ export function MainHeader({ className }: MainHeaderProps) {
 
   const logout = useUserStore((state) => state.logout);
   let tips = <span className="mr-2">Loading...</span>;
+  const iconClassName = "mr-2 h-4 w-4";
   if (!loading) {
     if (account) {
       tips = (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="link">
-              <User2 className="mr-2 h-4 w-4" />
-              {account}
+              <User2 className="h-4 w-4" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent className="w-56">
-            <DropdownMenuLabel>My Account</DropdownMenuLabel>
+            <DropdownMenuLabel>{account}</DropdownMenuLabel>
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
               <DropdownMenuItem
@@ -46,7 +46,7 @@ export function MainHeader({ className }: MainHeaderProps) {
                   logout();
                 }}
               >
-                <LogOut className="mr-2 h-4 w-4" />
+                <LogOut className={iconClassName} />
                 <span>Log out</span>
               </DropdownMenuItem>
             </DropdownMenuGroup>
@@ -58,7 +58,8 @@ export function MainHeader({ className }: MainHeaderProps) {
                   setTheme("system");
                 }}
               >
-                {theme == "system" && <Check className="mr-2 h-4 w-4" />}
+                {theme == "system" && <Check className={iconClassName} />}
+                {theme != "system" && <SunMoon className={iconClassName} />}
                 <span>System Theme</span>
               </DropdownMenuItem>
               <DropdownMenuItem
@@ -67,7 +68,8 @@ export function MainHeader({ className }: MainHeaderProps) {
                   setTheme("dark");
                 }}
               >
-                {theme == "dark" && <Check className="mr-2 h-4 w-4" />}
+                {theme == "dark" && <Check className={iconClassName} />}
+                {theme != "dark" && <Moon className={iconClassName} />}
                 <span>Dark Theme</span>
               </DropdownMenuItem>
               <DropdownMenuItem
@@ -76,7 +78,8 @@ export function MainHeader({ className }: MainHeaderProps) {
                   setTheme("light");
                 }}
               >
-                {theme == "light" && <Check className="mr-2 h-4 w-4" />}
+                {theme == "light" && <Check className={iconClassName} />}
+                {theme != "light" && <Sun className={iconClassName} />}
                 <span>Light Theme</span>
               </DropdownMenuItem>
             </DropdownMenuGroup>
@@ -86,7 +89,10 @@ export function MainHeader({ className }: MainHeaderProps) {
     } else {
       tips = (
         <Button variant="link">
-          <Link to={LOGIN}>Login</Link>
+          <Link to={LOGIN}>
+            <LogIn className="mr-2 h-4 w-4 inline" />
+            Login
+          </Link>
         </Button>
       );
     }

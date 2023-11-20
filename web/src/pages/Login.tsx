@@ -23,6 +23,8 @@ import * as z from "zod";
 import { useState } from "react";
 import useUserStore from "@/state/user";
 import { goBack } from "@/router";
+import { useToast } from "@/components/ui/use-toast";
+import { formatError } from "@/helpers/util";
 
 const loginSchema = z.object({
   account: z.string().min(2).max(50),
@@ -30,6 +32,8 @@ const loginSchema = z.object({
 });
 
 export default function Login() {
+  const { toast } = useToast();
+
   const [processing, setProcessing] = useState<boolean>(false);
   const [login, fetch] = useUserStore((state) => [state.login, state.fetch]);
 
@@ -52,7 +56,10 @@ export default function Login() {
         goBack();
       }
     } catch (err) {
-      // TODO 出错处理
+      toast({
+        title: "Login Fail",
+        description: formatError(err),
+      });
       console.error(err);
     } finally {
       setProcessing(false);

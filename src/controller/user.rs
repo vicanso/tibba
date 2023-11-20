@@ -1,8 +1,7 @@
 use super::JsonParams;
 use crate::cache::get_default_redis_cache;
 use crate::controller::JsonResult;
-use crate::db::get_database;
-use crate::entities::users;
+use crate::db::{add_user, find_user_by_account};
 use crate::error::{HttpError, HttpResult};
 use crate::middleware::{get_claims_from_headers, wait1s};
 use crate::middleware::{load_session, AuthResp, Claim};
@@ -14,7 +13,6 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use axum_extra::extract::cookie::CookieJar;
 use once_cell::sync::Lazy;
-use sea_orm::{ActiveModelTrait, ActiveValue, ColumnTrait, EntityTrait, QueryFilter};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use validator::Validate;
@@ -113,11 +111,7 @@ impl LoginParams {
 async fn login(JsonParams(params): JsonParams<LoginParams>) -> JsonResult<AuthResp> {
     params.validate_token()?;
 
-    let account = params.account;
-    let result = users::Entity::find()
-        .filter(users::Column::Account.eq(&account))
-        .one(get_database().await)
-        .await?;
+    let result = find_user_by_account(&params.account).await?;
     let account_password_err = HttpError::new("Account or password is wrong");
     if result.is_none() {
         return Err(account_password_err);
@@ -127,7 +121,7 @@ async fn login(JsonParams(params): JsonParams<LoginParams>) -> JsonResult<AuthRe
     if util::sha256(msg.as_bytes()) != params.password {
         return Err(account_password_err);
     }
-    let resp = (&Claim::new(&account)).try_into()?;
+    let resp = (&Claim::new(&params.account)).try_into()?;
     Ok(Json(resp))
 }
 
@@ -159,14 +153,7 @@ struct RegisterResp {
 }
 
 async fn register(JsonParams(params): JsonParams<RegisterParams>) -> JsonResult<RegisterResp> {
-    let conn = get_database().await;
-    let result = users::ActiveModel {
-        account: ActiveValue::set(params.account),
-        password: ActiveValue::set(params.password),
-        ..Default::default()
-    }
-    .insert(conn)
-    .await?;
+    let result = add_user(&params.account, &params.password).await?;
     Ok(Json(RegisterResp {
         id: result.id,
         account: result.account,
