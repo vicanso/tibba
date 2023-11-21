@@ -15,5 +15,5 @@ pub fn sha256(data: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(data);
     let result = hasher.finalize();
-    encode(&result)
+    encode(result)
 }

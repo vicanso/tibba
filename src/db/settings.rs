@@ -1,5 +1,5 @@
-use super::{get_database, FindRecordParams};
-use crate::entities::settings;
+use super::{get_database, EntityItemCategory, EntityItemDescription, FindRecordParams};
+use crate::entities::settings::{ActiveModel, Column, Entity, Model};
 use crate::error::HttpError;
 use crate::util::{json_get_date_time, json_get_i64, json_get_string};
 use sea_orm::query::{Order, Select};
@@ -11,8 +11,8 @@ pub type Result<T, E = HttpError> = std::result::Result<T, E>;
 
 const ERROR_CATEGORY: &str = "entity_settings";
 
-fn from_value(value: Value) -> Result<settings::ActiveModel> {
-    let mut model = settings::ActiveModel {
+fn from_value(value: Value) -> Result<ActiveModel> {
+    let mut model = ActiveModel {
         ..Default::default()
     };
     if let Some(id) = json_get_i64(&value, "id")? {
@@ -51,7 +51,7 @@ where
     }
     let mut s = sql;
     // TODO 是否有办法字符串转换为column
-    for order in orders.split(',').into_iter() {
+    for order in orders.split(',') {
         let mut order_type = Order::Asc;
         let key = if order.starts_with('-') {
             order_type = Order::Desc;
@@ -61,9 +61,9 @@ where
         };
 
         match key {
-            "id" => s = s.order_by(settings::Column::Id, order_type),
-            "updated_at" => s = s.order_by(settings::Column::UpdatedAt, order_type),
-            "status" => s = s.order_by(settings::Column::Status, order_type),
+            "id" => s = s.order_by(Column::Id, order_type),
+            "updated_at" => s = s.order_by(Column::UpdatedAt, order_type),
+            "status" => s = s.order_by(Column::Status, order_type),
             _ => {
                 let msg = format!("Order by {key} is unsupported");
                 return Err(HttpError::new_with_category(&msg, ERROR_CATEGORY));
@@ -73,17 +73,81 @@ where
     Ok(s)
 }
 
-pub async fn add_setting_json(user: &str, value: Value) -> Result<settings::Model> {
+pub async fn add_setting_json(user: &str, value: Value) -> Result<Model> {
     let mut data = from_value(value)?;
     data.creator = ActiveValue::set(user.to_string());
     let result = data.insert(get_database().await).await?;
     Ok(result)
 }
 
+pub fn list_setting_descriptions() -> Vec<EntityItemDescription> {
+    vec![
+        EntityItemDescription {
+            name: Column::Id.to_string(),
+            category: EntityItemCategory::Number,
+            readonly: true,
+            ..Default::default()
+        },
+        EntityItemDescription {
+            name: Column::Status.to_string(),
+            category: EntityItemCategory::Number,
+            ..Default::default()
+        },
+        EntityItemDescription {
+            name: Column::Name.to_string(),
+            category: EntityItemCategory::Text,
+            ..Default::default()
+        },
+        EntityItemDescription {
+            name: Column::Category.to_string(),
+            category: EntityItemCategory::Text,
+            ..Default::default()
+        },
+        EntityItemDescription {
+            name: Column::Data.to_string(),
+            category: EntityItemCategory::Editor,
+            ..Default::default()
+        },
+        EntityItemDescription {
+            name: Column::Remark.to_string(),
+            category: EntityItemCategory::Text,
+            ..Default::default()
+        },
+        EntityItemDescription {
+            name: Column::StartedAt.to_string(),
+            category: EntityItemCategory::DateTime,
+            ..Default::default()
+        },
+        EntityItemDescription {
+            name: Column::EndedAt.to_string(),
+            category: EntityItemCategory::DateTime,
+            ..Default::default()
+        },
+        EntityItemDescription {
+            name: Column::CreatedAt.to_string(),
+            category: EntityItemCategory::DateTime,
+            readonly: true,
+            ..Default::default()
+        },
+        EntityItemDescription {
+            name: Column::UpdatedAt.to_string(),
+            category: EntityItemCategory::DateTime,
+            readonly: true,
+            ..Default::default()
+        },
+        EntityItemDescription {
+            name: Column::Creator.to_string(),
+            category: EntityItemCategory::Text,
+            readonly: true,
+            ..Default::default()
+        },
+    ]
+}
+
 pub async fn find_count_setting_json(params: FindRecordParams) -> Result<(i64, Vec<Value>)> {
     let conn = get_database().await;
     let page_count = if params.page == 0 {
-        let count = settings::Entity::find().count(conn).await?;
+        let count = Entity::find().count(conn).await?;
         let mut page_count = count / params.page_size;
         if count % params.page_size != 0 {
             page_count += 1;
@@ -93,7 +157,7 @@ pub async fn find_count_setting_json(params: FindRecordParams) -> Result<(i64, V
         -1
     };
 
-    let mut sql = settings::Entity::find();
+    let mut sql = Entity::find();
     sql = order_by(sql, &params.orders.unwrap_or("-updated_at".to_string()))?;
     let items = sql
         .into_json()

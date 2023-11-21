@@ -1,6 +1,7 @@
 use super::{JsonResult, Query};
 use crate::db::{
-    add_setting_json, find_count_setting_json, find_count_user_json, FindRecordParams,
+    add_setting_json, find_count_setting_json, find_count_user_json, list_setting_descriptions,
+    EntityItemDescription, FindRecordParams,
 };
 use crate::error::HttpError;
 use crate::middleware::{load_session, Claim};
@@ -8,11 +9,12 @@ use crate::util::json_get_string;
 use axum::middleware::from_fn;
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub fn new_router() -> Router {
     let r = Router::new()
+        .route("/entity-descriptions", get(list_description))
         .route("/entities", post(add))
         .route("/entities", get(list))
         .layer(from_fn(load_session));
@@ -55,4 +57,23 @@ async fn list(Query(params): Query<FindRecordParams>) -> JsonResult<ListRecordRe
     };
 
     Ok(Json(ListRecordResp { page_count, items }))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ListDescriptionParams {
+    table: String,
+}
+
+#[derive(Debug, Serialize)]
+struct ListDescriptionResp {
+    items: Vec<EntityItemDescription>,
+}
+async fn list_description(
+    Query(params): Query<ListDescriptionParams>,
+) -> JsonResult<ListDescriptionResp> {
+    let items = match params.table.as_str() {
+        TABLE_NAME_SETTINGS => list_setting_descriptions(),
+        _ => return Err(HttpError::new("Table is invalid")),
+    };
+    Ok(Json(ListDescriptionResp { items }))
 }

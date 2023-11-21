@@ -1,7 +1,7 @@
 use super::{get_database, FindRecordParams};
 use crate::entities::users;
 use crate::error::HttpError;
-use sea_orm::{entity::prelude::*, ActiveValue, QuerySelect};
+use sea_orm::{entity::prelude::*, ActiveValue, Iterable, QuerySelect};
 use serde_json::Value;
 
 pub type Result<T, E = HttpError> = std::result::Result<T, E>;
@@ -39,18 +39,14 @@ pub async fn find_count_user_json(params: FindRecordParams) -> Result<(i64, Vec<
         -1
     };
 
-    let sql = users::Entity::find();
+    let mut sql = users::Entity::find().select_only();
+    for item in users::Column::iter() {
+        if item.as_str() == users::Column::Password.as_str() {
+            continue;
+        }
+        sql = sql.column(item);
+    }
     let items = sql
-        .select_only()
-        .column(users::Column::Account)
-        .column(users::Column::CreatedAt)
-        .column(users::Column::Email)
-        .column(users::Column::Groups)
-        .column(users::Column::Id)
-        .column(users::Column::Remark)
-        .column(users::Column::Roles)
-        .column(users::Column::Status)
-        .column(users::Column::UpdatedAt)
         .into_json()
         .paginate(conn, params.page_size)
         .fetch_page(params.page)
