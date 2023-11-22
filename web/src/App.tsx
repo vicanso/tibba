@@ -21,7 +21,7 @@ export default function App() {
       }
     } catch (err) {
       toast({
-        title: "Fetch Fail",
+        title: "Fetch user info fail",
         description: formatError(err),
       });
       console.error(err);

@@ -84,59 +84,80 @@ pub fn list_setting_descriptions() -> Vec<EntityItemDescription> {
     vec![
         EntityItemDescription {
             name: Column::Id.to_string(),
+            label: "ID".to_string(),
+            width: Some(60),
             category: EntityItemCategory::Number,
             readonly: true,
             ..Default::default()
         },
         EntityItemDescription {
             name: Column::Status.to_string(),
+            label: "状态".to_string(),
+            width: Some(60),
             category: EntityItemCategory::Number,
             ..Default::default()
         },
         EntityItemDescription {
             name: Column::Name.to_string(),
+            label: "名称".to_string(),
             category: EntityItemCategory::Text,
             ..Default::default()
         },
         EntityItemDescription {
             name: Column::Category.to_string(),
+            label: "分类".to_string(),
+            width: Some(80),
             category: EntityItemCategory::Text,
             ..Default::default()
         },
         EntityItemDescription {
             name: Column::Data.to_string(),
+            label: "配置".to_string(),
+            width: Some(200),
             category: EntityItemCategory::Editor,
             ..Default::default()
         },
         EntityItemDescription {
             name: Column::Remark.to_string(),
+            label: "备注".to_string(),
+            width: Some(120),
             category: EntityItemCategory::Text,
             ..Default::default()
         },
         EntityItemDescription {
             name: Column::StartedAt.to_string(),
+            label: "生效时间".to_string(),
+            width: Some(140),
             category: EntityItemCategory::DateTime,
             ..Default::default()
         },
         EntityItemDescription {
             name: Column::EndedAt.to_string(),
+            label: "失效时间".to_string(),
+            width: Some(140),
             category: EntityItemCategory::DateTime,
             ..Default::default()
         },
         EntityItemDescription {
             name: Column::CreatedAt.to_string(),
+            label: "创建时间".to_string(),
+            width: Some(140),
             category: EntityItemCategory::DateTime,
             readonly: true,
             ..Default::default()
         },
         EntityItemDescription {
             name: Column::UpdatedAt.to_string(),
+            label: "更新时间".to_string(),
+            width: Some(140),
             category: EntityItemCategory::DateTime,
             readonly: true,
             ..Default::default()
         },
         EntityItemDescription {
             name: Column::Creator.to_string(),
+            label: "创建人".to_string(),
+            width: Some(80),
             category: EntityItemCategory::Text,
             readonly: true,
             ..Default::default()

@@ -36,10 +36,10 @@ const router = createHashRouter([
     path: HOME,
     element: <Home />,
   },
-  {
-    path: "/users",
-    element: <Home />,
-  },
+  // {
+  //   path: "/users",
+  //   element:  <Home />,
+  // },
   {
     path: LOGIN,
     element: <Login />,

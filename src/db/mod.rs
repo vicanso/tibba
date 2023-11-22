@@ -32,9 +32,11 @@ pub struct EntityItemOption {
 #[derive(Debug, Serialize, Default)]
 pub struct EntityItemDescription {
     pub name: String,
+    pub label: String,
     pub category: EntityItemCategory,
     pub readonly: bool,
     pub options: Option<Vec<EntityItemOption>>,
+    pub width: Option<i16>,
 }
 
 pub use conn::get_database;

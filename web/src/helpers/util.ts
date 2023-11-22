@@ -1,7 +1,17 @@
 import HTTPError from "@/http-error";
+import dayjs from "dayjs";
 
 const oneHourMS = 3600 * 1000;
 const oneDayMS = 24 * oneHourMS;
+
+// formatDate 格式化日期
+export function formatDate(str: string): string {
+  if (!str) {
+    return "--";
+  }
+
+  return dayjs(str).format("YYYY-MM-DD HH:mm:ss");
+}
 
 export function formatError(err: Error | HTTPError | unknown): string {
   let message = "";

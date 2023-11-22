@@ -7,6 +7,7 @@ import request, {
 import sha256 from "crypto-js/sha256";
 import dayjs from "dayjs";
 import HTTPError from "@/http-error";
+import { USER_FRESH, USER_LOGIN, USER_LOGIN_TOKEN, USER_ME } from "@/url";
 
 interface UserState {
   anonymous: boolean;
@@ -27,7 +28,7 @@ const refresh = (expiredAt: string) => {
     .get<{
       access_token: string;
       token_type: string;
-    }>("/users/refresh")
+    }>(USER_FRESH)
     .then((res) => {
       const { token_type, access_token } = res.data;
       if (access_token) {
@@ -45,7 +46,7 @@ const useUserStore = create<UserState>()((set, get) => ({
   login: async (account: string, password: string) => {
     // 获取token
     const resp = await request.get<{ timestamp: number; token: string }>(
-      "/users/login-token",
+      USER_LOGIN_TOKEN,
     );
     const { token, timestamp } = resp.data;
     const msg = `${token}:${sha256(password).toString()}`;
@@ -53,7 +54,7 @@ const useUserStore = create<UserState>()((set, get) => ({
     const { data } = await request.post<{
       access_token: string;
       token_type: string;
-    }>("/users/login", {
+    }>(USER_LOGIN, {
       token,
       timestamp,
       account,
@@ -82,7 +83,7 @@ const useUserStore = create<UserState>()((set, get) => ({
         expired_at: string;
         issued_at: string;
         time: string;
-      }>("/users/me");
+      }>(USER_ME);
       let account = data.name;
       // 如果超过14天，则认为需要重新登录
       const expiredOffset = 14 * 24 * 3600;

@@ -109,7 +109,7 @@ export function MainHeader({ className }: MainHeaderProps) {
         <Link to={HOME} className="font-bold">
           Tibba
         </Link>
-        <div className="flex flex-1 items-center justify-between space-x-2 md:justify-end mr-20">
+        <div className="flex flex-1 items-center justify-between space-x-2 md:justify-end mr-5">
           {tips}
         </div>
       </div>

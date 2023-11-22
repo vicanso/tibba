@@ -10,7 +10,7 @@ export default function Home() {
       <div className="grid lg:grid-cols-5">
         <MainSidebar className="h-screen" />
         <div className="col-span-3 lg:col-span-4 lg:border-l">
-          <DataTable />
+          <DataTable entity="settings" />
         </div>
       </div>
     </div>

@@ -57,7 +57,7 @@ export default function Login() {
       }
     } catch (err) {
       toast({
-        title: "Login Fail",
+        title: "Login fail",
         description: formatError(err),
       });
       console.error(err);
