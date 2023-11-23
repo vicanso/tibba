@@ -20,6 +20,7 @@ pub enum EntityItemCategory {
     Number,
     DateTime,
     Editor,
+    Status,
 }
 
 #[derive(Debug, Serialize, Default)]

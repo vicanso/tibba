@@ -94,7 +94,7 @@ pub fn list_setting_descriptions() -> Vec<EntityItemDescription> {
             name: Column::Status.to_string(),
             label: "状态".to_string(),
             width: Some(60),
-            category: EntityItemCategory::Number,
+            category: EntityItemCategory::Status,
             ..Default::default()
         },
         EntityItemDescription {
