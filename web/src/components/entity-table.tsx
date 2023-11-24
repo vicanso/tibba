@@ -7,21 +7,15 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import request from "@/request";
-import { ArrowUpDown, ChevronDown, MoreHorizontal } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 
 import { INNER_ENTITY_DESCRIPTIONS, INNER_ENTITIES } from "@/url";
 import {
   ColumnDef,
-  ColumnFiltersState,
-  SortingState,
   VisibilityState,
   flexRender,
   getCoreRowModel,
-  getFilteredRowModel,
-  getPaginationRowModel,
-  getSortedRowModel,
   useReactTable,
-  TableState,
   PaginationState,
 } from "@tanstack/react-table";
 import { useEffect, useMemo, useState } from "react";
@@ -34,12 +28,8 @@ import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Checkbox } from "@/components/ui/checkbox";
 
 interface EntityItem {
   name: string;
@@ -176,7 +166,20 @@ export default function DataTable({ entity }: { entity: string }) {
     onPaginationChange: setPagination,
   });
 
+  function reset() {
+    setInitialized(false);
+    setLabels(new Map<string, string>());
+    setEntityItems([]);
+    setPageCount(0);
+    setEntities([]);
+    setPagination({
+      pageSize,
+      pageIndex: -1,
+    });
+  }
+
   useAsync(async () => {
+    reset();
     try {
       const items = await getEntityDescriptions(entity);
       const columnLabels = new Map<string, string>();
@@ -201,7 +204,7 @@ export default function DataTable({ entity }: { entity: string }) {
     } finally {
       setInitialized(true);
     }
-  }, []);
+  }, [entity]);
 
   useAsync(async () => {
     if (pageIndex < 0) {

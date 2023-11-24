@@ -1,4 +1,4 @@
-use super::{get_database, EntityItemCategory, EntityItemDescription, FindRecordParams};
+use super::{get_database, EntityItemCategory, EntityItemDescription, ListCountParams, Result};
 use crate::entities::settings::{ActiveModel, Column, Entity, Model};
 use crate::error::HttpError;
 use crate::util::{json_get_date_time, json_get_i64, json_get_string};
@@ -6,8 +6,6 @@ use sea_orm::query::{Order, Select};
 use sea_orm::{entity::prelude::*, ActiveValue, QueryOrder};
 use serde_json::Value;
 use substring::Substring;
-
-pub type Result<T, E = HttpError> = std::result::Result<T, E>;
 
 const ERROR_CATEGORY: &str = "entity_settings";
 
@@ -42,7 +40,7 @@ fn from_value(value: Value) -> Result<ActiveModel> {
     Ok(model)
 }
 
-pub fn order_by<E>(sql: Select<E>, orders: &str) -> Result<Select<E>>
+fn order_by<E>(sql: Select<E>, orders: &str) -> Result<Select<E>>
 where
     E: EntityTrait,
 {
@@ -73,118 +71,123 @@ where
     Ok(s)
 }
 
-pub async fn add_setting_json(user: &str, value: Value) -> Result<Model> {
-    let mut data = from_value(value)?;
-    data.creator = ActiveValue::set(user.to_string());
-    let result = data.insert(get_database().await).await?;
-    Ok(result)
-}
+pub struct SettingEntity {}
 
-pub fn list_setting_descriptions() -> Vec<EntityItemDescription> {
-    vec![
-        EntityItemDescription {
-            name: Column::Id.to_string(),
-            label: "ID".to_string(),
-            width: Some(60),
-            category: EntityItemCategory::Number,
-            readonly: true,
-            ..Default::default()
-        },
-        EntityItemDescription {
-            name: Column::Status.to_string(),
-            label: "状态".to_string(),
-            width: Some(60),
-            category: EntityItemCategory::Status,
-            ..Default::default()
-        },
-        EntityItemDescription {
-            name: Column::Name.to_string(),
-            label: "名称".to_string(),
-            category: EntityItemCategory::Text,
-            ..Default::default()
-        },
-        EntityItemDescription {
-            name: Column::Category.to_string(),
-            label: "分类".to_string(),
-            width: Some(80),
-            category: EntityItemCategory::Text,
-            ..Default::default()
-        },
-        EntityItemDescription {
-            name: Column::Data.to_string(),
-            label: "配置".to_string(),
-            width: Some(200),
-            category: EntityItemCategory::Editor,
-            ..Default::default()
-        },
-        EntityItemDescription {
-            name: Column::Remark.to_string(),
-            label: "备注".to_string(),
-            width: Some(120),
-            category: EntityItemCategory::Text,
-            ..Default::default()
-        },
-        EntityItemDescription {
-            name: Column::StartedAt.to_string(),
-            label: "生效时间".to_string(),
-            width: Some(140),
-            category: EntityItemCategory::DateTime,
-            ..Default::default()
-        },
-        EntityItemDescription {
-            name: Column::EndedAt.to_string(),
-            label: "失效时间".to_string(),
-            width: Some(140),
-            category: EntityItemCategory::DateTime,
-            ..Default::default()
-        },
-        EntityItemDescription {
-            name: Column::CreatedAt.to_string(),
-            label: "创建时间".to_string(),
-            width: Some(140),
-            category: EntityItemCategory::DateTime,
-            readonly: true,
-            ..Default::default()
-        },
-        EntityItemDescription {
-            name: Column::UpdatedAt.to_string(),
-            label: "更新时间".to_string(),
-            width: Some(140),
-            category: EntityItemCategory::DateTime,
-            readonly: true,
-            ..Default::default()
-        },
-        EntityItemDescription {
-            name: Column::Creator.to_string(),
-            label: "创建人".to_string(),
-            width: Some(80),
-            category: EntityItemCategory::Text,
-            readonly: true,
-            ..Default::default()
-        },
-    ]
-}
+impl SettingEntity {
+    pub async fn insert(user: &str, value: Value) -> Result<Model> {
+        let mut data = from_value(value)?;
+        data.creator = ActiveValue::set(user.to_string());
+        let result = data.insert(get_database().await).await?;
+        Ok(result)
+    }
+    pub fn list_descriptions() -> Vec<EntityItemDescription> {
+        vec![
+            EntityItemDescription {
+                name: Column::Id.to_string(),
+                label: "ID".to_string(),
+                width: Some(60),
+                category: EntityItemCategory::Number,
+                readonly: true,
+                ..Default::default()
+            },
+            EntityItemDescription {
+                name: Column::Status.to_string(),
+                label: "状态".to_string(),
+                width: Some(60),
+                category: EntityItemCategory::Status,
+                ..Default::default()
+            },
+            EntityItemDescription {
+                name: Column::Name.to_string(),
+                label: "名称".to_string(),
+                category: EntityItemCategory::Text,
+                ..Default::default()
+            },
+            EntityItemDescription {
+                name: Column::Category.to_string(),
+                label: "分类".to_string(),
+                width: Some(80),
+                category: EntityItemCategory::Text,
+                ..Default::default()
+            },
+            EntityItemDescription {
+                name: Column::Data.to_string(),
+                label: "配置".to_string(),
+                width: Some(200),
+                category: EntityItemCategory::Editor,
+                ..Default::default()
+            },
+            EntityItemDescription {
+                name: Column::Remark.to_string(),
+                label: "备注".to_string(),
+                width: Some(120),
+                category: EntityItemCategory::Text,
+                ..Default::default()
+            },
+            EntityItemDescription {
+                name: Column::StartedAt.to_string(),
+                label: "生效时间".to_string(),
+                width: Some(140),
+                category: EntityItemCategory::DateTime,
+                ..Default::default()
+            },
+            EntityItemDescription {
+                name: Column::EndedAt.to_string(),
+                label: "失效时间".to_string(),
+                width: Some(140),
+                category: EntityItemCategory::DateTime,
+                ..Default::default()
+            },
+            EntityItemDescription {
+                name: Column::CreatedAt.to_string(),
+                label: "创建时间".to_string(),
+                width: Some(140),
+                category: EntityItemCategory::DateTime,
+                readonly: true,
+                ..Default::default()
+            },
+            EntityItemDescription {
+                name: Column::UpdatedAt.to_string(),
+                label: "更新时间".to_string(),
+                width: Some(140),
+                category: EntityItemCategory::DateTime,
+                readonly: true,
+                ..Default::default()
+            },
+            EntityItemDescription {
+                name: Column::Creator.to_string(),
+                label: "创建人".to_string(),
+                width: Some(80),
+                category: EntityItemCategory::Text,
+                readonly: true,
+                ..Default::default()
+            },
+        ]
+    }
+    pub async fn list_count(params: &ListCountParams) -> Result<(i64, Vec<Value>)> {
+        let conn = get_database().await;
+        let page_count = if params.page == 0 {
+            let count = Entity::find().count(conn).await?;
+            let mut page_count = count / params.page_size;
+            if count % params.page_size != 0 {
+                page_count += 1;
+            }
+            page_count as i64
+        } else {
+            -1
+        };
 
-pub async fn find_count_setting_json(params: FindRecordParams) -> Result<(i64, Vec<Value>)> {
-    let conn = get_database().await;
-    let page_count = if params.page == 0 {
-        let count = Entity::find().count(conn).await?;
-        let mut page_count = count / params.page_size;
-        if count % params.page_size != 0 {
-            page_count += 1;
-        }
-        page_count as i64
-    } else {
-        -1
-    };
+        let mut sql = Entity::find();
+        sql = order_by(
+            sql,
+            &params.orders.clone().unwrap_or("-updated_at".to_string()),
+        )?;
+        let items = sql
+            .into_json()
+            .paginate(conn, params.page_size)
+            .fetch_page(params.page)
+            .await?;
 
-    let mut sql = Entity::find();
-    sql = order_by(sql, &params.orders.unwrap_or("-updated_at".to_string()))?;
-    let items = sql
-        .into_json()
-        .paginate(conn, params.page_size)
-        .fetch_page(params.page)
-        .await?;
-
-    Ok((page_count, items))
+        Ok((page_count, items))
+    }
 }

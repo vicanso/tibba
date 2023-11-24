@@ -2,7 +2,8 @@ import { createHashRouter } from "react-router-dom";
 
 import Home from "@/pages/Home";
 import Login from "@/pages/Login";
-import { LOGIN, HOME } from "@/data/route";
+import Entity from "@/pages/Entity";
+import { LOGIN, HOME, ENTITY } from "@/data/route";
 
 export type NavItemList = (typeof navItemList)[number];
 
@@ -25,7 +26,11 @@ export const navItemList = [
     items: [
       {
         name: "应用配置",
-        url: "/settings",
+        url: "/entity/settings",
+      },
+      {
+        name: "用户",
+        url: "/entity/users",
       },
     ],
   },
@@ -43,6 +48,10 @@ const router = createHashRouter([
   {
     path: LOGIN,
     element: <Login />,
+  },
+  {
+    path: ENTITY,
+    element: <Entity />,
   },
 ]);
 

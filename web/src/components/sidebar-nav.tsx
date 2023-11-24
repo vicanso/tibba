@@ -18,7 +18,7 @@ export function MainSidebar({ className }: MainSidebarProps) {
           className="w-full justify-start"
           key={`${item.name}-${subItem.name}`}
         >
-          <Link className="block text-left w-full" to={subItem.url}>
+          <Link className="block text-left w-full leading-10" to={subItem.url}>
             {subItem.name}
           </Link>
         </Button>

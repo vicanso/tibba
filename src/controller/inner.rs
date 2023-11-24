@@ -1,8 +1,5 @@
 use super::{JsonResult, Query};
-use crate::db::{
-    add_setting_json, find_count_setting_json, find_count_user_json, list_setting_descriptions,
-    EntityItemDescription, FindRecordParams,
-};
+use crate::db;
 use crate::error::HttpError;
 use crate::middleware::{load_session, Claim};
 use crate::util::json_get_string;
@@ -23,9 +20,6 @@ pub fn new_router() -> Router {
     Router::new().nest("/inners", r)
 }
 
-const TABLE_NAME_SETTINGS: &str = "settings";
-const TABLE_NAME_USERS: &str = "users";
-
 #[derive(Debug, Serialize)]
 struct AddRecordResp {
     id: i64,
@@ -33,14 +27,7 @@ struct AddRecordResp {
 
 async fn add(claims: Claim, Json(value): Json<Value>) -> JsonResult<AddRecordResp> {
     let table_name = json_get_string(&value, "table")?.ok_or(HttpError::new("Table is nil"))?;
-    let id = match table_name.as_str() {
-        TABLE_NAME_SETTINGS => {
-            let result = add_setting_json(&claims.get_account(), value).await?;
-            result.id
-        }
-        _ => return Err(HttpError::new("Table is invalid")),
-    };
-
+    let id = db::add(&table_name, &claims.get_account(), value).await?;
     Ok(Json(AddRecordResp { id }))
 }
 
@@ -49,12 +36,8 @@ struct ListRecordResp {
     page_count: i64,
     items: Vec<serde_json::Value>,
 }
-async fn list(Query(params): Query<FindRecordParams>) -> JsonResult<ListRecordResp> {
-    let (page_count, items) = match params.table.as_str() {
-        TABLE_NAME_SETTINGS => find_count_setting_json(params).await?,
-        TABLE_NAME_USERS => find_count_user_json(params).await?,
-        _ => return Err(HttpError::new("Table is invalid")),
-    };
+async fn list(Query(params): Query<db::ListCountParams>) -> JsonResult<ListRecordResp> {
+    let (page_count, items) = db::list_count(&params).await?;
 
     Ok(Json(ListRecordResp { page_count, items }))
 }
@@ -66,14 +49,13 @@ pub struct ListDescriptionParams {
 
 #[derive(Debug, Serialize)]
 struct ListDescriptionResp {
-    items: Vec<EntityItemDescription>,
+    items: Vec<db::EntityItemDescription>,
 }
 async fn list_description(
     Query(params): Query<ListDescriptionParams>,
 ) -> JsonResult<ListDescriptionResp> {
-    let items = match params.table.as_str() {
-        TABLE_NAME_SETTINGS => list_setting_descriptions(),
-        _ => return Err(HttpError::new("Table is invalid")),
-    };
-    Ok(Json(ListDescriptionResp { items }))
+    let descriptions = db::list_descriptions(&params.table)?;
+    Ok(Json(ListDescriptionResp {
+        items: descriptions,
+    }))
 }
