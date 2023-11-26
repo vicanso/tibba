@@ -1,4 +1,4 @@
-import HTTPError from "@/http-error";
+import HTTPError from "@/helpers/http-error";
 import dayjs from "dayjs";
 
 const oneHourMS = 3600 * 1000;

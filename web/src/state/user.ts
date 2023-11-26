@@ -3,10 +3,10 @@ import request, {
   saveAuthorization,
   authorizationExists,
   removeAuthorization,
-} from "@/request";
+} from "@/helpers/request";
 import sha256 from "crypto-js/sha256";
 import dayjs from "dayjs";
-import HTTPError from "@/http-error";
+import HTTPError from "@/helpers/http-error";
 import { USER_FRESH, USER_LOGIN, USER_LOGIN_TOKEN, USER_ME } from "@/url";
 
 interface UserState {

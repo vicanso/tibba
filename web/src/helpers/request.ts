@@ -1,5 +1,5 @@
 import axios, { AxiosRequestConfig, AxiosResponse } from "axios";
-import HTTPError from "@/http-error";
+import HTTPError from "@/helpers/http-error";
 
 const requestedAt = "X-Requested-At";
 const request = axios.create({

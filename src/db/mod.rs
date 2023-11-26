@@ -12,6 +12,7 @@ mod users;
 pub struct ListCountParams {
     pub table: String,
     pub orders: Option<String>,
+    pub keyword: Option<String>,
     pub page: u64,
     pub page_size: u64,
 }
@@ -47,12 +48,13 @@ pub struct EntityItemDescription {
 
 const TABLE_NAME_SETTINGS: &str = "settings";
 const TABLE_NAME_USERS: &str = "users";
+const TABLE_INVALID_MSG: &str = "Table is invalid";
 
 pub async fn list_count(params: &ListCountParams) -> Result<(i64, Vec<Value>)> {
     let result = match params.table.as_str() {
         TABLE_NAME_SETTINGS => SettingEntity::list_count(params).await?,
         TABLE_NAME_USERS => UserEntity::list_count(params).await?,
-        _ => return Err(HttpError::new("Table is invalid")),
+        _ => return Err(HttpError::new(TABLE_INVALID_MSG)),
     };
     Ok(result)
 }
@@ -60,7 +62,7 @@ pub fn list_descriptions(name: &str) -> Result<Vec<EntityItemDescription>> {
     let result = match name {
         TABLE_NAME_SETTINGS => SettingEntity::list_descriptions(),
         TABLE_NAME_USERS => UserEntity::list_descriptions(),
-        _ => return Err(HttpError::new("Table is invalid")),
+        _ => return Err(HttpError::new(TABLE_INVALID_MSG)),
     };
     Ok(result)
 }
@@ -70,7 +72,7 @@ pub async fn add(name: &str, user: &str, value: Value) -> Result<i64> {
             let result = SettingEntity::insert(user, value).await?;
             result.id
         }
-        _ => return Err(HttpError::new("Table is invalid")),
+        _ => return Err(HttpError::new(TABLE_INVALID_MSG)),
     };
     Ok(id)
 }

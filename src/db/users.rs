@@ -90,8 +90,12 @@ impl UserEntity {
     }
     pub async fn list_count(params: &ListCountParams) -> Result<(i64, Vec<Value>)> {
         let conn = get_database().await;
+        let mut sql = Entity::find();
+        if let Some(keyword) = &params.keyword {
+            sql = sql.filter(Column::Account.contains(keyword));
+        }
         let page_count = if params.page == 0 {
-            let count = Entity::find().count(conn).await?;
+            let count = sql.clone().count(conn).await?;
             let mut page_count = count / params.page_size;
             if count % params.page_size != 0 {
                 page_count += 1;
@@ -101,7 +105,7 @@ impl UserEntity {
             -1
         };
 
-        let mut sql = Entity::find().select_only();
+      
         for item in Column::iter() {
             if item.as_str() == Column::Password.as_str() {
                 continue;

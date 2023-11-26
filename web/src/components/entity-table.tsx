@@ -6,7 +6,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import request from "@/request";
+import request from "@/helpers/request";
 import { ChevronDown } from "lucide-react";
 
 import { INNER_ENTITY_DESCRIPTIONS, INNER_ENTITIES } from "@/url";
@@ -91,10 +91,12 @@ async function getEntities({
   entity,
   page,
   page_size,
+  keyword,
 }: {
   entity: string;
   page: number;
   page_size: number;
+  keyword: string;
 }) {
   const { data } = await request.get<{
     page_count: number;
@@ -104,6 +106,7 @@ async function getEntities({
       table: entity,
       page_size,
       page,
+      keyword,
     },
   });
   return data;
@@ -141,9 +144,9 @@ export default function DataTable({ entity }: { entity: string }) {
     pageIndex: -1,
     pageSize: 10,
   });
-  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(
-    getColumnVisibility(entity),
-  );
+  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
+  const [keyword, setKeyword] = useState("");
+  let inputKeyword = "";
 
   const pagination = useMemo(
     () => ({
@@ -176,6 +179,7 @@ export default function DataTable({ entity }: { entity: string }) {
       pageSize,
       pageIndex: -1,
     });
+    setColumnVisibility(getColumnVisibility(entity));
   }
 
   useAsync(async () => {
@@ -214,12 +218,13 @@ export default function DataTable({ entity }: { entity: string }) {
       entity,
       page_size: pageSize,
       page: pageIndex,
+      keyword,
     });
     setEntities(result.items);
     if (result.page_count >= 0) {
       setPageCount(result.page_count);
     }
-  }, [pageIndex]);
+  }, [pageIndex, keyword]);
 
   useEffect(() => {
     saveColumnVisibility(entity, columnVisibility);
@@ -253,12 +258,23 @@ export default function DataTable({ entity }: { entity: string }) {
         <div className="flex items-center py-4">
           <Input
             placeholder="Filter by keywords..."
-            value={""}
-            onChange={(event) =>
-              table.getColumn("id")?.setFilterValue(event.target.value)
-            }
+            onChange={(event) => (inputKeyword = event.target.value)}
+            defaultValue={keyword}
             className="max-w-sm"
           />
+          <Button
+            type="submit"
+            className="ml-5 px-10"
+            onClick={() => {
+              setPagination({
+                pageIndex: 0,
+                pageSize,
+              });
+              setKeyword(inputKeyword);
+            }}
+          >
+            查询
+          </Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" className="ml-auto">
@@ -311,7 +327,7 @@ export default function DataTable({ entity }: { entity: string }) {
                     colSpan={entityItems.length}
                     className="h-24 text-center"
                   >
-                    No results.
+                    无匹配数据
                   </TableCell>
                 </TableRow>
               )}
@@ -319,9 +335,11 @@ export default function DataTable({ entity }: { entity: string }) {
           </Table>
         </div>
         <div className="flex items-center justify-end space-x-2">
-          <div className="flex-1 text-sm text-muted-foreground">
-            Pages: {pageIndex + 1} / {table.getPageCount()}
-          </div>
+          {table.getPageCount() > 0 && (
+            <div className="flex-1 text-sm text-muted-foreground">
+              页数: {pageIndex + 1} / {table.getPageCount()}
+            </div>
+          )}
           <div className="space-x-2">
             <Button
               variant="outline"
@@ -329,7 +347,7 @@ export default function DataTable({ entity }: { entity: string }) {
               onClick={() => table.previousPage()}
               disabled={!table.getCanPreviousPage()}
             >
-              Previous
+              上一页
             </Button>
             <Button
               variant="outline"
@@ -337,7 +355,7 @@ export default function DataTable({ entity }: { entity: string }) {
               onClick={() => table.nextPage()}
               disabled={!table.getCanNextPage()}
             >
-              Next
+              下一页
             </Button>
           </div>
         </div>
