@@ -6,7 +6,6 @@ import EntityTable from "@/components/entity-table";
 
 export default function Entity() {
   const { entity } = useParams();
-  console.dir(entity);
   return (
     <div>
       <MainHeader />

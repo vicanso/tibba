@@ -167,7 +167,7 @@ impl SettingEntity {
     pub async fn list_count(params: &ListCountParams) -> Result<(i64, Vec<Value>)> {
         let conn = get_database().await;
         let mut sql = Entity::find();
-        if let Some(keyword) = &params.keyword  {
+        if let Some(keyword) = &params.keyword {
             sql = sql.filter(Column::Name.contains(keyword));
         }
 
@@ -181,9 +181,7 @@ impl SettingEntity {
         } else {
             -1
         };
-        
 
-      
         sql = order_by(
             sql,
             &params.orders.clone().unwrap_or("-updated_at".to_string()),

@@ -105,7 +105,6 @@ impl UserEntity {
             -1
         };
 
-      
         for item in Column::iter() {
             if item.as_str() == Column::Password.as_str() {
                 continue;

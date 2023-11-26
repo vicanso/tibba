@@ -76,6 +76,8 @@ function convertDescriptionToColumnDef(
   });
 }
 
+const opName = "op";
+
 async function getEntityDescriptions(entity: string): Promise<EntityItem[]> {
   const { data } = await request.get<{
     items: EntityItem[];
@@ -83,6 +85,13 @@ async function getEntityDescriptions(entity: string): Promise<EntityItem[]> {
     params: {
       table: entity,
     },
+  });
+  data.items.push({
+    name: opName,
+    label: "操作",
+    category: opName,
+    readonly: true,
+    width: 100,
   });
   return data.items;
 }
@@ -144,7 +153,10 @@ export default function DataTable({ entity }: { entity: string }) {
     pageIndex: -1,
     pageSize: 10,
   });
-  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
+  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(
+    getColumnVisibility(entity),
+  );
+  const [loading, setLoading] = useState(false);
   const [keyword, setKeyword] = useState("");
   let inputKeyword = "";
 
@@ -170,6 +182,7 @@ export default function DataTable({ entity }: { entity: string }) {
   });
 
   function reset() {
+    setKeyword("");
     setInitialized(false);
     setLabels(new Map<string, string>());
     setEntityItems([]);
@@ -201,7 +214,7 @@ export default function DataTable({ entity }: { entity: string }) {
       });
     } catch (err) {
       toast({
-        title: "Fetch entity description fail",
+        title: "获取实体描述信息失败",
         description: formatError(err),
       });
       console.error(err);
@@ -214,19 +227,44 @@ export default function DataTable({ entity }: { entity: string }) {
     if (pageIndex < 0) {
       return;
     }
-    const result = await getEntities({
-      entity,
-      page_size: pageSize,
-      page: pageIndex,
-      keyword,
-    });
-    setEntities(result.items);
-    if (result.page_count >= 0) {
-      setPageCount(result.page_count);
+    if (loading) {
+      return;
+    }
+    // TODO loading
+    setLoading(true);
+    try {
+      const result = await getEntities({
+        entity,
+        page_size: pageSize,
+        page: pageIndex,
+        keyword,
+      });
+      setEntities(result.items);
+      if (result.page_count >= 0) {
+        setPageCount(result.page_count);
+      }
+    } catch (err) {
+      toast({
+        title: "加载数据失败",
+        description: formatError(err),
+      });
+      console.error(err);
+    } finally {
+      setLoading(false);
     }
   }, [pageIndex, keyword]);
 
+  const submitSearch = () => {
+    setPagination({
+      pageIndex: 0,
+      pageSize,
+    });
+    setKeyword(inputKeyword);
+  };
+
   useEffect(() => {
+    console.dir(entity);
+    console.dir(columnVisibility);
     saveColumnVisibility(entity, columnVisibility);
   }, [entity, columnVisibility]);
 
@@ -257,23 +295,24 @@ export default function DataTable({ entity }: { entity: string }) {
       <div className="m-5">
         <div className="flex items-center py-4">
           <Input
-            placeholder="Filter by keywords..."
+            placeholder="请输入关键字"
             onChange={(event) => (inputKeyword = event.target.value)}
+            onKeyDown={(event) => {
+              if (event.code === "Enter") {
+                submitSearch();
+              }
+            }}
             defaultValue={keyword}
             className="max-w-sm"
           />
           <Button
+            disabled={loading}
             type="submit"
             className="ml-5 px-10"
-            onClick={() => {
-              setPagination({
-                pageIndex: 0,
-                pageSize,
-              });
-              setKeyword(inputKeyword);
-            }}
+            onClick={submitSearch}
           >
-            查询
+            {loading && "加载中..."}
+            {!loading && "查询"}
           </Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
