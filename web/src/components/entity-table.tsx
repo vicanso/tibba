@@ -44,15 +44,28 @@ function convertDescriptionToColumnDef(
 ): ColumnDef<Map<string, unknown>>[] {
   return items.map((item) => {
     const style = {
-      width: "",
+      minWidth: "",
     };
     if (item.width) {
-      style.width = `${item.width}px`;
+      style.minWidth = `${item.width}px`;
     }
     return {
       accessorKey: item.name,
-      header: item.label || item.name,
+      header: () => {
+        const name = item.label || item.name;
+        if (item.category == opName) {
+          return <div className="text-center sticky right-0">{name}</div>;
+        }
+        return name;
+      },
       cell: ({ row }) => {
+        if (item.category == opName) {
+          return (
+            <div className="grid items-center w-full" style={style}>
+              <Button variant="link">编辑</Button>
+            </div>
+          );
+        }
         let value: string = row.getValue(item.name);
         switch (item.category) {
           case "datetime": {
@@ -91,7 +104,7 @@ async function getEntityDescriptions(entity: string): Promise<EntityItem[]> {
     label: "操作",
     category: opName,
     readonly: true,
-    width: 100,
+    width: 60,
   });
   return data.items;
 }
@@ -230,7 +243,6 @@ export default function DataTable({ entity }: { entity: string }) {
     if (loading) {
       return;
     }
-    // TODO loading
     setLoading(true);
     try {
       const result = await getEntities({
@@ -263,8 +275,6 @@ export default function DataTable({ entity }: { entity: string }) {
   };
 
   useEffect(() => {
-    console.dir(entity);
-    console.dir(columnVisibility);
     saveColumnVisibility(entity, columnVisibility);
   }, [entity, columnVisibility]);
 
@@ -277,7 +287,7 @@ export default function DataTable({ entity }: { entity: string }) {
       <TableRow key={headerGroup.id}>
         {headerGroup.headers.map((header) => {
           return (
-            <TableHead key={header.id}>
+            <TableHead className="p-2" key={header.id}>
               {header.isPlaceholder
                 ? null
                 : flexRender(
@@ -308,7 +318,7 @@ export default function DataTable({ entity }: { entity: string }) {
           <Button
             disabled={loading}
             type="submit"
-            className="ml-5 px-10"
+            className="ml-5 w-40"
             onClick={submitSearch}
           >
             {loading && "加载中..."}
@@ -351,7 +361,7 @@ export default function DataTable({ entity }: { entity: string }) {
                     data-state={row.getIsSelected() && "selected"}
                   >
                     {row.getVisibleCells().map((cell) => (
-                      <TableCell key={cell.id}>
+                      <TableCell key={cell.id} className="p-2">
                         {flexRender(
                           cell.column.columnDef.cell,
                           cell.getContext(),

@@ -7,7 +7,7 @@ import request, {
 import sha256 from "crypto-js/sha256";
 import dayjs from "dayjs";
 import HTTPError from "@/helpers/http-error";
-import { USER_FRESH, USER_LOGIN, USER_LOGIN_TOKEN, USER_ME } from "@/url";
+import { USER_REFRESH, USER_LOGIN, USER_LOGIN_TOKEN, USER_ME } from "@/url";
 
 interface UserState {
   anonymous: boolean;
@@ -28,7 +28,7 @@ const refresh = (expiredAt: string) => {
     .get<{
       access_token: string;
       token_type: string;
-    }>(USER_FRESH)
+    }>(USER_REFRESH)
     .then((res) => {
       const { token_type, access_token } = res.data;
       if (access_token) {

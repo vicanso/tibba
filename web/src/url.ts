@@ -1,4 +1,4 @@
-export const USER_FRESH = "/user/fresh";
+export const USER_REFRESH = "/users/refresh";
 export const USER_LOGIN_TOKEN = "/users/login-token";
 export const USER_LOGIN = "/users/login";
 export const USER_ME = "/users/me";

@@ -1,13 +1,13 @@
 use super::{get_database, EntityItemCategory, EntityItemDescription, ListCountParams, Result};
 use crate::entities::users::{ActiveModel, Column, Entity, Model};
-use sea_orm::{entity::prelude::*, ActiveValue, Iterable, QuerySelect};
+use sea_orm::{entity::prelude::*, ActiveValue::Set, Condition, Iterable, QuerySelect};
 use serde_json::Value;
 
 pub async fn add_user(account: &str, password: &str) -> Result<Model> {
     let conn = get_database().await;
     let result = ActiveModel {
-        account: ActiveValue::set(account.to_string()),
-        password: ActiveValue::set(password.to_string()),
+        account: Set(account.to_string()),
+        password: Set(password.to_string()),
         ..Default::default()
     }
     .insert(conn)
@@ -92,7 +92,10 @@ impl UserEntity {
         let conn = get_database().await;
         let mut sql = Entity::find();
         if let Some(keyword) = &params.keyword {
-            sql = sql.filter(Column::Account.contains(keyword));
+            let cond = Condition::any()
+                .add(Column::Account.contains(keyword))
+                .add(Column::Email.contains(keyword));
+            sql = sql.filter(cond);
         }
         let page_count = if params.page == 0 {
             let count = sql.clone().count(conn).await?;

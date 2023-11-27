@@ -3,39 +3,40 @@ use crate::entities::settings::{ActiveModel, Column, Entity, Model};
 use crate::error::HttpError;
 use crate::util::{json_get_date_time, json_get_i64, json_get_string};
 use sea_orm::query::{Order, Select};
-use sea_orm::{entity::prelude::*, ActiveValue, QueryOrder};
+use sea_orm::Condition;
+use sea_orm::{entity::prelude::*, ActiveValue::Set, QueryOrder};
 use serde_json::Value;
 use substring::Substring;
 
 const ERROR_CATEGORY: &str = "entity_settings";
 
-fn from_value(value: Value) -> Result<ActiveModel> {
+fn from_value(value: &Value) -> Result<ActiveModel> {
     let mut model = ActiveModel {
         ..Default::default()
     };
-    if let Some(id) = json_get_i64(&value, "id")? {
-        model.id = ActiveValue::set(id);
+    if let Some(id) = json_get_i64(value, Column::Id.as_str())? {
+        model.id = Set(id);
     }
-    if let Some(status) = json_get_i64(&value, "status")? {
-        model.status = ActiveValue::set(status as i8);
+    if let Some(status) = json_get_i64(value, Column::Status.as_str())? {
+        model.status = Set(status as i8);
     }
-    if let Some(name) = json_get_string(&value, "name")? {
-        model.name = ActiveValue::set(name);
+    if let Some(name) = json_get_string(value, Column::Name.as_str())? {
+        model.name = Set(name);
     }
-    if let Some(category) = json_get_string(&value, "category")? {
-        model.category = ActiveValue::set(category);
+    if let Some(category) = json_get_string(value, Column::Category.as_str())? {
+        model.category = Set(category);
     }
-    if let Some(data) = json_get_string(&value, "data")? {
-        model.data = ActiveValue::set(data);
+    if let Some(data) = json_get_string(value, Column::Data.as_str())? {
+        model.data = Set(data);
     }
-    if let Some(remark) = json_get_string(&value, "remark")? {
-        model.remark = ActiveValue::set(remark);
+    if let Some(remark) = json_get_string(value, Column::Remark.as_str())? {
+        model.remark = Set(remark);
     }
-    if let Some(started_at) = json_get_date_time(&value, "started_at")? {
-        model.started_at = ActiveValue::set(started_at);
+    if let Some(started_at) = json_get_date_time(value, Column::StartedAt.as_str())? {
+        model.started_at = Set(started_at);
     }
-    if let Some(ended_at) = json_get_date_time(&value, "ended_at")? {
-        model.ended_at = ActiveValue::set(ended_at);
+    if let Some(ended_at) = json_get_date_time(value, Column::EndedAt.as_str())? {
+        model.ended_at = Set(ended_at);
     }
     Ok(model)
 }
@@ -48,7 +49,11 @@ where
         return Ok(sql);
     }
     let mut s = sql;
-    // TODO 是否有办法字符串转换为column
+    let support_orders: Vec<(String, Column)> = [Column::Id, Column::UpdatedAt, Column::Status]
+        .iter()
+        .map(|item| (item.to_string(), *item))
+        .collect();
+
     for order in orders.split(',') {
         let mut order_type = Order::Asc;
         let key = if order.starts_with('-') {
@@ -57,15 +62,16 @@ where
         } else {
             order
         };
-
-        match key {
-            "id" => s = s.order_by(Column::Id, order_type),
-            "updated_at" => s = s.order_by(Column::UpdatedAt, order_type),
-            "status" => s = s.order_by(Column::Status, order_type),
-            _ => {
-                let msg = format!("Order by {key} is unsupported");
-                return Err(HttpError::new_with_category(&msg, ERROR_CATEGORY));
+        let mut found = false;
+        for (name, column) in support_orders.iter() {
+            if name == key {
+                found = true;
+                s = s.order_by(*column, order_type.clone());
             }
+        }
+        if !found {
+            let msg = format!("Order by {key} is unsupported");
+            return Err(HttpError::new_with_category(&msg, ERROR_CATEGORY));
         }
     }
     Ok(s)
@@ -74,13 +80,45 @@ where
 pub struct SettingEntity {}
 
 impl SettingEntity {
-    pub async fn insert(user: &str, value: Value) -> Result<Model> {
+    pub async fn update_by_id(user: &str, id: i64, value: &Value) -> Result<()> {
+        let conn = get_database().await;
+        let result = Entity::find_by_id(id).one(conn).await?;
+        if result.is_none() {
+            return Err(HttpError::new("Record is not found"));
+        }
+        let mut setting: ActiveModel = result.unwrap().into();
+        setting.creator = Set(user.to_string());
+        if let Some(value) = json_get_i64(value, Column::Status.as_str())? {
+            setting.status = Set(value as i8);
+        }
+        if let Some(value) = json_get_string(value, Column::Name.as_str())? {
+            setting.name = Set(value);
+        }
+        if let Some(value) = json_get_string(value, Column::Category.as_str())? {
+            setting.category = Set(value);
+        }
+        if let Some(value) = json_get_string(value, Column::Data.as_str())? {
+            setting.data = Set(value);
+        }
+        if let Some(value) = json_get_string(value, Column::Remark.as_str())? {
+            setting.remark = Set(value);
+        }
+        if let Some(value) = json_get_date_time(value, Column::StartedAt.as_str())? {
+            setting.started_at = Set(value);
+        }
+        if let Some(value) = json_get_date_time(value, Column::EndedAt.as_str())? {
+            setting.ended_at = Set(value);
+        }
+        Ok(())
+    }
+    pub async fn insert(user: &str, value: &Value) -> Result<Model> {
         let mut data = from_value(value)?;
-        data.creator = ActiveValue::set(user.to_string());
+        data.creator = Set(user.to_string());
         let result = data.insert(get_database().await).await?;
         Ok(result)
     }
     pub fn list_descriptions() -> Vec<EntityItemDescription> {
+        println!("{}", Column::CreatedAt.to_string());
         vec![
             EntityItemDescription {
                 name: Column::Id.to_string(),
@@ -167,8 +205,13 @@ impl SettingEntity {
     pub async fn list_count(params: &ListCountParams) -> Result<(i64, Vec<Value>)> {
         let conn = get_database().await;
         let mut sql = Entity::find();
+
         if let Some(keyword) = &params.keyword {
-            sql = sql.filter(Column::Name.contains(keyword));
+            let cond = Condition::any()
+                .add(Column::Category.eq(keyword))
+                .add(Column::Name.contains(keyword))
+                .add(Column::Remark.contains(keyword));
+            sql = sql.filter(cond);
         }
 
         let page_count = if params.page == 0 {

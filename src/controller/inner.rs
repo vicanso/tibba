@@ -27,7 +27,7 @@ struct AddRecordResp {
 
 async fn add(claims: Claim, Json(value): Json<Value>) -> JsonResult<AddRecordResp> {
     let table_name = json_get_string(&value, "table")?.ok_or(HttpError::new("Table is nil"))?;
-    let id = db::add(&table_name, &claims.get_account(), value).await?;
+    let id = db::add(&table_name, &claims.get_account(), &value).await?;
     Ok(Json(AddRecordResp { id }))
 }
 

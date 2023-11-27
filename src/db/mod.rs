@@ -66,7 +66,7 @@ pub fn list_descriptions(name: &str) -> Result<Vec<EntityItemDescription>> {
     };
     Ok(result)
 }
-pub async fn add(name: &str, user: &str, value: Value) -> Result<i64> {
+pub async fn add(name: &str, user: &str, value: &Value) -> Result<i64> {
     let id = match name {
         TABLE_NAME_SETTINGS => {
             let result = SettingEntity::insert(user, value).await?;
