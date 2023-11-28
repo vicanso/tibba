@@ -7,11 +7,12 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import request from "@/helpers/request";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
 
 import { INNER_ENTITY_DESCRIPTIONS, INNER_ENTITIES } from "@/url";
 import {
   ColumnDef,
+  SortingState,
   VisibilityState,
   flexRender,
   getCoreRowModel,
@@ -38,11 +39,16 @@ interface EntityItem {
   readonly: boolean;
   width: number;
 }
+interface EntityDescription {
+  items: EntityItem[];
+  support_orders: string[];
+}
 
 function convertDescriptionToColumnDef(
-  items: EntityItem[],
+  description: EntityDescription,
+  sorting: SortingState,
 ): ColumnDef<Map<string, unknown>>[] {
-  return items.map((item) => {
+  return description.items.map((item) => {
     const style = {
       minWidth: "",
     };
@@ -51,10 +57,36 @@ function convertDescriptionToColumnDef(
     }
     return {
       accessorKey: item.name,
-      header: () => {
+      enableSorting: true,
+      header: ({ column }) => {
         const name = item.label || item.name;
         if (item.category == opName) {
           return <div className="text-center sticky right-0">{name}</div>;
+        }
+        if (description.support_orders?.includes(item.name)) {
+          let arrowType = 0;
+          sorting.forEach((sortItem) => {
+            if (sortItem.id === item.name) {
+              if (sortItem.desc) {
+                arrowType = 1;
+              } else {
+                arrowType = 2;
+              }
+            }
+          });
+          return (
+            <Button
+              variant="ghost"
+              onClick={() =>
+                column.toggleSorting(column.getIsSorted() === "asc")
+              }
+            >
+              {name}
+              {arrowType === 0 && <ArrowUpDown className="ml-2 h-4 w-4" />}
+              {arrowType === 1 && <ArrowDown className="ml-2 h-4 w-4" />}
+              {arrowType === 2 && <ArrowUp className="ml-2 h-4 w-4" />}
+            </Button>
+          );
         }
         return name;
       },
@@ -91,14 +123,17 @@ function convertDescriptionToColumnDef(
 
 const opName = "op";
 
-async function getEntityDescriptions(entity: string): Promise<EntityItem[]> {
-  const { data } = await request.get<{
-    items: EntityItem[];
-  }>(INNER_ENTITY_DESCRIPTIONS, {
-    params: {
-      table: entity,
+async function getEntityDescriptions(
+  entity: string,
+): Promise<EntityDescription> {
+  const { data } = await request.get<EntityDescription>(
+    INNER_ENTITY_DESCRIPTIONS,
+    {
+      params: {
+        table: entity,
+      },
     },
-  });
+  );
   data.items.push({
     name: opName,
     label: "操作",
@@ -106,7 +141,7 @@ async function getEntityDescriptions(entity: string): Promise<EntityItem[]> {
     readonly: true,
     width: 60,
   });
-  return data.items;
+  return data;
 }
 
 async function getEntities({
@@ -114,11 +149,13 @@ async function getEntities({
   page,
   page_size,
   keyword,
+  orders,
 }: {
   entity: string;
   page: number;
   page_size: number;
   keyword: string;
+  orders: string;
 }) {
   const { data } = await request.get<{
     page_count: number;
@@ -128,6 +165,7 @@ async function getEntities({
       table: entity,
       page_size,
       page,
+      orders,
       keyword,
     },
   });
@@ -169,6 +207,7 @@ export default function DataTable({ entity }: { entity: string }) {
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(
     getColumnVisibility(entity),
   );
+  const [sorting, setSorting] = useState<SortingState>([]);
   const [loading, setLoading] = useState(false);
   const [keyword, setKeyword] = useState("");
   let inputKeyword = "";
@@ -185,11 +224,13 @@ export default function DataTable({ entity }: { entity: string }) {
     state: {
       pagination,
       columnVisibility,
+      sorting,
     },
     pageCount,
     columns: entityItems,
     autoResetPageIndex: false,
     onColumnVisibilityChange: setColumnVisibility,
+    onSortingChange: setSorting,
     getCoreRowModel: getCoreRowModel(),
     onPaginationChange: setPagination,
   });
@@ -211,16 +252,15 @@ export default function DataTable({ entity }: { entity: string }) {
   useAsync(async () => {
     reset();
     try {
-      const items = await getEntityDescriptions(entity);
+      const description = await getEntityDescriptions(entity);
       const columnLabels = new Map<string, string>();
-      items.forEach((item) => {
+      description.items.forEach((item) => {
         if (item.label) {
           columnLabels.set(item.name, item.label);
         }
       });
       setLabels(columnLabels);
-
-      setEntityItems(convertDescriptionToColumnDef(items));
+      setEntityItems(convertDescriptionToColumnDef(description, sorting));
       setPagination({
         pageIndex: 0,
         pageSize,
@@ -234,7 +274,7 @@ export default function DataTable({ entity }: { entity: string }) {
     } finally {
       setInitialized(true);
     }
-  }, [entity]);
+  }, [entity, sorting]);
 
   useAsync(async () => {
     if (pageIndex < 0) {
@@ -245,11 +285,20 @@ export default function DataTable({ entity }: { entity: string }) {
     }
     setLoading(true);
     try {
+      const orders = sorting
+        .map((item) => {
+          if (item.desc) {
+            return `-${item.id}`;
+          }
+          return item.id;
+        })
+        .join(",");
       const result = await getEntities({
         entity,
         page_size: pageSize,
         page: pageIndex,
         keyword,
+        orders,
       });
       setEntities(result.items);
       if (result.page_count >= 0) {

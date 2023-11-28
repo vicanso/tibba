@@ -1,7 +1,11 @@
-use super::{get_database, EntityItemCategory, EntityItemDescription, ListCountParams, Result};
+use super::{
+    get_database, EntityDescription, EntityItemCategory, EntityItemDescription, ListCountParams,
+    Result,
+};
 use crate::entities::settings::{ActiveModel, Column, Entity, Model};
 use crate::error::HttpError;
 use crate::util::{json_get_date_time, json_get_i64, json_get_string};
+use once_cell::sync::Lazy;
 use sea_orm::query::{Order, Select};
 use sea_orm::Condition;
 use sea_orm::{entity::prelude::*, ActiveValue::Set, QueryOrder};
@@ -41,6 +45,15 @@ fn from_value(value: &Value) -> Result<ActiveModel> {
     Ok(model)
 }
 
+static SUPPORT_ORDERS: Lazy<Vec<Column>> = Lazy::new(|| {
+    vec![
+        Column::StartedAt,
+        Column::EndedAt,
+        Column::UpdatedAt,
+        Column::Status,
+    ]
+});
+
 fn order_by<E>(sql: Select<E>, orders: &str) -> Result<Select<E>>
 where
     E: EntityTrait,
@@ -49,7 +62,7 @@ where
         return Ok(sql);
     }
     let mut s = sql;
-    let support_orders: Vec<(String, Column)> = [Column::Id, Column::UpdatedAt, Column::Status]
+    let support_orders: Vec<(String, Column)> = SUPPORT_ORDERS
         .iter()
         .map(|item| (item.to_string(), *item))
         .collect();
@@ -87,7 +100,7 @@ impl SettingEntity {
             return Err(HttpError::new("Record is not found"));
         }
         let mut setting: ActiveModel = result.unwrap().into();
-        setting.creator = Set(user.to_string());
+        setting.updater = Set(Some(user.to_string()));
         if let Some(value) = json_get_i64(value, Column::Status.as_str())? {
             setting.status = Set(value as i8);
         }
@@ -109,6 +122,7 @@ impl SettingEntity {
         if let Some(value) = json_get_date_time(value, Column::EndedAt.as_str())? {
             setting.ended_at = Set(value);
         }
+        setting.update(conn).await?;
         Ok(())
     }
     pub async fn insert(user: &str, value: &Value) -> Result<Model> {
@@ -117,9 +131,8 @@ impl SettingEntity {
         let result = data.insert(get_database().await).await?;
         Ok(result)
     }
-    pub fn list_descriptions() -> Vec<EntityItemDescription> {
-        println!("{}", Column::CreatedAt.to_string());
-        vec![
+    pub fn description() -> EntityDescription {
+        let items = vec![
             EntityItemDescription {
                 name: Column::Id.to_string(),
                 label: "ID".to_string(),
@@ -200,7 +213,11 @@ impl SettingEntity {
                 readonly: true,
                 ..Default::default()
             },
-        ]
+        ];
+        EntityDescription {
+            items,
+            support_orders: SUPPORT_ORDERS.iter().map(|item| item.to_string()).collect(),
+        }
     }
     pub async fn list_count(params: &ListCountParams) -> Result<(i64, Vec<Value>)> {
         let conn = get_database().await;

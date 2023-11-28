@@ -9,6 +9,7 @@ CREATE TABLE `settings` (
   `remark` varchar(255) COLLATE utf8mb4_bin NOT NULL comment '配置备注',
   `started_at` timestamp NOT NULL comment '配置启用时间',
   `ended_at` timestamp NOT NULL comment '配置结束时间',
+  `updater` varchar(255) COLLATE utf8mb4_bin DEFAULT '',
   `creator` varchar(255) COLLATE utf8mb4_bin NOT NULL,
   PRIMARY KEY (`id`) comment '主键',
   UNIQUE KEY `setting_name` (`name`),

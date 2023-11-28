@@ -47,7 +47,7 @@ export function MainHeader({ className }: MainHeaderProps) {
                 }}
               >
                 <LogOut className={iconClassName} />
-                <span>Log out</span>
+                <span>退出</span>
               </DropdownMenuItem>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
@@ -60,7 +60,7 @@ export function MainHeader({ className }: MainHeaderProps) {
               >
                 {theme == "system" && <Check className={iconClassName} />}
                 {theme != "system" && <SunMoon className={iconClassName} />}
-                <span>System Theme</span>
+                <span>系统主题</span>
               </DropdownMenuItem>
               <DropdownMenuItem
                 className="cursor-pointer"
@@ -70,7 +70,7 @@ export function MainHeader({ className }: MainHeaderProps) {
               >
                 {theme == "dark" && <Check className={iconClassName} />}
                 {theme != "dark" && <Moon className={iconClassName} />}
-                <span>Dark Theme</span>
+                <span>深色主题</span>
               </DropdownMenuItem>
               <DropdownMenuItem
                 className="cursor-pointer"
@@ -80,7 +80,7 @@ export function MainHeader({ className }: MainHeaderProps) {
               >
                 {theme == "light" && <Check className={iconClassName} />}
                 {theme != "light" && <Sun className={iconClassName} />}
-                <span>Light Theme</span>
+                <span>浅色主题</span>
               </DropdownMenuItem>
             </DropdownMenuGroup>
           </DropdownMenuContent>
@@ -91,7 +91,7 @@ export function MainHeader({ className }: MainHeaderProps) {
         <Button variant="link">
           <Link to={LOGIN}>
             <LogIn className="mr-2 h-4 w-4 inline" />
-            Login
+            登录
           </Link>
         </Button>
       );

@@ -1,7 +1,12 @@
-use super::{get_database, EntityItemCategory, EntityItemDescription, ListCountParams, Result};
+use super::{
+    get_database, EntityDescription, EntityItemCategory, EntityItemDescription, ListCountParams,
+    Result,
+};
 use crate::entities::users::{ActiveModel, Column, Entity, Model};
 use sea_orm::{entity::prelude::*, ActiveValue::Set, Condition, Iterable, QuerySelect};
-use serde_json::Value;
+use serde_json::{json, Value};
+
+static ROLE_SU: &str = "su";
 
 pub async fn add_user(account: &str, password: &str) -> Result<Model> {
     let conn = get_database().await;
@@ -12,6 +17,12 @@ pub async fn add_user(account: &str, password: &str) -> Result<Model> {
     }
     .insert(conn)
     .await?;
+    if result.id == 1 {
+        let mut user: ActiveModel = result.clone().into();
+        user.roles = Set(Some(json!([ROLE_SU])));
+        // 仅输出日志即可
+        _ = user.update(conn).await
+    }
     Ok(result)
 }
 
@@ -26,8 +37,8 @@ pub async fn find_user_by_account(account: &str) -> Result<Option<Model>> {
 pub struct UserEntity {}
 
 impl UserEntity {
-    pub fn list_descriptions() -> Vec<EntityItemDescription> {
-        vec![
+    pub fn description() -> EntityDescription {
+        let items = vec![
             EntityItemDescription {
                 name: Column::Id.to_string(),
                 label: "ID".to_string(),
@@ -86,7 +97,11 @@ impl UserEntity {
                 readonly: true,
                 ..Default::default()
             },
-        ]
+        ];
+        EntityDescription {
+            items,
+            ..Default::default()
+        }
     }
     pub async fn list_count(params: &ListCountParams) -> Result<(i64, Vec<Value>)> {
         let conn = get_database().await;

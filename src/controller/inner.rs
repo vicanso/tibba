@@ -11,7 +11,7 @@ use serde_json::Value;
 
 pub fn new_router() -> Router {
     let r = Router::new()
-        .route("/entity-descriptions", get(list_description))
+        .route("/entity-descriptions", get(get_description))
         .route("/entities", post(add))
         .route("/entities", get(list))
         .layer(from_fn(load_session));
@@ -47,15 +47,9 @@ pub struct ListDescriptionParams {
     table: String,
 }
 
-#[derive(Debug, Serialize)]
-struct ListDescriptionResp {
-    items: Vec<db::EntityItemDescription>,
-}
-async fn list_description(
+async fn get_description(
     Query(params): Query<ListDescriptionParams>,
-) -> JsonResult<ListDescriptionResp> {
-    let descriptions = db::list_descriptions(&params.table)?;
-    Ok(Json(ListDescriptionResp {
-        items: descriptions,
-    }))
+) -> JsonResult<db::EntityDescription> {
+    let description = db::description(&params.table)?;
+    Ok(Json(description))
 }

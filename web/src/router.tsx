@@ -1,7 +1,7 @@
 import { createHashRouter } from "react-router-dom";
 
 import Home from "@/pages/Home";
-import Login from "@/pages/Login";
+import LoginRegister from "@/pages/LoginRegister";
 import Entity from "@/pages/Entity";
 import { LOGIN, HOME, ENTITY } from "@/data/route";
 
@@ -47,7 +47,7 @@ const router = createHashRouter([
   // },
   {
     path: LOGIN,
-    element: <Login />,
+    element: <LoginRegister />,
   },
   {
     path: ENTITY,

@@ -1,5 +1,4 @@
 use super::JsonParams;
-use crate::cache::get_default_redis_cache;
 use crate::controller::JsonResult;
 use crate::db::{add_user, find_user_by_account};
 use crate::error::{HttpError, HttpResult};
@@ -14,7 +13,7 @@ use axum::{Json, Router};
 use axum_extra::extract::cookie::CookieJar;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
+use serde_json::Value;
 use validator::Validate;
 
 static APP_SECRET: Lazy<String> = Lazy::new(|| config::must_new_basic_config().secret);
@@ -24,6 +23,8 @@ struct UserMeResp {
     expired_at: String,
     issued_at: String,
     time: String,
+    roles: Option<Value>,
+    groups: Option<Value>,
 }
 
 pub fn new_router() -> Router {
@@ -35,7 +36,6 @@ pub fn new_router() -> Router {
     let r = Router::new()
         .route("/me", get(me))
         .route("/refresh", get(refresh))
-        .route("/login-times", get(get_login_times))
         .layer(from_fn(load_session));
 
     Router::new().nest("/users", r.merge(login_router))
@@ -61,11 +61,24 @@ async fn me<B>(mut jar: CookieJar, req: Request<B>) -> HttpResult<(CookieJar, Js
             tl_error!(err = err.message, "get claim fail");
         }
     }
+    let mut roles = None;
+    let mut groups = None;
+    if !account.is_empty() {
+        let result = find_user_by_account(&account).await?;
+        if result.is_none() {
+            return Err(HttpError::new("Account is not exists"));
+        }
+        let user = result.unwrap();
+        roles = user.roles;
+        groups = user.groups;
+    }
 
     let me = UserMeResp {
         name: account,
         expired_at,
         issued_at,
+        roles,
+        groups,
         time: util::now(),
     };
     // 如果未设置device，则设置
@@ -158,22 +171,4 @@ async fn register(JsonParams(params): JsonParams<RegisterParams>) -> JsonResult<
         id: result.id,
         account: result.account,
     }))
-}
-
-#[derive(Debug, Clone, Serialize, Default)]
-struct LoginTimesResp {
-    pub count: i64,
-}
-async fn get_login_times(jar: CookieJar) -> JsonResult<LoginTimesResp> {
-    let device_id = util::get_device_id_from_cookie(&jar);
-    let cache = get_default_redis_cache();
-    // 如果未设置device，则设置
-    let mut count: i64 = 0;
-    if !device_id.is_empty() {
-        count = cache
-            .incr(&device_id, 1, Some(Duration::from_secs(60 * 60)))
-            .await?;
-    }
-
-    Ok(Json(LoginTimesResp { count }))
 }

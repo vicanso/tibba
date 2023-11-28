@@ -7,13 +7,20 @@ import request, {
 import sha256 from "crypto-js/sha256";
 import dayjs from "dayjs";
 import HTTPError from "@/helpers/http-error";
-import { USER_REFRESH, USER_LOGIN, USER_LOGIN_TOKEN, USER_ME } from "@/url";
+import {
+  USER_REFRESH,
+  USER_LOGIN,
+  USER_LOGIN_TOKEN,
+  USER_ME,
+  USER_REGISTER,
+} from "@/url";
 
 interface UserState {
   anonymous: boolean;
   loading: boolean;
   account: string;
   login: (account: string, password: string) => Promise<void>;
+  register: (account: string, password: string) => Promise<void>;
   logout: () => void;
   fetch: () => Promise<boolean>;
 }
@@ -43,6 +50,12 @@ const useUserStore = create<UserState>()((set, get) => ({
   anonymous: false,
   account: "",
   loading: false,
+  register: async (account: string, password: string) => {
+    await request.post(USER_REGISTER, {
+      account,
+      password: sha256(password).toString(),
+    });
+  },
   login: async (account: string, password: string) => {
     // 获取token
     const resp = await request.get<{ timestamp: number; token: string }>(

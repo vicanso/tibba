@@ -17,6 +17,12 @@ pub struct ListCountParams {
     pub page_size: u64,
 }
 
+#[derive(Debug, Serialize, Default)]
+pub struct EntityDescription {
+    pub items: Vec<EntityItemDescription>,
+    pub support_orders: Vec<String>,
+}
+
 #[derive(Debug, Eq, PartialEq, Serialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum EntityItemCategory {
@@ -58,10 +64,10 @@ pub async fn list_count(params: &ListCountParams) -> Result<(i64, Vec<Value>)> {
     };
     Ok(result)
 }
-pub fn list_descriptions(name: &str) -> Result<Vec<EntityItemDescription>> {
+pub fn description(name: &str) -> Result<EntityDescription> {
     let result = match name {
-        TABLE_NAME_SETTINGS => SettingEntity::list_descriptions(),
-        TABLE_NAME_USERS => UserEntity::list_descriptions(),
+        TABLE_NAME_SETTINGS => SettingEntity::description(),
+        TABLE_NAME_USERS => UserEntity::description(),
         _ => return Err(HttpError::new(TABLE_INVALID_MSG)),
     };
     Ok(result)
