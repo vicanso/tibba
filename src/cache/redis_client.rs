@@ -58,6 +58,7 @@ fn must_get_redis_pool() -> &'static Pool {
                     create: Some(config.connection_timeout),
                     recycle: Some(config.recycle_timeout),
                 },
+                ..Default::default()
             })
             .runtime(Runtime::Tokio1)
             .build()

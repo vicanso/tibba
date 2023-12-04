@@ -4,6 +4,8 @@ use serde_json::Value;
 
 pub type Result<T, E = HttpError> = std::result::Result<T, E>;
 
+pub static ROLE_SU: &str = "su";
+
 mod conn;
 mod settings;
 mod users;
@@ -21,6 +23,7 @@ pub struct ListCountParams {
 pub struct EntityDescription {
     pub items: Vec<EntityItemDescription>,
     pub support_orders: Vec<String>,
+    pub modify_roles: Vec<String>,
 }
 
 #[derive(Debug, Eq, PartialEq, Serialize, Default)]
@@ -56,10 +59,10 @@ const TABLE_NAME_SETTINGS: &str = "settings";
 const TABLE_NAME_USERS: &str = "users";
 const TABLE_INVALID_MSG: &str = "Table is invalid";
 
-pub async fn list_count(params: &ListCountParams) -> Result<(i64, Vec<Value>)> {
+pub async fn list_count(user: &str, params: &ListCountParams) -> Result<(i64, Vec<Value>)> {
     let result = match params.table.as_str() {
-        TABLE_NAME_SETTINGS => SettingEntity::list_count(params).await?,
-        TABLE_NAME_USERS => UserEntity::list_count(params).await?,
+        TABLE_NAME_SETTINGS => SettingEntity::list_count(user, params).await?,
+        TABLE_NAME_USERS => UserEntity::list_count(user, params).await?,
         _ => return Err(HttpError::new(TABLE_INVALID_MSG)),
     };
     Ok(result)

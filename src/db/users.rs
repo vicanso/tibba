@@ -1,12 +1,10 @@
 use super::{
     get_database, EntityDescription, EntityItemCategory, EntityItemDescription, ListCountParams,
-    Result,
+    Result, ROLE_SU
 };
 use crate::entities::users::{ActiveModel, Column, Entity, Model};
 use sea_orm::{entity::prelude::*, ActiveValue::Set, Condition, Iterable, QuerySelect};
 use serde_json::{json, Value};
-
-static ROLE_SU: &str = "su";
 
 pub async fn add_user(account: &str, password: &str) -> Result<Model> {
     let conn = get_database().await;
@@ -100,10 +98,14 @@ impl UserEntity {
         ];
         EntityDescription {
             items,
+            modify_roles: vec![
+                ROLE_SU.to_string(),
+            ],
             ..Default::default()
         }
     }
-    pub async fn list_count(params: &ListCountParams) -> Result<(i64, Vec<Value>)> {
+    pub async fn list_count(_user: &str, params: &ListCountParams) -> Result<(i64, Vec<Value>)> {
+        // TODO 判断权限
         let conn = get_database().await;
         let mut sql = Entity::find();
         if let Some(keyword) = &params.keyword {

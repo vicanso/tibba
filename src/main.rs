@@ -131,30 +131,34 @@ async fn run() {
     let app_state = get_app_state();
 
     // build our application with a route
-    let app = Router::new()
-        .merge(new_router())
-        // 后面的layer先执行
-        .layer(
-            // service build的则是按顺序
-            ServiceBuilder::new()
-                .layer(HandleErrorLayer::new(error::handle_error))
-                .timeout(basic_config.timeout)
-                // 入口初始化(task local等)
-                .layer(from_fn_with_state(app_state, entry))
-                // 记录访问日志
-                .layer(from_fn_with_state(app_state, access_log))
-                // 正在处理请求的限制
-                .layer(from_fn_with_state(app_state, processing_limit)),
-        );
+    let app = Router::new().merge(new_router())
+    // 后面的layer先执行
+    .layer(
+        // service build的则是按顺序
+        ServiceBuilder::new()
+            .layer(HandleErrorLayer::new(error::handle_error))
+            .timeout(basic_config.timeout)
+            // 入口初始化(task local等
+            .layer(from_fn_with_state(app_state, entry))
+            // 记录访问日志
+            .layer(from_fn_with_state(app_state, access_log))
+            // 正在处理请求的限制
+            .layer(from_fn_with_state(app_state, processing_limit)),
+    );
+    // TODO fall back 记录404统计
 
-    let addr = basic_config.listen.parse().unwrap();
-    info!("listening on http://{addr}/");
-    app_state.run();
-    axum::Server::bind(&addr)
-        .serve(app.into_make_service_with_connect_info::<SocketAddr>())
-        .with_graceful_shutdown(shutdown_signal())
+    info!("listening on http://{}/", basic_config.listen);
+    let listener = tokio::net::TcpListener::bind(basic_config.listen)
         .await
         .unwrap();
+    app_state.run();
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    // .with_graceful_shutdown(shutdown_signal())
+    .await
+    .unwrap();
 }
 
 async fn shutdown_signal() {

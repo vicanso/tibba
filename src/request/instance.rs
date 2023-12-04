@@ -5,7 +5,7 @@ use axum::http::uri::Uri;
 use axum::http::Method;
 use bytes::Bytes;
 use chrono::Local;
-use hyper::client::connect::HttpInfo;
+// use hyper::client::connect::HttpInfo;
 use reqwest::{tls::TlsInfo, Client, RequestBuilder};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -267,10 +267,10 @@ impl<H: HttpInterceptor> Instance<H> {
 
         stats.processing = process_done();
 
-        if let Some(value) = res.extensions().get::<HttpInfo>() {
-            stats.remote_addr = value.remote_addr().to_string();
-            stats.local_addr = value.local_addr().to_string();
-        }
+        // if let Some(value) = res.extensions().get::<HttpInfo>() {
+        //     stats.remote_addr = value.remote_addr().to_string();
+        //     stats.local_addr = value.local_addr().to_string();
+        // }
         if let Some(value) = res.extensions().get::<TlsInfo>() {
             if let Ok((_, cert)) =
                 X509Certificate::from_der(value.peer_certificate().unwrap_or_default())

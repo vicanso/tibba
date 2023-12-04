@@ -1,10 +1,12 @@
 use crate::util::random_string;
 use axum::http::Extensions;
 use axum_extra::extract::cookie::{Cookie, CookieJar};
+use cookie::CookieBuilder;
 use time::{Duration, OffsetDateTime};
 
 static DEVICE_ID_NAME: &str = "device";
 
+#[derive(Clone)]
 pub struct Account(String);
 
 impl Account {
@@ -31,10 +33,9 @@ pub fn get_device_id_from_cookie(jar: &CookieJar) -> String {
     "".to_string()
 }
 
-pub fn generate_device_id_cookie() -> Cookie<'static> {
-    Cookie::build(DEVICE_ID_NAME, random_string(10))
+pub fn generate_device_id_cookie() -> CookieBuilder<'static> {
+    Cookie::build((DEVICE_ID_NAME, random_string(10)))
         .http_only(true)
         .expires(OffsetDateTime::now_utc() + Duration::weeks(52))
         .path("/")
-        .finish()
 }

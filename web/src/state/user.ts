@@ -19,6 +19,7 @@ interface UserState {
   anonymous: boolean;
   loading: boolean;
   account: string;
+  roles: string[];
   login: (account: string, password: string) => Promise<void>;
   register: (account: string, password: string) => Promise<void>;
   logout: () => void;
@@ -50,6 +51,7 @@ const useUserStore = create<UserState>()((set, get) => ({
   anonymous: false,
   account: "",
   loading: false,
+  roles: [],
   register: async (account: string, password: string) => {
     await request.post(USER_REGISTER, {
       account,
@@ -96,6 +98,7 @@ const useUserStore = create<UserState>()((set, get) => ({
         expired_at: string;
         issued_at: string;
         time: string;
+        roles: string[];
       }>(USER_ME);
       let account = data.name;
       // 如果超过14天，则认为需要重新登录
@@ -107,6 +110,7 @@ const useUserStore = create<UserState>()((set, get) => ({
       set({
         account,
         anonymous: account == "",
+        roles: data.roles,
       });
       // 如果已登录，触发刷新ttl
       if (account) {

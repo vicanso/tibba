@@ -3,9 +3,10 @@ use crate::error::{HttpError, HttpResult};
 use crate::task_local::*;
 use crate::util::{from_timestamp, random_string, set_account_to_context, Account};
 use axum::async_trait;
+use axum::body::Body;
 use axum::extract::FromRequestParts;
-use axum::headers::authorization::Bearer;
-use axum::headers::{Authorization, Header};
+// use axum::headers::authorization::Bearer;
+// use axum::headers::{Authorization, Header};
 use axum::http::header::{HeaderMap, HeaderValue};
 use axum::http::request::Parts;
 use axum::http::Request;
@@ -106,8 +107,11 @@ fn now() -> usize {
 }
 
 pub fn get_claims_from_headers(headers: &HeaderMap<HeaderValue>) -> HttpResult<Claim> {
-    let mut values = headers.get_all(Authorization::<Bearer>::name()).iter();
-    let is_missing = values.size_hint() == (0, Some(0));
+    let value = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|header| header.to_str().ok())
+        .unwrap_or_default();
+    let is_missing = value.is_empty() || !value.starts_with("Bearer ");
     if is_missing {
         return Err(HttpError::new_with_category(
             "Missing credentials",
@@ -115,10 +119,14 @@ pub fn get_claims_from_headers(headers: &HeaderMap<HeaderValue>) -> HttpResult<C
         ));
     }
 
-    let bearer = Authorization::<Bearer>::decode(&mut values)
-        .map_err(|err| HttpError::new_with_category(&err.to_string(), JWT_ERROR_CATEGORY))?;
-    let result = decode::<Claim>(bearer.token(), &KEYS.decoding, &Validation::default())
-        .map_err(|_| HttpError::new_with_category("Invalid token", JWT_ERROR_CATEGORY))?;
+    // let bearer = Authorization::<Bearer>::decode(value.replace("Bearer ", ""))
+    //     .map_err(|err| HttpError::new_with_category(&err.to_string(), JWT_ERROR_CATEGORY))?;
+    let result = decode::<Claim>(
+        &value.replace("Bearer ", ""),
+        &KEYS.decoding,
+        &Validation::default(),
+    )
+    .map_err(|_| HttpError::new_with_category("Invalid token", JWT_ERROR_CATEGORY))?;
     let claims = result.claims;
     if claims.is_expired() {
         return Err(HttpError::new_with_category(
@@ -141,7 +149,7 @@ where
     }
 }
 
-pub async fn load_session<B>(mut req: Request<B>, next: Next<B>) -> HttpResult<Response> {
+pub async fn load_session(mut req: Request<Body>, next: Next) -> HttpResult<Response> {
     let claims = get_claims_from_headers(req.headers())?;
     if claims.account.is_empty() {
         return Err(HttpError {

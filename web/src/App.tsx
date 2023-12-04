@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import { RouterProvider } from "react-router-dom";
 import "@/app/globals.css";
 import "@/index.css";
@@ -12,6 +12,7 @@ import { formatError } from "@/helpers/util";
 
 export default function App() {
   const { toast } = useToast();
+  const [initialized, setInitialized] = useState(false);
   const fetch = useUserStore((state) => state.fetch);
   useAsync(async () => {
     try {
@@ -25,8 +26,13 @@ export default function App() {
         description: formatError(err),
       });
       console.error(err);
+    } finally {
+      setInitialized(true);
     }
   }, []);
+  if (!initialized) {
+    return <div className="text-center mt-5">正在初始化，请稍候...</div>;
+  }
   return (
     <React.StrictMode>
       <ThemeProvider storageKey="vite-ui-theme">

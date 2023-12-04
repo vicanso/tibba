@@ -1,6 +1,6 @@
 use super::{
     get_database, EntityDescription, EntityItemCategory, EntityItemDescription, ListCountParams,
-    Result,
+    Result, ROLE_SU
 };
 use crate::entities::settings::{ActiveModel, Column, Entity, Model};
 use crate::error::HttpError;
@@ -126,6 +126,7 @@ impl SettingEntity {
         Ok(())
     }
     pub async fn insert(user: &str, value: &Value) -> Result<Model> {
+        // TODO 权限校验
         let mut data = from_value(value)?;
         data.creator = Set(user.to_string());
         let result = data.insert(get_database().await).await?;
@@ -216,10 +217,15 @@ impl SettingEntity {
         ];
         EntityDescription {
             items,
+            modify_roles: vec![
+                ROLE_SU.to_string(),
+            ],
             support_orders: SUPPORT_ORDERS.iter().map(|item| item.to_string()).collect(),
+            ..Default::default()
         }
     }
-    pub async fn list_count(params: &ListCountParams) -> Result<(i64, Vec<Value>)> {
+    pub async fn list_count(_user: &str, params: &ListCountParams) -> Result<(i64, Vec<Value>)> {
+        // TODO 权限校验
         let conn = get_database().await;
         let mut sql = Entity::find();
 

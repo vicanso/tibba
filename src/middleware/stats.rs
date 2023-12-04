@@ -12,7 +12,7 @@ pub async fn access_log(
     State(state): State<&AppState>,
     InsecureClientIp(ip): InsecureClientIp,
     mut req: Request<Body>,
-    next: Next<Body>,
+    next: Next,
 ) -> HttpResult<Response<Body>> {
     let start_at = STARTED_AT.with(clone_value_from_task_local);
     let processing = state.get_processing();

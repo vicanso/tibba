@@ -3,7 +3,8 @@ import { createHashRouter } from "react-router-dom";
 import Home from "@/pages/Home";
 import LoginRegister from "@/pages/LoginRegister";
 import Entity from "@/pages/Entity";
-import { LOGIN, HOME, ENTITY } from "@/data/route";
+import EntityForm from "@/pages/EntityForm";
+import { LOGIN, HOME, ENTITY, ENTITY_FORM } from "@/data/route";
 
 export type NavItemList = (typeof navItemList)[number];
 
@@ -26,11 +27,11 @@ export const navItemList = [
     items: [
       {
         name: "应用配置",
-        url: "/entity/settings",
+        url: ENTITY.replace(":entity", "settings"),
       },
       {
         name: "用户",
-        url: "/entity/users",
+        url: ENTITY.replace(":entity", "users"),
       },
     ],
   },
@@ -41,10 +42,6 @@ const router = createHashRouter([
     path: HOME,
     element: <Home />,
   },
-  // {
-  //   path: "/users",
-  //   element:  <Home />,
-  // },
   {
     path: LOGIN,
     element: <LoginRegister />,
@@ -52,6 +49,10 @@ const router = createHashRouter([
   {
     path: ENTITY,
     element: <Entity />,
+  },
+  {
+    path: ENTITY_FORM,
+    element: <EntityForm />,
   },
 ]);
 
@@ -61,6 +62,11 @@ export function goToLogin() {
 
 export function goBack() {
   router.navigate(-1);
+}
+
+export function goToEntityForm(entity: string, id: string) {
+  const url = ENTITY_FORM.replace(":entity", entity).replace(":id", id);
+  router.navigate(url);
 }
 
 export default router;

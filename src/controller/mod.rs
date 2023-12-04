@@ -1,12 +1,11 @@
 use crate::error::{HttpError, HttpResult};
 use axum::async_trait;
-use axum::body::{Bytes, HttpBody};
+use axum::body::{Body, Bytes};
 use axum::extract::{FromRequest, FromRequestParts};
 use axum::http::header::HeaderMap;
 use axum::http::request::Parts;
 use axum::http::{header, Request};
 use axum::response::{IntoResponse, Response};
-use axum::BoxError;
 use axum::{Json, Router};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -70,17 +69,14 @@ where
 struct JsonParams<T>(pub T);
 
 #[async_trait]
-impl<T, S, B> FromRequest<S, B> for JsonParams<T>
+impl<T, S> FromRequest<S> for JsonParams<T>
 where
     T: DeserializeOwned + Validate,
-    B: HttpBody + Send + 'static,
-    B::Data: Send,
-    B::Error: Into<BoxError>,
     S: Send + Sync,
 {
     type Rejection = HttpError;
 
-    async fn from_request(req: Request<B>, state: &S) -> Result<Self, Self::Rejection> {
+    async fn from_request(req: Request<Body>, state: &S) -> Result<Self, Self::Rejection> {
         if json_content_type(req.headers()) {
             let bytes = Bytes::from_request(req, state).await.map_err(|err| {
                 HttpError::new_with_category(&err.to_string(), "params:read_body")

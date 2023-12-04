@@ -1,11 +1,11 @@
 use crate::error::{HttpError, HttpResult};
 use crate::state::AppState;
-use axum::{extract::State, http::Request, middleware::Next, response::Response};
+use axum::{body::Body, extract::State, http::Request, middleware::Next, response::Response};
 
-pub async fn processing_limit<B>(
+pub async fn processing_limit(
     State(state): State<&AppState>,
-    req: Request<B>,
-    next: Next<B>,
+    req: Request<Body>,
+    next: Next,
 ) -> HttpResult<Response> {
     if state.increase_processing() > state.processing_limit && state.processing_limit != 0 {
         state.decrease_processing();

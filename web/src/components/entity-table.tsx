@@ -8,7 +8,6 @@ import {
 } from "@/components/ui/table";
 import request from "@/helpers/request";
 import { ChevronDown, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
-
 import { INNER_ENTITY_DESCRIPTIONS, INNER_ENTITIES } from "@/url";
 import {
   ColumnDef,
@@ -31,6 +30,10 @@ import {
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import useUserStore from "@/state/user";
+import { useLocation, useSearchParams } from "react-router-dom";
+import { ENTITY_FORM } from "@/data/route";
+import { goToEntityForm } from "@/router";
 
 interface EntityItem {
   name: string;
@@ -42,12 +45,22 @@ interface EntityItem {
 interface EntityDescription {
   items: EntityItem[];
   support_orders: string[];
+  modify_roles: string[];
 }
 
 function convertDescriptionToColumnDef(
   description: EntityDescription,
   sorting: SortingState,
+  roles: string[],
+  entity: string,
 ): ColumnDef<Map<string, unknown>>[] {
+  let canModify = false;
+  description.modify_roles.forEach((item) => {
+    if (roles.includes(item)) {
+      canModify = true;
+    }
+  });
+
   return description.items.map((item) => {
     const style = {
       minWidth: "",
@@ -94,7 +107,17 @@ function convertDescriptionToColumnDef(
         if (item.category == opName) {
           return (
             <div className="grid items-center w-full" style={style}>
-              <Button variant="link">编辑</Button>
+              {!canModify && <Button variant="link">查看</Button>}
+              {canModify && (
+                <Button
+                  variant="link"
+                  onClick={() => {
+                    goToEntityForm(entity, row.getValue("id"));
+                  }}
+                >
+                  编辑
+                </Button>
+              )}
             </div>
           );
         }
@@ -193,6 +216,12 @@ function saveColumnVisibility(entity: string, data: Record<string, boolean>) {
 
 export default function DataTable({ entity }: { entity: string }) {
   const { toast } = useToast();
+
+  const [searchParams, setSearchParams] = useSearchParams();
+  const location = useLocation();
+
+  const [roles] = useUserStore((state) => [state.roles]);
+
   const [initialized, setInitialized] = useState(false);
   const [entityItems, setEntityItems] = useState<
     ColumnDef<Map<string, unknown>>[]
@@ -260,9 +289,11 @@ export default function DataTable({ entity }: { entity: string }) {
         }
       });
       setLabels(columnLabels);
-      setEntityItems(convertDescriptionToColumnDef(description, sorting));
+      setEntityItems(
+        convertDescriptionToColumnDef(description, sorting, roles, entity),
+      );
       setPagination({
-        pageIndex: 0,
+        pageIndex: Number(searchParams.get("page")) || 0,
         pageSize,
       });
     } catch (err) {
@@ -314,6 +345,31 @@ export default function DataTable({ entity }: { entity: string }) {
       setLoading(false);
     }
   }, [pageIndex, keyword]);
+
+  // 点浏览器返回
+  useEffect(() => {
+    if (pageIndex < 0) {
+      return;
+    }
+    const currentPage = Number(searchParams.get("page")) || 0;
+    if (pageIndex !== currentPage) {
+      setPagination({
+        pageIndex: currentPage,
+        pageSize,
+      });
+    }
+  }, [location]);
+  // 翻页时更新url query
+  useEffect(() => {
+    if (pageIndex < 0) {
+      return;
+    }
+    if (pageIndex !== (Number(searchParams.get("page")) || 0)) {
+      const params = new URLSearchParams();
+      params.set("page", `${pageIndex}`);
+      setSearchParams(params);
+    }
+  }, [pageIndex]);
 
   const submitSearch = () => {
     setPagination({

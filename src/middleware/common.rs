@@ -1,10 +1,10 @@
 use crate::task_local::*;
-use axum::{http::Request, middleware::Next, response::Response};
+use axum::{body::Body, http::Request, middleware::Next, response::Response};
 use chrono::Utc;
 use std::time::Duration;
 use tokio::time::sleep;
 
-async fn wait<B>(ms: i64, only_err_occurred: bool, req: Request<B>, next: Next<B>) -> Response {
+async fn wait(ms: i64, only_err_occurred: bool, req: Request<Body>, next: Next) -> Response {
     let resp = next.run(req).await;
     // 如果仅出错时等待
     if only_err_occurred && resp.status().as_u16() < 400 {
@@ -21,16 +21,16 @@ async fn wait<B>(ms: i64, only_err_occurred: bool, req: Request<B>, next: Next<B
 }
 
 /// 如果响应处理时间少于1秒，则等待
-pub async fn wait1s<B>(req: Request<B>, next: Next<B>) -> Response {
+pub async fn wait1s(req: Request<Body>, next: Next) -> Response {
     wait(1000, false, req, next).await
 }
 
 /// 如果响应处理时间少于2秒，则等待
-pub async fn wait2s<B>(req: Request<B>, next: Next<B>) -> Response {
+pub async fn wait2s(req: Request<Body>, next: Next) -> Response {
     wait(2000, false, req, next).await
 }
 
 /// 如果响应处理时间少于3秒，则等待
-pub async fn wait3s<B>(req: Request<B>, next: Next<B>) -> Response {
+pub async fn wait3s(req: Request<Body>, next: Next) -> Response {
     wait(3000, false, req, next).await
 }

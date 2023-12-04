@@ -36,9 +36,8 @@ struct ListRecordResp {
     page_count: i64,
     items: Vec<serde_json::Value>,
 }
-async fn list(Query(params): Query<db::ListCountParams>) -> JsonResult<ListRecordResp> {
-    let (page_count, items) = db::list_count(&params).await?;
-
+async fn list(claims: Claim, Query(params): Query<db::ListCountParams>) -> JsonResult<ListRecordResp> {
+    let (page_count, items) = db::list_count(&claims.get_account(), &params).await?;
     Ok(Json(ListRecordResp { page_count, items }))
 }
 

@@ -1,9 +1,10 @@
 use crate::error::{HttpError, HttpResult};
-use axum::body::Bytes;
+use axum::body::{Bytes, Body};
+use axum::extract::Request;
 use axum::http::{header, header::HeaderName, HeaderMap, HeaderValue};
+use http_body_util::BodyExt;
 use std::collections::HashMap;
 use std::str::FromStr;
-
 /// 插入HTTP头
 pub fn insert_header(
     headers: &mut HeaderMap<HeaderValue>,
@@ -56,17 +57,11 @@ pub fn get_header_value(headers: &HeaderMap<HeaderValue>, key: &str) -> String {
 }
 
 /// 读取http body
-pub async fn read_http_body<B>(body: B) -> HttpResult<Bytes>
-where
-    B: axum::body::HttpBody<Data = Bytes>,
-    B::Error: std::fmt::Display,
-{
-    let bytes = match hyper::body::to_bytes(body).await {
-        Ok(bytes) => bytes,
-        Err(err) => {
-            let msg = format!("failed to read body, {err}");
-            return Err(HttpError::new_with_category(&msg, "body_to_bytes"));
-        }
-    };
+pub async fn read_http_body(body: Body) -> HttpResult<Bytes> {
+    let bytes = body
+        .collect()
+        .await
+        .map_err(|err| HttpError::new_with_category(&err.to_string(), "body_to_bytes"))?
+        .to_bytes();
     Ok(bytes)
 }
