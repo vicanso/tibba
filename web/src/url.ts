@@ -6,3 +6,4 @@ export const USER_ME = "/users/me";
 
 export const INNER_ENTITY_DESCRIPTIONS = "/inners/entity-descriptions";
 export const INNER_ENTITIES = "/inners/entities";
+export const INNER_ENTITIES_DETAIL = "/inners/entities/:entity/:id";

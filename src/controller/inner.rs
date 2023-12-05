@@ -1,23 +1,34 @@
-use super::{JsonResult, Query};
+use super::{CacheJsonResult, JsonResult, Query};
 use crate::db;
 use crate::error::HttpError;
-use crate::middleware::{load_session, Claim};
+use crate::middleware::{should_logged_in, Claim};
 use crate::util::json_get_string;
+use axum::extract::Path;
 use axum::middleware::from_fn;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::time::Duration;
 
 pub fn new_router() -> Router {
     let r = Router::new()
         .route("/entity-descriptions", get(get_description))
+        .route("/entities/:entity/:id", get(find_by_id))
         .route("/entities", post(add))
         .route("/entities", get(list))
-        .layer(from_fn(load_session));
+        .layer(from_fn(should_logged_in));
 
     // TODO 增加鉴权处理
     Router::new().nest("/inners", r)
+}
+
+async fn find_by_id(claims: Claim, Path((entity, id)): Path<(String, i64)>) -> JsonResult<Value> {
+    let result = db::find_by_id(&entity, &claims.get_account(), id).await?;
+    if result.is_none() {
+        return Err(HttpError::new("Not found"));
+    }
+    Ok(result.unwrap().into())
 }
 
 #[derive(Debug, Serialize)]
@@ -28,7 +39,7 @@ struct AddRecordResp {
 async fn add(claims: Claim, Json(value): Json<Value>) -> JsonResult<AddRecordResp> {
     let table_name = json_get_string(&value, "table")?.ok_or(HttpError::new("Table is nil"))?;
     let id = db::add(&table_name, &claims.get_account(), &value).await?;
-    Ok(Json(AddRecordResp { id }))
+    Ok(AddRecordResp { id }.into())
 }
 
 #[derive(Debug, Serialize)]
@@ -36,9 +47,12 @@ struct ListRecordResp {
     page_count: i64,
     items: Vec<serde_json::Value>,
 }
-async fn list(claims: Claim, Query(params): Query<db::ListCountParams>) -> JsonResult<ListRecordResp> {
+async fn list(
+    claims: Claim,
+    Query(params): Query<db::ListCountParams>,
+) -> JsonResult<ListRecordResp> {
     let (page_count, items) = db::list_count(&claims.get_account(), &params).await?;
-    Ok(Json(ListRecordResp { page_count, items }))
+    Ok(ListRecordResp { page_count, items }.into())
 }
 
 #[derive(Debug, Deserialize)]
@@ -48,7 +62,7 @@ pub struct ListDescriptionParams {
 
 async fn get_description(
     Query(params): Query<ListDescriptionParams>,
-) -> JsonResult<db::EntityDescription> {
+) -> CacheJsonResult<db::EntityDescription> {
     let description = db::description(&params.table)?;
-    Ok(Json(description))
+    Ok((Duration::from_secs(300), description).into())
 }

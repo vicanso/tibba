@@ -32,7 +32,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import useUserStore from "@/state/user";
 import { useLocation, useSearchParams } from "react-router-dom";
-import { ENTITY_FORM } from "@/data/route";
 import { goToEntityForm } from "@/router";
 
 interface EntityItem {

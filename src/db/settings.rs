@@ -1,14 +1,14 @@
 use super::{
     get_database, EntityDescription, EntityItemCategory, EntityItemDescription, ListCountParams,
-    Result, ROLE_SU
+    Result, ROLE_SU,
 };
 use crate::entities::settings::{ActiveModel, Column, Entity, Model};
 use crate::error::HttpError;
 use crate::util::{json_get_date_time, json_get_i64, json_get_string};
 use once_cell::sync::Lazy;
 use sea_orm::query::{Order, Select};
-use sea_orm::Condition;
 use sea_orm::{entity::prelude::*, ActiveValue::Set, QueryOrder};
+use sea_orm::{Condition, QuerySelect};
 use serde_json::Value;
 use substring::Substring;
 
@@ -217,12 +217,15 @@ impl SettingEntity {
         ];
         EntityDescription {
             items,
-            modify_roles: vec![
-                ROLE_SU.to_string(),
-            ],
+            modify_roles: vec![ROLE_SU.to_string()],
             support_orders: SUPPORT_ORDERS.iter().map(|item| item.to_string()).collect(),
             ..Default::default()
         }
+    }
+    pub async fn find_by_id(_user: &str, id: i64) -> Result<Option<Value>> {
+        let conn = get_database().await;
+        let item = Entity::find_by_id(id).into_json().one(conn).await?;
+        Ok(item)
     }
     pub async fn list_count(_user: &str, params: &ListCountParams) -> Result<(i64, Vec<Value>)> {
         // TODO 权限校验

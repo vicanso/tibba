@@ -3,7 +3,7 @@ use crate::controller::JsonResult;
 use crate::db::{add_user, find_user_by_account};
 use crate::error::{HttpError, HttpResult};
 use crate::middleware::{get_claims_from_headers, wait1s};
-use crate::middleware::{load_session, AuthResp, Claim};
+use crate::middleware::{should_logged_in, AuthResp, Claim};
 use crate::util;
 use crate::{config, task_local::*, tl_error};
 use axum::http::Request;
@@ -36,15 +36,15 @@ pub fn new_router() -> Router {
     let r = Router::new()
         .route("/me", get(me))
         .route("/refresh", get(refresh))
-        .layer(from_fn(load_session));
+        .layer(from_fn(should_logged_in));
 
     Router::new().nest("/users", r.merge(login_router))
 }
 
 async fn refresh(mut claims: Claim) -> JsonResult<AuthResp> {
     claims.refresh();
-    let resp = (&claims).try_into()?;
-    Ok(Json(resp))
+    let resp: AuthResp = (&claims).try_into()?;
+    Ok(resp.into())
 }
 
 async fn me<B>(mut jar: CookieJar, req: Request<B>) -> HttpResult<(CookieJar, Json<UserMeResp>)> {
@@ -86,7 +86,7 @@ async fn me<B>(mut jar: CookieJar, req: Request<B>) -> HttpResult<(CookieJar, Js
         jar = jar.add(util::generate_device_id_cookie());
     }
 
-    Ok((jar, Json(me)))
+    Ok((jar, me.into()))
 }
 
 fn generate_login_toke(timestamp: i64) -> String {

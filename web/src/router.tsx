@@ -3,8 +3,8 @@ import { createHashRouter } from "react-router-dom";
 import Home from "@/pages/Home";
 import LoginRegister from "@/pages/LoginRegister";
 import Entity from "@/pages/Entity";
-import EntityForm from "@/pages/EntityForm";
-import { LOGIN, HOME, ENTITY, ENTITY_FORM } from "@/data/route";
+import EntityEditor from "@/pages/EntityEditor";
+import { LOGIN, HOME, ENTITY, ENTITY_EDITOR } from "@/data/route";
 
 export type NavItemList = (typeof navItemList)[number];
 
@@ -51,8 +51,8 @@ const router = createHashRouter([
     element: <Entity />,
   },
   {
-    path: ENTITY_FORM,
-    element: <EntityForm />,
+    path: ENTITY_EDITOR,
+    element: <EntityEditor />,
   },
 ]);
 
@@ -65,7 +65,7 @@ export function goBack() {
 }
 
 export function goToEntityForm(entity: string, id: string) {
-  const url = ENTITY_FORM.replace(":entity", entity).replace(":id", id);
+  const url = ENTITY_EDITOR.replace(":entity", entity).replace(":id", id);
   router.navigate(url);
 }
 

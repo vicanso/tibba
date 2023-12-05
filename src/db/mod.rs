@@ -85,6 +85,14 @@ pub async fn add(name: &str, user: &str, value: &Value) -> Result<i64> {
     };
     Ok(id)
 }
+pub async fn find_by_id(name: &str, user: &str, id: i64) -> Result<Option<Value>> {
+    let result = match name {
+        TABLE_NAME_SETTINGS => SettingEntity::find_by_id(user, id).await?,
+        TABLE_NAME_USERS => UserEntity::find_by_id(user, id).await?,
+        _ => return Err(HttpError::new(TABLE_INVALID_MSG)),
+    };
+    Ok(result)
+}
 
 pub use conn::get_database;
 pub use settings::*;

@@ -149,7 +149,7 @@ where
     }
 }
 
-pub async fn load_session(mut req: Request<Body>, next: Next) -> HttpResult<Response> {
+pub async fn should_logged_in(mut req: Request<Body>, next: Next) -> HttpResult<Response> {
     let claims = get_claims_from_headers(req.headers())?;
     if claims.account.is_empty() {
         return Err(HttpError {

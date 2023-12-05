@@ -20,7 +20,7 @@ pub use context::{
     set_account_to_context, Account,
 };
 pub use datetime::{from_timestamp, now, timestamp};
-pub use duration::duration_to_string;
+pub use duration::{get_duration, get_duration_string};
 pub use number::float_to_fixed;
 pub use string::{random_string, sha256, uuid};
 pub use value::{json_get, json_get_date_time, json_get_i64, json_get_string};

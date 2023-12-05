@@ -1,10 +1,14 @@
-use chrono::Duration;
+use chrono::{DateTime, Utc};
+use std::time::Duration;
 
-pub fn duration_to_string(mut d: Duration) -> String {
-    if d < Duration::zero() {
-        d = -d;
+pub fn get_duration(time: &DateTime<Utc>) -> Duration {
+    let mut secs = Utc::now().timestamp() - time.timestamp();
+    if secs < 0 {
+        secs = -secs
     }
-    // 已保证一定>=0，因此不会出错
-    let value: humantime::Duration = d.to_std().unwrap().into();
-    value.to_string()
+    Duration::from_secs(secs as u64)
+}
+
+pub fn get_duration_string(time: &DateTime<Utc>) -> String {
+    humantime::format_duration(get_duration(time)).to_string()
 }

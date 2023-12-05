@@ -131,20 +131,21 @@ async fn run() {
     let app_state = get_app_state();
 
     // build our application with a route
-    let app = Router::new().merge(new_router())
-    // 后面的layer先执行
-    .layer(
-        // service build的则是按顺序
-        ServiceBuilder::new()
-            .layer(HandleErrorLayer::new(error::handle_error))
-            .timeout(basic_config.timeout)
-            // 入口初始化(task local等
-            .layer(from_fn_with_state(app_state, entry))
-            // 记录访问日志
-            .layer(from_fn_with_state(app_state, access_log))
-            // 正在处理请求的限制
-            .layer(from_fn_with_state(app_state, processing_limit)),
-    );
+    let app = Router::new()
+        .merge(new_router())
+        // 后面的layer先执行
+        .layer(
+            // service build的则是按顺序
+            ServiceBuilder::new()
+                .layer(HandleErrorLayer::new(error::handle_error))
+                .timeout(basic_config.timeout)
+                // 入口初始化(task local等
+                .layer(from_fn_with_state(app_state, entry))
+                // 记录访问日志
+                .layer(from_fn_with_state(app_state, access_log))
+                // 正在处理请求的限制
+                .layer(from_fn_with_state(app_state, processing_limit)),
+        );
     // TODO fall back 记录404统计
 
     info!("listening on http://{}/", basic_config.listen);

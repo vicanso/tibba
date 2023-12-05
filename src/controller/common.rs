@@ -1,12 +1,12 @@
 use super::CacheJsonResult;
-use crate::asset;
 use crate::config::get_env;
 use crate::error::{HttpError, HttpResult};
 use crate::state::get_app_state;
-use crate::util::duration_to_string;
+use crate::{asset, util};
 use axum::{routing::get, Router};
 use chrono::Utc;
 use serde::Serialize;
+use std::time::Duration;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -37,7 +37,7 @@ async fn ping() -> HttpResult<&'static str> {
 
 async fn get_application_info() -> CacheJsonResult<ApplicationInfo> {
     let app_state = get_app_state();
-    let d = Utc::now().signed_duration_since(app_state.get_started_at());
+    let uptime = util::get_duration_string(&app_state.get_started_at());
     let os = os_info::get().os_type().to_string();
     let mut arch = "x86";
     // 运行环境较为单一，此字段也只用于展示
@@ -49,11 +49,11 @@ async fn get_application_info() -> CacheJsonResult<ApplicationInfo> {
     let info = ApplicationInfo {
         builded_at: asset::get_build_date(),
         commit: asset::get_commit(),
-        uptime: duration_to_string(d),
+        uptime,
         env: get_env(),
         arch: arch.to_string(),
         os,
         version: VERSION.to_string(),
     };
-    Ok((60, info).into())
+    Ok((Duration::from_secs(60), info).into())
 }

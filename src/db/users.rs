@@ -1,6 +1,6 @@
 use super::{
     get_database, EntityDescription, EntityItemCategory, EntityItemDescription, ListCountParams,
-    Result, ROLE_SU
+    Result, ROLE_SU,
 };
 use crate::entities::users::{ActiveModel, Column, Entity, Model};
 use sea_orm::{entity::prelude::*, ActiveValue::Set, Condition, Iterable, QuerySelect};
@@ -98,11 +98,19 @@ impl UserEntity {
         ];
         EntityDescription {
             items,
-            modify_roles: vec![
-                ROLE_SU.to_string(),
-            ],
+            modify_roles: vec![ROLE_SU.to_string()],
             ..Default::default()
         }
+    }
+    pub async fn find_by_id(_user: &str, id: i64) -> Result<Option<Value>> {
+        let conn = get_database().await;
+        let item = Entity::find_by_id(id)
+            .select_only()
+            .columns(Column::iter().filter(|col| !matches!(col, Column::Password)))
+            .into_json()
+            .one(conn)
+            .await?;
+        Ok(item)
     }
     pub async fn list_count(_user: &str, params: &ListCountParams) -> Result<(i64, Vec<Value>)> {
         // TODO 判断权限
@@ -125,13 +133,9 @@ impl UserEntity {
             -1
         };
 
-        for item in Column::iter() {
-            if item.as_str() == Column::Password.as_str() {
-                continue;
-            }
-            sql = sql.column(item);
-        }
         let items = sql
+            .select_only()
+            .columns(Column::iter().filter(|col| !matches!(col, Column::Password)))
             .into_json()
             .paginate(conn, params.page_size)
             .fetch_page(params.page)
