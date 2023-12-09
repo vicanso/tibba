@@ -6,9 +6,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import request from "@/helpers/request";
 import { ChevronDown, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
-import { INNER_ENTITY_DESCRIPTIONS, INNER_ENTITIES } from "@/url";
 import {
   ColumnDef,
   SortingState,
@@ -31,28 +29,16 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import useUserStore from "@/state/user";
+import useEntityStore, { EntityDescription } from "@/state/entity";
 import { useLocation, useSearchParams } from "react-router-dom";
 import { goToEntityForm } from "@/router";
-
-interface EntityItem {
-  name: string;
-  label: string;
-  category: string;
-  readonly: boolean;
-  width: number;
-}
-interface EntityDescription {
-  items: EntityItem[];
-  support_orders: string[];
-  modify_roles: string[];
-}
 
 function convertDescriptionToColumnDef(
   description: EntityDescription,
   sorting: SortingState,
   roles: string[],
   entity: string,
-): ColumnDef<Map<string, unknown>>[] {
+): ColumnDef<Record<string, unknown>>[] {
   let canModify = false;
   description.modify_roles.forEach((item) => {
     if (roles.includes(item)) {
@@ -145,55 +131,6 @@ function convertDescriptionToColumnDef(
 
 const opName = "op";
 
-async function getEntityDescriptions(
-  entity: string,
-): Promise<EntityDescription> {
-  const { data } = await request.get<EntityDescription>(
-    INNER_ENTITY_DESCRIPTIONS,
-    {
-      params: {
-        table: entity,
-      },
-    },
-  );
-  data.items.push({
-    name: opName,
-    label: "操作",
-    category: opName,
-    readonly: true,
-    width: 60,
-  });
-  return data;
-}
-
-async function getEntities({
-  entity,
-  page,
-  page_size,
-  keyword,
-  orders,
-}: {
-  entity: string;
-  page: number;
-  page_size: number;
-  keyword: string;
-  orders: string;
-}) {
-  const { data } = await request.get<{
-    page_count: number;
-    items: Map<string, unknown>[];
-  }>(INNER_ENTITIES, {
-    params: {
-      table: entity,
-      page_size,
-      page,
-      orders,
-      keyword,
-    },
-  });
-  return data;
-}
-
 function getColumnVisibility(entity: string) {
   const value = window.localStorage.getItem(`columnVisibility:${entity}`);
   if (value) {
@@ -221,13 +158,18 @@ export default function DataTable({ entity }: { entity: string }) {
 
   const [roles] = useUserStore((state) => [state.roles]);
 
+  const [fetchDescription, listEntities] = useEntityStore((state) => [
+    state.fetchDescription,
+    state.listEntities,
+  ]);
+
   const [initialized, setInitialized] = useState(false);
   const [entityItems, setEntityItems] = useState<
-    ColumnDef<Map<string, unknown>>[]
+    ColumnDef<Record<string, unknown>>[]
   >([]);
   const [labels, setLabels] = useState(new Map<string, string>());
   const [pageCount, setPageCount] = useState(0);
-  const [entities, setEntities] = useState<Map<string, unknown>[]>([]);
+  const [entities, setEntities] = useState<Record<string, unknown>[]>([]);
   const [{ pageIndex, pageSize }, setPagination] = useState<PaginationState>({
     pageIndex: -1,
     pageSize: 10,
@@ -280,7 +222,14 @@ export default function DataTable({ entity }: { entity: string }) {
   useAsync(async () => {
     reset();
     try {
-      const description = await getEntityDescriptions(entity);
+      const description = await fetchDescription(entity);
+      description.items.push({
+        name: opName,
+        label: "操作",
+        category: opName,
+        readonly: true,
+        width: 60,
+      });
       const columnLabels = new Map<string, string>();
       description.items.forEach((item) => {
         if (item.label) {
@@ -323,7 +272,7 @@ export default function DataTable({ entity }: { entity: string }) {
           return item.id;
         })
         .join(",");
-      const result = await getEntities({
+      const result = await listEntities({
         entity,
         page_size: pageSize,
         page: pageIndex,

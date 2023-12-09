@@ -1,0 +1,86 @@
+import request from "@/helpers/request";
+import {
+  INNER_ENTITIES,
+  INNER_ENTITY_DESCRIPTIONS,
+  INNER_ENTITIES_DETAIL,
+} from "@/url";
+import { create } from "zustand";
+
+interface EntityItem {
+  name: string;
+  label: string;
+  category: string;
+  readonly: boolean;
+  width: number;
+}
+export interface EntityDescription {
+  items: EntityItem[];
+  support_orders: string[];
+  modify_roles: string[];
+}
+
+interface EntityState {
+  fetchDescription: (entity: string) => Promise<EntityDescription>;
+  listEntities: (params: {
+    entity: string;
+    page: number;
+    page_size: number;
+    keyword: string;
+    orders: string;
+  }) => Promise<{
+    page_count: number;
+    items: Record<string, unknown>[];
+  }>;
+  getEntity: (entity: string, id: string) => Promise<Record<string, unknown>>;
+}
+
+const entityStore = create<EntityState>()((set, get) => ({
+  fetchDescription: async (entity: string) => {
+    const { data } = await request.get<EntityDescription>(
+      INNER_ENTITY_DESCRIPTIONS,
+      {
+        params: {
+          table: entity,
+        },
+      },
+    );
+    return data;
+  },
+  listEntities: async ({
+    entity,
+    page,
+    page_size,
+    keyword,
+    orders,
+  }: {
+    entity: string;
+    page: number;
+    page_size: number;
+    keyword: string;
+    orders: string;
+  }) => {
+    const { data } = await request.get<{
+      page_count: number;
+      items: Record<string, unknown>[];
+    }>(INNER_ENTITIES, {
+      params: {
+        table: entity,
+        page_size,
+        page,
+        orders,
+        keyword,
+      },
+    });
+    return data;
+  },
+  getEntity: async (entity: string, id: string) => {
+    const url = INNER_ENTITIES_DETAIL.replace(":entity", entity).replace(
+      ":id",
+      id,
+    );
+    const { data } = await request.get<Record<string, unknown>>(url);
+    return data;
+  },
+}));
+
+export default entityStore;
