@@ -1,4 +1,5 @@
 import request from "@/helpers/request";
+import Entity from "@/pages/Entity";
 import {
   INNER_ENTITIES,
   INNER_ENTITY_DESCRIPTIONS,
@@ -17,6 +18,36 @@ export interface EntityDescription {
   items: EntityItem[];
   support_orders: string[];
   modify_roles: string[];
+}
+
+export enum EntityItemCategory {
+  TEXT = "text",
+  NUMBER = "number",
+  DATETIME = "datetime",
+  EDITOR = "editor",
+  STATUS = "status",
+  JSON = "json",
+}
+
+enum EntityStatus {
+  DISABLED = 0,
+  ENABLED = 1,
+}
+
+export function formatEntityStatus(value: unknown) {
+  if (Number(value) === EntityStatus.ENABLED) {
+    return "启用";
+  }
+  return "禁用";
+}
+
+export function getEntityStatusOptions() {
+  return [EntityStatus.ENABLED, EntityStatus.DISABLED].map((value) => {
+    return {
+      value: String(value),
+      label: formatEntityStatus(value),
+    };
+  });
 }
 
 interface EntityState {

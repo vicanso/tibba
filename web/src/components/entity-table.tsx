@@ -29,7 +29,11 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import useUserStore from "@/state/user";
-import useEntityStore, { EntityDescription } from "@/state/entity";
+import useEntityStore, {
+  EntityDescription,
+  EntityStatus,
+  formatEntityStatus,
+} from "@/state/entity";
 import { useLocation, useSearchParams } from "react-router-dom";
 import { goToEntityForm } from "@/router";
 
@@ -113,11 +117,7 @@ function convertDescriptionToColumnDef(
             break;
           }
           case "status": {
-            if (String(value) === "1") {
-              value = "启用";
-            } else {
-              value = "禁用";
-            }
+            value = formatEntityStatus(value);
             break;
           }
           default:

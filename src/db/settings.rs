@@ -143,16 +143,16 @@ impl SettingEntity {
                 ..Default::default()
             },
             EntityItemDescription {
+                name: Column::Name.to_string(),
+                label: "名称".to_string(),
+                category: EntityItemCategory::Text,
+                ..Default::default()
+            },
+            EntityItemDescription {
                 name: Column::Status.to_string(),
                 label: "状态".to_string(),
                 width: Some(60),
                 category: EntityItemCategory::Status,
-                ..Default::default()
-            },
-            EntityItemDescription {
-                name: Column::Name.to_string(),
-                label: "名称".to_string(),
-                category: EntityItemCategory::Text,
                 ..Default::default()
             },
             EntityItemDescription {

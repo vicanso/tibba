@@ -46,16 +46,17 @@ impl UserEntity {
                 ..Default::default()
             },
             EntityItemDescription {
+                name: Column::Account.to_string(),
+                label: "账号".to_string(),
+                category: EntityItemCategory::Text,
+                readonly: true,
+                ..Default::default()
+            },
+            EntityItemDescription {
                 name: Column::Status.to_string(),
                 label: "状态".to_string(),
                 width: Some(60),
                 category: EntityItemCategory::Status,
-                ..Default::default()
-            },
-            EntityItemDescription {
-                name: Column::Account.to_string(),
-                label: "账号".to_string(),
-                category: EntityItemCategory::Text,
                 ..Default::default()
             },
             EntityItemDescription {
