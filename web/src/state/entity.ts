@@ -7,12 +7,19 @@ import {
 } from "@/url";
 import { create } from "zustand";
 
+interface EntityOption {
+  label: string;
+  str_value: string;
+  num_value: number;
+}
+
 interface EntityItem {
   name: string;
   label: string;
   category: string;
   readonly: boolean;
   width: number;
+  options: EntityOption[];
 }
 export interface EntityDescription {
   items: EntityItem[];
@@ -25,6 +32,7 @@ export enum EntityItemCategory {
   NUMBER = "number",
   DATETIME = "datetime",
   EDITOR = "editor",
+  TEXTS = "texts",
   STATUS = "status",
   JSON = "json",
 }

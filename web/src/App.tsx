@@ -22,7 +22,7 @@ export default function App() {
       }
     } catch (err) {
       toast({
-        title: "Fetch user info fail",
+        title: "获取用户信息失败",
         description: formatError(err),
       });
       console.error(err);

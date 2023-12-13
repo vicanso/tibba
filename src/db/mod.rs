@@ -5,6 +5,7 @@ use serde_json::Value;
 pub type Result<T, E = HttpError> = std::result::Result<T, E>;
 
 pub static ROLE_SU: &str = "su";
+pub static ROLE_ADMIN: &str = "admin";
 
 mod conn;
 mod settings;
@@ -31,6 +32,7 @@ pub struct EntityDescription {
 pub enum EntityItemCategory {
     #[default]
     Text,
+    TEXTS,
     Number,
     DateTime,
     Editor,

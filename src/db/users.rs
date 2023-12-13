@@ -1,10 +1,11 @@
 use super::{
     get_database, EntityDescription, EntityItemCategory, EntityItemDescription, ListCountParams,
-    Result, ROLE_SU,
+    Result, ROLE_SU, ROLE_ADMIN, EntityItemOption,
 };
 use crate::entities::users::{ActiveModel, Column, Entity, Model};
 use sea_orm::{entity::prelude::*, ActiveValue::Set, Condition, Iterable, QuerySelect};
 use serde_json::{json, Value};
+
 
 pub async fn add_user(account: &str, password: &str) -> Result<Model> {
     let conn = get_database().await;
@@ -36,6 +37,17 @@ pub struct UserEntity {}
 
 impl UserEntity {
     pub fn description() -> EntityDescription {
+        let roles = vec![
+            ROLE_SU,
+            ROLE_ADMIN,
+        ];
+        let role_options = roles.iter().map(|item| {
+            EntityItemOption{
+                label: item.to_string(),
+                str_value: Some(item.to_string()),
+                ..Default::default()
+            }
+        }).collect();
         let items = vec![
             EntityItemDescription {
                 name: Column::Id.to_string(),
@@ -70,7 +82,8 @@ impl UserEntity {
                 name: Column::Roles.to_string(),
                 label: "角色".to_string(),
                 width: Some(100),
-                category: EntityItemCategory::Json,
+                category: EntityItemCategory::TEXTS,
+                options: Some(role_options),
                 ..Default::default()
             },
             EntityItemDescription {
