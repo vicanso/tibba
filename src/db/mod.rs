@@ -1,6 +1,7 @@
 use crate::error::HttpError;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use snafu::Snafu;
 
 pub type Result<T, E = HttpError> = std::result::Result<T, E>;
 
@@ -11,9 +12,23 @@ mod conn;
 mod settings;
 mod users;
 
+#[derive(Debug, Snafu)]
+pub enum Error {
+    #[snafu(display("Record not found"))]
+    NotFound,
+    #[snafu(display("Order by {order} is unsupported"))]
+    OrderNotSupport { order: String },
+}
+
+impl From<Error> for HttpError {
+    fn from(value: Error) -> Self {
+        HttpError::new_with_category(&value.to_string(), "db")
+    }
+}
+
 #[derive(Debug, Deserialize, Clone)]
 pub struct ListCountParams {
-    pub table: String,
+    // pub table: String,
     pub orders: Option<String>,
     pub keyword: Option<String>,
     pub page: u64,
@@ -61,8 +76,12 @@ const TABLE_NAME_SETTINGS: &str = "settings";
 const TABLE_NAME_USERS: &str = "users";
 const TABLE_INVALID_MSG: &str = "Table is invalid";
 
-pub async fn list_count(user: &str, params: &ListCountParams) -> Result<(i64, Vec<Value>)> {
-    let result = match params.table.as_str() {
+pub async fn list_count(
+    name: &str,
+    user: &str,
+    params: &ListCountParams,
+) -> Result<(i64, Vec<Value>)> {
+    let result = match name {
         TABLE_NAME_SETTINGS => SettingEntity::list_count(user, params).await?,
         TABLE_NAME_USERS => UserEntity::list_count(user, params).await?,
         _ => return Err(HttpError::new(TABLE_INVALID_MSG)),
@@ -94,6 +113,15 @@ pub async fn find_by_id(name: &str, user: &str, id: i64) -> Result<Option<Value>
         _ => return Err(HttpError::new(TABLE_INVALID_MSG)),
     };
     Ok(result)
+}
+pub async fn update_by_id(name: &str, user: &str, id: i64, value: &Value) -> Result<()> {
+    match name {
+        TABLE_NAME_SETTINGS => SettingEntity::update_by_id(user, id, value).await?,
+        TABLE_NAME_USERS => UserEntity::update_by_id(user, id, value).await?,
+        _ => return Err(HttpError::new(TABLE_INVALID_MSG)),
+    };
+
+    Ok(())
 }
 
 pub use conn::get_database;

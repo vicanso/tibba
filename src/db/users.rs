@@ -1,11 +1,11 @@
 use super::{
-    get_database, EntityDescription, EntityItemCategory, EntityItemDescription, ListCountParams,
-    Result, ROLE_SU, ROLE_ADMIN, EntityItemOption,
+    get_database, EntityDescription, EntityItemCategory, EntityItemDescription, EntityItemOption,
+    Error, ListCountParams, Result, ROLE_ADMIN, ROLE_SU,
 };
 use crate::entities::users::{ActiveModel, Column, Entity, Model};
+use crate::util::{json_get_i64, json_get_strings};
 use sea_orm::{entity::prelude::*, ActiveValue::Set, Condition, Iterable, QuerySelect};
 use serde_json::{json, Value};
-
 
 pub async fn add_user(account: &str, password: &str) -> Result<Model> {
     let conn = get_database().await;
@@ -36,18 +36,35 @@ pub async fn find_user_by_account(account: &str) -> Result<Option<Model>> {
 pub struct UserEntity {}
 
 impl UserEntity {
+    pub async fn update_by_id(user: &str, id: i64, value: &Value) -> Result<()> {
+        let conn = get_database().await;
+        let result = Entity::find_by_id(id).one(conn).await?;
+        if result.is_none() {
+            return Err(Error::NotFound.into());
+        }
+        let mut data: ActiveModel = result.unwrap().into();
+        if let Some(value) = json_get_i64(value, Column::Status.as_str())? {
+            data.status = Set(value as i8);
+        }
+        if let Some(value) = json_get_strings(value, Column::Roles.as_str())? {
+            data.roles = Set(Some(json!(value)))
+        }
+        if let Some(value) = json_get_strings(value, Column::Groups.as_str())? {
+            data.groups = Set(Some(json!(value)))
+        }
+        data.update(conn).await?;
+        Ok(())
+    }
     pub fn description() -> EntityDescription {
-        let roles = vec![
-            ROLE_SU,
-            ROLE_ADMIN,
-        ];
-        let role_options = roles.iter().map(|item| {
-            EntityItemOption{
+        let roles = vec![ROLE_SU, ROLE_ADMIN];
+        let role_options = roles
+            .iter()
+            .map(|item| EntityItemOption {
                 label: item.to_string(),
                 str_value: Some(item.to_string()),
                 ..Default::default()
-            }
-        }).collect();
+            })
+            .collect();
         let items = vec![
             EntityItemDescription {
                 name: Column::Id.to_string(),

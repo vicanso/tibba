@@ -49,3 +49,15 @@ pub fn json_get_date_time(value: &Value, key: &str) -> Result<Option<DateTime<Ut
     }
     Ok(None)
 }
+
+pub fn json_get_strings(value: &Value, key: &str) -> Result<Option<Vec<String>>> {
+    if let Some(arr) = value.get(key) {
+        if !arr.is_array() {
+            return Err(HttpError::new(&format!("{key} is not an array")));
+        }
+        if let Some(values) = arr.as_array() {
+            return Ok(Some(values.iter().map(|item| item.to_string()).collect()));
+        }
+    }
+    Ok(None)
+}

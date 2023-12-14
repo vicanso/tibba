@@ -4,6 +4,6 @@ export const USER_LOGIN = "/users/login";
 export const USER_REGISTER = "/users/register";
 export const USER_ME = "/users/me";
 
-export const INNER_ENTITY_DESCRIPTIONS = "/inners/entity-descriptions";
-export const INNER_ENTITIES = "/inners/entities";
-export const INNER_ENTITIES_DETAIL = "/inners/entities/:entity/:id";
+export const INNER_ENTITY_DESCRIPTIONS = "/inners/entity-descriptions/:entity";
+export const INNER_ENTITIES = "/inners/entities/:entity";
+export const INNER_ENTITIES_ID = "/inners/entities/:entity/:id";

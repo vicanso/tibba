@@ -136,6 +136,7 @@ export default function Login() {
                         <Input
                           autoFocus
                           placeholder="请输入你的账号"
+                          type="search"
                           {...field}
                         />
                       </FormControl>
@@ -196,6 +197,7 @@ export default function Login() {
                         <Input
                           autoFocus
                           placeholder="请输入你的账号"
+                          type="search"
                           {...field}
                         />
                       </FormControl>

@@ -3,7 +3,7 @@ import Entity from "@/pages/Entity";
 import {
   INNER_ENTITIES,
   INNER_ENTITY_DESCRIPTIONS,
-  INNER_ENTITIES_DETAIL,
+  INNER_ENTITIES_ID,
 } from "@/url";
 import { create } from "zustand";
 
@@ -76,12 +76,7 @@ interface EntityState {
 const entityStore = create<EntityState>()((set, get) => ({
   fetchDescription: async (entity: string) => {
     const { data } = await request.get<EntityDescription>(
-      INNER_ENTITY_DESCRIPTIONS,
-      {
-        params: {
-          table: entity,
-        },
-      },
+      INNER_ENTITY_DESCRIPTIONS.replace(":entity", entity),
     );
     return data;
   },
@@ -101,9 +96,8 @@ const entityStore = create<EntityState>()((set, get) => ({
     const { data } = await request.get<{
       page_count: number;
       items: Record<string, unknown>[];
-    }>(INNER_ENTITIES, {
+    }>(INNER_ENTITIES.replace(":entity", entity), {
       params: {
-        table: entity,
         page_size,
         page,
         orders,
@@ -113,10 +107,7 @@ const entityStore = create<EntityState>()((set, get) => ({
     return data;
   },
   getEntity: async (entity: string, id: string) => {
-    const url = INNER_ENTITIES_DETAIL.replace(":entity", entity).replace(
-      ":id",
-      id,
-    );
+    const url = INNER_ENTITIES_ID.replace(":entity", entity).replace(":id", id);
     const { data } = await request.get<Record<string, unknown>>(url);
     return data;
   },

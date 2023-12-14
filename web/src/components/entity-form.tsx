@@ -21,7 +21,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
-import { isNil, includes, isUndefined } from "lodash-es";
+import { isNil, includes, isEqual } from "lodash-es";
 import { useState } from "react";
 import { Input } from "@/components/ui/input";
 import { useForm } from "react-hook-form";
@@ -43,10 +43,29 @@ export default function EntityForm({
 }) {
   const [getEntity] = useEntityStore((state) => [state.getEntity]);
   const [entityData, setEntityData] = useState<Record<string, unknown>>({});
+  const [processing, setProcessing] = useState<boolean>(false);
 
   const schema: Record<string, z.ZodTypeAny> = {};
+
   description.items.forEach((item) => {
-    schema[item.name] = z.string().min(0).max(50);
+    switch (item.category) {
+      case EntityItemCategory.NUMBER: {
+        schema[item.name] = z.number();
+        break;
+      }
+      case EntityItemCategory.STATUS: {
+        schema[item.name] = z.number();
+        break;
+      }
+      case EntityItemCategory.TEXTS: {
+        schema[item.name] = z.array(z.string());
+        break;
+      }
+      default: {
+        schema[item.name] = z.string().min(0).max(50);
+        break;
+      }
+    }
   });
   const form = useForm({
     resolver: zodResolver(z.object(schema)),
@@ -56,13 +75,11 @@ export default function EntityForm({
     try {
       const data = await getEntity(entity, id);
       Object.keys(data).forEach((key) => {
-        if (!isNil(data[key])) {
-          form.setValue(key, data[key]);
-        } else {
-          form.setValue(key, "");
+        if (isNil(data[key])) {
+          data[key] = "";
         }
+        form.setValue(key, data[key]);
       });
-
       setEntityData(data);
     } catch (err) {
       toast({
@@ -73,7 +90,28 @@ export default function EntityForm({
   }, [entity, id]);
 
   async function onSubmit(values: Record<string, unknown>) {
-    console.dir(values);
+    if (processing) {
+      return;
+    }
+    const updateData: Record<string, unknown> = {};
+    Object.keys(values).forEach((key) => {
+      if (!isEqual(values[key], entityData[key])) {
+        updateData[key] = values[key];
+      }
+    });
+    if (Object.keys(updateData).length === 0) {
+      toast({
+        title: "数据未修改",
+        description: "当前的数据未有修改，请修改后再提交",
+      });
+      return;
+    }
+    setProcessing(true);
+    try {
+      console.dir(updateData);
+    } finally {
+      setProcessing(false);
+    }
   }
 
   if (!entityData.id) {
@@ -83,11 +121,6 @@ export default function EntityForm({
   const formItems = description.items
     ?.filter((item) => !includes(ignoreFields, item.name))
     .map((item) => {
-      // const originValue = entityData[item.name];
-      // let value = "";
-      // if (!isNil(originValue)) {
-      //   value = String(originValue);
-      // }
       return (
         <FormField
           key={item.name}
@@ -104,8 +137,15 @@ export default function EntityForm({
                     </SelectItem>
                   );
                 });
+
+                // TODO 是否可以支持number类型
                 element = (
-                  <Select defaultValue={String(field.value)}>
+                  <Select
+                    defaultValue={String(field.value)}
+                    onValueChange={(value) => {
+                      form.setValue(item.name, Number(value));
+                    }}
+                  >
                     <SelectTrigger>
                       <SelectValue placeholder="请选择" />
                     </SelectTrigger>
@@ -124,8 +164,14 @@ export default function EntityForm({
                     </SelectItem>
                   );
                 });
+                // TODO 是否支持multiple
                 element = (
-                  <Select defaultValue={field.value}>
+                  <Select
+                    defaultValue={field.value[0]}
+                    onValueChange={(value) => {
+                      form.setValue(item.name, [value]);
+                    }}
+                  >
                     <SelectTrigger>
                       <SelectValue placeholder="请选择" />
                     </SelectTrigger>
@@ -169,7 +215,7 @@ export default function EntityForm({
             </div>
             <CardFooter>
               <Button type="submit" className="w-[150px]">
-                更新
+                {processing ? "更新中..." : "更新"}
               </Button>
             </CardFooter>
           </Card>

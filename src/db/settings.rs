@@ -1,9 +1,8 @@
 use super::{
-    get_database, EntityDescription, EntityItemCategory, EntityItemDescription, ListCountParams,
-    Result, ROLE_SU,
+    get_database, EntityDescription, EntityItemCategory, EntityItemDescription, Error,
+    ListCountParams, Result, ROLE_SU,
 };
 use crate::entities::settings::{ActiveModel, Column, Entity, Model};
-use crate::error::HttpError;
 use crate::util::{json_get_date_time, json_get_i64, json_get_string};
 use once_cell::sync::Lazy;
 use sea_orm::query::{Order, Select};
@@ -83,8 +82,10 @@ where
             }
         }
         if !found {
-            let msg = format!("Order by {key} is unsupported");
-            return Err(HttpError::new_with_category(&msg, ERROR_CATEGORY));
+            return Err(Error::OrderNotSupport {
+                order: order.to_string(),
+            }
+            .into());
         }
     }
     Ok(s)
@@ -97,7 +98,7 @@ impl SettingEntity {
         let conn = get_database().await;
         let result = Entity::find_by_id(id).one(conn).await?;
         if result.is_none() {
-            return Err(HttpError::new("Record is not found"));
+            return Err(Error::NotFound.into());
         }
         let mut setting: ActiveModel = result.unwrap().into();
         setting.updater = Set(Some(user.to_string()));
