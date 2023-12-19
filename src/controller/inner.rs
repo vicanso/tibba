@@ -5,7 +5,7 @@ use crate::middleware::{should_logged_in, Claim};
 use axum::extract::Path;
 use axum::http::StatusCode;
 use axum::middleware::from_fn;
-use axum::routing::{get, post, put};
+use axum::routing::{get, patch, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -15,7 +15,7 @@ pub fn new_router() -> Router {
     let r = Router::new()
         .route("/entity-descriptions/:entity", get(get_description))
         .route("/entities/:entity/:id", get(find_by_id))
-        .route("/entities/:entity/:id", put(update_by_id))
+        .route("/entities/:entity/:id", patch(update_by_id))
         .route("/entities/:entity", post(add))
         .route("/entities/:entity", get(list))
         .layer(from_fn(should_logged_in));

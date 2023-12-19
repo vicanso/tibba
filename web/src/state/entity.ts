@@ -71,6 +71,11 @@ interface EntityState {
     items: Record<string, unknown>[];
   }>;
   getEntity: (entity: string, id: string) => Promise<Record<string, unknown>>;
+  updateEntity: (
+    entity: string,
+    id: string,
+    data: Record<string, unknown>,
+  ) => Promise<void>;
 }
 
 const entityStore = create<EntityState>()((set, get) => ({
@@ -110,6 +115,14 @@ const entityStore = create<EntityState>()((set, get) => ({
     const url = INNER_ENTITIES_ID.replace(":entity", entity).replace(":id", id);
     const { data } = await request.get<Record<string, unknown>>(url);
     return data;
+  },
+  updateEntity: async (
+    entity: string,
+    id: string,
+    data: Record<string, unknown>,
+  ) => {
+    const url = INNER_ENTITIES_ID.replace(":entity", entity).replace(":id", id);
+    await request.patch(url, data);
   },
 }));
 

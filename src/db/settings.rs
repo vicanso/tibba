@@ -11,8 +11,6 @@ use sea_orm::{Condition, QuerySelect};
 use serde_json::Value;
 use substring::Substring;
 
-const ERROR_CATEGORY: &str = "entity_settings";
-
 fn from_value(value: &Value) -> Result<ActiveModel> {
     let mut model = ActiveModel {
         ..Default::default()
@@ -147,6 +145,7 @@ impl SettingEntity {
                 name: Column::Name.to_string(),
                 label: "名称".to_string(),
                 category: EntityItemCategory::Text,
+                readonly: true,
                 ..Default::default()
             },
             EntityItemDescription {
@@ -180,21 +179,21 @@ impl SettingEntity {
             EntityItemDescription {
                 name: Column::StartedAt.to_string(),
                 label: "生效时间".to_string(),
-                width: Some(140),
+                width: Some(150),
                 category: EntityItemCategory::DateTime,
                 ..Default::default()
             },
             EntityItemDescription {
                 name: Column::EndedAt.to_string(),
                 label: "失效时间".to_string(),
-                width: Some(140),
+                width: Some(150),
                 category: EntityItemCategory::DateTime,
                 ..Default::default()
             },
             EntityItemDescription {
                 name: Column::CreatedAt.to_string(),
                 label: "创建时间".to_string(),
-                width: Some(140),
+                width: Some(150),
                 category: EntityItemCategory::DateTime,
                 readonly: true,
                 ..Default::default()
@@ -202,7 +201,7 @@ impl SettingEntity {
             EntityItemDescription {
                 name: Column::UpdatedAt.to_string(),
                 label: "更新时间".to_string(),
-                width: Some(140),
+                width: Some(150),
                 category: EntityItemCategory::DateTime,
                 readonly: true,
                 ..Default::default()

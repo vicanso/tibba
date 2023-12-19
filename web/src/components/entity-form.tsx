@@ -20,6 +20,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { cn } from "@/lib/utils";
+import { Calendar as CalendarIcon } from "lucide-react";
+import { Calendar } from "@/components/ui/calendar";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
 import { isNil, includes, isEqual } from "lodash-es";
 import { useState } from "react";
@@ -28,7 +36,9 @@ import { useForm } from "react-hook-form";
 import * as z from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "@/components/ui/use-toast";
-import { formatError } from "@/helpers/util";
+import { formatDate, formatError } from "@/helpers/util";
+import { Label } from "@/components/ui/label";
+import dayjs from "dayjs";
 
 const ignoreFields = ["id", "created_at", "updated_at"];
 
@@ -41,7 +51,11 @@ export default function EntityForm({
   id: string;
   description: EntityDescription;
 }) {
-  const [getEntity] = useEntityStore((state) => [state.getEntity]);
+  const [getEntity, updateEntity] = useEntityStore((state) => [
+    state.getEntity,
+    state.updateEntity,
+  ]);
+  const [tips, setTips] = useState("");
   const [entityData, setEntityData] = useState<Record<string, unknown>>({});
   const [processing, setProcessing] = useState<boolean>(false);
 
@@ -99,16 +113,22 @@ export default function EntityForm({
         updateData[key] = values[key];
       }
     });
-    if (Object.keys(updateData).length === 0) {
+    const keys = Object.keys(updateData);
+    if (keys.length === 0) {
       toast({
         title: "数据未修改",
         description: "当前的数据未有修改，请修改后再提交",
       });
       return;
     }
+    setTips("");
     setProcessing(true);
     try {
-      console.dir(updateData);
+      await updateEntity(entity, id, updateData);
+      keys.forEach((key) => {
+        entityData[key] = updateData[key];
+      });
+      setTips(`已成功更新数据，字段为：${keys.join(",")}。`);
     } finally {
       setProcessing(false);
     }
@@ -182,14 +202,82 @@ export default function EntityForm({
                 );
                 break;
               }
-              default: {
-                element = (
-                  <Input
-                    // defaultValue={value}
-                    {...field}
-                    disabled={item.readonly}
-                  />
+              case EntityItemCategory.DATETIME: {
+                const date = field.value;
+                let time = "";
+                if (date) {
+                  const arr = formatDate(date).split(" ");
+                  if (arr.length === 2) {
+                    time = arr[1];
+                  }
+                }
+                const footer = (
+                  <>
+                    <div className="px-4 pt-0 pb-4">
+                      <Label>时间</Label>
+                      <Input
+                        className="mt-[5px]"
+                        type="time"
+                        onChange={(e) => {
+                          const { value } = e.target;
+                          const hours = Number.parseInt(
+                            value.split(":")[0] || "00",
+                            10,
+                          );
+                          const minutes = Number.parseInt(
+                            value.split(":")[1] || "00",
+                            10,
+                          );
+                          const datetime = dayjs(date)
+                            .hour(hours)
+                            .minute(minutes)
+                            .toISOString();
+                          form.setValue(item.name, datetime);
+                        }}
+                        defaultValue={time}
+                      />
+                    </div>
+                    {!date && <p>Please pick a day.</p>}
+                  </>
                 );
+                element = (
+                  <Popover key={item.name}>
+                    <PopoverTrigger asChild>
+                      <div>
+                        <Button
+                          variant={"outline"}
+                          type="button"
+                          className={cn(
+                            "justify-start text-left font-normal w-full",
+                            !date && "text-muted-foreground",
+                          )}
+                        >
+                          <CalendarIcon className="mr-2 h-4 w-4" />
+                          {date ? formatDate(date) : <span>请选择日期</span>}
+                        </Button>
+                      </div>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-auto p-0">
+                      <Calendar
+                        mode="single"
+                        selected={new Date(date)}
+                        onSelect={(value) => {
+                          if (value) {
+                            form.setValue(item.name, value.toISOString());
+                          } else {
+                            form.setValue(item.name, "");
+                          }
+                        }}
+                        initialFocus
+                      />
+                      {footer}
+                    </PopoverContent>
+                  </Popover>
+                );
+                break;
+              }
+              default: {
+                element = <Input {...field} disabled={item.readonly} />;
                 break;
               }
             }
@@ -217,6 +305,7 @@ export default function EntityForm({
               <Button type="submit" className="w-[150px]">
                 {processing ? "更新中..." : "更新"}
               </Button>
+              <Label className="ml-5">{tips}</Label>
             </CardFooter>
           </Card>
         </form>

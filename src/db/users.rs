@@ -93,6 +93,7 @@ impl UserEntity {
                 label: "邮箱".to_string(),
                 width: Some(80),
                 category: EntityItemCategory::Text,
+                readonly: true,
                 ..Default::default()
             },
             EntityItemDescription {
@@ -107,13 +108,18 @@ impl UserEntity {
                 name: Column::Groups.to_string(),
                 label: "群组".to_string(),
                 width: Some(100),
-                category: EntityItemCategory::Editor,
+                category: EntityItemCategory::TEXTS,
+                options: Some(vec![EntityItemOption {
+                    label: "IT".to_string(),
+                    str_value: Some("it".to_string()),
+                    ..Default::default()
+                }]),
                 ..Default::default()
             },
             EntityItemDescription {
                 name: Column::CreatedAt.to_string(),
                 label: "创建时间".to_string(),
-                width: Some(140),
+                width: Some(150),
                 category: EntityItemCategory::DateTime,
                 readonly: true,
                 ..Default::default()
@@ -121,7 +127,7 @@ impl UserEntity {
             EntityItemDescription {
                 name: Column::UpdatedAt.to_string(),
                 label: "更新时间".to_string(),
-                width: Some(140),
+                width: Some(150),
                 category: EntityItemCategory::DateTime,
                 readonly: true,
                 ..Default::default()

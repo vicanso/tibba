@@ -56,7 +56,22 @@ pub fn json_get_strings(value: &Value, key: &str) -> Result<Option<Vec<String>>>
             return Err(HttpError::new(&format!("{key} is not an array")));
         }
         if let Some(values) = arr.as_array() {
-            return Ok(Some(values.iter().map(|item| item.to_string()).collect()));
+            let mut err = None;
+            let arr = values
+                .iter()
+                .map(|item| {
+                    if !item.is_string() {
+                        err = Some(HttpError::new("value is not a string"));
+                        return "".to_string();
+                    }
+                    return item.as_str().unwrap_or_default().to_string();
+                })
+                .collect();
+            // 如果出错
+            if !err.is_none() {
+                return Err(err.unwrap());
+            }
+            return Ok(Some(arr));
         }
     }
     Ok(None)
