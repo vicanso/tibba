@@ -28,6 +28,8 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { Textarea } from "@/components/ui/textarea";
+
 import { Button } from "@/components/ui/button";
 import { isNil, includes, isEqual } from "lodash-es";
 import { useState } from "react";
@@ -39,6 +41,7 @@ import { toast } from "@/components/ui/use-toast";
 import { formatDate, formatError } from "@/helpers/util";
 import { Label } from "@/components/ui/label";
 import dayjs from "dayjs";
+import { Loading } from "@/components/loading";
 
 const ignoreFields = ["id", "created_at", "updated_at"];
 
@@ -135,160 +138,171 @@ export default function EntityForm({
   }
 
   if (!entityData.id) {
-    return <div>...</div>;
+    return <Loading />;
   }
 
   const formItems = description.items
     ?.filter((item) => !includes(ignoreFields, item.name))
     .map((item) => {
+      let fieldClass = "";
+      if (item.span) {
+        fieldClass = `col-span-${item.span}`;
+      }
       return (
-        <FormField
-          key={item.name}
-          name={item.name}
-          control={form.control}
-          render={({ field }) => {
-            let element: JSX.Element;
-            switch (item.category) {
-              case EntityItemCategory.STATUS: {
-                const options = getEntityStatusOptions().map((item) => {
-                  return (
-                    <SelectItem key={item.value} value={item.value}>
-                      {item.label}
-                    </SelectItem>
-                  );
-                });
+        <div key={item.name} className={fieldClass}>
+          <FormField
+            name={item.name}
+            control={form.control}
+            render={({ field }) => {
+              let element: JSX.Element;
+              switch (item.category) {
+                case EntityItemCategory.STATUS: {
+                  const options = getEntityStatusOptions().map((item) => {
+                    return (
+                      <SelectItem key={item.value} value={item.value}>
+                        {item.label}
+                      </SelectItem>
+                    );
+                  });
 
-                // TODO 是否可以支持number类型
-                element = (
-                  <Select
-                    defaultValue={String(field.value)}
-                    onValueChange={(value) => {
-                      form.setValue(item.name, Number(value));
-                    }}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="请选择" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectGroup>{options}</SelectGroup>
-                    </SelectContent>
-                  </Select>
-                );
-                break;
-              }
-              case EntityItemCategory.TEXTS: {
-                const options = item.options.map((item) => {
-                  return (
-                    <SelectItem key={item.str_value} value={item.str_value}>
-                      {item.label}
-                    </SelectItem>
+                  // TODO 是否可以支持number类型
+                  element = (
+                    <Select
+                      defaultValue={String(field.value)}
+                      onValueChange={(value) => {
+                        form.setValue(item.name, Number(value));
+                      }}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="请选择" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectGroup>{options}</SelectGroup>
+                      </SelectContent>
+                    </Select>
                   );
-                });
-                // TODO 是否支持multiple
-                element = (
-                  <Select
-                    defaultValue={field.value[0]}
-                    onValueChange={(value) => {
-                      form.setValue(item.name, [value]);
-                    }}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="请选择" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectGroup>{options}</SelectGroup>
-                    </SelectContent>
-                  </Select>
-                );
-                break;
-              }
-              case EntityItemCategory.DATETIME: {
-                const date = field.value;
-                let time = "";
-                if (date) {
-                  const arr = formatDate(date).split(" ");
-                  if (arr.length === 2) {
-                    time = arr[1];
-                  }
+                  break;
                 }
-                const footer = (
-                  <>
-                    <div className="px-4 pt-0 pb-4">
-                      <Label>时间</Label>
-                      <Input
-                        className="mt-[5px]"
-                        type="time"
-                        onChange={(e) => {
-                          const { value } = e.target;
-                          const hours = Number.parseInt(
-                            value.split(":")[0] || "00",
-                            10,
-                          );
-                          const minutes = Number.parseInt(
-                            value.split(":")[1] || "00",
-                            10,
-                          );
-                          const datetime = dayjs(date)
-                            .hour(hours)
-                            .minute(minutes)
-                            .toISOString();
-                          form.setValue(item.name, datetime);
-                        }}
-                        defaultValue={time}
-                      />
-                    </div>
-                    {!date && <p>Please pick a day.</p>}
-                  </>
-                );
-                element = (
-                  <Popover key={item.name}>
-                    <PopoverTrigger asChild>
-                      <div>
-                        <Button
-                          variant={"outline"}
-                          type="button"
-                          className={cn(
-                            "justify-start text-left font-normal w-full",
-                            !date && "text-muted-foreground",
-                          )}
-                        >
-                          <CalendarIcon className="mr-2 h-4 w-4" />
-                          {date ? formatDate(date) : <span>请选择日期</span>}
-                        </Button>
+                case EntityItemCategory.TEXTS: {
+                  const options = item.options.map((item) => {
+                    return (
+                      <SelectItem key={item.str_value} value={item.str_value}>
+                        {item.label}
+                      </SelectItem>
+                    );
+                  });
+                  // TODO 是否支持multiple
+                  element = (
+                    <Select
+                      defaultValue={field.value[0]}
+                      onValueChange={(value) => {
+                        form.setValue(item.name, [value]);
+                      }}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="请选择" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectGroup>{options}</SelectGroup>
+                      </SelectContent>
+                    </Select>
+                  );
+                  break;
+                }
+                case EntityItemCategory.DATETIME: {
+                  const date = field.value;
+                  let time = "";
+                  if (date) {
+                    const arr = formatDate(date).split(" ");
+                    if (arr.length === 2) {
+                      time = arr[1];
+                    }
+                  }
+                  const footer = (
+                    <>
+                      <div className="px-4 pt-0 pb-4">
+                        <Label>时间</Label>
+                        <Input
+                          className="mt-[5px]"
+                          type="time"
+                          onChange={(e) => {
+                            const { value } = e.target;
+                            const hours = Number.parseInt(
+                              value.split(":")[0] || "00",
+                              10,
+                            );
+                            const minutes = Number.parseInt(
+                              value.split(":")[1] || "00",
+                              10,
+                            );
+                            const datetime = dayjs(date)
+                              .hour(hours)
+                              .minute(minutes)
+                              .toISOString();
+                            form.setValue(item.name, datetime);
+                          }}
+                          defaultValue={time}
+                        />
                       </div>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-auto p-0">
-                      <Calendar
-                        mode="single"
-                        selected={new Date(date)}
-                        onSelect={(value) => {
-                          if (value) {
-                            form.setValue(item.name, value.toISOString());
-                          } else {
-                            form.setValue(item.name, "");
-                          }
-                        }}
-                        initialFocus
-                      />
-                      {footer}
-                    </PopoverContent>
-                  </Popover>
-                );
-                break;
+                      {!date && <p>Please pick a day.</p>}
+                    </>
+                  );
+                  element = (
+                    <Popover key={item.name}>
+                      <PopoverTrigger asChild>
+                        <div>
+                          <Button
+                            variant={"outline"}
+                            type="button"
+                            className={cn(
+                              "justify-start text-left font-normal w-full",
+                              !date && "text-muted-foreground",
+                            )}
+                          >
+                            <CalendarIcon className="mr-2 h-4 w-4" />
+                            {date ? formatDate(date) : <span>请选择日期</span>}
+                          </Button>
+                        </div>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-auto p-0">
+                        <Calendar
+                          mode="single"
+                          selected={new Date(date)}
+                          onSelect={(value) => {
+                            if (value) {
+                              form.setValue(item.name, value.toISOString());
+                            } else {
+                              form.setValue(item.name, "");
+                            }
+                          }}
+                          initialFocus
+                        />
+                        {footer}
+                      </PopoverContent>
+                    </Popover>
+                  );
+                  break;
+                }
+                case EntityItemCategory.EDITOR: {
+                  element = (
+                    <Textarea {...field} disabled={item.readonly} rows={8} />
+                  );
+                  break;
+                }
+                default: {
+                  element = <Input {...field} disabled={item.readonly} />;
+                  break;
+                }
               }
-              default: {
-                element = <Input {...field} disabled={item.readonly} />;
-                break;
-              }
-            }
-            return (
-              <FormItem>
-                <FormLabel>{item.label}</FormLabel>
-                <FormControl>{element}</FormControl>
-              </FormItem>
-            );
-          }}
-        />
+              return (
+                <FormItem>
+                  <FormLabel>{item.label}</FormLabel>
+                  <FormControl>{element}</FormControl>
+                </FormItem>
+              );
+            }}
+          />
+        </div>
       );
     });
 

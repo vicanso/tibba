@@ -14,11 +14,7 @@ export const navItemList = [
     items: [
       {
         name: "用户列表",
-        url: HOME,
-      },
-      {
-        name: "登录记录",
-        url: "/users",
+        url: ENTITY.replace(":entity", "users"),
       },
     ],
   },
@@ -28,10 +24,6 @@ export const navItemList = [
       {
         name: "应用配置",
         url: ENTITY.replace(":entity", "settings"),
-      },
-      {
-        name: "用户",
-        url: ENTITY.replace(":entity", "users"),
       },
     ],
   },

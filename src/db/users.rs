@@ -110,7 +110,7 @@ impl UserEntity {
                 width: Some(100),
                 category: EntityItemCategory::TEXTS,
                 options: Some(vec![EntityItemOption {
-                    label: "IT".to_string(),
+                    label: "it".to_string(),
                     str_value: Some("it".to_string()),
                     ..Default::default()
                 }]),

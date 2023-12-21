@@ -36,6 +36,7 @@ import useEntityStore, {
 } from "@/state/entity";
 import { useLocation, useSearchParams } from "react-router-dom";
 import { goToEntityForm } from "@/router";
+import { Loading } from "@/components/loading";
 
 function convertDescriptionToColumnDef(
   description: EntityDescription,
@@ -332,7 +333,7 @@ export default function DataTable({ entity }: { entity: string }) {
   }, [entity, columnVisibility]);
 
   if (!initialized) {
-    return <div>Loading...</div>;
+    return <Loading />;
   }
 
   const tableHeader = table.getHeaderGroups().map((headerGroup) => {

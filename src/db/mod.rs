@@ -69,7 +69,8 @@ pub struct EntityItemDescription {
     pub category: EntityItemCategory,
     pub readonly: bool,
     pub options: Option<Vec<EntityItemOption>>,
-    pub width: Option<i16>,
+    pub width: Option<u16>,
+    pub span: Option<u8>,
 }
 
 const TABLE_NAME_SETTINGS: &str = "settings";

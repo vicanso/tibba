@@ -151,7 +151,7 @@ impl SettingEntity {
             EntityItemDescription {
                 name: Column::Status.to_string(),
                 label: "状态".to_string(),
-                width: Some(60),
+                width: Some(90),
                 category: EntityItemCategory::Status,
                 ..Default::default()
             },
@@ -159,20 +159,6 @@ impl SettingEntity {
                 name: Column::Category.to_string(),
                 label: "分类".to_string(),
                 width: Some(80),
-                category: EntityItemCategory::Text,
-                ..Default::default()
-            },
-            EntityItemDescription {
-                name: Column::Data.to_string(),
-                label: "配置".to_string(),
-                width: Some(200),
-                category: EntityItemCategory::Editor,
-                ..Default::default()
-            },
-            EntityItemDescription {
-                name: Column::Remark.to_string(),
-                label: "备注".to_string(),
-                width: Some(120),
                 category: EntityItemCategory::Text,
                 ..Default::default()
             },
@@ -191,6 +177,30 @@ impl SettingEntity {
                 ..Default::default()
             },
             EntityItemDescription {
+                name: Column::Creator.to_string(),
+                label: "创建人".to_string(),
+                width: Some(80),
+                category: EntityItemCategory::Text,
+                readonly: true,
+                ..Default::default()
+            },
+            EntityItemDescription {
+                name: Column::Data.to_string(),
+                label: "配置".to_string(),
+                width: Some(200),
+                category: EntityItemCategory::Editor,
+                span: Some(3),
+                ..Default::default()
+            },
+            EntityItemDescription {
+                name: Column::Remark.to_string(),
+                label: "备注".to_string(),
+                width: Some(120),
+                span: Some(3),
+                category: EntityItemCategory::Text,
+                ..Default::default()
+            },
+            EntityItemDescription {
                 name: Column::CreatedAt.to_string(),
                 label: "创建时间".to_string(),
                 width: Some(150),
@@ -203,14 +213,6 @@ impl SettingEntity {
                 label: "更新时间".to_string(),
                 width: Some(150),
                 category: EntityItemCategory::DateTime,
-                readonly: true,
-                ..Default::default()
-            },
-            EntityItemDescription {
-                name: Column::Creator.to_string(),
-                label: "创建人".to_string(),
-                width: Some(80),
-                category: EntityItemCategory::Text,
                 readonly: true,
                 ..Default::default()
             },

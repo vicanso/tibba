@@ -20,6 +20,7 @@ interface EntityItem {
   readonly: boolean;
   width: number;
   options: EntityOption[];
+  span: number;
 }
 export interface EntityDescription {
   items: EntityItem[];
