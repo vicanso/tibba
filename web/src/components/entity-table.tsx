@@ -31,7 +31,6 @@ import {
 import useUserStore from "@/state/user";
 import useEntityStore, {
   EntityDescription,
-  EntityStatus,
   formatEntityStatus,
 } from "@/state/entity";
 import { useLocation, useSearchParams } from "react-router-dom";
@@ -230,6 +229,8 @@ export default function DataTable({ entity }: { entity: string }) {
         category: opName,
         readonly: true,
         width: 60,
+        options: [],
+        span: 0,
       });
       const columnLabels = new Map<string, string>();
       description.items.forEach((item) => {
@@ -366,6 +367,7 @@ export default function DataTable({ entity }: { entity: string }) {
                 submitSearch();
               }
             }}
+            type="search"
             defaultValue={keyword}
             className="max-w-sm"
           />

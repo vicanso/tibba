@@ -10,7 +10,6 @@ import {
   DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuItem,
-  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -34,11 +33,10 @@ export function MainHeader({ className }: MainHeaderProps) {
           <DropdownMenuTrigger asChild>
             <Button variant="link">
               <User2 className="h-4 w-4" />
+              <span className="ml-1">{account}</span>
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent className="w-56">
-            <DropdownMenuLabel>{account}</DropdownMenuLabel>
-            <DropdownMenuSeparator />
             <DropdownMenuGroup>
               <DropdownMenuItem
                 className="cursor-pointer"

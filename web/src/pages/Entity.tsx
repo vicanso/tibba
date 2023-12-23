@@ -9,9 +9,9 @@ export default function Entity() {
   return (
     <div>
       <MainHeader />
-      <div className="grid lg:grid-cols-5">
-        <MainSidebar className="h-screen" />
-        <div className="col-span-3 lg:col-span-4 lg:border-l">
+      <div className="flex">
+        <MainSidebar className="h-screen flex-none w-[230px]" />
+        <div className="grow lg:border-l">
           <EntityTable entity={entity || ""} />
         </div>
       </div>

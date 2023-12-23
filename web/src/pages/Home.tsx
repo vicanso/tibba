@@ -5,9 +5,9 @@ export default function Home() {
   return (
     <div>
       <MainHeader />
-      <div className="grid lg:grid-cols-5">
-        <MainSidebar className="h-screen" />
-        <div className="col-span-3 lg:col-span-4 lg:border-l"></div>
+      <div className="flex">
+        <MainSidebar className="h-screen flex-none w-[230px]" />
+        <div className="grow lg:border-l"></div>
       </div>
     </div>
   );

@@ -308,6 +308,8 @@ export default function EntityForm({
 
   return (
     <div className="w-full">
+      {/* 因为col-span是动态生成，因此先引入，否则tailwind并未编译该类 */}
+      <span className="col-span-3 col-span-2" />
       <Form {...form}>
         <form onSubmit={form.handleSubmit(onSubmit)}>
           <Card className="m-5">

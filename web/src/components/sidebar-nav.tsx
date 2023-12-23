@@ -26,7 +26,7 @@ export function MainSidebar({ className }: MainSidebarProps) {
     });
     return (
       <div className="px-3 py-2" key={item.name}>
-        <h2 className="mb-2 px-4 text-lg">
+        <h2 className="px-4 text-lg">
           {item.name}
           <div className="space-y-1">{subItems}</div>
         </h2>
@@ -35,7 +35,7 @@ export function MainSidebar({ className }: MainSidebarProps) {
   });
   return (
     <div className={cn("pb-12", className)}>
-      <div className="space-y-4 py-4">{arr}</div>
+      <div className="space-y-1 py-4">{arr}</div>
     </div>
   );
 }

@@ -1,5 +1,4 @@
 import request from "@/helpers/request";
-import Entity from "@/pages/Entity";
 import {
   INNER_ENTITIES,
   INNER_ENTITY_DESCRIPTIONS,
@@ -79,7 +78,7 @@ interface EntityState {
   ) => Promise<void>;
 }
 
-const entityStore = create<EntityState>()((set, get) => ({
+const entityStore = create<EntityState>()(() => ({
   fetchDescription: async (entity: string) => {
     const { data } = await request.get<EntityDescription>(
       INNER_ENTITY_DESCRIPTIONS.replace(":entity", entity),
