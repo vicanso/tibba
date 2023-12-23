@@ -2,7 +2,7 @@ use super::JsonParams;
 use crate::controller::JsonResult;
 use crate::db::{add_user, find_user_by_account};
 use crate::error::{HttpError, HttpResult};
-use crate::middleware::{get_claims_from_headers, wait1s};
+use crate::middleware::{get_claims_from_headers, ip_login_limit, wait1s};
 use crate::middleware::{should_logged_in, AuthResp, Claim};
 use crate::util;
 use crate::{config, task_local::*, tl_error};
@@ -32,7 +32,12 @@ pub fn new_router() -> Router {
         .route("/login-token", get(login_token))
         .route("/register", post(register))
         // 登录设置为最少等待x秒，避免快速尝试
-        .route("/login", post(login).layer(from_fn(wait1s)));
+        .route(
+            "/login",
+            post(login)
+                .layer(from_fn(wait1s))
+                .layer(from_fn(ip_login_limit)),
+        );
     let r = Router::new()
         .route("/me", get(me))
         .route("/refresh", get(refresh))

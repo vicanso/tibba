@@ -56,7 +56,7 @@ impl UserEntity {
         Ok(())
     }
     pub fn description() -> EntityDescription {
-        let roles = vec![ROLE_SU, ROLE_ADMIN];
+        let roles = [ROLE_SU, ROLE_ADMIN];
         let role_options = roles
             .iter()
             .map(|item| EntityItemOption {

@@ -68,8 +68,8 @@ pub fn json_get_strings(value: &Value, key: &str) -> Result<Option<Vec<String>>>
                 })
                 .collect();
             // 如果出错
-            if !err.is_none() {
-                return Err(err.unwrap());
+            if let Some(err) = err {
+                return Err(err);
             }
             return Ok(Some(arr));
         }

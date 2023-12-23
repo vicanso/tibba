@@ -1,4 +1,4 @@
-use axum::middleware::{from_fn, from_fn_with_state};
+use axum::middleware::from_fn_with_state;
 use axum::{error_handling::HandleErrorLayer, Router};
 use once_cell::sync::Lazy;
 use sea_orm::{ActiveModelTrait, ActiveValue};
