@@ -14,7 +14,7 @@ bytes = "1.5.0"
 chrono = "0.4.31"
 config = { version = "0.13.4", features = ["yaml"] }
 cookie = "0.18.0"
-deadpool-redis = "0.14.0"
+deadpool-redis = { version ="0.14.0", features = ["cluster", "rt_tokio_1"]}
 hex = "0.4.3"
 http-body-util = "0.1.0"
 humantime = "2.1.0"
@@ -56,3 +56,8 @@ pretty_assertions = "1.4.0"
 [profile.release]
 codegen-units = 1
 lto = true
+
+[features]
+# 需要启用redis cluster才配置 
+redis_cluster = []
+# default = ["redis_cluster"]

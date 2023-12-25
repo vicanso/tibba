@@ -33,6 +33,7 @@ pub struct ListCountParams {
     pub keyword: Option<String>,
     pub page: u64,
     pub page_size: u64,
+    pub counted: bool,
 }
 
 #[derive(Debug, Serialize, Default)]
@@ -47,7 +48,7 @@ pub struct EntityDescription {
 pub enum EntityItemCategory {
     #[default]
     Text,
-    TEXTS,
+    Texts,
     Number,
     DateTime,
     Editor,

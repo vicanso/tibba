@@ -158,6 +158,8 @@ fn must_new_config() -> &'static APPConfig {
             .try_deserialize::<HashMap<String, HashMap<String, String>>>()
             .unwrap();
         APPConfig {
+            // 根据应用名调整
+            env_prefix: "TIBBA".to_string(),
             settings,
             ..Default::default()
         }

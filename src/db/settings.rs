@@ -242,7 +242,7 @@ impl SettingEntity {
             sql = sql.filter(cond);
         }
 
-        let page_count = if params.page == 0 {
+        let page_count = if params.counted {
             let count = sql.clone().count(conn).await?;
             let mut page_count = count / params.page_size;
             if count % params.page_size != 0 {

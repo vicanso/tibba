@@ -10,3 +10,13 @@ pub use two_level_store::TwoLevelStore;
 
 pub(self) use redis_client::Result as RedisResult;
 pub(self) use ttl_lru_store::Expired;
+
+#[cfg(not(feature = "redis_cluster"))]
+mod redis_normal_pool;
+#[cfg(not(feature = "redis_cluster"))]
+pub(self) use redis_normal_pool::must_get_redis_pool;
+
+#[cfg(feature = "redis_cluster")]
+mod redis_cluster_pool;
+#[cfg(feature = "redis_cluster")]
+pub(self) use redis_cluster_pool::must_get_redis_pool;

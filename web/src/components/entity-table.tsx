@@ -280,6 +280,7 @@ export default function DataTable({ entity }: { entity: string }) {
         page: pageIndex,
         keyword,
         orders,
+        counted: pageCount === 0,
       });
       setEntities(result.items);
       if (result.page_count >= 0) {

@@ -100,7 +100,7 @@ impl UserEntity {
                 name: Column::Roles.to_string(),
                 label: "角色".to_string(),
                 width: Some(100),
-                category: EntityItemCategory::TEXTS,
+                category: EntityItemCategory::Texts,
                 options: Some(role_options),
                 ..Default::default()
             },
@@ -108,7 +108,7 @@ impl UserEntity {
                 name: Column::Groups.to_string(),
                 label: "群组".to_string(),
                 width: Some(100),
-                category: EntityItemCategory::TEXTS,
+                category: EntityItemCategory::Texts,
                 options: Some(vec![EntityItemOption {
                     label: "it".to_string(),
                     str_value: Some("it".to_string()),
@@ -159,7 +159,7 @@ impl UserEntity {
                 .add(Column::Email.contains(keyword));
             sql = sql.filter(cond);
         }
-        let page_count = if params.page == 0 {
+        let page_count = if params.counted {
             let count = sql.clone().count(conn).await?;
             let mut page_count = count / params.page_size;
             if count % params.page_size != 0 {

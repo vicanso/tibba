@@ -1,8 +1,11 @@
-use crate::config::must_new_redis_config;
+use super::must_get_redis_pool;
 use crate::error::HttpError;
 use crate::util::{lz4_decode, lz4_encode, zstd_decode, zstd_encode, CompressError};
+#[cfg(feature = "redis_cluster")]
+use deadpool_redis::cluster::Connection;
 use deadpool_redis::redis::{cmd, pipe};
-use deadpool_redis::{Connection, Manager, Pool, PoolConfig, Runtime};
+#[cfg(not(feature = "redis_cluster"))]
+use deadpool_redis::Connection;
 use once_cell::sync::OnceCell;
 use serde::{de::DeserializeOwned, Serialize};
 use snafu::{ResultExt, Snafu};
@@ -45,27 +48,6 @@ impl From<Error> for HttpError {
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
-fn must_get_redis_pool() -> &'static Pool {
-    static REDIS_POOL: OnceCell<Pool> = OnceCell::new();
-    REDIS_POOL
-        .get_or_try_init(|| {
-            let config = must_new_redis_config();
-            let p = Pool::builder(Manager::new(config.nodes[0].as_str()).unwrap());
-            p.config(PoolConfig {
-                max_size: config.pool_size as usize,
-                timeouts: deadpool_redis::Timeouts {
-                    wait: Some(config.wait_timeout),
-                    create: Some(config.connection_timeout),
-                    recycle: Some(config.recycle_timeout),
-                },
-                ..Default::default()
-            })
-            .runtime(Runtime::Tokio1)
-            .build()
-        })
-        .unwrap()
-}
-
 async fn get_redis_conn() -> Result<Connection> {
     must_get_redis_pool().get().await.context(PoolSnafu)
 }
@@ -87,7 +69,6 @@ pub struct RedisCache {
 /// 获取默认的redis缓存，基于redis pool并设置默认的ttl
 pub fn get_default_redis_cache() -> &'static RedisCache {
     static DEFAULT_REDIS_CACHE: OnceCell<RedisCache> = OnceCell::new();
-
     DEFAULT_REDIS_CACHE.get_or_init(RedisCache::new)
 }
 
