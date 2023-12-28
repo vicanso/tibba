@@ -165,6 +165,11 @@ impl RedisCache {
         let k = self.get_key(key);
         self.set(&k, value, ttl).await
     }
+    /// 将数据设置至redis中，如果未设置ttl则使用默认值
+    pub async fn set_string(&self, key: &str, value: &str, ttl: Option<Duration>) -> Result<()> {
+        let k = self.get_key(key);
+        self.set(&k, value.as_bytes(), ttl).await
+    }
     /// 从redis中获取数据
     async fn get(&self, key: &str) -> Result<Vec<u8>> {
         let mut conn = get_redis_conn().await?;

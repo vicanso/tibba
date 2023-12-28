@@ -66,7 +66,7 @@ interface EntityState {
     page_size: number;
     keyword: string;
     orders: string;
-    counted: boolean,
+    counted: boolean;
   }) => Promise<{
     page_count: number;
     items: Record<string, unknown>[];
@@ -99,7 +99,7 @@ const entityStore = create<EntityState>()(() => ({
     page_size: number;
     keyword: string;
     orders: string;
-    counted: boolean,
+    counted: boolean;
   }) => {
     const { data } = await request.get<{
       page_count: number;

@@ -22,7 +22,7 @@ pub use context::{
 pub use datetime::{from_timestamp, now, timestamp};
 pub use duration::{get_duration, get_duration_string};
 pub use number::float_to_fixed;
-pub use string::{random_string, sha256, uuid};
+pub use string::*;
 pub use value::*;
 
 /// 是否开发环境

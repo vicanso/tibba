@@ -5,8 +5,6 @@ use crate::util::{from_timestamp, random_string, set_account_to_context, Account
 use axum::async_trait;
 use axum::body::Body;
 use axum::extract::FromRequestParts;
-// use axum::headers::authorization::Bearer;
-// use axum::headers::{Authorization, Header};
 use axum::http::header::{HeaderMap, HeaderValue};
 use axum::http::request::Parts;
 use axum::http::Request;

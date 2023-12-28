@@ -1,10 +1,12 @@
-use super::CacheJsonResult;
+use super::{CacheJsonResult, JsonResult, Query};
 use crate::config::get_env;
 use crate::error::{HttpError, HttpResult};
 use crate::state::get_app_state;
-use crate::{asset, util};
+use crate::{asset, cache, util};
 use axum::{routing::get, Router};
-use serde::Serialize;
+use captcha::filters::{Noise, Wave};
+use captcha::Captcha;
+use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -21,7 +23,9 @@ struct ApplicationInfo {
 }
 
 pub fn new_router() -> Router {
-    let r = Router::new().route("/application", get(get_application_info));
+    let r = Router::new()
+        .route("/application", get(get_application_info))
+        .route("/captcha", get(captcha));
 
     Router::new().route("/ping", get(ping)).nest("/commons", r)
 }
@@ -55,4 +59,47 @@ async fn get_application_info() -> CacheJsonResult<ApplicationInfo> {
         version: VERSION.to_string(),
     };
     Ok((Duration::from_secs(60), info).into())
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct CaptchaParams {
+    pub level: Option<i8>,
+}
+
+#[derive(Debug, Clone, Serialize, Default)]
+struct CaptchaInfo {
+    ts: i64,
+    hash: String,
+    data: String,
+}
+
+async fn captcha(Query(params): Query<CaptchaParams>) -> JsonResult<CaptchaInfo> {
+    let level = params.level.unwrap_or_default();
+    // 未实现send，因此需要将其生命周期减短
+    let (text, data) = {
+        let mut c = Captcha::new();
+        c.add_chars(4)
+            .apply_filter(Noise::new(0.2))
+            .apply_filter(Wave::new(2.0, 8.0).horizontal())
+            .apply_filter(Wave::new(2.0, 8.0).vertical())
+            .view(120, 40);
+        (c.chars_as_string(), c.as_base64().unwrap_or_default())
+    };
+    let mut info = CaptchaInfo {
+        data,
+        ..Default::default()
+    };
+    if level > 0 {
+        let hash = util::uuid();
+        cache::get_default_redis_cache()
+            .set_string(&hash, &text, Some(Duration::from_secs(5 * 60)))
+            .await?;
+        info.hash = hash;
+    } else {
+        let (ts, hash) = util::timestamp_hash(&text);
+        info.ts = ts;
+        info.hash = hash;
+    }
+
+    Ok(info.into())
 }

@@ -7,7 +7,7 @@ use axum::http::StatusCode;
 use axum::middleware::from_fn;
 use axum::routing::{get, patch, post};
 use axum::{Json, Router};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::Value;
 use std::time::Duration;
 
@@ -58,11 +58,6 @@ async fn list(
 ) -> JsonResult<ListRecordResp> {
     let (page_count, items) = db::list_count(&entity, &claims.get_account(), &params).await?;
     Ok(ListRecordResp { page_count, items }.into())
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ListDescriptionParams {
-    table: String,
 }
 
 async fn get_description(Path(entity): Path<String>) -> CacheJsonResult<db::EntityDescription> {

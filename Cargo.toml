@@ -11,6 +11,7 @@ axum-client-ip = "0.5.0"
 axum-extra = { version = "0.9.0", features = ["cookie"] }
 base64 = "0.21.5"
 bytes = "1.5.0"
+captcha = "0.0.9"
 chrono = "0.4.31"
 config = { version = "0.13.4", features = ["yaml"] }
 cookie = "0.18.0"
@@ -52,6 +53,7 @@ zstd = "0.13.0"
 
 [dev-dependencies]
 pretty_assertions = "1.4.0"
+axum = { version = "0.7.2", features = ["macros"]}
 
 [profile.release]
 codegen-units = 1
