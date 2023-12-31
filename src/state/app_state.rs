@@ -1,9 +1,10 @@
-use crate::config::must_new_basic_config;
+use crate::config::{must_new_basic_config, must_new_session_config};
+use axum::extract::FromRef;
+use axum_extra::extract::cookie::Key;
 use chrono::{DateTime, Utc};
 use once_cell::sync::OnceCell;
 use std::sync::atomic::{AtomicI32, AtomicI8, Ordering};
 
-#[derive(Debug)]
 pub struct AppState {
     pub processing_limit: i32,
     status: AtomicI8,
@@ -44,6 +45,7 @@ pub fn get_app_state() -> &'static AppState {
     APP_STATE.get_or_init(|| {
         // 在main时已调用，因此不会unwrap
         let basic_config = must_new_basic_config();
+        let session_config = must_new_session_config();
         AppState {
             processing_limit: basic_config.processing_limit,
             started_at: Utc::now(),

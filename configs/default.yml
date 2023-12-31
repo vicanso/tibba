@@ -7,6 +7,7 @@ basic:
   secret: osbhdlycJ0
 
 session:
+  cookie: tibba
   # session有效期
   ttl: 7d
 

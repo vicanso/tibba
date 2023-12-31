@@ -6,9 +6,10 @@ edition = "2021"
 
 [dependencies]
 async-trait = "0.1.75"
-axum = "0.7.2"
+# axum = "0.7.2"
+axum = { version = "0.7.2", features = ["macros"]}
 axum-client-ip = "0.5.0"
-axum-extra = { version = "0.9.0", features = ["cookie"] }
+axum-extra = { version = "0.9.0", features = ["cookie", "cookie-signed"] }
 base64 = "0.21.5"
 bytes = "1.5.0"
 captcha = "0.0.9"
@@ -17,6 +18,7 @@ config = { version = "0.13.4", features = ["yaml"] }
 cookie = "0.18.0"
 deadpool-redis = { version ="0.14.0", features = ["cluster", "rt_tokio_1"]}
 hex = "0.4.3"
+hmac = "0.12.1"
 http-body-util = "0.1.0"
 humantime = "2.1.0"
 hyper = "1.1.0"
@@ -53,7 +55,6 @@ zstd = "0.13.0"
 
 [dev-dependencies]
 pretty_assertions = "1.4.0"
-axum = { version = "0.7.2", features = ["macros"]}
 
 [profile.release]
 codegen-units = 1

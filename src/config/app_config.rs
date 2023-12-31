@@ -269,17 +269,21 @@ pub fn must_new_redis_config() -> RedisConfig {
 pub struct SessionConfig {
     // session有效期
     #[validate(range(min = 60, max = 2592000))]
-    pub ttl: usize,
+    pub ttl: i64,
     // session的secret，长度最少64
     #[validate(length(min = 64))]
     pub secret: String,
+    #[validate(length(min = 1, max = 64))]
+    pub cookie: String,
 }
 pub fn must_new_session_config() -> SessionConfig {
     let config = must_new_config().set_prefix("session");
     let ttl = config.get_duration_from_env_first("ttl", Some(Duration::from_secs(2 * 24 * 3600)));
+    let cookie = config.get_from_env_first("cookie", None);
     let session_config = SessionConfig {
-        ttl: ttl.as_secs() as usize,
+        ttl: ttl.as_secs() as i64,
         secret: config.get_from_env_first("secret", None),
+        cookie,
     };
     session_config.validate().unwrap();
     session_config

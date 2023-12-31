@@ -29,9 +29,19 @@ pub fn sha256(data: &[u8]) -> String {
     encode(result)
 }
 
+pub fn sign_hash(value: &str) -> String {
+    sha256(format!("{value}:{}", *APP_SECRET).as_bytes())
+}
+pub fn validate_sign_hash(value: &str, hash: &str) -> HttpResult<()> {
+    if sign_hash(value) != hash {
+        return Err(HttpError::new_with_category("数据校验不匹配", "sign_hash"));
+    }
+    Ok(())
+}
+
 pub fn timestamp_hash(value: &str) -> (i64, String) {
     let ts = timestamp();
-    let hash = sha256(format!("{ts}:{value}:{}", *APP_SECRET).as_bytes());
+    let hash = sign_hash(&format!("{ts}:{value}"));
     (ts, hash)
 }
 
@@ -44,8 +54,5 @@ pub fn validate_timestamp_hash(ts: i64, value: &str, hash: &str) -> HttpResult<(
             category,
         ));
     }
-    if hash != sha256(format!("{ts}:{value}:{}", *APP_SECRET).as_bytes()) {
-        return Err(HttpError::new_with_category("数据校验不匹配", category));
-    }
-    Ok(())
+    validate_sign_hash(&format!("{ts}:{value}"), hash)
 }

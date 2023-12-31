@@ -1,8 +1,8 @@
 use crate::config::{must_new_session_config, SessionConfig};
 use crate::error::{HttpError, HttpResult};
-use crate::task_local::*;
-use crate::util::{from_timestamp, random_string, set_account_to_context, Account};
-use axum::async_trait;
+use crate::state::get_app_state;
+use crate::util;
+use crate::{cache, task_local::*};
 use axum::body::Body;
 use axum::extract::FromRequestParts;
 use axum::http::header::{HeaderMap, HeaderValue};
@@ -10,12 +10,17 @@ use axum::http::request::Parts;
 use axum::http::Request;
 use axum::http::StatusCode;
 use axum::middleware::Next;
-use axum::response::Response;
+use axum::response::{IntoResponse, Response};
+use axum::{async_trait, Json};
+use axum_extra::extract::cookie::{Key, SignedCookieJar};
+use cookie::CookieBuilder;
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Validation};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 static SESSION_CONFIG: Lazy<SessionConfig> = Lazy::new(must_new_session_config);
+static SESSION_KEY: Lazy<Key> = Lazy::new(|| Key::from(SESSION_CONFIG.secret.as_bytes()));
 
 static KEYS: Lazy<Keys> = Lazy::new(|| Keys::new(SESSION_CONFIG.secret.as_bytes()));
 
@@ -37,71 +42,122 @@ impl Keys {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Claim {
-    // Required (validate_exp defaults to true in validation). Expiration time (as UTC timestamp)
-    exp: usize,
-    // Optional. Issued at (as UTC timestamp)
-    iat: usize,
+    // 有效期
+    exp: i64,
+    // 创建时间
+    iat: i64,
     id: String,
+    account: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ClaimResp {
     account: String,
 }
 
 impl Claim {
     pub fn new(account: &str) -> Self {
-        let iat = now();
+        let iat = util::timestamp();
         Claim {
             exp: iat + SESSION_CONFIG.ttl,
             iat,
-            id: random_string(8),
+            id: "".to_string(),
             account: account.to_string(),
         }
+    }
+    fn get_key(&self) -> String {
+        format!("ss:{}", self.id)
     }
     pub fn get_account(&self) -> String {
         self.account.clone()
     }
     pub fn get_expired_at(&self) -> String {
-        from_timestamp(self.exp as i64, 0)
+        util::from_timestamp(self.exp, 0)
     }
     pub fn get_issued_at(&self) -> String {
-        from_timestamp(self.iat as i64, 0)
+        util::from_timestamp(self.iat, 0)
     }
     pub fn is_expired(&self) -> bool {
-        let value = now();
-        // 已过期
-        if self.exp < value {
-            return false;
-        }
+        let value = util::timestamp();
         // 如果创建时间已超过30天，则认为过期
         if value - self.iat > 30 * 24 * 3600 {
             return true;
         }
+        // 已过期
+        if self.exp < value {
+            return true;
+        }
+
         false
     }
     pub fn refresh(&mut self) {
-        self.exp = now() + SESSION_CONFIG.ttl;
+        self.exp = util::timestamp() + SESSION_CONFIG.ttl;
+    }
+    pub async fn save(&mut self) -> HttpResult<()> {
+        if self.id.is_empty() {
+            self.id = util::uuid();
+        }
+        cache::get_default_redis_cache()
+            .set_struct(
+                &self.get_key(),
+                &self,
+                Some(Duration::from_secs(SESSION_CONFIG.ttl as u64)),
+            )
+            .await?;
+        Ok(())
     }
 }
 
-#[derive(Debug, Serialize)]
-pub struct AuthResp {
-    access_token: String,
-    token_type: String,
-}
+impl IntoResponse for Claim {
+    fn into_response(self) -> Response {
+        let c = CookieBuilder::new(&SESSION_CONFIG.cookie, self.id.clone())
+            .path("/")
+            .http_only(true)
+            .max_age(time::Duration::seconds(SESSION_CONFIG.ttl));
+        let jar = SignedCookieJar::new(SESSION_KEY.clone());
 
-impl TryFrom<&Claim> for AuthResp {
-    type Error = HttpError;
-    fn try_from(value: &Claim) -> Result<Self, Self::Error> {
-        let access_token = encode(&jsonwebtoken::Header::default(), value, &KEYS.encoding)
-            .map_err(|_| {
-                HttpError::new_with_category("Token creation error", JWT_ERROR_CATEGORY)
-            })?;
-        Ok(Self {
-            access_token,
-            token_type: "Bearer".to_string(),
-        })
+        (
+            jar.add(c),
+            Json(ClaimResp {
+                account: self.account,
+            }),
+        )
+            .into_response()
     }
 }
-fn now() -> usize {
-    chrono::Utc::now().timestamp() as usize
+
+// #[derive(Debug, Serialize)]
+// pub struct AuthResp {
+//     access_token: String,
+//     token_type: String,
+// }
+
+// impl TryFrom<&Claim> for AuthResp {
+//     type Error = HttpError;
+//     fn try_from(value: &Claim) -> Result<Self, Self::Error> {
+//         let access_token = encode(&jsonwebtoken::Header::default(), value, &KEYS.encoding)
+//             .map_err(|_| {
+//                 HttpError::new_with_category("Token creation error", JWT_ERROR_CATEGORY)
+//             })?;
+//         Ok(Self {
+//             access_token,
+//             token_type: "Bearer".to_string(),
+//         })
+//     }
+// }
+
+pub async fn get_claims_from_jar(jar: &SignedCookieJar) -> HttpResult<()> {
+    if let Some(session_id) = jar.get(&SESSION_CONFIG.cookie) {
+        println!("{session_id}");
+    }
+
+    // if let Some(session_id) = jar.get("session_id") {
+    //     // fetch and render user...
+    // } else {
+    //     Err(StatusCode::UNAUTHORIZED)
+    // }
+
+    Ok(())
 }
 
 pub fn get_claims_from_headers(headers: &HeaderMap<HeaderValue>) -> HttpResult<Claim> {
@@ -160,11 +216,11 @@ pub async fn should_logged_in(mut req: Request<Body>, next: Next) -> HttpResult<
 
     ACCOUNT
         .scope(account.clone(), async {
-            set_account_to_context(req.extensions_mut(), Account::new(account.clone()));
+            util::set_account_to_context(req.extensions_mut(), util::Account::new(account.clone()));
             let mut resp = next.run(req).await;
             // 由于在session之前的中间件无法获取account的值
             // 因此又将account设置至resp extension中
-            set_account_to_context(resp.extensions_mut(), Account::new(account));
+            util::set_account_to_context(resp.extensions_mut(), util::Account::new(account));
             Ok(resp)
         })
         .await

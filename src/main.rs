@@ -24,6 +24,7 @@ mod db;
 mod entities;
 mod error;
 mod httptrace;
+mod keygrip;
 mod middleware;
 mod request;
 mod state;
