@@ -1,6 +1,5 @@
 use crate::config::{must_new_session_config, SessionConfig};
 use crate::error::{HttpError, HttpResult};
-use crate::state::get_app_state;
 use crate::util;
 use crate::{cache, task_local::*};
 use axum::body::Body;
@@ -14,7 +13,6 @@ use axum::response::{IntoResponse, Response};
 use axum::{async_trait, Json};
 use axum_extra::extract::cookie::{Key, SignedCookieJar};
 use cookie::CookieBuilder;
-use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Validation};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -22,25 +20,7 @@ use std::time::Duration;
 static SESSION_CONFIG: Lazy<SessionConfig> = Lazy::new(must_new_session_config);
 static SESSION_KEY: Lazy<Key> = Lazy::new(|| Key::from(SESSION_CONFIG.secret.as_bytes()));
 
-static KEYS: Lazy<Keys> = Lazy::new(|| Keys::new(SESSION_CONFIG.secret.as_bytes()));
-
-static JWT_ERROR_CATEGORY: &str = "jwt";
-
-struct Keys {
-    encoding: EncodingKey,
-    decoding: DecodingKey,
-}
-
-impl Keys {
-    fn new(secret: &[u8]) -> Self {
-        Self {
-            encoding: EncodingKey::from_secret(secret),
-            decoding: DecodingKey::from_secret(secret),
-        }
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub struct Claim {
     // 有效期
     exp: i64,
@@ -65,8 +45,13 @@ impl Claim {
             account: account.to_string(),
         }
     }
-    fn get_key(&self) -> String {
-        format!("ss:{}", self.id)
+    pub async fn new_from_redis(id: &str) -> HttpResult<Self> {
+        let key = Self::get_key(id);
+        let result = cache::get_default_redis_cache().get_struct(&key).await?;
+        Ok(result.unwrap_or_default())
+    }
+    fn get_key(id: &str) -> String {
+        format!("ss:{id}")
     }
     pub fn get_account(&self) -> String {
         self.account.clone()
@@ -90,8 +75,9 @@ impl Claim {
 
         false
     }
-    pub fn refresh(&mut self) {
+    pub async fn refresh(&mut self) -> HttpResult<()> {
         self.exp = util::timestamp() + SESSION_CONFIG.ttl;
+        self.save().await
     }
     pub async fn save(&mut self) -> HttpResult<()> {
         if self.id.is_empty() {
@@ -99,7 +85,7 @@ impl Claim {
         }
         cache::get_default_redis_cache()
             .set_struct(
-                &self.get_key(),
+                &Self::get_key(&self.id),
                 &self,
                 Some(Duration::from_secs(SESSION_CONFIG.ttl as u64)),
             )
@@ -126,69 +112,20 @@ impl IntoResponse for Claim {
     }
 }
 
-// #[derive(Debug, Serialize)]
-// pub struct AuthResp {
-//     access_token: String,
-//     token_type: String,
-// }
-
-// impl TryFrom<&Claim> for AuthResp {
-//     type Error = HttpError;
-//     fn try_from(value: &Claim) -> Result<Self, Self::Error> {
-//         let access_token = encode(&jsonwebtoken::Header::default(), value, &KEYS.encoding)
-//             .map_err(|_| {
-//                 HttpError::new_with_category("Token creation error", JWT_ERROR_CATEGORY)
-//             })?;
-//         Ok(Self {
-//             access_token,
-//             token_type: "Bearer".to_string(),
-//         })
-//     }
-// }
-
-pub async fn get_claims_from_jar(jar: &SignedCookieJar) -> HttpResult<()> {
-    if let Some(session_id) = jar.get(&SESSION_CONFIG.cookie) {
-        println!("{session_id}");
-    }
-
-    // if let Some(session_id) = jar.get("session_id") {
-    //     // fetch and render user...
-    // } else {
-    //     Err(StatusCode::UNAUTHORIZED)
-    // }
-
-    Ok(())
-}
-
-pub fn get_claims_from_headers(headers: &HeaderMap<HeaderValue>) -> HttpResult<Claim> {
-    let value = headers
-        .get(axum::http::header::AUTHORIZATION)
-        .and_then(|header| header.to_str().ok())
-        .unwrap_or_default();
-    let is_missing = value.is_empty() || !value.starts_with("Bearer ");
-    if is_missing {
-        return Err(HttpError::new_with_category(
-            "Missing credentials",
-            JWT_ERROR_CATEGORY,
-        ));
-    }
-
-    // let bearer = Authorization::<Bearer>::decode(value.replace("Bearer ", ""))
-    //     .map_err(|err| HttpError::new_with_category(&err.to_string(), JWT_ERROR_CATEGORY))?;
-    let result = decode::<Claim>(
-        &value.replace("Bearer ", ""),
-        &KEYS.decoding,
-        &Validation::default(),
-    )
-    .map_err(|_| HttpError::new_with_category("Invalid token", JWT_ERROR_CATEGORY))?;
-    let claims = result.claims;
-    if claims.is_expired() {
-        return Err(HttpError::new_with_category(
-            "Claim is expired",
-            JWT_ERROR_CATEGORY,
-        ));
-    }
-    Ok(claims)
+async fn get_claim_from_headers(headers: &HeaderMap<HeaderValue>) -> HttpResult<Claim> {
+    let jar = SignedCookieJar::from_headers(headers, SESSION_KEY.clone());
+    let result = if let Some(session_id) = jar.get(&SESSION_CONFIG.cookie) {
+        let claim = Claim::new_from_redis(session_id.value()).await?;
+        // 如果已过期
+        if claim.is_expired() {
+            Claim::default()
+        } else {
+            claim
+        }
+    } else {
+        Claim::default()
+    };
+    Ok(result)
 }
 
 #[async_trait]
@@ -199,20 +136,30 @@ where
     type Rejection = HttpError;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        get_claims_from_headers(&parts.headers)
+        if let Some(claim) = parts.extensions.get::<Claim>() {
+            return Ok(claim.clone());
+        }
+        let claim = get_claim_from_headers(&parts.headers).await?;
+        parts.extensions.insert(claim.clone());
+        Ok(claim)
     }
 }
 
-pub async fn should_logged_in(mut req: Request<Body>, next: Next) -> HttpResult<Response> {
-    let claims = get_claims_from_headers(req.headers())?;
-    if claims.account.is_empty() {
+async fn load_claim(
+    should_logged_in: bool,
+    mut req: Request<Body>,
+    next: Next,
+) -> HttpResult<Response> {
+    let claim = get_claim_from_headers(req.headers()).await?;
+    if should_logged_in && claim.account.is_empty() {
         return Err(HttpError {
             message: "Should be login first".to_string(),
             status: StatusCode::UNAUTHORIZED.as_u16(),
             ..Default::default()
         });
     }
-    let account = claims.get_account();
+    req.extensions_mut().insert(claim.clone());
+    let account = claim.get_account();
 
     ACCOUNT
         .scope(account.clone(), async {
@@ -224,4 +171,12 @@ pub async fn should_logged_in(mut req: Request<Body>, next: Next) -> HttpResult<
             Ok(resp)
         })
         .await
+}
+
+pub async fn load_session(mut req: Request<Body>, next: Next) -> HttpResult<Response> {
+    load_claim(false, req, next).await
+}
+
+pub async fn should_logged_in(mut req: Request<Body>, next: Next) -> HttpResult<Response> {
+    load_claim(true, req, next).await
 }

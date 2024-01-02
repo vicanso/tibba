@@ -171,22 +171,20 @@ impl RedisCache {
         self.set(&k, value.as_bytes(), ttl).await
     }
     /// 从redis中获取数据
-    async fn get(&self, key: &str) -> Result<Vec<u8>> {
+    async fn get<T: redis::FromRedisValue>(&self, key: &str) -> Result<T> {
         let mut conn = get_redis_conn().await?;
         let result = cmd("GET")
             .arg(key)
             .query_async(&mut conn)
             .await
-            .context(RedisSnafu {
-                category: "get_bytes",
-            })?;
+            .context(RedisSnafu { category: "get" })?;
 
         Ok(result)
     }
     /// 从redis中获取数据
-    pub async fn get_bytes(&self, key: &str) -> Result<Vec<u8>> {
+    pub async fn get_value<T: redis::FromRedisValue>(&self, key: &str) -> Result<T> {
         let k = self.get_key(key);
-        self.get(&k).await
+        self.get::<T>(&k).await
     }
     /// 将struct转换为json后设置至redis中，若未指定ttl则使用默认值
     pub async fn set_struct<T>(&self, key: &str, value: &T, ttl: Option<Duration>) -> Result<()>
@@ -206,7 +204,7 @@ impl RedisCache {
         T: DeserializeOwned,
     {
         let k = self.get_key(key);
-        let buf = self.get(&k).await?;
+        let buf: Vec<u8> = self.get(&k).await?;
 
         if buf.is_empty() {
             return Ok(None);
@@ -267,7 +265,7 @@ impl RedisCache {
         T: DeserializeOwned,
     {
         let k = self.get_key(key);
-        let value = self.get(&k).await?;
+        let value: Vec<u8> = self.get(&k).await?;
 
         if value.is_empty() {
             return Ok(None);
@@ -307,7 +305,7 @@ impl RedisCache {
         T: DeserializeOwned,
     {
         let k = self.get_key(key);
-        let value = self.get_bytes(&k).await?;
+        let value: Vec<u8> = self.get(&k).await?;
 
         if value.is_empty() {
             return Ok(None);

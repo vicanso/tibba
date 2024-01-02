@@ -10,6 +10,18 @@ pub struct AppState {
     status: AtomicI8,
     processing: AtomicI32,
     started_at: DateTime<Utc>,
+    key: Key,
+}
+
+#[derive(Clone)]
+pub struct ReadonlyState {
+    key: Key,
+}
+
+impl FromRef<ReadonlyState> for Key {
+    fn from_ref(state: &ReadonlyState) -> Self {
+        state.key.clone()
+    }
 }
 
 const APP_STATUS_STOP: i8 = 0;
@@ -38,6 +50,11 @@ impl AppState {
     pub fn get_started_at(&self) -> DateTime<Utc> {
         self.started_at
     }
+    pub fn readonly(&self) -> ReadonlyState {
+        ReadonlyState {
+            key: self.key.clone(),
+        }
+    }
 }
 
 pub fn get_app_state() -> &'static AppState {
@@ -51,6 +68,7 @@ pub fn get_app_state() -> &'static AppState {
             started_at: Utc::now(),
             status: AtomicI8::new(0),
             processing: AtomicI32::new(0),
+            key: Key::from(session_config.secret.as_bytes()),
         }
     })
 }

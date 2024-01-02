@@ -2,16 +2,15 @@ use super::JsonParams;
 use crate::controller::JsonResult;
 use crate::db::{add_user, find_user_by_account};
 use crate::error::{HttpError, HttpResult};
-use crate::middleware::{get_claims_from_headers, get_claims_from_jar, ip_login_limit, wait1s};
+use crate::middleware::{error_limiter, load_session, wait, LimitParams, WaitParams};
 use crate::middleware::{should_logged_in, Claim};
 use crate::util;
 use crate::{task_local::*, tl_error};
-use axum::http::Request;
-use axum::middleware::from_fn;
+use axum::http::StatusCode;
+use axum::middleware::{from_fn, from_fn_with_state};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use axum_extra::extract::cookie::CookieJar;
-use axum_extra::extract::cookie::SignedCookieJar;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use validator::Validate;
@@ -34,43 +33,29 @@ pub fn new_router() -> Router {
         .route(
             "/login",
             post(login)
-                .layer(from_fn(wait1s))
-                .layer(from_fn(ip_login_limit)),
+                .layer(from_fn_with_state(WaitParams::new(1000), wait))
+                .layer(from_fn_with_state(
+                    // 限制时间内最多只出错5次
+                    LimitParams::new(5, 3600, "login_fail"),
+                    error_limiter,
+                )),
         );
+    let refresh_router =
+        Router::new().route("/refresh", get(refresh).layer(from_fn(should_logged_in)));
     let r = Router::new()
         .route("/me", get(me))
-        // .route("/refresh", get(refresh))
-        .layer(from_fn(should_logged_in));
+        .layer(from_fn(load_session));
 
-    Router::new().nest("/users", r.merge(login_router))
+    Router::new().nest("/users", r.merge(login_router).merge(refresh_router))
 }
 
-// async fn refresh(mut claims: Claim) -> JsonResult<AuthResp> {
-//     claims.refresh();
-//     let resp: AuthResp = (&claims).try_into()?;
-//     Ok(resp.into())
-// }
+async fn refresh(mut claim: Claim) -> HttpResult<StatusCode> {
+    claim.refresh().await?;
+    Ok(StatusCode::NO_CONTENT)
+}
 
-async fn me<B>(
-    mut jar: CookieJar,
-    // signed_jar: SignedCookieJar,
-    req: Request<B>,
-) -> HttpResult<(CookieJar, Json<UserMeResp>)> {
-    // get_claims_from_jar(&signed_jar).await?;
-
-    let mut account = "".to_string();
-    let mut expired_at = "".to_string();
-    let mut issued_at = "".to_string();
-    match get_claims_from_headers(req.headers()) {
-        Ok(claims) => {
-            account = claims.get_account();
-            expired_at = claims.get_expired_at();
-            issued_at = claims.get_issued_at();
-        }
-        Err(err) => {
-            tl_error!(err = err.message, "get claim fail");
-        }
-    }
+async fn me(mut jar: CookieJar, claim: Claim) -> HttpResult<(CookieJar, Json<UserMeResp>)> {
+    let account = claim.get_account();
     let mut roles = None;
     let mut groups = None;
     if !account.is_empty() {
@@ -85,8 +70,8 @@ async fn me<B>(
 
     let me = UserMeResp {
         name: account,
-        expired_at,
-        issued_at,
+        expired_at: claim.get_expired_at(),
+        issued_at: claim.get_issued_at(),
         roles,
         groups,
         time: util::now(),
