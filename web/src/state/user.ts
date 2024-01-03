@@ -1,9 +1,5 @@
 import { create } from "zustand";
-import request, {
-  saveAuthorization,
-  authorizationExists,
-  removeAuthorization,
-} from "@/helpers/request";
+import request from "@/helpers/request";
 import sha256 from "crypto-js/sha256";
 import dayjs from "dayjs";
 import HTTPError from "@/helpers/http-error";
@@ -13,6 +9,7 @@ import {
   USER_LOGIN_TOKEN,
   USER_ME,
   USER_REGISTER,
+  USER_LOGOUT,
 } from "@/url";
 
 interface UserState {
@@ -20,7 +17,7 @@ interface UserState {
   loading: boolean;
   account: string;
   roles: string[];
-  login: (account: string, password: string) => Promise<void>;
+  login: (account: string, password: string, captcha: string) => Promise<void>;
   register: (account: string, password: string) => Promise<void>;
   logout: () => void;
   fetch: () => Promise<boolean>;
@@ -37,13 +34,6 @@ const refresh = (expiredAt: string) => {
       access_token: string;
       token_type: string;
     }>(USER_REFRESH)
-    .then((res) => {
-      const { token_type, access_token } = res.data;
-      if (access_token) {
-        const authorization = `${token_type} ${access_token}`;
-        saveAuthorization(authorization);
-      }
-    })
     .catch(console.error);
 };
 
@@ -58,34 +48,34 @@ const useUserStore = create<UserState>()((set, get) => ({
       password: sha256(password).toString(),
     });
   },
-  login: async (account: string, password: string) => {
+  login: async (account: string, password: string, captcha: string) => {
     // 获取token
-    const resp = await request.get<{ timestamp: number; token: string }>(
+    const resp = await request.get<{ ts: number; token: string; hash: string }>(
       USER_LOGIN_TOKEN,
     );
-    const { token, timestamp } = resp.data;
-    const msg = `${token}:${sha256(password).toString()}`;
+    const { token, ts, hash } = resp.data;
+    const msg = `${hash}:${sha256(password).toString()}`;
     // 登录
-    const { data } = await request.post<{
+    await request.post<{
       access_token: string;
       token_type: string;
-    }>(USER_LOGIN, {
-      token,
-      timestamp,
-      account,
-      password: sha256(msg).toString(),
-    });
-    const authorization = `${data.token_type} ${data.access_token}`;
-    saveAuthorization(authorization);
+    }>(
+      USER_LOGIN,
+      {
+        token,
+        ts,
+        hash,
+        account,
+        password: sha256(msg).toString(),
+      },
+      {
+        headers: {
+          "X-Captcha": captcha,
+        },
+      },
+    );
   },
   fetch: async () => {
-    // 如果不存在，则未登录
-    if (!authorizationExists()) {
-      set({
-        anonymous: true,
-      });
-      return false;
-    }
     if (get().loading) {
       return false;
     }
@@ -104,7 +94,6 @@ const useUserStore = create<UserState>()((set, get) => ({
       // 如果超过14天，则认为需要重新登录
       const expiredOffset = 14 * 24 * 3600;
       if (dayjs().unix() - dayjs(data.issued_at).unix() > expiredOffset) {
-        removeAuthorization();
         account = "";
       }
       set({
@@ -129,8 +118,8 @@ const useUserStore = create<UserState>()((set, get) => ({
     }
     return get().account != "";
   },
-  logout: () => {
-    removeAuthorization();
+  logout: async () => {
+    await request.delete(USER_LOGOUT);
     set({
       account: "",
       anonymous: true,

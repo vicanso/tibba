@@ -25,11 +25,13 @@ import { useState } from "react";
 import useUserStore from "@/state/user";
 import { goBack } from "@/router";
 import { useToast } from "@/components/ui/use-toast";
-import { formatError } from "@/helpers/util";
+import { formatError, isErrorCode } from "@/helpers/util";
+import { Captcha } from "@/components/captcha";
 
 const loginSchema = z.object({
   account: z.string().min(2).max(50),
   password: z.string().min(6).max(50),
+  captcha: z.string().min(4),
 });
 
 const registerSchema = z.object({
@@ -44,6 +46,7 @@ export default function Login() {
   const loginTab = "login";
   const registerTab = "register";
 
+  const [captchaKey, setCaptchaKey] = useState(`${Date.now()}`);
   const [processing, setProcessing] = useState<boolean>(false);
   const [currentTab, setCurrentTab] = useState(loginTab);
   const [login, register, fetch] = useUserStore((state) => [
@@ -57,6 +60,7 @@ export default function Login() {
     defaultValues: {
       account: "",
       password: "",
+      captcha: "",
     },
   });
   const registerForm = useForm<z.infer<typeof registerSchema>>({
@@ -73,7 +77,7 @@ export default function Login() {
     }
     setProcessing(true);
     try {
-      await login(values.account, values.password);
+      await login(values.account, values.password, values.captcha);
       const isLogin = await fetch();
       if (isLogin) {
         goBack();
@@ -84,6 +88,10 @@ export default function Login() {
         description: formatError(err),
       });
       console.error(err);
+      // 图形验证码只能校验一次，如果是不匹配需要刷新
+      if (isErrorCode(err, "mismatching")) {
+        setCaptchaKey(`${Date.now()}`);
+      }
     } finally {
       setProcessing(false);
     }
@@ -157,6 +165,27 @@ export default function Login() {
                           type="password"
                           placeholder="请输入你的密码"
                           {...field}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+              <div className="flex flex-col space-y-1.5">
+                <FormField
+                  control={loginForm.control}
+                  name="captcha"
+                  render={() => (
+                    <FormItem>
+                      <FormLabel>图形验证码</FormLabel>
+                      <FormControl>
+                        <Captcha
+                          key={captchaKey}
+                          level={1}
+                          onChange={(value) => {
+                            loginForm.setValue("captcha", value);
+                          }}
                         />
                       </FormControl>
                       <FormMessage />

@@ -7,22 +7,6 @@ const request = axios.create({
   timeout: 10 * 1000,
 });
 
-const authorizationKey = "authorization";
-let authorization = window.localStorage.getItem(authorizationKey) || "";
-
-export function saveAuthorization(value: string) {
-  authorization = value;
-  window.localStorage.setItem(authorizationKey, authorization);
-}
-
-export function authorizationExists() {
-  return !!window.localStorage.getItem(authorizationKey);
-}
-
-export function removeAuthorization() {
-  window.localStorage.removeItem(authorizationKey);
-}
-
 request.interceptors.request.use(
   (config) => {
     // 对请求的query部分清空值
@@ -37,9 +21,6 @@ request.interceptors.request.use(
     config.url = `/api${config.url}`;
     if (config.headers) {
       config.headers[requestedAt] = `${Date.now()}`;
-    }
-    if (authorization) {
-      config.headers.set("Authorization", authorization);
     }
     return config;
   },

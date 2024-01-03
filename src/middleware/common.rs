@@ -1,3 +1,5 @@
+use crate::cache;
+use crate::error::{HttpError, HttpResult};
 use crate::task_local::*;
 use axum::{body::Body, extract::State, http::Request, middleware::Next, response::Response};
 use chrono::Utc;
@@ -33,4 +35,26 @@ pub async fn wait(State(params): State<WaitParams>, req: Request<Body>, next: Ne
         sleep(Duration::from_millis(offset as u64)).await
     }
     resp
+}
+
+pub async fn validate_captcha(req: Request<Body>, next: Next) -> HttpResult<Response> {
+    let category = "captcha";
+    let value = req
+        .headers()
+        .get("X-Captcha")
+        .ok_or(HttpError::new_with_category("图形验证码不能为空", category))?
+        .to_str()
+        .map_err(|err| HttpError::new_with_category(&err.to_string(), category))?;
+    let arr: Vec<&str> = value.split(":").collect();
+    if arr.len() != 3 {
+        return Err(HttpError::new_with_category("图形验证码参数非法", category));
+    }
+    let code: String = cache::get_default_redis_cache().get_del(arr[1]).await?;
+    if code != arr[2] {
+        let mut he = HttpError::new_with_category("图形验证码输入错误", category);
+        he.code = "mismatching".to_string();
+        return Err(he);
+    }
+    let resp = next.run(req).await;
+    Ok(resp)
 }

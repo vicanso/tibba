@@ -2,13 +2,15 @@ use super::JsonParams;
 use crate::controller::JsonResult;
 use crate::db::{add_user, find_user_by_account};
 use crate::error::{HttpError, HttpResult};
-use crate::middleware::{error_limiter, load_session, wait, LimitParams, WaitParams};
+use crate::middleware::{
+    error_limiter, load_session, validate_captcha, wait, LimitParams, WaitParams,
+};
 use crate::middleware::{should_logged_in, Claim};
 use crate::util;
 use crate::{task_local::*, tl_error};
 use axum::http::StatusCode;
 use axum::middleware::{from_fn, from_fn_with_state};
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use axum_extra::extract::cookie::CookieJar;
 use serde::{Deserialize, Serialize};
@@ -38,12 +40,14 @@ pub fn new_router() -> Router {
                     // 限制时间内最多只出错5次
                     LimitParams::new(5, 3600, "login_fail"),
                     error_limiter,
-                )),
+                ))
+                .layer(from_fn(validate_captcha)),
         );
     let refresh_router =
         Router::new().route("/refresh", get(refresh).layer(from_fn(should_logged_in)));
     let r = Router::new()
         .route("/me", get(me))
+        .route("/logout", delete(logout))
         .layer(from_fn(load_session));
 
     Router::new().nest("/users", r.merge(login_router).merge(refresh_router))
@@ -86,7 +90,7 @@ async fn me(mut jar: CookieJar, claim: Claim) -> HttpResult<(CookieJar, Json<Use
 
 #[derive(Deserialize, Validate)]
 struct LoginParams {
-    timestamp: i64,
+    ts: i64,
     #[validate(length(min = 32))]
     token: String,
     #[validate(length(min = 32))]
@@ -100,13 +104,13 @@ struct LoginParams {
 impl LoginParams {
     fn validate_token(&self) -> HttpResult<()> {
         // 测试环境需要，设置为0则跳过
-        if self.timestamp <= 0 && (util::is_development() || util::is_test()) {
+        if self.ts <= 0 && (util::is_development() || util::is_test()) {
             return Ok(());
         }
-        if (self.timestamp - util::timestamp()).abs() > 60 {
+        if (self.ts - util::timestamp()).abs() > 60 {
             return Err(HttpError::new("Timestamp is invalid"));
         }
-        util::validate_sign_hash(&self.token, &self.hash)?;
+        util::validate_timestamp_hash(self.ts, &self.token, &self.hash)?;
         Ok(())
     }
 }
@@ -129,6 +133,11 @@ async fn login(JsonParams(params): JsonParams<LoginParams>) -> HttpResult<Claim>
     // 记录session
     claim.save().await?;
 
+    Ok(claim)
+}
+
+async fn logout(mut claim: Claim) -> HttpResult<Claim> {
+    claim.destroy();
     Ok(claim)
 }
 

@@ -92,6 +92,9 @@ impl Claim {
             .await?;
         Ok(())
     }
+    pub fn destroy(&mut self) {
+        self.id = "".to_string();
+    }
 }
 
 impl IntoResponse for Claim {
@@ -173,10 +176,10 @@ async fn load_claim(
         .await
 }
 
-pub async fn load_session(mut req: Request<Body>, next: Next) -> HttpResult<Response> {
+pub async fn load_session(req: Request<Body>, next: Next) -> HttpResult<Response> {
     load_claim(false, req, next).await
 }
 
-pub async fn should_logged_in(mut req: Request<Body>, next: Next) -> HttpResult<Response> {
+pub async fn should_logged_in(req: Request<Body>, next: Next) -> HttpResult<Response> {
     load_claim(true, req, next).await
 }

@@ -33,7 +33,11 @@ impl From<Error> for HttpError {
     fn from(err: Error) -> Self {
         match err {
             Error::Redis { category, source } => {
-                HttpError::new_with_category(&source.to_string(), &category)
+                let mut msg = source.to_string();
+                if msg.contains("(response was nil)") {
+                    msg = "数据已过期".to_string();
+                }
+                HttpError::new_with_category(&msg, &category)
             }
             Error::Pool { source } => {
                 HttpError::new_with_category(&source.to_string(), "redis_pool")
@@ -229,7 +233,7 @@ impl RedisCache {
         Ok(result)
     }
     /// 获取后并删除该key在redis中的值，用于仅获取一次的场景
-    pub async fn get_del(&self, key: &str) -> Result<Vec<u8>> {
+    pub async fn get_del<T: redis::FromRedisValue>(&self, key: &str) -> Result<T> {
         let k = self.get_key(key);
         let mut conn = get_redis_conn().await?;
         let (value, _) = pipe()
@@ -237,7 +241,7 @@ impl RedisCache {
             .arg(&k)
             .cmd("DEL")
             .arg(&k)
-            .query_async::<Connection, (Vec<u8>, bool)>(&mut conn)
+            .query_async::<Connection, (T, bool)>(&mut conn)
             .await
             .context(RedisSnafu {
                 category: "get_del",

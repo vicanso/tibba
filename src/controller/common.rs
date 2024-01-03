@@ -78,11 +78,13 @@ async fn captcha(Query(params): Query<CaptchaParams>) -> JsonResult<CaptchaInfo>
     // 未实现send，因此需要将其生命周期减短
     let (text, data) = {
         let mut c = Captcha::new();
-        c.add_chars(4)
-            .apply_filter(Noise::new(0.2))
+        // 设置允许0会导致0的时候不展示，后续确认
+        c.set_chars(&"123456789".chars().collect::<Vec<_>>())
+            .add_chars(4)
+            .apply_filter(Noise::new(0.4))
             .apply_filter(Wave::new(2.0, 8.0).horizontal())
             .apply_filter(Wave::new(2.0, 8.0).vertical())
-            .view(120, 40);
+            .view(120, 38);
         (c.chars_as_string(), c.as_base64().unwrap_or_default())
     };
     let mut info = CaptchaInfo {
