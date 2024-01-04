@@ -150,6 +150,20 @@ function saveColumnVisibility(entity: string, data: Record<string, boolean>) {
   );
 }
 
+const entityPageSizeKey = "entityPageSize";
+function getPageSize() {
+  const value = window.localStorage.getItem(entityPageSizeKey);
+  const pageSize = Number(value);
+  if (Number.isNaN(pageSize) || pageSize <= 0) {
+    return 10;
+  }
+  return pageSize;
+}
+
+function savePageSize(pageSize: number) {
+  window.localStorage.setItem(entityPageSizeKey, `${pageSize}`);
+}
+
 export default function DataTable({ entity }: { entity: string }) {
   const { toast } = useToast();
 
@@ -172,7 +186,7 @@ export default function DataTable({ entity }: { entity: string }) {
   const [entities, setEntities] = useState<Record<string, unknown>[]>([]);
   const [{ pageIndex, pageSize }, setPagination] = useState<PaginationState>({
     pageIndex: -1,
-    pageSize: 10,
+    pageSize: getPageSize(),
   });
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(
     getColumnVisibility(entity),
@@ -213,7 +227,7 @@ export default function DataTable({ entity }: { entity: string }) {
     setPageCount(0);
     setEntities([]);
     setPagination({
-      pageSize,
+      pageSize: getPageSize(),
       pageIndex: -1,
     });
     setColumnVisibility(getColumnVisibility(entity));
@@ -295,7 +309,7 @@ export default function DataTable({ entity }: { entity: string }) {
     } finally {
       setLoading(false);
     }
-  }, [pageIndex, keyword]);
+  }, [pageIndex, keyword, pageSize]);
 
   // 点浏览器返回
   useEffect(() => {
@@ -332,7 +346,8 @@ export default function DataTable({ entity }: { entity: string }) {
 
   useEffect(() => {
     saveColumnVisibility(entity, columnVisibility);
-  }, [entity, columnVisibility]);
+    savePageSize(pageSize);
+  }, [entity, columnVisibility, pageSize]);
 
   if (!initialized) {
     return <Loading />;
@@ -441,12 +456,31 @@ export default function DataTable({ entity }: { entity: string }) {
           </Table>
         </div>
         <div className="flex items-center justify-end space-x-2">
-          {table.getPageCount() > 0 && (
-            <div className="flex-1 text-sm text-muted-foreground">
-              页数: {pageIndex + 1} / {table.getPageCount()}
-            </div>
-          )}
-          <div className="space-x-2">
+          <div className="space-x-3">
+            {table.getPageCount() > 0 && (
+              <span className="flex-1 text-sm text-muted-foreground">
+                页数: {pageIndex + 1} / {table.getPageCount()}
+              </span>
+            )}
+            <span>
+              每页:{" "}
+              <Input
+                className="inline-flex w-[64px] h-9 ml-2"
+                type="number"
+                defaultValue={pageSize}
+                onChange={(e) => {
+                  const pageSize = Number(e.target.value);
+                  if (pageSize <= 0) {
+                    return;
+                  }
+                  setPagination({
+                    pageIndex: Number(searchParams.get("page")) || 0,
+                    pageSize,
+                  });
+                  savePageSize(pageSize);
+                }}
+              />
+            </span>
             <Button
               variant="outline"
               size="sm"

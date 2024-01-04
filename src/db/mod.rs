@@ -36,6 +36,15 @@ pub struct ListCountParams {
     pub counted: bool,
 }
 
+impl ListCountParams {
+   pub fn validate(&self) -> Result<()> {
+    if self.page_size == 0 {
+        return Err(HttpError::new("每页记录数不能为0"))
+    }
+    Ok(())
+   } 
+}
+
 #[derive(Debug, Serialize, Default)]
 pub struct EntityDescription {
     pub items: Vec<EntityItemDescription>,

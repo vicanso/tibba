@@ -37,8 +37,8 @@ pub fn new_router() -> Router {
             post(login)
                 .layer(from_fn_with_state(WaitParams::new(1000), wait))
                 .layer(from_fn_with_state(
-                    // 限制时间内最多只出错5次
-                    LimitParams::new(5, 3600, "login_fail"),
+                    // 限制时间内最多只出错x次
+                    LimitParams::new(10, 3600, "login_fail"),
                     error_limiter,
                 ))
                 .layer(from_fn(validate_captcha)),

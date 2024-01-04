@@ -177,7 +177,7 @@ pub struct BasicConfig {
     pub processing_limit: i32,
     // 超时
     pub timeout: Duration,
-    #[validate(length(min = 1))]
+    #[validate(length(min = 6))]
     pub secret: String,
 }
 

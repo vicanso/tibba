@@ -2,7 +2,6 @@ import { create } from "zustand";
 import request from "@/helpers/request";
 import sha256 from "crypto-js/sha256";
 import dayjs from "dayjs";
-import HTTPError from "@/helpers/http-error";
 import {
   USER_REFRESH,
   USER_LOGIN,
@@ -105,12 +104,6 @@ const useUserStore = create<UserState>()((set, get) => ({
       if (account) {
         refresh(data.expired_at);
       }
-    } catch (err) {
-      const e = err as HTTPError;
-      if (e.category !== "jwt") {
-        throw err;
-      }
-      console.error(err);
     } finally {
       set({
         loading: false,

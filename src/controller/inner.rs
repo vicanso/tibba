@@ -1,10 +1,10 @@
 use super::{CacheJsonResult, JsonResult, Query};
 use crate::db;
 use crate::error::{HttpError, HttpResult};
-use crate::middleware::{should_logged_in, Claim};
+use crate::middleware::{should_logged_in, validate_roles, Claim};
 use axum::extract::Path;
 use axum::http::StatusCode;
-use axum::middleware::from_fn;
+use axum::middleware::{from_fn, from_fn_with_state};
 use axum::routing::{get, patch, post};
 use axum::{Json, Router};
 use serde::Serialize;
@@ -18,6 +18,10 @@ pub fn new_router() -> Router {
         .route("/entities/:entity/:id", patch(update_by_id))
         .route("/entities/:entity", post(add))
         .route("/entities/:entity", get(list))
+        .layer(from_fn_with_state(
+            vec![db::ROLE_ADMIN.to_string(), db::ROLE_SU.to_string()],
+            validate_roles,
+        ))
         .layer(from_fn(should_logged_in));
 
     // TODO 增加鉴权处理
@@ -56,6 +60,7 @@ async fn list(
     Path(entity): Path<String>,
     Query(params): Query<db::ListCountParams>,
 ) -> JsonResult<ListRecordResp> {
+    params.validate()?;
     let (page_count, items) = db::list_count(&entity, &claims.get_account(), &params).await?;
     Ok(ListRecordResp { page_count, items }.into())
 }

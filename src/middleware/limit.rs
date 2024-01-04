@@ -68,7 +68,7 @@ pub async fn error_limiter(
 ) -> HttpResult<Response<Body>> {
     let (key, ttl) = get_limit_params(ip, &params);
     // 获取失败的忽略
-    if let Ok(count) = get_default_redis_cache().get_value::<i64>(&key).await {
+    if let Ok(count) = get_default_redis_cache().get::<i64>(&key).await {
         if count > params.max {
             let msg = format!("请求过于频繁，请稍候再试！({count}/{})", params.max);
             return Err(HttpError::new_with_category(&msg, "error_limiter"));

@@ -50,29 +50,34 @@ pub fn json_get_date_time(value: &Value, key: &str) -> Result<Option<DateTime<Ut
     Ok(None)
 }
 
+pub fn json_value_to_strings(value: &Value) -> Result<Option<Vec<String>>> {
+    if !value.is_array() {
+        return Err(HttpError::new("value is not an array"));
+    }
+    if let Some(values) = value.as_array() {
+        let mut err = None;
+        let arr = values
+            .iter()
+            .map(|item| {
+                if !item.is_string() {
+                    err = Some(HttpError::new("value is not a string"));
+                    return "".to_string();
+                }
+                return item.as_str().unwrap_or_default().to_string();
+            })
+            .collect();
+        // 如果出错
+        if let Some(err) = err {
+            return Err(err);
+        }
+        return Ok(Some(arr));
+    }
+    Ok(None)
+}
+
 pub fn json_get_strings(value: &Value, key: &str) -> Result<Option<Vec<String>>> {
     if let Some(arr) = value.get(key) {
-        if !arr.is_array() {
-            return Err(HttpError::new(&format!("{key} is not an array")));
-        }
-        if let Some(values) = arr.as_array() {
-            let mut err = None;
-            let arr = values
-                .iter()
-                .map(|item| {
-                    if !item.is_string() {
-                        err = Some(HttpError::new("value is not a string"));
-                        return "".to_string();
-                    }
-                    return item.as_str().unwrap_or_default().to_string();
-                })
-                .collect();
-            // 如果出错
-            if let Some(err) = err {
-                return Err(err);
-            }
-            return Ok(Some(arr));
-        }
+        return json_value_to_strings(arr);
     }
     Ok(None)
 }

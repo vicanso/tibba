@@ -1,9 +1,10 @@
 use crate::config::{must_new_session_config, SessionConfig};
+use crate::db::find_user_by_account;
 use crate::error::{HttpError, HttpResult};
 use crate::util;
 use crate::{cache, task_local::*};
 use axum::body::Body;
-use axum::extract::FromRequestParts;
+use axum::extract::{FromRequestParts, State};
 use axum::http::header::{HeaderMap, HeaderValue};
 use axum::http::request::Parts;
 use axum::http::Request;
@@ -31,7 +32,7 @@ pub struct Claim {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ClaimResp {
+struct ClaimResp {
     account: String,
 }
 
@@ -182,4 +183,41 @@ pub async fn load_session(req: Request<Body>, next: Next) -> HttpResult<Response
 
 pub async fn should_logged_in(req: Request<Body>, next: Next) -> HttpResult<Response> {
     load_claim(true, req, next).await
+}
+
+pub async fn validate_roles(
+    State(valid_roles): State<Vec<String>>,
+    req: Request<Body>,
+    next: Next,
+) -> HttpResult<Response> {
+    let claim = get_claim_from_headers(req.headers()).await?;
+    if claim.account.is_empty() {
+        return Err(HttpError {
+            message: "Should be login first".to_string(),
+            status: StatusCode::UNAUTHORIZED.as_u16(),
+            ..Default::default()
+        });
+    }
+    // 因为已登录成功，因此账号不存在不会发生
+    let result = find_user_by_account(&claim.account)
+        .await?
+        .ok_or(HttpError::new("账号不存在"))?;
+    let mut valid = false;
+    if let Some(roles) = result.roles {
+        let roles = util::json_value_to_strings(&roles)?.unwrap_or_default();
+        roles.iter().for_each(|item| {
+            if !valid && valid_roles.contains(item) {
+                valid = true;
+            }
+        });
+    }
+    if !valid {
+        return Err(HttpError {
+            message: "当前登录账号权限不满足".to_string(),
+            status: StatusCode::FORBIDDEN.as_u16(),
+            ..Default::default()
+        });
+    }
+    let resp = next.run(req).await;
+    Ok(resp)
 }

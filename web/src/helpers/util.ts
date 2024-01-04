@@ -13,6 +13,13 @@ export function formatDate(str: string): string {
   return dayjs(str).format("YYYY-MM-DD HH:mm:ss");
 }
 
+export function isError(err: Error | HTTPError | unknown, category: string) {
+  if (err instanceof HTTPError) {
+    return err.category === category;
+  }
+  return false;
+}
+
 export function isErrorCode(err: Error | HTTPError | unknown, code: string) {
   if (err instanceof HTTPError) {
     return err.code === code;

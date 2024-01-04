@@ -94,7 +94,7 @@ async fn captcha(Query(params): Query<CaptchaParams>) -> JsonResult<CaptchaInfo>
     if level > 0 {
         let hash = util::uuid();
         cache::get_default_redis_cache()
-            .set_string(&hash, &text, Some(Duration::from_secs(5 * 60)))
+            .set(&hash, &text, Some(Duration::from_secs(5 * 60)))
             .await?;
         info.hash = hash;
     } else {
