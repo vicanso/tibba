@@ -6,7 +6,6 @@ edition = "2021"
 
 [dependencies]
 async-trait = "0.1.75"
-# axum = "0.7.2"
 axum = { version = "0.7.2", features = ["macros"]}
 axum-client-ip = "0.5.0"
 axum-extra = { version = "0.9.1", features = ["cookie", "cookie-signed"] }
@@ -33,7 +32,7 @@ redis = { version = "0.24.0", features = ["tokio-comp", "aio"] }
 regex = "1.10.2"
 reqwest = { version = "0.11.23", default-features = false, features = ["rustls-tls", "json"] }
 rust-embed = { version = "8.1.0", features = ["mime-guess", "compression"] }
-sea-orm = { version = "0.12.10", features = ["sqlx-mysql", "runtime-tokio-rustls", "macros"] }
+sea-orm = { version = "0.12.12", features = ["sqlx-mysql", "runtime-tokio-rustls", "macros"] }
 serde = { version = "1.0.193", features = ["derive"] }
 serde_json = "1.0.108"
 serde_path_to_error = "0.1.14"
@@ -61,6 +60,6 @@ codegen-units = 1
 lto = true
 
 [features]
-# 需要启用redis cluster才配置 
+# 需要启用redis cluster才配置
 redis_cluster = []
 # default = ["redis_cluster"]

@@ -11,6 +11,7 @@ pub static ROLE_ADMIN: &str = "admin";
 mod conn;
 mod settings;
 mod users;
+mod files;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -37,12 +38,12 @@ pub struct ListCountParams {
 }
 
 impl ListCountParams {
-   pub fn validate(&self) -> Result<()> {
-    if self.page_size == 0 {
-        return Err(HttpError::new("每页记录数不能为0"))
+    pub fn validate(&self) -> Result<()> {
+        if self.page_size == 0 {
+            return Err(HttpError::new("每页记录数不能为0"));
+        }
+        Ok(())
     }
-    Ok(())
-   } 
 }
 
 #[derive(Debug, Serialize, Default)]

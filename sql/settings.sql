@@ -16,4 +16,4 @@ CREATE TABLE `settings` (
   KEY `setting_created_at` (`created_at`),
   KEY `setting_updated_at` (`updated_at`),
   KEY `setting_status_category` (`status`,`category`)
-) ENGINE=InnoDB AUTO_INCREMENT=4 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;

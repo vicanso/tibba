@@ -11,4 +11,4 @@ CREATE TABLE `users` (
   `email` varchar(255) COLLATE utf8mb4_bin DEFAULT NULL comment '用户邮箱',
   PRIMARY KEY (`id`) comment '主键',
   UNIQUE KEY `user_account` (`account`)
-) ENGINE=InnoDB AUTO_INCREMENT=4 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;

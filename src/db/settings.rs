@@ -6,8 +6,8 @@ use crate::entities::settings::{ActiveModel, Column, Entity, Model};
 use crate::util::{json_get_date_time, json_get_i64, json_get_string};
 use once_cell::sync::Lazy;
 use sea_orm::query::{Order, Select};
+use sea_orm::Condition;
 use sea_orm::{entity::prelude::*, ActiveValue::Set, QueryOrder};
-use sea_orm::{Condition, QuerySelect};
 use serde_json::Value;
 use substring::Substring;
 

@@ -81,3 +81,10 @@ pub fn json_get_strings(value: &Value, key: &str) -> Result<Option<Vec<String>>>
     }
     Ok(None)
 }
+
+pub fn json_get_bytes(value: &Value, key: &str) -> Result<Option<Vec<u8>>> {
+    if let Some(value) = value.get(key)  {
+        
+    }
+    Ok(None)
+}
