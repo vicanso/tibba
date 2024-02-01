@@ -1,4 +1,5 @@
 use crate::error::HttpError;
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -83,8 +84,11 @@ pub fn json_get_strings(value: &Value, key: &str) -> Result<Option<Vec<String>>>
 }
 
 pub fn json_get_bytes(value: &Value, key: &str) -> Result<Option<Vec<u8>>> {
-    if let Some(value) = value.get(key)  {
-        
+    if let Some(value) = json_get_string(value, key)? {
+        let value = STANDARD
+            .decode(value)
+            .map_err(|err| HttpError::new_with_category(&err.to_string(), "base64"))?;
+        return Ok(Some(value));
     }
     Ok(None)
 }

@@ -11,13 +11,7 @@ use sea_orm::{entity::prelude::*, ActiveValue::Set, QueryOrder};
 use serde_json::Value;
 use substring::Substring;
 
-fn from_value(value: &Value) -> Result<ActiveModel> {
-    let mut model = ActiveModel {
-        ..Default::default()
-    };
-    if let Some(id) = json_get_i64(value, Column::Id.as_str())? {
-        model.id = Set(id);
-    }
+fn update_from_value(model: &mut ActiveModel, value: &Value) -> Result<()> {
     if let Some(status) = json_get_i64(value, Column::Status.as_str())? {
         model.status = Set(status as i8);
     }
@@ -39,7 +33,7 @@ fn from_value(value: &Value) -> Result<ActiveModel> {
     if let Some(ended_at) = json_get_date_time(value, Column::EndedAt.as_str())? {
         model.ended_at = Set(ended_at);
     }
-    Ok(model)
+    Ok(())
 }
 
 static SUPPORT_ORDERS: Lazy<Vec<Column>> = Lazy::new(|| {
@@ -100,33 +94,16 @@ impl SettingEntity {
         }
         let mut setting: ActiveModel = result.unwrap().into();
         setting.updater = Set(Some(user.to_string()));
-        if let Some(value) = json_get_i64(value, Column::Status.as_str())? {
-            setting.status = Set(value as i8);
-        }
-        if let Some(value) = json_get_string(value, Column::Name.as_str())? {
-            setting.name = Set(value);
-        }
-        if let Some(value) = json_get_string(value, Column::Category.as_str())? {
-            setting.category = Set(value);
-        }
-        if let Some(value) = json_get_string(value, Column::Data.as_str())? {
-            setting.data = Set(value);
-        }
-        if let Some(value) = json_get_string(value, Column::Remark.as_str())? {
-            setting.remark = Set(value);
-        }
-        if let Some(value) = json_get_date_time(value, Column::StartedAt.as_str())? {
-            setting.started_at = Set(value);
-        }
-        if let Some(value) = json_get_date_time(value, Column::EndedAt.as_str())? {
-            setting.ended_at = Set(value);
-        }
+        update_from_value(&mut setting, value)?;
         setting.update(conn).await?;
         Ok(())
     }
     pub async fn insert(user: &str, value: &Value) -> Result<Model> {
         // TODO 权限校验
-        let mut data = from_value(value)?;
+        let mut data = ActiveModel {
+            ..Default::default()
+        };
+        update_from_value(&mut data, value)?;
         data.creator = Set(user.to_string());
         let result = data.insert(get_database().await).await?;
         Ok(result)

@@ -4,6 +4,7 @@ use regex::Regex;
 use sea_orm::{ConnectOptions, Database, DatabaseConnection};
 use tokio::sync::OnceCell;
 use tracing::info;
+
 async fn get_conn() -> DatabaseConnection {
     let config = must_new_database_config();
     let mut opt = ConnectOptions::new(&config.url);
