@@ -20,6 +20,7 @@ pub struct Model {
     #[sea_orm(column_type = "Binary(BlobSize::Medium)")]
     pub data: Vec<u8>,
     pub creator: String,
+    pub updater: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

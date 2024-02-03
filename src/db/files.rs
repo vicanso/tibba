@@ -8,9 +8,12 @@ use crate::util::{json_get_bytes, json_get_string};
 use db_entity_derive::DbEntity;
 use once_cell::sync::Lazy;
 use sea_orm::query::{Order, Select};
+use sea_orm::ColumnTrait;
 use sea_orm::Condition;
+use sea_orm::QuerySelect;
 use sea_orm::{entity::prelude::*, ActiveValue::Set, QueryOrder};
 use serde_json::Value;
+use std::str::FromStr;
 use substring::Substring;
 
 static SUPPORT_ORDERS: Lazy<Vec<Column>> = Lazy::new(|| vec![Column::Id, Column::Name]);

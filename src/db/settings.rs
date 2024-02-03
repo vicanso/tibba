@@ -1,40 +1,20 @@
+use super::CommonEntity;
 use super::{
     get_database, EntityDescription, EntityItemCategory, EntityItemDescription, Error,
     ListCountParams, Result, ROLE_SU,
 };
 use crate::entities::settings::{ActiveModel, Column, Entity, Model};
 use crate::util::{json_get_date_time, json_get_i64, json_get_string};
+use db_entity_derive::DbEntity;
 use once_cell::sync::Lazy;
 use sea_orm::query::{Order, Select};
+use sea_orm::ColumnTrait;
 use sea_orm::Condition;
+use sea_orm::QuerySelect;
 use sea_orm::{entity::prelude::*, ActiveValue::Set, QueryOrder};
 use serde_json::Value;
+use std::str::FromStr;
 use substring::Substring;
-
-fn update_from_value(model: &mut ActiveModel, value: &Value) -> Result<()> {
-    if let Some(status) = json_get_i64(value, Column::Status.as_str())? {
-        model.status = Set(status as i8);
-    }
-    if let Some(name) = json_get_string(value, Column::Name.as_str())? {
-        model.name = Set(name);
-    }
-    if let Some(category) = json_get_string(value, Column::Category.as_str())? {
-        model.category = Set(category);
-    }
-    if let Some(data) = json_get_string(value, Column::Data.as_str())? {
-        model.data = Set(data);
-    }
-    if let Some(remark) = json_get_string(value, Column::Remark.as_str())? {
-        model.remark = Set(remark);
-    }
-    if let Some(started_at) = json_get_date_time(value, Column::StartedAt.as_str())? {
-        model.started_at = Set(started_at);
-    }
-    if let Some(ended_at) = json_get_date_time(value, Column::EndedAt.as_str())? {
-        model.ended_at = Set(ended_at);
-    }
-    Ok(())
-}
 
 static SUPPORT_ORDERS: Lazy<Vec<Column>> = Lazy::new(|| {
     vec![
@@ -45,68 +25,48 @@ static SUPPORT_ORDERS: Lazy<Vec<Column>> = Lazy::new(|| {
     ]
 });
 
-fn order_by<E>(sql: Select<E>, orders: &str) -> Result<Select<E>>
-where
-    E: EntityTrait,
-{
-    if orders.is_empty() {
-        return Ok(sql);
-    }
-    let mut s = sql;
-    let support_orders: Vec<(String, Column)> = SUPPORT_ORDERS
-        .iter()
-        .map(|item| (item.to_string(), *item))
-        .collect();
-
-    for order in orders.split(',') {
-        let mut order_type = Order::Asc;
-        let key = if order.starts_with('-') {
-            order_type = Order::Desc;
-            order.substring(1, order.len())
-        } else {
-            order
-        };
-        let mut found = false;
-        for (name, column) in support_orders.iter() {
-            if name == key {
-                found = true;
-                s = s.order_by(*column, order_type.clone());
-            }
-        }
-        if !found {
-            return Err(Error::OrderNotSupport {
-                order: order.to_string(),
-            }
-            .into());
-        }
-    }
-    Ok(s)
-}
-
+#[derive(DbEntity)]
 pub struct SettingEntity {}
+impl CommonEntity for SettingEntity {}
 
 impl SettingEntity {
-    pub async fn update_by_id(user: &str, id: i64, value: &Value) -> Result<()> {
-        let conn = get_database().await;
-        let result = Entity::find_by_id(id).one(conn).await?;
-        if result.is_none() {
-            return Err(Error::NotFound.into());
+    fn get_support_orders() -> Vec<Column> {
+        SUPPORT_ORDERS.to_vec()
+    }
+    fn update_from_value(model: &mut ActiveModel, value: &Value) -> Result<()> {
+        if let Some(status) = json_get_i64(value, Column::Status.as_str())? {
+            model.status = Set(status as i8);
         }
-        let mut setting: ActiveModel = result.unwrap().into();
-        setting.updater = Set(Some(user.to_string()));
-        update_from_value(&mut setting, value)?;
-        setting.update(conn).await?;
+        if let Some(name) = json_get_string(value, Column::Name.as_str())? {
+            model.name = Set(name);
+        }
+        if let Some(category) = json_get_string(value, Column::Category.as_str())? {
+            model.category = Set(category);
+        }
+        if let Some(data) = json_get_string(value, Column::Data.as_str())? {
+            model.data = Set(data);
+        }
+        if let Some(remark) = json_get_string(value, Column::Remark.as_str())? {
+            model.remark = Set(remark);
+        }
+        if let Some(started_at) = json_get_date_time(value, Column::StartedAt.as_str())? {
+            model.started_at = Set(started_at);
+        }
+        if let Some(ended_at) = json_get_date_time(value, Column::EndedAt.as_str())? {
+            model.ended_at = Set(ended_at);
+        }
         Ok(())
     }
-    pub async fn insert(user: &str, value: &Value) -> Result<Model> {
-        // TODO 权限校验
-        let mut data = ActiveModel {
-            ..Default::default()
-        };
-        update_from_value(&mut data, value)?;
-        data.creator = Set(user.to_string());
-        let result = data.insert(get_database().await).await?;
-        Ok(result)
+    fn get_condition(params: &ListCountParams) -> Option<Condition> {
+        if let Some(keyword) = &params.keyword {
+            let cond = Condition::any()
+                .add(Column::Category.eq(keyword))
+                .add(Column::Name.contains(keyword))
+                .add(Column::Remark.contains(keyword));
+            Some(cond)
+        } else {
+            None
+        }
     }
     pub fn description() -> EntityDescription {
         let items = vec![
@@ -200,46 +160,5 @@ impl SettingEntity {
             support_orders: SUPPORT_ORDERS.iter().map(|item| item.to_string()).collect(),
             ..Default::default()
         }
-    }
-    pub async fn find_by_id(_user: &str, id: i64) -> Result<Option<Value>> {
-        let conn = get_database().await;
-        let item = Entity::find_by_id(id).into_json().one(conn).await?;
-        Ok(item)
-    }
-    pub async fn list_count(_user: &str, params: &ListCountParams) -> Result<(i64, Vec<Value>)> {
-        // TODO 权限校验
-        let conn = get_database().await;
-        let mut sql = Entity::find();
-
-        if let Some(keyword) = &params.keyword {
-            let cond = Condition::any()
-                .add(Column::Category.eq(keyword))
-                .add(Column::Name.contains(keyword))
-                .add(Column::Remark.contains(keyword));
-            sql = sql.filter(cond);
-        }
-
-        let page_count = if params.counted {
-            let count = sql.clone().count(conn).await?;
-            let mut page_count = count / params.page_size;
-            if count % params.page_size != 0 {
-                page_count += 1;
-            }
-            page_count as i64
-        } else {
-            -1
-        };
-
-        sql = order_by(
-            sql,
-            &params.orders.clone().unwrap_or("-updated_at".to_string()),
-        )?;
-        let items = sql
-            .into_json()
-            .paginate(conn, params.page_size)
-            .fetch_page(params.page)
-            .await?;
-
-        Ok((page_count, items))
     }
 }

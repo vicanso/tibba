@@ -53,6 +53,7 @@ pub fn db_entity(input: TokenStream) -> TokenStream {
                 }
                 let mut data: ActiveModel = result.unwrap().into();
                 Self::update_from_value(&mut data, value)?;
+                data.updater = Set(Some(user.to_string()));
                 data.update(conn).await?;
                 Ok(())
             }
@@ -69,7 +70,16 @@ pub fn db_entity(input: TokenStream) -> TokenStream {
             pub async fn find_by_id(user: &str, id: i64) -> Result<Option<Value>> {
                 Self::validate_for_query(user).await?;
                 let conn = get_database().await;
-                let item = Entity::find_by_id(id).into_json().one(conn).await?;
+                let mut sql =  Entity::find_by_id(id);
+                if let Some(columns) = Self::get_columns() {
+                    sql = sql.select_only();
+                    for col in columns.iter() {
+                        if let Ok(column) = Column::from_str(col) {
+                            sql = sql.column(column);
+                        }
+                    }
+                }
+                let item = sql.into_json().one(conn).await?;
                 Ok(item)
             }
             pub async fn list_count(user: &str, params: &ListCountParams) -> Result<(i64, Vec<Value>)> {
@@ -95,6 +105,14 @@ pub fn db_entity(input: TokenStream) -> TokenStream {
                     sql,
                     &params.orders.clone().unwrap_or("-updated_at".to_string()),
                 )?;
+                if let Some(columns) = Self::get_columns() {
+                    sql = sql.select_only();
+                    for col in columns.iter() {
+                        if let Ok(column) = Column::from_str(col) {
+                            sql = sql.column(column);
+                        }
+                    }
+                }
                 let items = sql
                     .into_json()
                     .paginate(conn, params.page_size)

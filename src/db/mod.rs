@@ -1,5 +1,6 @@
 use crate::error::HttpError;
 use async_trait::async_trait;
+use sea_orm::{ColumnTrait, Condition};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use snafu::Snafu;
@@ -29,6 +30,12 @@ pub trait CommonEntity {
     }
     async fn validate_for_query(_user: &str) -> Result<()> {
         Ok(())
+    }
+    fn get_condition(_params: &ListCountParams) -> Option<Condition> {
+        None
+    }
+    fn get_columns() -> Option<Vec<String>> {
+        None
     }
 }
 
