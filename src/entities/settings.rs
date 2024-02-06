@@ -7,7 +7,7 @@ use sea_orm::ActiveValue;
 use serde::{Deserialize, Serialize};
 use std::ops::Add;
 
-#[derive(Clone, Debug, PartialEq, DeriveEntityModel, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, DeriveEntityModel, Eq, Serialize, Deserialize, Default)]
 #[sea_orm(table_name = "settings")]
 pub struct Model {
     #[sea_orm(primary_key)]

@@ -1,7 +1,7 @@
 use super::CommonEntity;
 use super::{
-    get_database, EntityDescription, EntityItemCategory, EntityItemDescription, Error,
-    ListCountParams, Result, ROLE_SU,
+    get_database, EntityDescription, EntityItemCategory, EntityItemDescription, EntityItemOption,
+    Error, ListCountParams, Result, ROLE_SU,
 };
 use crate::entities::settings::{ActiveModel, Column, Entity, Model};
 use crate::util::{json_get_date_time, json_get_i64, json_get_string};
@@ -97,6 +97,18 @@ impl SettingEntity {
                 label: "分类".to_string(),
                 width: Some(80),
                 category: EntityItemCategory::Text,
+                options: Some(vec![
+                    EntityItemOption {
+                        label: "应用配置".to_string(),
+                        str_value: Some("system".to_string()),
+                        ..Default::default()
+                    },
+                    EntityItemOption {
+                        label: "业务配置".to_string(),
+                        str_value: Some("biz".to_string()),
+                        ..Default::default()
+                    },
+                ]),
                 ..Default::default()
             },
             EntityItemDescription {

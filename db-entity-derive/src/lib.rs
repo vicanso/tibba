@@ -70,7 +70,7 @@ pub fn db_entity(input: TokenStream) -> TokenStream {
             pub async fn find_by_id(user: &str, id: i64) -> Result<Option<Value>> {
                 Self::validate_for_query(user).await?;
                 let conn = get_database().await;
-                let mut sql =  Entity::find_by_id(id);
+                let mut sql = Entity::find_by_id(id);
                 if let Some(columns) = Self::get_columns() {
                     sql = sql.select_only();
                     for col in columns.iter() {

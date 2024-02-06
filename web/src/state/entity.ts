@@ -4,6 +4,7 @@ import {
   INNER_ENTITY_DESCRIPTIONS,
   INNER_ENTITIES_ID,
 } from "@/url";
+import { isString, isNil } from "lodash-es";
 import { create } from "zustand";
 
 interface EntityOption {
@@ -37,7 +38,7 @@ export enum EntityItemCategory {
   JSON = "json",
 }
 
-enum EntityStatus {
+export enum EntityStatus {
   DISABLED = 0,
   ENABLED = 1,
 }
@@ -75,6 +76,10 @@ interface EntityState {
   updateEntity: (
     entity: string,
     id: string,
+    data: Record<string, unknown>,
+  ) => Promise<void>;
+  createEntity: (
+    entity: string,
     data: Record<string, unknown>,
   ) => Promise<void>;
 }
@@ -127,6 +132,27 @@ const entityStore = create<EntityState>()(() => ({
   ) => {
     const url = INNER_ENTITIES_ID.replace(":entity", entity).replace(":id", id);
     await request.patch(url, data);
+  },
+  createEntity: async (entity: string, data: Record<string, unknown>) => {
+    const url = INNER_ENTITIES.replace(":entity", entity);
+    const params: Record<string, unknown> = {};
+    Object.keys(data).forEach((key) => {
+      if (key == "id") {
+        return;
+      }
+      const value = data[key];
+      if (isNil(value)) {
+        return;
+      }
+      if (!isString(value)) {
+        params[key] = value;
+        return;
+      }
+      if (value) {
+        params[key] = value;
+      }
+    });
+    await request.post(url, params);
   },
 }));
 

@@ -3,6 +3,7 @@ import useEntityStore, {
   EntityDescription,
   getEntityStatusOptions,
   EntityItemCategory,
+  EntityStatus,
 } from "@/state/entity";
 import { Card, CardHeader, CardFooter } from "@/components/ui/card";
 import {
@@ -54,15 +55,17 @@ export default function EntityForm({
   id: string;
   description: EntityDescription;
 }) {
-  const [getEntity, updateEntity] = useEntityStore((state) => [
+  const [getEntity, updateEntity, createEntity] = useEntityStore((state) => [
     state.getEntity,
     state.updateEntity,
+    state.createEntity,
   ]);
   const [tips, setTips] = useState("");
   const [entityData, setEntityData] = useState<Record<string, unknown>>({});
   const [processing, setProcessing] = useState<boolean>(false);
 
   const schema: Record<string, z.ZodTypeAny> = {};
+  const isCreated = id === "0";
 
   description.items.forEach((item) => {
     switch (item.category) {
@@ -89,6 +92,30 @@ export default function EntityForm({
   });
 
   useAsync(async () => {
+    if (isCreated) {
+      setEntityData({ id: -1 });
+      description.items.forEach((item) => {
+        if (item.name === "id") {
+          form.setValue(item.name, -1);
+          return;
+        }
+        switch (item.category) {
+          case EntityItemCategory.DATETIME: {
+            form.setValue(item.name, new Date().toISOString());
+            break;
+          }
+          case EntityItemCategory.STATUS: {
+            form.setValue(item.name, EntityStatus.ENABLED);
+            break;
+          }
+          default: {
+            form.setValue(item.name, "");
+            break;
+          }
+        }
+      });
+      return;
+    }
     try {
       const data = await getEntity(entity, id);
       Object.keys(data).forEach((key) => {
@@ -127,11 +154,21 @@ export default function EntityForm({
     setTips("");
     setProcessing(true);
     try {
-      await updateEntity(entity, id, updateData);
-      keys.forEach((key) => {
-        entityData[key] = updateData[key];
+      if (isCreated) {
+        await createEntity(entity, values);
+        setTips("已成功创建娄据");
+      } else {
+        await updateEntity(entity, id, updateData);
+        keys.forEach((key) => {
+          entityData[key] = updateData[key];
+        });
+        setTips(`已成功更新数据，字段为：${keys.join(",")}。`);
+      }
+    } catch (err) {
+      toast({
+        title: "获取数据失败",
+        description: formatError(err),
       });
-      setTips(`已成功更新数据，字段为：${keys.join(",")}。`);
     } finally {
       setProcessing(false);
     }
@@ -147,6 +184,10 @@ export default function EntityForm({
       let fieldClass = "";
       if (item.span) {
         fieldClass = `col-span-${item.span}`;
+      }
+      let readonly = item.readonly;
+      if (isCreated) {
+        readonly = false;
       }
       return (
         <div key={item.name} className={fieldClass}>
@@ -244,7 +285,7 @@ export default function EntityForm({
                           defaultValue={time}
                         />
                       </div>
-                      {!date && <p>Please pick a day.</p>}
+                      {!date && <p>请先选择日期</p>}
                     </>
                   );
                   element = (
@@ -285,12 +326,37 @@ export default function EntityForm({
                 }
                 case EntityItemCategory.EDITOR: {
                   element = (
-                    <Textarea {...field} disabled={item.readonly} rows={8} />
+                    <Textarea {...field} disabled={readonly} rows={8} />
                   );
                   break;
                 }
                 default: {
-                  element = <Input {...field} disabled={item.readonly} />;
+                  if (item.options && item.options.length) {
+                    const options = item.options.map((item) => {
+                      return (
+                        <SelectItem key={item.str_value} value={item.str_value}>
+                          {item.label}
+                        </SelectItem>
+                      );
+                    });
+                    element = (
+                      <Select
+                        defaultValue={field.value}
+                        onValueChange={(value) => {
+                          form.setValue(item.name, value);
+                        }}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="请选择" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectGroup>{options}</SelectGroup>
+                        </SelectContent>
+                      </Select>
+                    );
+                  } else {
+                    element = <Input {...field} disabled={readonly} />;
+                  }
                   break;
                 }
               }
@@ -305,21 +371,29 @@ export default function EntityForm({
         </div>
       );
     });
+  let btnText = "更新";
+  if (isCreated) {
+    btnText = "创建";
+  }
+  if (processing) {
+    btnText += "中...";
+  }
 
   return (
     <div className="w-full">
       {/* 因为col-span是动态生成，因此先引入，否则tailwind并未编译该类 */}
-      <span className="col-span-3 col-span-2" />
+      <span className="col-span-3" />
       <Form {...form}>
         <form onSubmit={form.handleSubmit(onSubmit)}>
           <Card className="m-5">
-            <CardHeader>数据更新-记录Id：{id}</CardHeader>
+            {isCreated && <CardHeader>新增记录</CardHeader>}
+            {!isCreated && <CardHeader>数据更新-记录Id：{id}</CardHeader>}
             <div className="ml-5 mr-5 mb-5">
               <div className="grid grid-cols-3 gap-4">{formItems}</div>
             </div>
             <CardFooter>
               <Button type="submit" className="w-[150px]">
-                {processing ? "更新中..." : "更新"}
+                {btnText}
               </Button>
               <Label className="ml-5">{tips}</Label>
             </CardFooter>

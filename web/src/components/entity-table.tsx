@@ -396,6 +396,17 @@ export default function DataTable({ entity }: { entity: string }) {
             {loading && "加载中..."}
             {!loading && "查询"}
           </Button>
+          {entity != "users" && (
+            <Button
+              className="ml-5 w-40"
+              variant="secondary"
+              onClick={() => {
+                goToEntityForm(entity, "0");
+              }}
+            >
+              新增
+            </Button>
+          )}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" className="ml-auto">
