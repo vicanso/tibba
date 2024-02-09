@@ -106,6 +106,7 @@ pub struct EntityItemDescription {
     pub label: String,
     pub category: EntityItemCategory,
     pub readonly: bool,
+    pub auto_created: bool,
     pub options: Option<Vec<EntityItemOption>>,
     pub width: Option<u16>,
     pub span: Option<u8>,

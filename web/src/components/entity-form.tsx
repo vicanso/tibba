@@ -43,6 +43,7 @@ import { formatDate, formatError } from "@/helpers/util";
 import { Label } from "@/components/ui/label";
 import dayjs from "dayjs";
 import { Loading } from "@/components/loading";
+import { goBack } from "@/router";
 
 const ignoreFields = ["id", "created_at", "updated_at"];
 
@@ -93,10 +94,10 @@ export default function EntityForm({
 
   useAsync(async () => {
     if (isCreated) {
-      setEntityData({ id: -1 });
+      setEntityData({ id: 0 });
       description.items.forEach((item) => {
         if (item.name === "id") {
-          form.setValue(item.name, -1);
+          form.setValue(item.name, 0);
           return;
         }
         switch (item.category) {
@@ -109,7 +110,11 @@ export default function EntityForm({
             break;
           }
           default: {
-            form.setValue(item.name, "");
+            if (item.auto_created) {
+              form.setValue(item.name, "");
+            } else {
+              form.setValue(item.name, undefined);
+            }
             break;
           }
         }
@@ -156,7 +161,7 @@ export default function EntityForm({
     try {
       if (isCreated) {
         await createEntity(entity, values);
-        setTips("已成功创建娄据");
+        setTips("已成功创建数据。");
       } else {
         await updateEntity(entity, id, updateData);
         keys.forEach((key) => {
@@ -174,12 +179,13 @@ export default function EntityForm({
     }
   }
 
-  if (!entityData.id) {
+  if (isNil(entityData.id)) {
     return <Loading />;
   }
 
   const formItems = description.items
     ?.filter((item) => !includes(ignoreFields, item.name))
+    .filter((item) => !(isCreated && item.auto_created))
     .map((item) => {
       let fieldClass = "";
       if (item.span) {
@@ -382,7 +388,7 @@ export default function EntityForm({
   return (
     <div className="w-full">
       {/* 因为col-span是动态生成，因此先引入，否则tailwind并未编译该类 */}
-      <span className="col-span-3" />
+      <span className="col-span-2 col-span-3" />
       <Form {...form}>
         <form onSubmit={form.handleSubmit(onSubmit)}>
           <Card className="m-5">
@@ -394,6 +400,16 @@ export default function EntityForm({
             <CardFooter>
               <Button type="submit" className="w-[150px]">
                 {btnText}
+              </Button>
+              <Button
+                variant="secondary"
+                className="ml-5 w-[150px]"
+                onClick={(e) => {
+                  e.preventDefault();
+                  goBack();
+                }}
+              >
+                返回
               </Button>
               <Label className="ml-5">{tips}</Label>
             </CardFooter>

@@ -33,7 +33,6 @@ import useEntityStore, {
   EntityDescription,
   formatEntityStatus,
 } from "@/state/entity";
-import { useLocation, useSearchParams } from "react-router-dom";
 import { goToEntityForm } from "@/router";
 import { Loading } from "@/components/loading";
 
@@ -167,9 +166,6 @@ function savePageSize(pageSize: number) {
 export default function DataTable({ entity }: { entity: string }) {
   const { toast } = useToast();
 
-  const [searchParams, setSearchParams] = useSearchParams();
-  const location = useLocation();
-
   const [roles] = useUserStore((state) => [state.roles]);
 
   const [fetchDescription, listEntities] = useEntityStore((state) => [
@@ -194,7 +190,7 @@ export default function DataTable({ entity }: { entity: string }) {
   const [sorting, setSorting] = useState<SortingState>([]);
   const [loading, setLoading] = useState(false);
   const [keyword, setKeyword] = useState("");
-  let inputKeyword = "";
+  const [inputKeyword, setInputKeyword] = useState("");
 
   const pagination = useMemo(
     () => ({
@@ -243,6 +239,7 @@ export default function DataTable({ entity }: { entity: string }) {
         category: opName,
         readonly: true,
         width: 60,
+        auto_created: false,
         options: [],
         span: 0,
       });
@@ -257,7 +254,7 @@ export default function DataTable({ entity }: { entity: string }) {
         convertDescriptionToColumnDef(description, sorting, roles, entity),
       );
       setPagination({
-        pageIndex: Number(searchParams.get("page")) || 0,
+        pageIndex: 0,
         pageSize,
       });
     } catch (err) {
@@ -311,31 +308,6 @@ export default function DataTable({ entity }: { entity: string }) {
     }
   }, [pageIndex, keyword, pageSize]);
 
-  // 点浏览器返回
-  useEffect(() => {
-    if (pageIndex < 0) {
-      return;
-    }
-    const currentPage = Number(searchParams.get("page")) || 0;
-    if (pageIndex !== currentPage) {
-      setPagination({
-        pageIndex: currentPage,
-        pageSize,
-      });
-    }
-  }, [location]);
-  // 翻页时更新url query
-  useEffect(() => {
-    if (pageIndex < 0) {
-      return;
-    }
-    if (pageIndex !== (Number(searchParams.get("page")) || 0)) {
-      const params = new URLSearchParams();
-      params.set("page", `${pageIndex}`);
-      setSearchParams(params);
-    }
-  }, [pageIndex]);
-
   const submitSearch = () => {
     setPagination({
       pageIndex: 0,
@@ -377,7 +349,10 @@ export default function DataTable({ entity }: { entity: string }) {
         <div className="flex items-center py-4">
           <Input
             placeholder="请输入关键字"
-            onChange={(event) => (inputKeyword = event.target.value)}
+            onChange={(event) => {
+              setInputKeyword(event.target.value);
+              // inputKeyword = event.target.value;
+            }}
             onKeyDown={(event) => {
               if (event.code === "Enter") {
                 submitSearch();
@@ -459,7 +434,8 @@ export default function DataTable({ entity }: { entity: string }) {
                     colSpan={entityItems.length}
                     className="h-24 text-center"
                   >
-                    无匹配数据
+                    {!loading && "无匹配数据"}
+                    {loading && "正在加载数据，请稍候..."}
                   </TableCell>
                 </TableRow>
               )}
@@ -485,7 +461,7 @@ export default function DataTable({ entity }: { entity: string }) {
                     return;
                   }
                   setPagination({
-                    pageIndex: Number(searchParams.get("page")) || 0,
+                    pageIndex,
                     pageSize,
                   });
                   savePageSize(pageSize);

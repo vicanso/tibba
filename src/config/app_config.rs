@@ -142,7 +142,7 @@ pub fn get_env() -> String {
 
 fn must_new_source(name: &str) -> config::File<FileSourceString, FileFormat> {
     let str = std::string::String::from_utf8_lossy(&Configs::get(name).unwrap().data).to_string();
-    File::from_str(str.as_str(), FileFormat::Yaml)
+    File::from_str(str.as_str(), FileFormat::Toml)
 }
 
 fn must_new_config() -> &'static APPConfig {
@@ -151,8 +151,8 @@ fn must_new_config() -> &'static APPConfig {
         let mode = get_env();
 
         let settings = Config::builder()
-            .add_source(must_new_source("default.yml"))
-            .add_source(must_new_source(&format!("{mode}.yml")))
+            .add_source(must_new_source("default.toml"))
+            .add_source(must_new_source(&format!("{mode}.toml")))
             .build()
             .unwrap()
             .try_deserialize::<HashMap<String, HashMap<String, String>>>()

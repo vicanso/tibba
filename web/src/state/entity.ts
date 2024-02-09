@@ -18,6 +18,7 @@ interface EntityItem {
   label: string;
   category: string;
   readonly: boolean;
+  auto_created: boolean;
   width: number;
   options: EntityOption[];
   span: number;

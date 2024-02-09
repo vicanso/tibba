@@ -75,6 +75,7 @@ impl SettingEntity {
                 label: "ID".to_string(),
                 width: Some(60),
                 category: EntityItemCategory::Number,
+                auto_created: true,
                 readonly: true,
                 ..Default::default()
             },
@@ -131,6 +132,7 @@ impl SettingEntity {
                 width: Some(80),
                 category: EntityItemCategory::Text,
                 readonly: true,
+                auto_created: true,
                 ..Default::default()
             },
             EntityItemDescription {

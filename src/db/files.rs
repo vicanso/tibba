@@ -54,6 +54,7 @@ impl FileEntity {
             EntityItemDescription {
                 name: Column::Id.to_string(),
                 label: "ID".to_string(),
+                auto_created: true,
                 width: Some(60),
                 category: EntityItemCategory::Number,
                 readonly: true,
@@ -72,6 +73,7 @@ impl FileEntity {
                 width: Some(80),
                 category: EntityItemCategory::Text,
                 readonly: true,
+                auto_created: true,
                 ..Default::default()
             },
             EntityItemDescription {
