@@ -282,9 +282,14 @@ export default function EntityForm({
                               value.split(":")[1] || "00",
                               10,
                             );
+                            const seconds = Number.parseInt(
+                              value.split(":")[2] || "00",
+                              10,
+                            );
                             const datetime = dayjs(date)
                               .hour(hours)
                               .minute(minutes)
+                              .second(seconds)
                               .toISOString();
                             form.setValue(item.name, datetime);
                           }}
@@ -317,6 +322,12 @@ export default function EntityForm({
                           selected={new Date(date)}
                           onSelect={(value) => {
                             if (value) {
+                              if (date) {
+                                const d = new Date(date);
+                                value.setHours(d.getHours());
+                                value.setMinutes(d.getMinutes());
+                                value.setSeconds(d.getSeconds());
+                              }
                               form.setValue(item.name, value.toISOString());
                             } else {
                               form.setValue(item.name, "");
