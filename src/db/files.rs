@@ -16,7 +16,8 @@ use serde_json::Value;
 use std::str::FromStr;
 use substring::Substring;
 
-static SUPPORT_ORDERS: Lazy<Vec<Column>> = Lazy::new(|| vec![Column::Id, Column::Name]);
+static SUPPORT_ORDERS: Lazy<Vec<Column>> =
+    Lazy::new(|| vec![Column::Id, Column::Name, Column::UpdatedAt]);
 
 #[derive(DbEntity)]
 pub struct FileEntity {}
@@ -78,17 +79,8 @@ impl FileEntity {
             },
             EntityItemDescription {
                 name: Column::Data.to_string(),
-                label: "配置".to_string(),
-                width: Some(200),
-                category: EntityItemCategory::Editor,
-                span: Some(3),
-                ..Default::default()
-            },
-            EntityItemDescription {
-                name: Column::Data.to_string(),
                 label: "文件".to_string(),
                 width: Some(120),
-                span: Some(3),
                 category: EntityItemCategory::File,
                 ..Default::default()
             },

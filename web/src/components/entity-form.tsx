@@ -110,7 +110,7 @@ export default function EntityForm({
             break;
           }
           default: {
-            if (item.auto_created) {
+            if (item.auto_created || item.readonly) {
               form.setValue(item.name, "");
             } else {
               form.setValue(item.name, undefined);
@@ -344,6 +344,28 @@ export default function EntityForm({
                 case EntityItemCategory.EDITOR: {
                   element = (
                     <Textarea {...field} disabled={readonly} rows={8} />
+                  );
+                  break;
+                }
+                case EntityItemCategory.FILE: {
+                  element = (
+                    <Input
+                      type="file"
+                      placeholder="请选择文件"
+                      onChange={(e) => {
+                        if (e.target.files) {
+                          const file = e.target.files[0];
+                          const data = new Blob([file], {
+                            type: file.type,
+                          });
+                          const reader = new FileReader();
+                          reader.onload = (e) => {
+                            form.setValue(item.name, e.target?.result);
+                          };
+                          reader.readAsDataURL(data);
+                        }
+                      }}
+                    ></Input>
                   );
                   break;
                 }

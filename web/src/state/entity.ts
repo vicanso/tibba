@@ -37,6 +37,7 @@ export enum EntityItemCategory {
   TEXTS = "texts",
   STATUS = "status",
   JSON = "json",
+  FILE = "file",
 }
 
 export enum EntityStatus {

@@ -25,6 +25,10 @@ export const navItemList = [
         name: "应用配置",
         url: ENTITY.replace(":entity", "settings"),
       },
+      {
+        name: "文件配置",
+        url: ENTITY.replace(":entity", "files"),
+      },
     ],
   },
 ];
