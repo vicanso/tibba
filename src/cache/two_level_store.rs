@@ -1,4 +1,4 @@
-use super::{Expired, RedisCache, RedisResult, TtlLruStore};
+use super::{Expired, RedisCache, Result, TtlLruStore};
 use chrono::Local;
 use serde::{de::DeserializeOwned, Serialize};
 use std::num::NonZeroUsize;
@@ -44,7 +44,7 @@ impl<T: Clone + ?Sized + Serialize + DeserializeOwned> TwoLevelStore<T> {
             redis: RedisCache::new_with_ttl_prefix(ttl, prefix),
         }
     }
-    pub async fn set(&self, key: &str, value: T) -> RedisResult<()> {
+    pub async fn set(&self, key: &str, value: T) -> Result<()> {
         // 根据ttl按区间重新计算值
         let ttl = get_ttl_by_unit(self.ttl);
 
@@ -63,7 +63,7 @@ impl<T: Clone + ?Sized + Serialize + DeserializeOwned> TwoLevelStore<T> {
 
         Ok(())
     }
-    pub async fn get(&self, key: &str) -> RedisResult<Option<T>> {
+    pub async fn get(&self, key: &str) -> Result<Option<T>> {
         // 从先lru读取(get保证了肯定不过期)
         if let Some(value) = self.lru.get(key).await {
             return Ok(Some(value.data));

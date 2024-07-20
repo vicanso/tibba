@@ -11,7 +11,7 @@ export default function Entity() {
       <MainHeader />
       <div className="flex">
         <MainSidebar className="h-screen flex-none w-[230px]" />
-        <div className="grow lg:border-l">
+        <div className="grow lg:border-l overflow-auto">
           <EntityTable entity={entity || ""} />
         </div>
       </div>

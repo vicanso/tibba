@@ -1,67 +1,20 @@
-use super::must_get_redis_pool;
-use crate::error::HttpError;
-use crate::util::{lz4_decode, lz4_encode, zstd_decode, zstd_encode, CompressError};
-#[cfg(feature = "redis_cluster")]
-use deadpool_redis::cluster::Connection;
+use super::redis_pool::{must_get_redis_connection, RedisConnection};
+use super::{Error, Result};
+use crate::util::{lz4_decode, lz4_encode, zstd_decode, zstd_encode};
 use deadpool_redis::redis::{cmd, pipe};
-#[cfg(not(feature = "redis_cluster"))]
-use deadpool_redis::Connection;
 use once_cell::sync::OnceCell;
 use serde::{de::DeserializeOwned, Serialize};
-use snafu::{ResultExt, Snafu};
 use std::time::Duration;
 
-#[derive(Debug, Snafu)]
-pub enum Error {
-    #[snafu(display("Redis {category}: {source}"))]
-    Redis {
-        category: String,
-        source: deadpool_redis::redis::RedisError,
-    },
-    #[snafu(display("Redis pool: {source}"))]
-    Pool { source: deadpool_redis::PoolError },
-    #[snafu(display("Json {category}: {source}"))]
-    Json {
-        category: String,
-        source: serde_json::Error,
-    },
-    #[snafu(display("{source}"))]
-    Compress { source: CompressError },
-}
-
-impl From<Error> for HttpError {
-    fn from(err: Error) -> Self {
-        match err {
-            Error::Redis { category, source } => {
-                let mut msg = source.to_string();
-                if msg.contains("(response was nil)") {
-                    msg = "数据已过期".to_string();
-                }
-                HttpError::new_with_category(&msg, &category)
-            }
-            Error::Pool { source } => {
-                HttpError::new_with_category(&source.to_string(), "redis_pool")
-            }
-            Error::Json { category, source } => {
-                HttpError::new_with_category(&source.to_string(), &category)
-            }
-            Error::Compress { source } => source.into(),
-        }
-    }
-}
-
-pub type Result<T, E = Error> = std::result::Result<T, E>;
-
-async fn get_redis_conn() -> Result<Connection> {
-    must_get_redis_pool().get().await.context(PoolSnafu)
-}
-
 pub async fn redis_ping() -> Result<String> {
-    let mut conn = get_redis_conn().await?;
+    let mut conn = must_get_redis_connection().await?;
     cmd("PING")
-        .query_async::<Connection, String>(&mut conn)
+        .query_async::<RedisConnection, String>(&mut conn)
         .await
-        .context(RedisSnafu { category: "ping" })
+        .map_err(|e| Error::Redis {
+            category: "ping".to_string(),
+            source: e,
+        })
 }
 
 #[derive(Default, Clone, Debug)]
@@ -85,12 +38,15 @@ impl RedisCache {
     }
     /// 从redis中获取数据
     async fn get_value<T: redis::FromRedisValue>(&self, key: &str) -> Result<T> {
-        let mut conn = get_redis_conn().await?;
+        let mut conn = must_get_redis_connection().await?;
         let result = cmd("GET")
             .arg(key)
             .query_async(&mut conn)
             .await
-            .context(RedisSnafu { category: "get" })?;
+            .map_err(|e| Error::Redis {
+                category: "get".to_string(),
+                source: e,
+            })?;
 
         Ok(result)
     }
@@ -101,7 +57,7 @@ impl RedisCache {
         value: T,
         ttl: Option<Duration>,
     ) -> Result<()> {
-        let mut conn = get_redis_conn().await?;
+        let mut conn = must_get_redis_connection().await?;
 
         let seconds = ttl.unwrap_or(self.ttl).as_secs();
         cmd("SETEX")
@@ -110,7 +66,10 @@ impl RedisCache {
             .arg(value)
             .query_async(&mut conn)
             .await
-            .context(RedisSnafu { category: "set" })?;
+            .map_err(|e| Error::Redis {
+                category: "set".to_string(),
+                source: e,
+            })?;
         Ok(())
     }
     /// 使用默认的ttl初始化redis缓存实例
@@ -132,7 +91,7 @@ impl RedisCache {
     /// 如果成功则返回true，否则返回false。
     /// 主要用于多实例并发限制。
     pub async fn lock(&self, key: &str, ttl: Option<Duration>) -> Result<bool> {
-        let mut conn = get_redis_conn().await?;
+        let mut conn = must_get_redis_connection().await?;
         let k = self.get_key(key);
 
         let result = cmd("SET")
@@ -143,25 +102,31 @@ impl RedisCache {
             .arg(ttl.unwrap_or(self.ttl).as_secs())
             .query_async(&mut conn)
             .await
-            .context(RedisSnafu { category: "lock" })?;
+            .map_err(|e| Error::Redis {
+                category: "lock".to_string(),
+                source: e,
+            })?;
         Ok(result)
     }
     /// 从redis中删除key
     pub async fn del(&self, key: &str) -> Result<()> {
-        let mut conn = get_redis_conn().await?;
+        let mut conn = must_get_redis_connection().await?;
         let k = self.get_key(key);
 
         cmd("DEL")
             .arg(&k)
             .query_async(&mut conn)
             .await
-            .context(RedisSnafu { category: "del" })?;
+            .map_err(|e| Error::Redis {
+                category: "del".to_string(),
+                source: e,
+            })?;
         Ok(())
     }
     /// 增加redis中key所对应的值，如果ttl未指定则使用默认值，
     /// 需要注意此ttl仅在首次时设置。
     pub async fn incr(&self, key: &str, delta: i64, ttl: Option<Duration>) -> Result<i64> {
-        let mut conn = get_redis_conn().await?;
+        let mut conn = must_get_redis_connection().await?;
         let k = self.get_key(key);
         let (_, count) = pipe()
             .cmd("SET")
@@ -173,9 +138,12 @@ impl RedisCache {
             .cmd("INCRBY")
             .arg(&k)
             .arg(delta)
-            .query_async::<Connection, (bool, i64)>(&mut conn)
+            .query_async::<RedisConnection, (bool, i64)>(&mut conn)
             .await
-            .context(RedisSnafu { category: "incr" })?;
+            .map_err(|e| Error::Redis {
+                category: "incr".to_string(),
+                source: e,
+            })?;
         Ok(count)
     }
 
@@ -200,8 +168,9 @@ impl RedisCache {
     where
         T: ?Sized + Serialize,
     {
-        let value = serde_json::to_vec(&value).context(JsonSnafu {
-            category: "set_struct",
+        let value = serde_json::to_vec(&value).map_err(|e| Error::Common {
+            category: "set_struct".to_string(),
+            message: e.to_string(),
         })?;
         let k = self.get_key(key);
         self.set_value(&k, &value, ttl).await?;
@@ -220,36 +189,41 @@ impl RedisCache {
         }
 
         let deserializer = &mut serde_json::Deserializer::from_slice(&buf);
-        let result = T::deserialize(deserializer).context(JsonSnafu {
-            category: "get_struct",
+        let result = T::deserialize(deserializer).map_err(|e| Error::Common {
+            category: "get_struct".to_string(),
+            message: e.to_string(),
         })?;
 
         Ok(Some(result))
     }
     /// 返回该key在redis中的有效期
     pub async fn ttl(&self, key: &str) -> Result<i32> {
-        let mut conn = get_redis_conn().await?;
+        let mut conn = must_get_redis_connection().await?;
         let k = self.get_key(key);
         let result = cmd("TTL")
             .arg(&k)
             .query_async(&mut conn)
             .await
-            .context(RedisSnafu { category: "ttl" })?;
+            .map_err(|e| Error::Redis {
+                category: "ttl".to_string(),
+                source: e,
+            })?;
         Ok(result)
     }
     /// 获取后并删除该key在redis中的值，用于仅获取一次的场景
     pub async fn get_del<T: redis::FromRedisValue>(&self, key: &str) -> Result<T> {
         let k = self.get_key(key);
-        let mut conn = get_redis_conn().await?;
+        let mut conn = must_get_redis_connection().await?;
         let (value, _) = pipe()
             .cmd("GET")
             .arg(&k)
             .cmd("DEL")
             .arg(&k)
-            .query_async::<Connection, (T, bool)>(&mut conn)
+            .query_async::<RedisConnection, (T, bool)>(&mut conn)
             .await
-            .context(RedisSnafu {
-                category: "get_del",
+            .map_err(|e| Error::Redis {
+                category: "get_del".to_string(),
+                source: e,
             })?;
         Ok(value)
     }
@@ -260,8 +234,9 @@ impl RedisCache {
     where
         T: ?Sized + Serialize,
     {
-        let value = serde_json::to_vec(&value).context(JsonSnafu {
-            category: "set_struct_lz4",
+        let value = serde_json::to_vec(&value).map_err(|e| Error::Common {
+            category: "set_struct_lz4".to_string(),
+            message: e.to_string(),
         })?;
         let buf = lz4_encode(&value);
         let k = self.get_key(key);
@@ -280,11 +255,12 @@ impl RedisCache {
             return Ok(None);
         }
 
-        let buf = lz4_decode(value.as_slice()).context(CompressSnafu)?;
+        let buf = lz4_decode(value.as_slice()).map_err(|e| Error::Compress { source: e })?;
 
         let deserializer = &mut serde_json::Deserializer::from_slice(&buf);
-        let result = T::deserialize(deserializer).context(JsonSnafu {
-            category: "get_struct_lz4",
+        let result = T::deserialize(deserializer).map_err(|e| Error::Common {
+            category: "get_struct_lz4".to_string(),
+            message: e.to_string(),
         })?;
         Ok(Some(result))
     }
@@ -300,10 +276,11 @@ impl RedisCache {
     where
         T: ?Sized + Serialize,
     {
-        let value = serde_json::to_vec(&value).context(JsonSnafu {
-            category: "set_struct_zstd",
+        let value = serde_json::to_vec(&value).map_err(|e| Error::Common {
+            category: "set_struct_zstd".to_string(),
+            message: e.to_string(),
         })?;
-        let buf = zstd_encode(&value).context(CompressSnafu)?;
+        let buf = zstd_encode(&value).map_err(|e| Error::Compress { source: e })?;
         let k = self.get_key(key);
         self.set_value(&k, &buf, ttl).await?;
         Ok(())
@@ -320,11 +297,12 @@ impl RedisCache {
             return Ok(None);
         }
 
-        let buf = zstd_decode(value.as_slice()).context(CompressSnafu)?;
+        let buf = zstd_decode(value.as_slice()).map_err(|e| Error::Compress { source: e })?;
 
         let deserializer = &mut serde_json::Deserializer::from_slice(&buf);
-        let result = T::deserialize(deserializer).context(JsonSnafu {
-            category: "get_struct_zstd",
+        let result = T::deserialize(deserializer).map_err(|e| Error::Common {
+            category: "get_struct_zstd".to_string(),
+            message: e.to_string(),
         })?;
         Ok(Some(result))
     }
