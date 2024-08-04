@@ -4,7 +4,7 @@ use super::{
     ListCountParams, Result, ROLE_SU,
 };
 use crate::entities::files::{ActiveModel, Column, Entity, Model};
-use crate::util::{json_get_bytes, json_get_string};
+use crate::util::json_get_string;
 use db_entity_derive::DbEntity;
 use once_cell::sync::Lazy;
 use sea_orm::query::{Order, Select};
@@ -34,7 +34,7 @@ impl FileEntity {
         if let Some(content_type) = json_get_string(value, Column::ContentType.as_str())? {
             model.content_type = Set(content_type);
         }
-        if let Some(data) = json_get_bytes(value, Column::Data.as_str())? {
+        if let Some(data) = json_get_string(value, Column::Data.as_str())? {
             model.data = Set(data)
         }
 

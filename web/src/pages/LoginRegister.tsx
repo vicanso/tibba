@@ -88,10 +88,8 @@ export default function Login() {
         description: formatError(err),
       });
       console.error(err);
-      // 图形验证码只能校验一次，如果是不匹配需要刷新
-      if (isErrorCode(err, "mismatching")) {
-        setCaptchaKey(`${Date.now()}`);
-      }
+      // 图形验证码只能校验一次，如果出错则要刷新
+      setCaptchaKey(`${Date.now()}`);
     } finally {
       setProcessing(false);
     }
