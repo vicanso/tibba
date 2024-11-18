@@ -82,6 +82,10 @@ export default function EntityForm({
         schema[item.name] = z.array(z.string());
         break;
       }
+      case EntityItemCategory.FILE: {
+        schema[item.name] = z.string().min(0);
+        break;
+      }
       default: {
         schema[item.name] = z.string().min(0).max(50);
         break;
@@ -353,7 +357,7 @@ export default function EntityForm({
                       type="file"
                       placeholder="请选择文件"
                       onChange={(e) => {
-                        if (e.target.files) {
+                        if (e.target.files && e.target.files.length) {
                           const file = e.target.files[0];
                           const data = new Blob([file], {
                             type: file.type,
@@ -361,6 +365,7 @@ export default function EntityForm({
                           const reader = new FileReader();
                           reader.onload = (e) => {
                             form.setValue(item.name, e.target?.result);
+                            form.setValue("content_type", file.type);
                           };
                           reader.readAsDataURL(data);
                         }

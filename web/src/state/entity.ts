@@ -4,7 +4,7 @@ import {
   INNER_ENTITY_DESCRIPTIONS,
   INNER_ENTITIES_ID,
 } from "@/url";
-import { isString, isNil } from "lodash-es";
+import { isString, isNil, isObject } from "lodash-es";
 import { create } from "zustand";
 
 interface EntityOption {
@@ -119,6 +119,13 @@ const entityStore = create<EntityState>()(() => ({
         keyword,
         counted,
       },
+    });
+    data.items.forEach((item) => {
+      Object.keys(item).forEach((key) => {
+        if (isObject(item[key])) {
+          item[key] = JSON.stringify(item[key]);
+        }
+      });
     });
     return data;
   },

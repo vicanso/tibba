@@ -85,6 +85,15 @@ impl FileEntity {
                 ..Default::default()
             },
             EntityItemDescription {
+                name: Column::ContentType.to_string(),
+                label: "文件类型".to_string(),
+                width: Some(120),
+                category: EntityItemCategory::Text,
+                auto_created: true,
+                readonly: true,
+                ..Default::default()
+            },
+            EntityItemDescription {
                 name: Column::CreatedAt.to_string(),
                 label: "创建时间".to_string(),
                 width: Some(150),
