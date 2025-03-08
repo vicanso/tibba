@@ -10,3 +10,7 @@ path = "src/lib.rs"
 [dependencies]
 tibba-config = { path = "../tibba-config" }
 snafu = { workspace = true }
+axum = { workspace = true }
+serde = { workspace = true }
+tracing = { workspace = true }
+tower = { workspace = true }

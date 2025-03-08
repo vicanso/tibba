@@ -12,7 +12,13 @@ lto = true
 strip = "debuginfo"
 
 [workspace]
-members = ["tibba-config", "tibba-error", "tibba-hook", "tibba-web"]
+members = [
+    "tibba-config",
+    "tibba-error",
+    "tibba-hook",
+    "tibba-util",
+    "tibba-web",
+]
 
 [workspace.dependencies]
 config = "0.15.9"
@@ -26,3 +32,9 @@ tracing = "0.1.41"
 rust-embed = "8.6.0"
 futures = "0.3.31"
 snafu = "0.8.5"
+axum = "0.8.1"
+serde = { version = "1.0.218", features = ["derive"] }
+tower = { version = "0.5.2", features = ["timeout"] }
+uuid = { version = "1.15.1", features = ["v7"] }
+nanoid = "0.4.0"
+chrono = "0.4.40"

@@ -54,12 +54,12 @@ fn convert_string_to_i32(value: String) -> i32 {
     0
 }
 
-fn convert_string_to_bool(value: String) -> bool {
-    if let Ok(result) = value.parse::<bool>() {
-        return result;
-    }
-    false
-}
+// fn convert_string_to_bool(value: String) -> bool {
+//     if let Ok(result) = value.parse::<bool>() {
+//         return result;
+//     }
+//     false
+// }
 
 #[derive(Debug, Clone, Default)]
 pub struct AppConfig {
@@ -96,29 +96,29 @@ impl AppConfig {
         }
         default_value.unwrap_or(s)
     }
-    fn get_int(&self, key: &str, default_value: Option<i32>) -> i32 {
-        let value = self.get(key, None);
-        if !value.is_empty() {
-            return convert_string_to_i32(value);
-        }
-        default_value.unwrap_or_default()
-    }
-    fn get_duration(&self, key: &str, default_value: Option<Duration>) -> Result<Duration> {
-        let value = self.get(key, None);
-        if !value.is_empty() {
-            return humantime::parse_duration(&value).context(ParseDurationSnafu {
-                category: key.to_string(),
-            });
-        }
-        Ok(default_value.unwrap_or_default())
-    }
-    fn get_bool(&self, key: &str, default_value: Option<bool>) -> bool {
-        let value = self.get(key, None);
-        if !value.is_empty() {
-            return convert_string_to_bool(value);
-        }
-        default_value.unwrap_or_default()
-    }
+    // fn get_int(&self, key: &str, default_value: Option<i32>) -> i32 {
+    //     let value = self.get(key, None);
+    //     if !value.is_empty() {
+    //         return convert_string_to_i32(value);
+    //     }
+    //     default_value.unwrap_or_default()
+    // }
+    // fn get_duration(&self, key: &str, default_value: Option<Duration>) -> Result<Duration> {
+    //     let value = self.get(key, None);
+    //     if !value.is_empty() {
+    //         return humantime::parse_duration(&value).context(ParseDurationSnafu {
+    //             category: key.to_string(),
+    //         });
+    //     }
+    //     Ok(default_value.unwrap_or_default())
+    // }
+    // fn get_bool(&self, key: &str, default_value: Option<bool>) -> bool {
+    //     let value = self.get(key, None);
+    //     if !value.is_empty() {
+    //         return convert_string_to_bool(value);
+    //     }
+    //     default_value.unwrap_or_default()
+    // }
     fn get_from_env_first(&self, key: &str, default_value: Option<String>) -> String {
         let k = self.get_key(key);
         let mut env_key = k.replace('.', "_").to_uppercase();
@@ -137,13 +137,13 @@ impl AppConfig {
         }
         default_value.unwrap_or_default()
     }
-    fn get_bool_from_env_first(&self, key: &str, default_value: Option<bool>) -> bool {
-        let value = self.get_from_env_first(key, None);
-        if !value.is_empty() {
-            return convert_string_to_bool(value);
-        }
-        default_value.unwrap_or_default()
-    }
+    // fn get_bool_from_env_first(&self, key: &str, default_value: Option<bool>) -> bool {
+    //     let value = self.get_from_env_first(key, None);
+    //     if !value.is_empty() {
+    //         return convert_string_to_bool(value);
+    //     }
+    //     default_value.unwrap_or_default()
+    // }
     fn get_duration_from_env_first(&self, key: &str, default_value: Option<Duration>) -> Duration {
         let value = self.get_from_env_first(key, None);
         let v = default_value.unwrap_or_default();

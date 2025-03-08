@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-axum = "0.8.1"
+axum = { workspace = true }
 tibba-config = { path = "../tibba-config" }
 tibba-error = { path = "../tibba-error" }
 tibba-hook = { path = "../tibba-hook" }
@@ -20,6 +20,7 @@ tracing = { workspace = true }
 tracing-subscriber = { version = "0.3.19", features = ["local-time"] }
 rust-embed = { workspace = true }
 once_cell = { workspace = true }
+tower = { workspace = true }
 ctor = "0.4.0"
 
 [profile.release]

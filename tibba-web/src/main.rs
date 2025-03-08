@@ -14,10 +14,14 @@
 
 use crate::config::must_get_config;
 use axum::Router;
+use axum::error_handling::HandleErrorLayer;
+use axum::routing::get;
 use std::env;
 use std::net::SocketAddr;
 use std::str::FromStr;
+use tibba_error::handle_error;
 use tibba_hook::run_before_tasks;
+use tower::ServiceBuilder;
 use tracing::{Level, error, info};
 use tracing_subscriber::FmtSubscriber;
 
@@ -56,7 +60,11 @@ async fn run() {
     }
     let app_config = must_get_config();
     let basic_config = app_config.new_basic_config().unwrap();
-    let app = Router::new();
+    let app = Router::new().route("/", get(|| async {})).layer(
+        ServiceBuilder::new()
+            .layer(HandleErrorLayer::new(handle_error))
+            .timeout(basic_config.timeout),
+    );
 
     info!("listening on http://{}/", basic_config.listen);
     let listener = tokio::net::TcpListener::bind(basic_config.listen)
@@ -73,7 +81,7 @@ async fn run() {
 
 fn main() {
     std::panic::set_hook(Box::new(|e| {
-        // TODO 发送告警通知
+        // TODO send alert
         error!(category = "panic", message = e.to_string(),);
         std::process::exit(1);
     }));

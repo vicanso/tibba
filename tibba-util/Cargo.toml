@@ -1,0 +1,14 @@
+[package]
+name = "tibba-util"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "tibba_util"
+path = "src/lib.rs"
+
+[dependencies]
+snafu = { workspace = true }
+uuid = { workspace = true }
+nanoid = { workspace = true }
+chrono = { workspace = true }
