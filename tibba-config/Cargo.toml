@@ -1,0 +1,17 @@
+[package]
+name = "tibba-config"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "tibba_config"
+path = "src/lib.rs"
+
+[dependencies]
+config = { workspace = true }
+once_cell = { workspace = true }
+substring = { workspace = true }
+url = { workspace = true }
+validator = { workspace = true }
+humantime = { workspace = true }
+dashmap = { workspace = true }

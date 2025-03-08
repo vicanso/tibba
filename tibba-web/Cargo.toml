@@ -1,0 +1,25 @@
+[package]
+name = "tibba-web"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+axum = "0.8.1"
+tibba-config = { path = "../tibba-config" }
+time = "0.3.39"
+tokio = { version = "1.44.0", features = [
+    "macros",
+    "rt",
+    "rt-multi-thread",
+    "net",
+    "signal",
+] }
+tracing = { workspace = true }
+tracing-subscriber = { version = "0.3.19", features = ["local-time"] }
+rust-embed = { workspace = true }
+once_cell = { workspace = true }
+
+[profile.release]
+codegen-units = 1
+lto = true
+strip = "debuginfo"
