@@ -12,7 +12,7 @@ lto = true
 strip = "debuginfo"
 
 [workspace]
-members = ["tibba-config", "tibba-web"]
+members = ["tibba-config", "tibba-error", "tibba-hook", "tibba-web"]
 
 [workspace.dependencies]
 config = "0.15.9"
@@ -24,3 +24,5 @@ humantime = "2.1.0"
 dashmap = "6.1.0"
 tracing = "0.1.41"
 rust-embed = "8.6.0"
+futures = "0.3.31"
+snafu = "0.8.5"

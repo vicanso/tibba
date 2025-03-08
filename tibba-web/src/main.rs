@@ -12,11 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::config::get_config;
+use crate::config::must_get_config;
 use axum::Router;
 use std::env;
 use std::net::SocketAddr;
 use std::str::FromStr;
+use tibba_hook::run_before_tasks;
 use tracing::{Level, error, info};
 use tracing_subscriber::FmtSubscriber;
 
@@ -48,9 +49,13 @@ fn init_logger() {
 
 #[tokio::main]
 async fn run() {
-    let app_config = get_config();
-    info!("{:?}", app_config.must_new_basic_config());
-    let basic_config = app_config.must_new_basic_config();
+    // only use unwrap in run function
+    if let Err(e) = run_before_tasks().await {
+        error!(category = "run_before_tasks", message = e.to_string(),);
+        return;
+    }
+    let app_config = must_get_config();
+    let basic_config = app_config.new_basic_config().unwrap();
     let app = Router::new();
 
     info!("listening on http://{}/", basic_config.listen);
@@ -73,6 +78,5 @@ fn main() {
         std::process::exit(1);
     }));
     init_logger();
-    info!("Starting tibba-web");
     run();
 }

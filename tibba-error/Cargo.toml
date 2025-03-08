@@ -1,0 +1,12 @@
+[package]
+name = "tibba-error"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "tibba_error"
+path = "src/lib.rs"
+
+[dependencies]
+tibba-config = { path = "../tibba-config" }
+snafu = { workspace = true }

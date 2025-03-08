@@ -12,27 +12,46 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use ctor::ctor;
 use once_cell::sync::OnceCell;
 use rust_embed::RustEmbed;
 use tibba_config::{AppConfig, new_app_config};
+use tibba_error::Error;
+use tibba_hook::register_before_task;
 
 static CONFIGS: OnceCell<AppConfig> = OnceCell::new();
+
+type Result<T> = std::result::Result<T, Error>;
 
 #[derive(RustEmbed)]
 #[folder = "configs/"]
 struct Configs;
 
-fn new_config() -> &'static AppConfig {
-    CONFIGS.get_or_init(|| {
+fn new_config() -> Result<&'static AppConfig> {
+    CONFIGS.get_or_try_init(|| {
         let config = Configs::get("default.toml").unwrap().data;
-        let app_config = new_app_config(
+        new_app_config(
             vec![std::str::from_utf8(&config).unwrap_or_default()],
             Some("TIBBA_WEB"),
-        );
-        app_config
+        )
+        .map_err(|e| Error::Config { source: e })
     })
 }
 
-pub fn get_config() -> &'static AppConfig {
-    new_config()
+pub fn must_get_config() -> &'static AppConfig {
+    new_config().unwrap()
+}
+
+// add application init before application start
+#[ctor]
+fn init() {
+    register_before_task(
+        "application_config",
+        Box::new(|| {
+            Box::pin(async {
+                new_config()?;
+                Ok(())
+            })
+        }),
+    );
 }

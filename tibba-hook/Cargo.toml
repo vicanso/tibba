@@ -1,0 +1,13 @@
+[package]
+name = "tibba-hook"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "tibba_hook"
+path = "src/lib.rs"
+
+[dependencies]
+dashmap = { workspace = true }
+futures = { workspace = true }
+once_cell = { workspace = true }

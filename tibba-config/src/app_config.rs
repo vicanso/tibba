@@ -13,12 +13,39 @@
 // limitations under the License.
 
 use config::{Config, File, FileFormat, FileSourceString};
+use snafu::{ResultExt, Snafu};
 use std::collections::HashMap;
 use std::env;
 use std::time::Duration;
 use substring::Substring;
 use url::Url;
 use validator::Validate;
+
+#[derive(Debug, Snafu)]
+pub enum Error {
+    #[snafu(display("{category}, url parse error {source}"))]
+    Url {
+        category: String,
+        source: url::ParseError,
+    },
+    #[snafu(display("{category}, config error {source}"))]
+    Config {
+        category: String,
+        source: config::ConfigError,
+    },
+    #[snafu(display("{category}, validate error {source}"))]
+    Validate {
+        category: String,
+        source: validator::ValidationErrors,
+    },
+    #[snafu(display("{category}, parse duration error {source}"))]
+    ParseDuration {
+        category: String,
+        source: humantime::DurationError,
+    },
+}
+
+type Result<T> = std::result::Result<T, Error>;
 
 fn convert_string_to_i32(value: String) -> i32 {
     if let Ok(result) = value.parse::<i32>() {
@@ -76,14 +103,12 @@ impl AppConfig {
         }
         default_value.unwrap_or_default()
     }
-    fn get_duration(
-        &self,
-        key: &str,
-        default_value: Option<Duration>,
-    ) -> Result<Duration, humantime::DurationError> {
+    fn get_duration(&self, key: &str, default_value: Option<Duration>) -> Result<Duration> {
         let value = self.get(key, None);
         if !value.is_empty() {
-            return humantime::parse_duration(&value);
+            return humantime::parse_duration(&value).context(ParseDurationSnafu {
+                category: key.to_string(),
+            });
         }
         Ok(default_value.unwrap_or_default())
     }
@@ -129,27 +154,31 @@ impl AppConfig {
     }
 }
 
-fn must_new_source(data: &str) -> File<FileSourceString, FileFormat> {
+fn new_source(data: &str) -> File<FileSourceString, FileFormat> {
     File::from_str(data, FileFormat::Toml)
 }
 
-pub fn new_app_config(data: Vec<&str>, env_prefix: Option<&str>) -> AppConfig {
+pub fn new_app_config(data: Vec<&str>, env_prefix: Option<&str>) -> Result<AppConfig> {
     let mut builder = Config::builder();
     for d in data {
-        if d.len() > 0 {
-            builder = builder.add_source(must_new_source(d));
+        if !d.is_empty() {
+            builder = builder.add_source(new_source(d));
         }
     }
     let settings = builder
         .build()
-        .unwrap()
+        .context(ConfigSnafu {
+            category: "config_builder".to_string(),
+        })?
         .try_deserialize::<HashMap<String, HashMap<String, String>>>()
-        .unwrap();
-    AppConfig {
+        .context(ConfigSnafu {
+            category: "config_deserialize".to_string(),
+        })?;
+    Ok(AppConfig {
         env_prefix: env_prefix.unwrap_or_default().to_string(),
         settings,
         ..Default::default()
-    }
+    })
 }
 
 #[derive(Debug, Clone, Default, Validate)]
@@ -168,7 +197,7 @@ pub struct BasicConfig {
 
 impl AppConfig {
     /// Create a new basic config, if the config is invalid, it will panic
-    pub fn must_new_basic_config(&self) -> BasicConfig {
+    pub fn new_basic_config(&self) -> Result<BasicConfig> {
         let config = self.clone().set_prefix("basic");
         let timeout = config.get_duration_from_env_first("timeout", Some(Duration::from_secs(60)));
         let basic_config = BasicConfig {
@@ -177,8 +206,10 @@ impl AppConfig {
             timeout,
             secret: config.get_from_env_first("secret", None),
         };
-        basic_config.validate().unwrap();
-        basic_config
+        basic_config.validate().context(ValidateSnafu {
+            category: "basic".to_string(),
+        })?;
+        Ok(basic_config)
     }
 }
 
@@ -198,13 +229,13 @@ pub struct RedisConfig {
 }
 
 impl AppConfig {
-    pub fn must_new_redis_config(&self) -> RedisConfig {
+    pub fn new_redis_config(&self) -> Result<RedisConfig> {
         let config = self.clone().set_prefix("redis");
         let uri = config.get_from_env_first("uri", None);
         let start = if let Some(index) = uri.find('@') {
             index + 1
         } else {
-            uri.find("//").unwrap() + 2
+            uri.find("//").unwrap_or_default() + 2
         };
 
         let mut host = uri.substring(start, uri.len());
@@ -215,7 +246,9 @@ impl AppConfig {
         for item in host.split(',') {
             nodes.push(uri.replace(host, item));
         }
-        let info = Url::parse(&nodes[0]).unwrap();
+        let info = Url::parse(&nodes[0]).context(UrlSnafu {
+            category: "redis".to_string(),
+        })?;
         let mut redis_config = RedisConfig {
             nodes,
             pool_size: 10,
@@ -248,7 +281,9 @@ impl AppConfig {
                 _ => (),
             }
         }
-        redis_config.validate().unwrap();
-        redis_config
+        redis_config.validate().context(ValidateSnafu {
+            category: "redis".to_string(),
+        })?;
+        Ok(redis_config)
     }
 }
