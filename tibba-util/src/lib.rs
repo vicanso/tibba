@@ -12,5 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use lz4_flex::block::DecompressError;
+use snafu::Snafu;
+
+#[derive(Snafu, Debug)]
+pub enum Error {
+    #[snafu(display("{source}"))]
+    Zstd { source: std::io::Error },
+    #[snafu(display("{source}"))]
+    Lz4Decompress { source: DecompressError },
+}
+
+pub mod compression;
 pub mod datetime;
 pub mod string;

@@ -12,3 +12,8 @@ snafu = { workspace = true }
 uuid = { workspace = true }
 nanoid = { workspace = true }
 chrono = { workspace = true }
+lz4_flex = { workspace = true }
+zstd = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = "1.4.1"

@@ -38,3 +38,5 @@ tower = { version = "0.5.2", features = ["timeout"] }
 uuid = { version = "1.15.1", features = ["v7"] }
 nanoid = "0.4.0"
 chrono = "0.4.40"
+lz4_flex = "0.11.3"
+zstd = "0.13.3"
