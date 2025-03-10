@@ -8,6 +8,8 @@ axum = { workspace = true }
 tibba-config = { path = "../tibba-config" }
 tibba-error = { path = "../tibba-error" }
 tibba-hook = { path = "../tibba-hook" }
+tibba-util = { path = "../tibba-util" }
+tibba-state = { path = "../tibba-state" }
 time = "0.3.39"
 tokio = { version = "1.44.0", features = [
     "macros",

@@ -14,6 +14,7 @@
 
 use lz4_flex::block::DecompressError;
 use snafu::Snafu;
+use std::env;
 
 #[derive(Snafu, Debug)]
 pub enum Error {
@@ -21,8 +22,44 @@ pub enum Error {
     Zstd { source: std::io::Error },
     #[snafu(display("{source}"))]
     Lz4Decompress { source: DecompressError },
+    #[snafu(display("{source}"))]
+    InvalidHeaderName {
+        source: axum::http::header::InvalidHeaderName,
+    },
+    #[snafu(display("{source}"))]
+    InvalidHeaderValue {
+        source: axum::http::header::InvalidHeaderValue,
+    },
+    #[snafu(display("{source}"))]
+    Axum { source: axum::Error },
 }
 
-pub mod compression;
-pub mod datetime;
-pub mod string;
+pub fn get_env() -> String {
+    env::var("RUST_ENV").unwrap_or_else(|_| "dev".to_string())
+}
+
+/// Whether it is a development environment
+/// Used to determine whether it is a local development environment
+pub fn is_development() -> bool {
+    get_env() == "dev"
+}
+
+/// Whether it is a test environment
+pub fn is_test() -> bool {
+    get_env() == "test"
+}
+
+/// Whether it is a production environment
+pub fn is_production() -> bool {
+    get_env() == "production"
+}
+
+mod compression;
+mod datetime;
+mod http;
+mod string;
+
+pub use compression::*;
+pub use datetime::*;
+pub use http::*;
+pub use string::*;

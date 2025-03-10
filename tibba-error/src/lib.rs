@@ -23,8 +23,16 @@ use tracing::error;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
-    Config { source: tibba_config::Error },
-    Http { error: HttpError },
+    Config {
+        source: tibba_config::Error,
+    },
+    Http {
+        error: HttpError,
+    },
+    #[snafu(display("{message}"))]
+    Invalid {
+        message: String,
+    },
 }
 
 impl From<HttpError> for Error {
@@ -57,6 +65,13 @@ impl IntoResponse for Error {
                 category: "config".to_string(),
                 status: 500,
                 message: source.to_string(),
+                exception: true,
+                ..Default::default()
+            },
+            Error::Invalid { message } => HttpError {
+                category: "invalid".to_string(),
+                status: 400,
+                message,
                 exception: true,
                 ..Default::default()
             },
