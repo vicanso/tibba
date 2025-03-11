@@ -1678,8 +1678,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "tibba-middleware"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "tibba-error",
+ "tibba-state",
+]
+
+[[package]]
 name = "tibba-state"
 version = "0.1.0"
+dependencies = [
+ "tokio",
+]
 
 [[package]]
 name = "tibba-util"
@@ -1707,6 +1719,7 @@ dependencies = [
  "tibba-config",
  "tibba-error",
  "tibba-hook",
+ "tibba-middleware",
  "tibba-state",
  "tibba-util",
  "time",

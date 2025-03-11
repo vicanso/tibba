@@ -33,6 +33,10 @@ pub enum Error {
     Invalid {
         message: String,
     },
+    #[snafu(display("{message}"))]
+    ProcessingLimit {
+        message: String,
+    },
 }
 
 impl From<HttpError> for Error {
@@ -71,6 +75,13 @@ impl IntoResponse for Error {
             Error::Invalid { message } => HttpError {
                 category: "invalid".to_string(),
                 status: 400,
+                message,
+                exception: true,
+                ..Default::default()
+            },
+            Error::ProcessingLimit { message } => HttpError {
+                category: "processing_limit".to_string(),
+                status: 429,
                 message,
                 exception: true,
                 ..Default::default()

@@ -3,4 +3,9 @@ name = "tibba-state"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+name = "tibba_state"
+path = "src/lib.rs"
+
 [dependencies]
+tokio = { workspace = true }

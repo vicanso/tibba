@@ -12,8 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-mod app_state;
-mod ctx;
+use std::sync::Arc;
+// use std::time::Instant;
 
-pub use app_state::*;
-pub use ctx::*;
+// Request Context
+#[derive(Debug, Clone)]
+struct Context {
+    // device_id: String,
+    // trace_id: String,
+    // start_time: Instant,
+    // account: Option<String>,
+}
+
+tokio::task_local! {
+    pub static CTX: Arc<Context>;
+}

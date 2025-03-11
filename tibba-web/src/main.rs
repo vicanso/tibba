@@ -13,19 +13,36 @@
 // limitations under the License.
 
 use crate::config::must_get_config;
+use crate::state::get_app_state;
 use axum::Router;
 use axum::error_handling::HandleErrorLayer;
+use axum::middleware::from_fn_with_state;
 use axum::routing::get;
 use std::env;
 use std::net::SocketAddr;
 use std::str::FromStr;
 use tibba_error::handle_error;
 use tibba_hook::run_before_tasks;
+use tibba_middleware::processing_limit;
 use tower::ServiceBuilder;
 use tracing::{Level, error, info};
 use tracing_subscriber::FmtSubscriber;
 
 mod config;
+mod state;
+
+// async fn print_request_response(
+//     State(state): State<&AppState>,
+//     req: Request,
+//     next: Next,
+// ) -> Result<impl IntoResponse, (StatusCode, String)> {
+//     println!(">>>>>>>>>>>>>>");
+//     println!("processing: {}", state.get_processing());
+//     println!("processing: {:?}", state.get_started_at());
+//     let res = next.run(req).await;
+
+//     Ok(res)
+// }
 
 fn init_logger() {
     let mut level = Level::INFO;
@@ -60,10 +77,12 @@ async fn run() {
     }
     let app_config = must_get_config();
     let basic_config = app_config.new_basic_config().unwrap();
+
     let app = Router::new().route("/", get(|| async {})).layer(
         ServiceBuilder::new()
             .layer(HandleErrorLayer::new(handle_error))
-            .timeout(basic_config.timeout),
+            .timeout(basic_config.timeout)
+            .layer(from_fn_with_state(get_app_state(), processing_limit)),
     );
 
     info!("listening on http://{}/", basic_config.listen);

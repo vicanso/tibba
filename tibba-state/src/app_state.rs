@@ -37,10 +37,10 @@ impl AppState {
     pub fn get_processing_limit(&self) -> i32 {
         self.processing_limit
     }
-    pub fn increase_processing(&self) -> i32 {
+    pub fn inc_processing(&self) -> i32 {
         self.processing.fetch_add(1, Ordering::Relaxed)
     }
-    pub fn decrease_processing(&self) -> i32 {
+    pub fn dec_processing(&self) -> i32 {
         self.processing.fetch_add(-1, Ordering::Relaxed)
     }
     pub fn get_processing(&self) -> i32 {

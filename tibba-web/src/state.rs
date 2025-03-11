@@ -12,8 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-mod app_state;
-mod ctx;
+use crate::config::must_get_config;
+use once_cell::sync::OnceCell;
+use tibba_state::AppState;
 
-pub use app_state::*;
-pub use ctx::*;
+static STATE: OnceCell<AppState> = OnceCell::new();
+
+pub fn get_app_state() -> &'static AppState {
+    STATE.get_or_init(|| {
+        let app_config = must_get_config();
+        let basic_config = app_config.new_basic_config().unwrap();
+        AppState::new(basic_config.processing_limit)
+    })
+}
