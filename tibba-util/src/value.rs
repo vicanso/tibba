@@ -12,12 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-mod common;
-mod entry;
-mod limit;
-mod stats;
+use serde_json::Value;
 
-pub use common::*;
-pub use entry::*;
-pub use limit::*;
-pub use stats::*;
+pub fn json_get(data: &[u8], key: &str) -> String {
+    let message = if let Ok(value) = serde_json::from_slice::<Value>(data) {
+        if let Some(value) = value.get(key) {
+            value.as_str().map_or(value.to_string(), |s| s.to_string())
+        } else {
+            "".to_string()
+        }
+    } else {
+        "".to_string()
+    };
+    // if message is null, return ""
+    if message.to_lowercase() == "null" {
+        return "".to_string();
+    }
+    message
+}

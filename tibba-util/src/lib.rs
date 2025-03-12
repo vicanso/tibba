@@ -58,8 +58,10 @@ mod compression;
 mod datetime;
 mod http;
 mod string;
+mod value;
 
 pub use compression::*;
 pub use datetime::*;
 pub use http::*;
 pub use string::*;
+pub use value::*;

@@ -13,15 +13,29 @@
 // limitations under the License.
 
 use std::sync::Arc;
-// use std::time::Instant;
+use std::time::{Duration, Instant};
 
 // Request Context
 #[derive(Debug, Clone)]
-struct Context {
-    // device_id: String,
-    // trace_id: String,
-    // start_time: Instant,
-    // account: Option<String>,
+pub struct Context {
+    pub device_id: String,
+    pub trace_id: String,
+    start_time: Instant,
+    account: Option<String>,
+}
+
+impl Context {
+    pub fn new(device_id: &str, trace_id: &str) -> Self {
+        Self {
+            device_id: device_id.to_string(),
+            trace_id: trace_id.to_string(),
+            start_time: Instant::now(),
+            account: None,
+        }
+    }
+    pub fn elapsed(&self) -> Duration {
+        self.start_time.elapsed()
+    }
 }
 
 tokio::task_local! {

@@ -16,8 +16,10 @@ use axum::extract::Request;
 use axum::extract::State;
 use axum::middleware::Next;
 use axum::response::IntoResponse;
-use tibba_error::Error;
+use scopeguard::defer;
+use tibba_error::{Error, new_exception_error_with_status};
 use tibba_state::AppState;
+use tracing::debug;
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -26,12 +28,21 @@ pub async fn processing_limit(
     req: Request,
     next: Next,
 ) -> Result<impl IntoResponse> {
+    debug!(category = "middleware", "--> processing_limit");
+    defer!(debug!(category = "middleware", "<-- processing_limit"););
+    let limit = state.get_processing_limit();
+    // limit < 0 means no limit
+    if limit < 0 {
+        let res = next.run(req).await;
+        return Ok(res);
+    }
     let count = state.inc_processing() + 1;
-    if count > state.get_processing_limit() {
+    if count > limit {
         state.dec_processing();
-        return Err(Error::ProcessingLimit {
-            message: "Too many requests".to_string(),
-        });
+        return Err(new_exception_error_with_status(
+            "Too many requests".to_string(),
+            429,
+        ));
     }
     let res = next.run(req).await;
     state.dec_processing();

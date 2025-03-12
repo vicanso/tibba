@@ -23,20 +23,7 @@ use tracing::error;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
-    Config {
-        source: tibba_config::Error,
-    },
-    Http {
-        error: HttpError,
-    },
-    #[snafu(display("{message}"))]
-    Invalid {
-        message: String,
-    },
-    #[snafu(display("{message}"))]
-    ProcessingLimit {
-        message: String,
-    },
+    Http { error: HttpError },
 }
 
 impl From<HttpError> for Error {
@@ -65,27 +52,6 @@ impl IntoResponse for Error {
     fn into_response(self) -> Response {
         let e = match self {
             Error::Http { error } => error,
-            Error::Config { source } => HttpError {
-                category: "config".to_string(),
-                status: 500,
-                message: source.to_string(),
-                exception: true,
-                ..Default::default()
-            },
-            Error::Invalid { message } => HttpError {
-                category: "invalid".to_string(),
-                status: 400,
-                message,
-                exception: true,
-                ..Default::default()
-            },
-            Error::ProcessingLimit { message } => HttpError {
-                category: "processing_limit".to_string(),
-                status: 429,
-                message,
-                exception: true,
-                ..Default::default()
-            },
         };
 
         let status = StatusCode::from_u16(e.status).unwrap_or(StatusCode::BAD_REQUEST);
@@ -101,10 +67,29 @@ pub fn new_error(message: String) -> Error {
     new_error_with_status(message, 400)
 }
 
+pub fn new_error_with_category(message: String, category: String) -> Error {
+    HttpError {
+        message,
+        category,
+        ..Default::default()
+    }
+    .into()
+}
+
 pub fn new_error_with_status(message: String, status: u16) -> Error {
     HttpError {
         message,
         status,
+        ..Default::default()
+    }
+    .into()
+}
+
+pub fn new_exception_error_with_status(message: String, status: u16) -> Error {
+    HttpError {
+        message,
+        status,
+        exception: true,
         ..Default::default()
     }
     .into()

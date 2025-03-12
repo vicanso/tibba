@@ -10,5 +10,12 @@ path = "src/lib.rs"
 
 [dependencies]
 axum = { workspace = true }
+axum-extra = { workspace = true }
+axum-client-ip = { workspace = true }
+urlencoding = { workspace = true }
+tracing = { workspace = true }
+scopeguard = { workspace = true }
+tokio = { workspace = true }
 tibba-state = { path = "../tibba-state" }
 tibba-error = { path = "../tibba-error" }
+tibba-util = { path = "../tibba-util" }

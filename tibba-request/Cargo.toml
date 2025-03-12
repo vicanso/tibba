@@ -1,0 +1,23 @@
+[package]
+name = "tibba-request"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "tibba_request"
+path = "src/lib.rs"
+
+[dependencies]
+tokio = { workspace = true }
+reqwest = { workspace = true }
+async-trait = { workspace = true }
+bytes = { workspace = true }
+snafu = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true }
+axum = { workspace = true }
+serde_json = { workspace = true }
+tibba-util = { path = "../tibba-util" }
+
+[dev-dependencies]
+pretty_assertions = "1.4.1"

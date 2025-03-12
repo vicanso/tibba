@@ -16,6 +16,9 @@ lz4_flex = { workspace = true }
 zstd = { workspace = true }
 axum = { workspace = true }
 http-body-util = { workspace = true }
+axum-extra = { workspace = true }
+cookie = { workspace = true }
+serde_json = { workspace = true }
 
 [dev-dependencies]
 pretty_assertions = "1.4.1"

@@ -11,6 +11,7 @@ tibba-hook = { path = "../tibba-hook" }
 tibba-util = { path = "../tibba-util" }
 tibba-state = { path = "../tibba-state" }
 tibba-middleware = { path = "../tibba-middleware" }
+tibba-request = { path = "../tibba-request" }
 time = "0.3.39"
 tokio = { workspace = true }
 tracing = { workspace = true }

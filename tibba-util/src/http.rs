@@ -15,7 +15,10 @@
 use super::Error;
 use axum::body::{Body, Bytes};
 use axum::http::{HeaderMap, HeaderValue, header, header::HeaderName};
+use axum_extra::extract::cookie::{Cookie, CookieJar};
+use cookie::CookieBuilder;
 use http_body_util::BodyExt;
+use nanoid::nanoid;
 use std::collections::HashMap;
 use std::str::FromStr;
 
@@ -78,4 +81,21 @@ pub async fn read_http_body(body: Body) -> Result<Bytes> {
         .map_err(|e| Error::Axum { source: e })?
         .to_bytes();
     Ok(bytes)
+}
+
+static DEVICE_ID_NAME: &str = "device";
+pub fn get_device_id_from_cookie(jar: &CookieJar) -> String {
+    if let Some(value) = jar.get(DEVICE_ID_NAME) {
+        return value.value().to_string();
+    }
+    "".to_string()
+}
+
+pub fn generate_device_id_cookie() -> CookieBuilder<'static> {
+    let expires =
+        cookie::time::OffsetDateTime::now_utc().saturating_add(cookie::time::Duration::weeks(52));
+    Cookie::build((DEVICE_ID_NAME, nanoid!(10)))
+        .http_only(true)
+        .expires(expires)
+        .path("/")
 }

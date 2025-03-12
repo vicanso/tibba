@@ -23,7 +23,8 @@ use std::net::SocketAddr;
 use std::str::FromStr;
 use tibba_error::handle_error;
 use tibba_hook::run_before_tasks;
-use tibba_middleware::processing_limit;
+use tibba_middleware::{entry, processing_limit, stats};
+use tibba_request::{CommonInterceptor, InstanceClientBuilder};
 use tower::ServiceBuilder;
 use tracing::{Level, error, info};
 use tracing_subscriber::FmtSubscriber;
@@ -31,22 +32,9 @@ use tracing_subscriber::FmtSubscriber;
 mod config;
 mod state;
 
-// async fn print_request_response(
-//     State(state): State<&AppState>,
-//     req: Request,
-//     next: Next,
-// ) -> Result<impl IntoResponse, (StatusCode, String)> {
-//     println!(">>>>>>>>>>>>>>");
-//     println!("processing: {}", state.get_processing());
-//     println!("processing: {:?}", state.get_started_at());
-//     let res = next.run(req).await;
-
-//     Ok(res)
-// }
-
 fn init_logger() {
     let mut level = Level::INFO;
-    if let Ok(log_level) = env::var("LOG_LEVEL") {
+    if let Ok(log_level) = env::var("RUST_LOG") {
         if let Ok(value) = Level::from_str(log_level.as_str()) {
             level = value;
         }
@@ -70,6 +58,9 @@ fn init_logger() {
 
 #[tokio::main]
 async fn run() {
+    let builder: InstanceClientBuilder<CommonInterceptor> =
+        InstanceClientBuilder::builder("http://localhost:8080");
+    let _request = builder.build().unwrap();
     // only use unwrap in run function
     if let Err(e) = run_before_tasks().await {
         error!(category = "run_before_tasks", message = e.to_string(),);
@@ -79,9 +70,12 @@ async fn run() {
     let basic_config = app_config.new_basic_config().unwrap();
 
     let app = Router::new().route("/", get(|| async {})).layer(
+        // service build layer execute by add order
         ServiceBuilder::new()
             .layer(HandleErrorLayer::new(handle_error))
             .timeout(basic_config.timeout)
+            .layer(from_fn_with_state(get_app_state(), entry))
+            .layer(from_fn_with_state(get_app_state(), stats))
             .layer(from_fn_with_state(get_app_state(), processing_limit)),
     );
 

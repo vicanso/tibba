@@ -16,7 +16,7 @@ use ctor::ctor;
 use once_cell::sync::OnceCell;
 use rust_embed::RustEmbed;
 use tibba_config::{AppConfig, new_app_config};
-use tibba_error::Error;
+use tibba_error::{Error, new_error_with_category};
 use tibba_hook::register_before_task;
 use tracing::info;
 
@@ -33,16 +33,17 @@ fn new_config() -> Result<&'static AppConfig> {
         let mut arr = vec![];
         for name in ["default.toml", &format!("{}.toml", tibba_util::get_env())] {
             let data = Configs::get(name)
-                .ok_or(Error::Invalid {
-                    message: format!("{} not found", name),
-                })?
+                .ok_or(new_error_with_category(
+                    format!("{} not found", name),
+                    "config".to_string(),
+                ))?
                 .data;
             info!(category = "config", "load config from {}", name);
             arr.push(std::str::from_utf8(&data).unwrap_or_default().to_string());
         }
 
         new_app_config(arr.iter().map(|s| s.as_str()).collect(), Some("TIBBA_WEB"))
-            .map_err(|e| Error::Config { source: e })
+            .map_err(|e| new_error_with_category(e.to_string(), "config".to_string()))
     })
 }
 
