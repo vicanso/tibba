@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use chrono::{DateTime, Local, offset};
+use std::time::{Duration, Instant};
 
 pub fn now() -> String {
     Local::now().to_string()
@@ -27,5 +28,19 @@ pub fn from_timestamp(secs: i64, nsecs: u32) -> String {
         value.with_timezone(&offset::Local).to_string()
     } else {
         "".to_string()
+    }
+}
+
+pub fn new_get_duration() -> impl FnOnce() -> Duration {
+    let start = Instant::now();
+    move || -> Duration { start.elapsed() }
+}
+
+pub fn new_get_duration_ms() -> impl FnOnce() -> u32 {
+    let start = Instant::now();
+    move || -> u32 {
+        let value = start.elapsed().as_millis() as u32;
+        // the minimum value is 1, avoid the default value
+        value.max(1)
     }
 }

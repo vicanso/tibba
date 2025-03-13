@@ -24,7 +24,7 @@ use std::str::FromStr;
 use tibba_error::handle_error;
 use tibba_hook::run_before_tasks;
 use tibba_middleware::{entry, processing_limit, stats};
-use tibba_request::{CommonInterceptor, InstanceClientBuilder};
+use tibba_request::{ClientBuilder, Params};
 use tower::ServiceBuilder;
 use tracing::{Level, error, info};
 use tracing_subscriber::FmtSubscriber;
@@ -58,9 +58,23 @@ fn init_logger() {
 
 #[tokio::main]
 async fn run() {
-    let builder: InstanceClientBuilder<CommonInterceptor> =
-        InstanceClientBuilder::builder("http://localhost:8080");
-    let _request = builder.build().unwrap();
+    let client = ClientBuilder::new("baidu")
+        .base_url("https://baidu.com")
+        .timeout(std::time::Duration::from_secs(10))
+        .common_interceptor()
+        .build()
+        .unwrap();
+    let resp = client
+        .request_raw(Params::<Vec<(&str, &str)>, ()> {
+            url: "/?a=eYtFiWeWeq",
+            method: axum::http::Method::GET,
+            query: Some(&vec![("b", "123")]),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    info!("response body size: {}", resp.len());
+
     // only use unwrap in run function
     if let Err(e) = run_before_tasks().await {
         error!(category = "run_before_tasks", message = e.to_string(),);

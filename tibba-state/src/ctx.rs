@@ -21,7 +21,7 @@ pub struct Context {
     pub device_id: String,
     pub trace_id: String,
     start_time: Instant,
-    account: Option<String>,
+    // account: Option<String>,
 }
 
 impl Context {
@@ -30,7 +30,7 @@ impl Context {
             device_id: device_id.to_string(),
             trace_id: trace_id.to_string(),
             start_time: Instant::now(),
-            account: None,
+            // account: None,
         }
     }
     pub fn elapsed(&self) -> Duration {

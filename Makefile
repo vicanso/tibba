@@ -1,5 +1,5 @@
 lint:
-	# cargo clippy --all-targets --all -- --deny=warnings
+	cargo clippy --all-targets --all -- --deny=warnings
 
 fmt:
 	cargo fmt
