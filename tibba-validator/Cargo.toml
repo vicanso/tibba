@@ -1,0 +1,11 @@
+[package]
+name = "tibba-validator"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "tibba_validator"
+path = "src/lib.rs"
+
+[dependencies]
+validator = { workspace = true }

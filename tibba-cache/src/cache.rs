@@ -20,12 +20,17 @@ use tibba_util::{lz4_decode, lz4_encode, zstd_decode, zstd_encode};
 
 type Result<T> = std::result::Result<T, Error>;
 
+/// Redis cache implementation that provides various caching operations
 pub struct RedisCache {
+    /// Time-to-live duration for cache entries
     ttl: Duration,
+    /// Prefix added to all cache keys
     prefix: String,
+    /// Redis connection pool
     pool: &'static RedisPool,
 }
 
+/// Builder pattern implementation for RedisCache
 pub struct RedisCacheBuilder {
     ttl: Duration,
     prefix: String,
@@ -33,6 +38,10 @@ pub struct RedisCacheBuilder {
 }
 
 impl RedisCacheBuilder {
+    /// Creates a new RedisCacheBuilder with default settings:
+    /// - TTL: 10 minutes
+    /// - Empty prefix
+    /// - Given Redis pool
     pub fn new(pool: &'static RedisPool) -> Self {
         Self {
             ttl: Duration::from_secs(10 * 60),
@@ -40,14 +49,22 @@ impl RedisCacheBuilder {
             pool,
         }
     }
+
+    /// Sets the time-to-live duration for cache entries
+    /// Returns self for method chaining
     pub fn ttl(mut self, ttl: Duration) -> Self {
         self.ttl = ttl;
         self
     }
+
+    /// Sets the prefix for all cache keys
+    /// Returns self for method chaining
     pub fn prefix(mut self, prefix: String) -> Self {
         self.prefix = prefix;
         self
     }
+
+    /// Constructs and returns a new RedisCache instance with the configured settings
     pub fn build(self) -> RedisCache {
         RedisCache {
             ttl: self.ttl,
@@ -58,13 +75,26 @@ impl RedisCacheBuilder {
 }
 
 impl RedisCache {
+    /// Generates the full cache key by combining prefix (if any) with the provided key
+    /// # Arguments
+    /// * `key` - The base key to be prefixed
+    /// # Returns
+    /// * If prefix is empty: returns the original key
+    /// * If prefix exists: returns prefix + key
     fn get_key(&self, key: &str) -> String {
         if self.prefix.is_empty() {
             return key.to_string();
         }
         self.prefix.to_string() + key
     }
-    /// get value from redis
+    /// Retrieves a raw value from Redis for the given key
+    /// # Type Parameters
+    /// * `T` - The type to deserialize the Redis value into
+    /// # Arguments
+    /// * `key` - The key to retrieve
+    /// # Returns
+    /// * `Ok(T)` - Successfully retrieved and converted value
+    /// * `Err(Error)` - Redis error or value conversion error
     async fn get_value<T: redis::FromRedisValue>(&self, key: &str) -> Result<T> {
         let mut conn = self.pool.get().await?;
         let result = cmd("GET")
@@ -78,7 +108,13 @@ impl RedisCache {
 
         Ok(result)
     }
-    /// set value to redis
+    /// Stores a raw value in Redis with optional TTL
+    /// # Type Parameters
+    /// * `T` - The type of value to store, must be convertible to Redis data
+    /// # Arguments
+    /// * `key` - The key under which to store the value
+    /// * `value` - The value to store
+    /// * `ttl` - Optional time-to-live duration (uses instance default if None)
     async fn set_value<T: redis::ToRedisArgs>(
         &self,
         key: &str,
@@ -100,8 +136,14 @@ impl RedisCache {
             })?;
         Ok(())
     }
-    /// Lock a key with a ttl, if the key is locked, return false
-    /// if the key is not locked, set the key to true and return true
+    /// Attempts to acquire a distributed lock using Redis SET NX command
+    /// # Arguments
+    /// * `key` - The lock key
+    /// * `ttl` - Optional lock duration (uses instance default if None)
+    /// # Returns
+    /// * `Ok(true)` - Lock was successfully acquired
+    /// * `Ok(false)` - Lock already exists
+    /// * `Err(Error)` - Redis operation failed
     pub async fn lock(&self, key: &str, ttl: Option<Duration>) -> Result<bool> {
         let mut conn = self.pool.get().await?;
         let k = self.get_key(key);
@@ -120,7 +162,12 @@ impl RedisCache {
             })?;
         Ok(result)
     }
-    /// Delete a key from redis
+    /// Removes a key and its value from Redis
+    /// # Arguments
+    /// * `key` - The key to delete
+    /// # Returns
+    /// * `Ok(())` - Key was successfully deleted (or didn't exist)
+    /// * `Err(Error)` - Redis operation failed
     pub async fn del(&self, key: &str) -> Result<()> {
         let mut conn = self.pool.get().await?;
         let k = self.get_key(key);
@@ -135,10 +182,16 @@ impl RedisCache {
             })?;
         Ok(())
     }
-    /// Increment a key by delta.
-    /// If the key does not exist, set the key to 0, the ttl of cache, and then increment by delta
-    /// If the key exists, increment by delta.
-    /// Return the new value of the key.
+    /// Atomically increments a counter by delta
+    /// # Arguments
+    /// * `key` - The counter key
+    /// * `delta` - Amount to increment by (can be negative)
+    /// * `ttl` - Optional time-to-live for the counter
+    /// # Returns
+    /// * `Ok(i64)` - The new value after incrementing
+    /// * `Err(Error)` - Redis operation failed
+    /// # Notes
+    /// If the key doesn't exist, it's initialized to 0 before incrementing
     pub async fn incr(&self, key: &str, delta: i64, ttl: Option<Duration>) -> Result<i64> {
         let mut conn = self.pool.get().await?;
         let k = self.get_key(key);
@@ -160,7 +213,10 @@ impl RedisCache {
             })?;
         Ok(count)
     }
-    // Set value to redis
+    /// Sets a value in Redis with an optional TTL
+    /// - If TTL is None, uses the default TTL configured for this cache
+    /// - Value type must implement ToRedisArgs trait
+    /// - Key will be automatically prefixed if a prefix is configured
     pub async fn set<T: redis::ToRedisArgs>(
         &self,
         key: &str,
@@ -170,12 +226,18 @@ impl RedisCache {
         let k = self.get_key(key);
         self.set_value(&k, value, ttl).await
     }
-    /// Get value from redis
+    /// Retrieves a value from Redis
+    /// - Value type must implement FromRedisValue trait
+    /// - Key will be automatically prefixed if a prefix is configured
+    /// - Returns Error if key doesn't exist or value can't be converted to T
     pub async fn get<T: redis::FromRedisValue>(&self, key: &str) -> Result<T> {
         let k = self.get_key(key);
         self.get_value::<T>(&k).await
     }
-    /// Set struct value to redis
+    /// Serializes and stores a struct in Redis as JSON
+    /// - Value must implement Serialize trait
+    /// - Optional TTL (uses default if None)
+    /// - Key will be automatically prefixed
     pub async fn set_struct<T>(&self, key: &str, value: &T, ttl: Option<Duration>) -> Result<()>
     where
         T: ?Sized + Serialize,
@@ -188,7 +250,11 @@ impl RedisCache {
         self.set_value(&k, &value, ttl).await?;
         Ok(())
     }
-    /// Get struct value from redis
+    /// Retrieves and deserializes a struct from Redis
+    /// - Type must implement DeserializeOwned trait
+    /// - Returns None if key doesn't exist
+    /// - Returns Error if deserialization fails
+    /// - Key will be automatically prefixed
     pub async fn get_struct<T>(&self, key: &str) -> Result<Option<T>>
     where
         T: DeserializeOwned,
@@ -208,7 +274,15 @@ impl RedisCache {
 
         Ok(Some(result))
     }
-    /// Get ttl from redis
+    /// Gets the remaining time-to-live for a key
+    /// # Arguments
+    /// * `key` - The key to check
+    /// # Returns
+    /// * `Ok(seconds)` where:
+    ///   * `seconds > 0` - Remaining time in seconds
+    ///   * `seconds = -2` - Key does not exist
+    ///   * `seconds = -1` - Key exists but has no expiry
+    /// * `Err(Error)` - Redis operation failed
     pub async fn ttl(&self, key: &str) -> Result<i32> {
         let mut conn = self.pool.get().await?;
         let k = self.get_key(key);
@@ -222,7 +296,14 @@ impl RedisCache {
             })?;
         Ok(result)
     }
-    /// Get and delete a key from redis
+    /// Atomically retrieves a value and deletes it from Redis
+    /// # Type Parameters
+    /// * `T` - The type to deserialize the Redis value into
+    /// # Arguments
+    /// * `key` - The key to get and delete
+    /// # Returns
+    /// * `Ok(T)` - The value before deletion
+    /// * `Err(Error)` - Redis operation failed or value conversion error
     pub async fn get_del<T: redis::FromRedisValue>(&self, key: &str) -> Result<T> {
         let k = self.get_key(key);
         let mut conn = self.pool.get().await?;
@@ -239,7 +320,15 @@ impl RedisCache {
             })?;
         Ok(value)
     }
-    /// Set struct value to redis with lz4 compression
+    /// Serializes a struct to JSON, compresses it with LZ4, and stores in Redis
+    /// # Type Parameters
+    /// * `T` - The struct type to serialize
+    /// # Arguments
+    /// * `key` - The key under which to store the compressed data
+    /// * `value` - The struct to serialize and compress
+    /// * `ttl` - Optional time-to-live duration
+    /// # Notes
+    /// Uses LZ4 compression which favors speed over compression ratio
     pub async fn set_struct_lz4<T>(&self, key: &str, value: &T, ttl: Option<Duration>) -> Result<()>
     where
         T: ?Sized + Serialize,
@@ -253,7 +342,15 @@ impl RedisCache {
         self.set_value(&k, &buf, ttl).await?;
         Ok(())
     }
-    /// Get struct value from redis with lz4 compression
+    /// Retrieves, decompresses (LZ4), and deserializes a struct from Redis
+    /// # Type Parameters
+    /// * `T` - The struct type to deserialize into
+    /// # Arguments
+    /// * `key` - The key to retrieve
+    /// # Returns
+    /// * `Ok(Some(T))` - Successfully retrieved and deserialized value
+    /// * `Ok(None)` - Key doesn't exist
+    /// * `Err(Error)` - Redis, decompression, or deserialization error
     pub async fn get_struct_lz4<T>(&self, key: &str) -> Result<Option<T>>
     where
         T: DeserializeOwned,
@@ -274,7 +371,15 @@ impl RedisCache {
         })?;
         Ok(Some(result))
     }
-    /// Set struct value to redis with zstd compression
+    /// Serializes a struct to JSON, compresses it with Zstd, and stores in Redis
+    /// # Type Parameters
+    /// * `T` - The struct type to serialize
+    /// # Arguments
+    /// * `key` - The key under which to store the compressed data
+    /// * `value` - The struct to serialize and compress
+    /// * `ttl` - Optional time-to-live duration
+    /// # Notes
+    /// Uses Zstd compression which provides better compression ratios than LZ4
     pub async fn set_struct_zstd<T>(
         &self,
         key: &str,
@@ -293,7 +398,15 @@ impl RedisCache {
         self.set_value(&k, &buf, ttl).await?;
         Ok(())
     }
-    /// Get struct value from redis with zstd compression
+    /// Retrieves, decompresses (Zstd), and deserializes a struct from Redis
+    /// # Type Parameters
+    /// * `T` - The struct type to deserialize into
+    /// # Arguments
+    /// * `key` - The key to retrieve
+    /// # Returns
+    /// * `Ok(Some(T))` - Successfully retrieved and deserialized value
+    /// * `Ok(None)` - Key doesn't exist
+    /// * `Err(Error)` - Redis, decompression, or deserialization error
     pub async fn get_struct_zstd<T>(&self, key: &str) -> Result<Option<T>>
     where
         T: DeserializeOwned,

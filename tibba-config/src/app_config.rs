@@ -12,41 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use super::Error;
 use config::{Config, File, FileFormat, FileSourceString};
-use snafu::{ResultExt, Snafu};
 use std::collections::HashMap;
 use std::env;
 use std::time::Duration;
 use substring::Substring;
+use tibba_validator::x_listen_addr;
 use url::Url;
 use validator::Validate;
 
-#[derive(Debug, Snafu)]
-pub enum Error {
-    #[snafu(display("{category}, url parse error {source}"))]
-    Url {
-        category: String,
-        source: url::ParseError,
-    },
-    #[snafu(display("{category}, config error {source}"))]
-    Config {
-        category: String,
-        source: config::ConfigError,
-    },
-    #[snafu(display("{category}, validate error {source}"))]
-    Validate {
-        category: String,
-        source: validator::ValidationErrors,
-    },
-    #[snafu(display("{category}, parse duration error {source}"))]
-    ParseDuration {
-        category: String,
-        source: humantime::DurationError,
-    },
-}
-
 type Result<T> = std::result::Result<T, Error>;
 
+// Helper function to convert string to i32, returns 0 if parsing fails
 fn convert_string_to_i32(value: String) -> i32 {
     if let Ok(result) = value.parse::<i32>() {
         return result;
@@ -61,25 +39,33 @@ fn convert_string_to_i32(value: String) -> i32 {
 //     false
 // }
 
+// AppConfig struct represents the application configuration
+// It manages configuration settings with environment variable support
 #[derive(Debug, Clone, Default)]
 pub struct AppConfig {
+    // Prefix for environment variables
     env_prefix: String,
+    // Prefix for configuration keys
     prefix: String,
+    // Nested HashMap storing configuration values
     settings: HashMap<String, HashMap<String, String>>,
 }
 
 impl AppConfig {
+    // Sets a new prefix and returns a new AppConfig instance
     fn set_prefix(&self, prefix: &str) -> AppConfig {
         let mut config = self.clone();
         config.prefix = prefix.to_string();
         config
     }
+    // Constructs the full configuration key using the prefix
     fn get_key(&self, key: &str) -> String {
         if self.prefix.is_empty() {
             return key.to_string();
         }
         format!("{}.{key}", self.prefix)
     }
+    // Retrieves a configuration value by key with optional default value
     fn get(&self, key: &str, default_value: Option<String>) -> String {
         let mut s = "".to_string();
         let k = self.get_key(key);
@@ -119,6 +105,7 @@ impl AppConfig {
     //     }
     //     default_value.unwrap_or_default()
     // }
+    // Retrieves value from environment variable first, falls back to config file
     fn get_from_env_first(&self, key: &str, default_value: Option<String>) -> String {
         let k = self.get_key(key);
         let mut env_key = k.replace('.', "_").to_uppercase();
@@ -130,6 +117,7 @@ impl AppConfig {
         }
         self.get(key, default_value)
     }
+    // Similar to get_from_env_first but converts the value to integer
     fn get_int_from_env_first(&self, key: &str, default_value: Option<i32>) -> i32 {
         let value = self.get_from_env_first(key, None);
         if !value.is_empty() {
@@ -144,6 +132,7 @@ impl AppConfig {
     //     }
     //     default_value.unwrap_or_default()
     // }
+    // Similar to get_from_env_first but converts the value to Duration
     fn get_duration_from_env_first(&self, key: &str, default_value: Option<Duration>) -> Duration {
         let value = self.get_from_env_first(key, None);
         let v = default_value.unwrap_or_default();
@@ -154,10 +143,12 @@ impl AppConfig {
     }
 }
 
+// Creates a new File source from TOML string data
 fn new_source(data: &str) -> File<FileSourceString, FileFormat> {
     File::from_str(data, FileFormat::Toml)
 }
 
+// Creates a new AppConfig instance from multiple TOML configuration strings
 pub fn new_app_config(data: Vec<&str>, env_prefix: Option<&str>) -> Result<AppConfig> {
     let mut builder = Config::builder();
     for d in data {
@@ -167,12 +158,14 @@ pub fn new_app_config(data: Vec<&str>, env_prefix: Option<&str>) -> Result<AppCo
     }
     let settings = builder
         .build()
-        .context(ConfigSnafu {
+        .map_err(|e| Error::Config {
             category: "config_builder".to_string(),
+            source: e,
         })?
         .try_deserialize::<HashMap<String, HashMap<String, String>>>()
-        .context(ConfigSnafu {
+        .map_err(|e| Error::Config {
             category: "config_deserialize".to_string(),
+            source: e,
         })?;
     Ok(AppConfig {
         env_prefix: env_prefix.unwrap_or_default().to_string(),
@@ -181,10 +174,12 @@ pub fn new_app_config(data: Vec<&str>, env_prefix: Option<&str>) -> Result<AppCo
     })
 }
 
+// BasicConfig struct defines the basic application settings
+// with validation rules for each field
 #[derive(Debug, Clone, Default, Validate)]
 pub struct BasicConfig {
     // listen address
-    #[validate(length(min = 1))]
+    #[validate(custom(function = "x_listen_addr"))]
     pub listen: String,
     // processing limit
     #[validate(range(min = 0, max = 100000))]
@@ -206,13 +201,16 @@ impl AppConfig {
             timeout,
             secret: config.get_from_env_first("secret", None),
         };
-        basic_config.validate().context(ValidateSnafu {
+        basic_config.validate().map_err(|e| Error::Validate {
             category: "basic".to_string(),
+            source: e,
         })?;
         Ok(basic_config)
     }
 }
 
+// RedisConfig struct defines Redis-specific configuration
+// with validation rules for connection parameters
 #[derive(Debug, Clone, Default, Validate)]
 pub struct RedisConfig {
     // redis nodes
@@ -229,6 +227,8 @@ pub struct RedisConfig {
 }
 
 impl AppConfig {
+    // Creates a new RedisConfig instance from the configuration
+    // Parses Redis URI and extracts connection parameters
     pub fn new_redis_config(&self) -> Result<RedisConfig> {
         let config = self.clone().set_prefix("redis");
         let uri = config.get_from_env_first("uri", None);
@@ -246,8 +246,9 @@ impl AppConfig {
         for item in host.split(',') {
             nodes.push(uri.replace(host, item));
         }
-        let info = Url::parse(&nodes[0]).context(UrlSnafu {
+        let info = Url::parse(&nodes[0]).map_err(|e| Error::Url {
             category: "redis".to_string(),
+            source: e,
         })?;
         let mut redis_config = RedisConfig {
             nodes,
@@ -281,8 +282,9 @@ impl AppConfig {
                 _ => (),
             }
         }
-        redis_config.validate().context(ValidateSnafu {
+        redis_config.validate().map_err(|e| Error::Validate {
             category: "redis".to_string(),
+            source: e,
         })?;
         Ok(redis_config)
     }

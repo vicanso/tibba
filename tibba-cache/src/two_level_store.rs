@@ -20,39 +20,73 @@ use std::time::Duration;
 
 type Result<T> = std::result::Result<T, Error>;
 
-// Calculate expiration time aligned to interval boundaries
+/// Calculates TTL (Time-To-Live) aligned to interval boundaries
+/// # Arguments
+/// * `unit` - The base duration unit to align with
+/// # Returns
+/// * Duration - Calculated TTL that aligns with the unit boundaries
+/// # Notes
+/// * If remaining time is less than 1/10 of unit, extends to next interval
+/// * Helps prevent cache stampede by aligning expiration times
 fn get_ttl_by_unit(unit: Duration) -> Duration {
     let now = Local::now();
-    // Calculate the remaining time
+    // Calculate the remaining time until next interval
     let seconds = unit.as_secs() - (now.timestamp() as u64 % unit.as_secs());
-    // If less than 1/10 of the unit, extend the expiration time
+    // If less than 1/10 of the unit, extend to next interval
     if seconds < unit.as_secs() / 10 {
         return Duration::from_secs(unit.as_secs() + seconds);
     }
     Duration::from_secs(seconds)
 }
 
+/// Gets current timestamp in seconds
+/// # Returns
+/// * `i64` - Current Unix timestamp
 fn now() -> i64 {
     Local::now().timestamp()
 }
 
+/// Wrapper struct that adds expiration time to cached data
+/// # Type Parameters
+/// * `T` - The type of data being cached
 #[derive(Clone)]
 struct ExpiredCache<T> {
+    /// The actual cached data
     data: T,
+    /// Unix timestamp when this cache entry expires
     expired_at: i64,
 }
+
 impl<T> Expired for ExpiredCache<T> {
+    /// Checks if the cached data has expired
+    /// # Returns
+    /// * `true` - Cache entry has not expired yet
+    /// * `false` - Cache entry has expired
     fn is_expired(&self) -> bool {
         now() < self.expired_at
     }
 }
 
+/// Two-level cache implementation combining in-memory LRU cache and Redis
+/// # Type Parameters
+/// * `T` - The type of data being cached
 pub struct TwoLevelStore<T> {
+    /// First level: In-memory LRU cache with TTL
     lru: TtlLruStore<ExpiredCache<T>>,
+    /// Default TTL for cache entries
     ttl: Duration,
+    /// Second level: Redis cache
     redis: RedisCache,
 }
+
 impl<T: Clone + Serialize + DeserializeOwned> TwoLevelStore<T> {
+    /// Creates a new TwoLevelStore instance
+    /// # Arguments
+    /// * `cache` - Redis cache instance for second level storage
+    /// * `size` - Maximum number of entries in the LRU cache
+    /// * `ttl` - Default time-to-live for cache entries
+    /// # Returns
+    /// * New TwoLevelStore instance
     pub fn new(cache: RedisCache, size: NonZeroUsize, ttl: Duration) -> Self {
         TwoLevelStore {
             lru: TtlLruStore::new(size),
@@ -60,6 +94,17 @@ impl<T: Clone + Serialize + DeserializeOwned> TwoLevelStore<T> {
             redis: cache,
         }
     }
+
+    /// Stores a value in both cache levels
+    /// # Arguments
+    /// * `key` - The key under which to store the value
+    /// * `value` - The value to store
+    /// # Returns
+    /// * `Ok(())` - Successfully stored in both caches
+    /// * `Err(Error)` - Failed to store in Redis
+    /// # Notes
+    /// * Calculates TTL aligned with interval boundaries
+    /// * Stores in Redis first, then LRU cache
     pub async fn set(&self, key: &str, value: T) -> Result<()> {
         // Calculate the remaining time
         let ttl = get_ttl_by_unit(self.ttl);
@@ -75,18 +120,30 @@ impl<T: Clone + Serialize + DeserializeOwned> TwoLevelStore<T> {
 
         Ok(())
     }
+
+    /// Retrieves a value from the cache
+    /// # Arguments
+    /// * `key` - The key to look up
+    /// # Returns
+    /// * `Ok(Some(T))` - Value found in either cache level
+    /// * `Ok(None)` - Value not found in either cache
+    /// * `Err(Error)` - Redis operation failed
+    /// # Notes
+    /// * Checks LRU cache first
+    /// * If not in LRU, checks Redis and updates LRU if found
+    /// * Only updates LRU if Redis TTL is within expected range
     pub async fn get(&self, key: &str) -> Result<Option<T>> {
-        // Read from lru first (get ensures it is not expired)
+        // Try LRU cache first (get ensures it is not expired)
         if let Some(value) = self.lru.get(key).await {
             return Ok(Some(value.data));
         }
+        // Try Redis if not in LRU
         let result: Option<T> = self.redis.get_struct(key).await?;
-        // If there is a value, reset to lru
+        // If found in Redis, potentially update LRU
         if let Some(ref value) = result {
             let ttl = get_ttl_by_unit(self.ttl);
-            // If ttl > self.ttl
-            // It means the data may expire, so do not cache
-            // Therefore, the scenario of caching ttl less than the default value
+            // Only cache in LRU if TTL is within expected range
+            // Prevents caching nearly-expired values
             if ttl <= self.ttl {
                 let data = ExpiredCache {
                     data: value.clone(),

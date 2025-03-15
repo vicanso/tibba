@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Import required dependencies for HTTP handling, serialization, and logging
 use axum::BoxError;
 use axum::Json;
 use axum::http::{HeaderValue, StatusCode, header};
@@ -21,17 +22,22 @@ use serde::{Deserialize, Serialize};
 use snafu::Snafu;
 use tracing::error;
 
+// Main Error enum that wraps HttpError
+// Uses Snafu for error handling boilerplate generation
 #[derive(Debug, Snafu)]
 pub enum Error {
     Http { error: HttpError },
 }
 
+// Implementation of From trait to convert HttpError into Error
 impl From<HttpError> for Error {
     fn from(error: HttpError) -> Self {
         Error::Http { error }
     }
 }
 
+// Represents an HTTP error with detailed information
+// Implements serialization for JSON responses
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct HttpError {
     // error message
@@ -48,6 +54,8 @@ pub struct HttpError {
     pub extra: Option<Vec<String>>,
 }
 
+// Implements conversion of Error into HTTP Response
+// Sets appropriate status code and headers
 impl IntoResponse for Error {
     fn into_response(self) -> Response {
         let e = match self {
@@ -63,10 +71,13 @@ impl IntoResponse for Error {
     }
 }
 
+// Creates a new Error with default status code 400 (Bad Request)
 pub fn new_error(message: String) -> Error {
     new_error_with_status(message, 400)
 }
 
+// Creates a new Error with specified category
+// Uses default values for other fields
 pub fn new_error_with_category(message: String, category: String) -> Error {
     HttpError {
         message,
@@ -76,6 +87,8 @@ pub fn new_error_with_category(message: String, category: String) -> Error {
     .into()
 }
 
+// Creates a new Error with custom status code
+// Uses default values for other fields
 pub fn new_error_with_status(message: String, status: u16) -> Error {
     HttpError {
         message,
@@ -85,6 +98,8 @@ pub fn new_error_with_status(message: String, status: u16) -> Error {
     .into()
 }
 
+// Creates a new Error marked as an exception with custom status code
+// Sets exception flag to true
 pub fn new_exception_error_with_status(message: String, status: u16) -> Error {
     HttpError {
         message,
@@ -95,14 +110,19 @@ pub fn new_exception_error_with_status(message: String, status: u16) -> Error {
     .into()
 }
 
+// Global error handler for the application
+// Processes unhandled errors and converts them into appropriate Error responses
+// Handles special cases like timeout errors
 pub async fn handle_error(
-    // `Method` and `Uri` are extractors so they can be used here
-    method: Method,
-    uri: Uri,
-    // the last argument must be the error itself
-    err: BoxError,
+    method: Method, // HTTP method of the request
+    uri: Uri,       // URI of the request
+    err: BoxError,  // The error that occurred
 ) -> Error {
+    // Log the error with request details
     error!("method:{}, uri:{}, error:{}", method, uri, err.to_string());
+
+    // Special handling for timeout errors
+    // Otherwise treats as internal server error (500)
     let (message, category, status) = if err.is::<tower::timeout::error::Elapsed>() {
         (
             "Request took too long".to_string(),
@@ -112,6 +132,8 @@ pub async fn handle_error(
     } else {
         (err.to_string(), "exception".to_string(), 500)
     };
+
+    // Create and return appropriate HttpError
     HttpError {
         message,
         category,

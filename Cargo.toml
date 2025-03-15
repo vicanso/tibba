@@ -22,6 +22,7 @@ members = [
     "tibba-request",
     "tibba-state",
     "tibba-util",
+    "tibba-validator",
     "tibba-web",
 ]
 

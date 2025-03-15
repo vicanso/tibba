@@ -2117,6 +2117,7 @@ dependencies = [
  "once_cell",
  "snafu",
  "substring",
+ "tibba-validator",
  "url",
  "validator",
 ]
@@ -2209,6 +2210,13 @@ dependencies = [
  "snafu",
  "uuid",
  "zstd",
+]
+
+[[package]]
+name = "tibba-validator"
+version = "0.1.0"
+dependencies = [
+ "validator",
 ]
 
 [[package]]

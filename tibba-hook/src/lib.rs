@@ -17,35 +17,56 @@ use once_cell::sync::Lazy;
 use std::error::Error;
 use std::pin::Pin;
 
+// Custom Result type that uses Box<dyn Error> for error handling
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
+// Type alias for a pinned, boxed Future that returns Result<()>
+// Used for async hook tasks
 type HookTask = Pin<Box<dyn Future<Output = Result<()>>>>;
 
-// Add Send bound to ensure the future can be safely shared between threads
+// Type alias for hook task functions
+// Functions that return a HookTask and can be safely shared between threads
 pub type HookTaskFuture = Box<fn() -> HookTask>;
 
-// Use Send + Sync bound for the stored futures
+// Global storage for "before" hooks using DashMap for thread-safe concurrent access
+// Stores tasks with their priorities as (u8, HookTaskFuture)
+// Key: hook name, Value: (priority, task)
 static HOOK_BEFORE_TASKS: Lazy<DashMap<String, (u8, HookTaskFuture)>> = Lazy::new(DashMap::new);
 
-// Use Send + Sync bound for the stored futures
+// Global storage for "after" hooks using DashMap for thread-safe concurrent access
+// Similar structure to HOOK_BEFORE_TASKS
 static HOOK_AFTER_TASKS: Lazy<DashMap<String, (u8, HookTaskFuture)>> = Lazy::new(DashMap::new);
 
-// register before task
+// Registers a task to be executed before the main operation
+// Parameters:
+// - name: unique identifier for the task
+// - priority: execution order (lower numbers execute first)
+// - task: the function to be executed
 pub fn register_before_task(name: &str, priority: u8, task: HookTaskFuture) {
     HOOK_BEFORE_TASKS.insert(name.to_string(), (priority, task));
 }
 
-// register after task
+// Registers a task to be executed after the main operation
+// Parameters:
+// - name: unique identifier for the task
+// - priority: execution order (lower numbers execute first)
+// - task: the function to be executed
 pub fn register_after_task(name: &str, priority: u8, task: HookTaskFuture) {
     HOOK_AFTER_TASKS.insert(name.to_string(), (priority, task));
 }
 
+// Internal function to execute a set of tasks in priority order
+// Parameters:
+// - tasks: reference to a DashMap containing the tasks to execute
 async fn run_task(tasks: &DashMap<String, (u8, HookTaskFuture)>) -> Result<()> {
+    // Extract and sort tasks by priority
     let mut names = vec![];
     for item in tasks.iter() {
         names.push((item.key().clone(), item.value().0));
     }
     names.sort_by_key(|k| k.1);
+
+    // Execute tasks in priority order
     for (name, _) in names {
         if let Some(item) = tasks.get(&name) {
             item.1().await?;
@@ -55,12 +76,12 @@ async fn run_task(tasks: &DashMap<String, (u8, HookTaskFuture)>) -> Result<()> {
     Ok(())
 }
 
-// run before tasks
+// Executes all registered "before" tasks in priority order
 pub async fn run_before_tasks() -> Result<()> {
     run_task(&HOOK_BEFORE_TASKS).await
 }
 
-// run after tasks
+// Executes all registered "after" tasks in priority order
 pub async fn run_after_tasks() -> Result<()> {
     run_task(&HOOK_AFTER_TASKS).await
 }

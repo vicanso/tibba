@@ -11,7 +11,33 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+use snafu::Snafu;
 
 mod app_config;
+
+// Error enum for handling various error types in the configuration
+#[derive(Debug, Snafu)]
+pub enum Error {
+    #[snafu(display("{category}, url parse error {source}"))]
+    Url {
+        category: String,
+        source: url::ParseError,
+    },
+    #[snafu(display("{category}, config error {source}"))]
+    Config {
+        category: String,
+        source: config::ConfigError,
+    },
+    #[snafu(display("{category}, validate error {source}"))]
+    Validate {
+        category: String,
+        source: validator::ValidationErrors,
+    },
+    #[snafu(display("{category}, parse duration error {source}"))]
+    ParseDuration {
+        category: String,
+        source: humantime::DurationError,
+    },
+}
 
 pub use app_config::*;

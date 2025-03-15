@@ -16,26 +16,58 @@ use lru::LruCache;
 use std::num::NonZeroUsize;
 use tokio::sync::RwLock;
 
+/// Trait for types that can expire
 pub trait Expired {
-    // check if the data is expired
+    /// Checks if the data has expired
+    /// # Returns
+    /// * `true` - The data has expired and should be removed
+    /// * `false` - The data is still valid
     fn is_expired(&self) -> bool;
 }
 
-/// ttl+lru based storage component
+/// A thread-safe storage component combining TTL (Time-To-Live) and LRU (Least Recently Used) caching strategies
+/// # Type Parameters
+/// * `T` - The type of values to store, must implement Expired trait
 pub struct TtlLruStore<T> {
+    /// Thread-safe LRU cache storing key-value pairs
+    /// Uses RwLock for concurrent access with multiple readers or single writer
     cache: RwLock<LruCache<String, T>>,
 }
+
 impl<T: Expired + Clone> TtlLruStore<T> {
+    /// Creates a new TtlLruStore with specified capacity
+    /// # Arguments
+    /// * `size` - Maximum number of items the cache can hold (must be non-zero)
+    /// # Returns
+    /// * A new TtlLruStore instance
     pub fn new(size: NonZeroUsize) -> Self {
         let cache: LruCache<String, T> = LruCache::new(size);
         TtlLruStore {
             cache: RwLock::new(cache),
         }
     }
+
+    /// Stores a value in the cache
+    /// # Arguments
+    /// * `key` - The key under which to store the value
+    /// * `value` - The value to store
+    /// # Notes
+    /// * If the cache is at capacity, the least recently used item will be removed
+    /// * If the key already exists, the value will be updated
     pub async fn set(&self, key: &str, value: T) {
         let cache = &mut self.cache.write().await;
         cache.put(key.to_string(), value);
     }
+
+    /// Retrieves a value from the cache if it exists and hasn't expired
+    /// # Arguments
+    /// * `key` - The key to look up
+    /// # Returns
+    /// * `Some(T)` - The value if found and not expired
+    /// * `None` - If key doesn't exist or value has expired
+    /// # Notes
+    /// * Uses peek() instead of get() to avoid updating LRU order
+    /// * Returns a clone of the value to maintain thread safety
     pub async fn get(&self, key: &str) -> Option<T> {
         let cache = self.cache.read().await;
         // better performance use peek to avoid moving the data to the front of the cache
@@ -45,6 +77,13 @@ impl<T: Expired + Clone> TtlLruStore<T> {
         }
         None
     }
+
+    /// Removes a value from the cache
+    /// # Arguments
+    /// * `key` - The key to remove
+    /// # Notes
+    /// * No-op if key doesn't exist
+    /// * Requires mutable access to the store
     pub async fn del(&mut self, key: &str) {
         let cache = &mut self.cache.write().await;
         cache.pop(key);
