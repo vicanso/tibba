@@ -13,6 +13,7 @@ strip = "debuginfo"
 
 [workspace]
 members = [
+    "tibba-cache",
     "tibba-config",
     "tibba-crypto",
     "tibba-error",
@@ -67,3 +68,6 @@ reqwest = { version = "0.12.13", default-features = false, features = [
 ] }
 async-trait = "0.1.87"
 bytes = "1.10.1"
+deadpool-redis = { version = "0.20.0", features = ["cluster", "rt_tokio_1"] }
+redis = { version = "0.29.1", features = ["tokio-comp", "aio"] }
+lru = "0.13.0"

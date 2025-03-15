@@ -1,0 +1,21 @@
+[package]
+name = "tibba-cache"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "tibba_cache"
+path = "src/lib.rs"
+
+[dependencies]
+deadpool-redis = { workspace = true }
+redis = { workspace = true }
+async-trait = { workspace = true }
+snafu = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+lru = { workspace = true }
+tokio = { workspace = true }
+chrono = { workspace = true }
+tibba-config = { path = "../tibba-config" }
+tibba-util = { path = "../tibba-util" }
