@@ -12,3 +12,4 @@ snafu = { workspace = true }
 hex = { workspace = true }
 hmac = { workspace = true }
 sha2 = { workspace = true }
+tibba-error = { path = "../tibba-error" }

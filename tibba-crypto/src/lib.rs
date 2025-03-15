@@ -13,6 +13,8 @@
 // limitations under the License.
 
 use snafu::Snafu;
+use tibba_error::Error as BaseError;
+use tibba_error::HttpError;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -20,6 +22,24 @@ pub enum Error {
     HmacSha256 { message: String },
     #[snafu(display("key grip empty"))]
     KeyGripEmpty,
+}
+
+impl From<Error> for BaseError {
+    fn from(val: Error) -> Self {
+        match val {
+            Error::HmacSha256 { message } => HttpError {
+                message,
+                category: "hmac_sha256".to_string(),
+                ..Default::default()
+            },
+            Error::KeyGripEmpty => HttpError {
+                message: "key grip empty".to_string(),
+                category: "key_grip".to_string(),
+                ..Default::default()
+            },
+        }
+        .into()
+    }
 }
 
 mod key_grip;

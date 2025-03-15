@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Import necessary dependencies
 use super::Error;
 use async_trait::async_trait;
 use axum::http::Method;
@@ -29,9 +30,12 @@ use tibba_util::{json_get, new_get_duration_ms};
 use tracing::info;
 type Result<T> = std::result::Result<T, Error>;
 
+// Default empty query and body parameters
 static EMPTY_QUERY: Option<&[(&str, &str)]> = None;
 static EMPTY_BODY: Option<&[(&str, &str)]> = None;
 
+/// Request parameters structure
+/// Generic over query (Q) and body (P) types that must be serializable
 #[derive(Clone, Debug, Default)]
 pub struct Params<'a, Q, P>
 where
@@ -45,38 +49,45 @@ where
     pub url: &'a str,
 }
 
+/// Statistics for HTTP requests
 #[derive(Default, Clone, Debug)]
 pub struct HttpStats {
-    pub method: String,
-    pub path: String,
-    pub remote_addr: String,
-    pub status: u16,
-    pub content_length: usize,
-    pub processing: u32,
-    pub transfer: u32,
-    pub serde: u32,
-    pub total: u32,
-    pub tls_version: String,
-    pub tls_not_before: String,
-    pub tls_not_after: String,
+    pub method: String,         // HTTP method used
+    pub path: String,           // Request path
+    pub remote_addr: String,    // Remote address
+    pub status: u16,            // Response status code
+    pub content_length: usize,  // Response content length
+    pub processing: u32,        // Processing time
+    pub transfer: u32,          // Transfer time
+    pub serde: u32,             // Serialization/deserialization time
+    pub total: u32,             // Total request time
+    pub tls_version: String,    // TLS version used
+    pub tls_not_before: String, // TLS certificate validity start
+    pub tls_not_after: String,  // TLS certificate validity end
 }
 
+/// HTTP interceptor trait for request/response modification and monitoring
 #[async_trait]
 pub trait HttpInterceptor: Send + Sync {
+    // Handle failed requests (status >= 400)
     async fn fail(&self, _status: u16, _data: &Bytes) -> Result<()> {
         Ok(())
     }
+    // Modify outgoing requests
     async fn request(&self, req: RequestBuilder) -> Result<RequestBuilder> {
         Ok(req)
     }
+    // Modify incoming responses
     async fn response(&self, data: Bytes) -> Result<Bytes> {
         Ok(data)
     }
+    // Handle request completion
     async fn on_done(&self, _stats: &HttpStats, _err: Option<&Error>) -> Result<()> {
         Ok(())
     }
 }
 
+/// Common error handling for HTTP responses
 pub async fn handle_fail(service: &str, status: u16, data: &Bytes) -> Result<()> {
     if status >= 400 {
         let mut message = json_get(data, "message");
@@ -91,6 +102,7 @@ pub async fn handle_fail(service: &str, status: u16, data: &Bytes) -> Result<()>
     Ok(())
 }
 
+/// Default interceptor implementation with logging
 pub struct CommonInterceptor {
     service: String,
 }
@@ -136,19 +148,21 @@ impl HttpInterceptor for CommonInterceptor {
     }
 }
 
+/// HTTP client configuration
 struct ClientConfig {
-    service: String,
-    base_url: String,
-    read_timeout: Option<Duration>,
-    timeout: Option<Duration>,
-    connect_timeout: Option<Duration>,
-    pool_idle_timeout: Option<Duration>,
-    pool_max_idle_per_host: usize,
-    max_processing: Option<u32>,
-    headers: Option<HeaderMap>,
-    interceptors: Option<Vec<Box<dyn HttpInterceptor>>>,
+    service: String,                                     // Service name
+    base_url: String,                                    // Base URL for requests
+    read_timeout: Option<Duration>,                      // Read timeout
+    timeout: Option<Duration>,                           // Overall timeout
+    connect_timeout: Option<Duration>,                   // Connection timeout
+    pool_idle_timeout: Option<Duration>,                 // Connection pool idle timeout
+    pool_max_idle_per_host: usize,                       // Max idle connections per host
+    max_processing: Option<u32>,                         // Max concurrent requests
+    headers: Option<HeaderMap>,                          // Default headers
+    interceptors: Option<Vec<Box<dyn HttpInterceptor>>>, // Request interceptors
 }
 
+/// Builder for HTTP client configuration
 pub struct ClientBuilder {
     config: ClientConfig,
 }
@@ -255,13 +269,15 @@ impl ClientBuilder {
     }
 }
 
+/// HTTP client implementation
 pub struct Client {
-    client: ReqwestClient,
-    config: ClientConfig,
-    processing: AtomicU32,
+    client: ReqwestClient, // Underlying reqwest client
+    config: ClientConfig,  // Client configuration
+    processing: AtomicU32, // Current processing count
 }
 
 impl Client {
+    /// Constructs full URL from base URL and path
     fn get_url(&self, url: &str) -> String {
         if url.starts_with("http") {
             url.to_string()
@@ -269,6 +285,8 @@ impl Client {
             self.config.base_url.to_string() + url
         }
     }
+
+    /// Makes raw HTTP request and returns bytes
     async fn raw<Q: Serialize + ?Sized, P: Serialize + ?Sized>(
         &self,
         stats: &mut HttpStats,
@@ -370,6 +388,8 @@ impl Client {
         }
         Ok(full)
     }
+
+    /// Makes HTTP request and deserializes response
     async fn do_request<Q: Serialize + ?Sized, P: Serialize + ?Sized, T: DeserializeOwned>(
         &self,
         stats: &mut HttpStats,
@@ -385,6 +405,9 @@ impl Client {
         stats.serde = serde_done();
         Ok(data)
     }
+
+    // Public API methods for different HTTP methods
+    // GET, POST, etc. with various parameter combinations
     async fn request<Q: Serialize + ?Sized, P: Serialize + ?Sized, T: DeserializeOwned>(
         &self,
         params: Params<'_, Q, P>,

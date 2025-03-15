@@ -17,3 +17,4 @@ humantime = { workspace = true }
 dashmap = { workspace = true }
 snafu = { workspace = true }
 tibba-validator = { path = "../tibba-validator" }
+tibba-error = { path = "../tibba-error" }

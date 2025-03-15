@@ -2103,6 +2103,7 @@ dependencies = [
  "serde_json",
  "snafu",
  "tibba-config",
+ "tibba-error",
  "tibba-util",
  "tokio",
 ]
@@ -2117,6 +2118,7 @@ dependencies = [
  "once_cell",
  "snafu",
  "substring",
+ "tibba-error",
  "tibba-validator",
  "url",
  "validator",
@@ -2130,6 +2132,7 @@ dependencies = [
  "hmac",
  "sha2",
  "snafu",
+ "tibba-error",
 ]
 
 [[package]]
@@ -2208,6 +2211,7 @@ dependencies = [
  "pretty_assertions",
  "serde_json",
  "snafu",
+ "tibba-error",
  "uuid",
  "zstd",
 ]

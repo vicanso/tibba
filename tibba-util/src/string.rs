@@ -16,6 +16,19 @@ use nanoid::nanoid;
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::{NoContext, Timestamp, Uuid};
 
+/// Generates a UUIDv7 string
+///
+/// Creates a time-based UUID (version 7) using the current system time
+/// Format: xxxxxxxx-xxxx-7xxx-xxxx-xxxxxxxxxxxx
+///
+/// # Returns
+/// * String containing the formatted UUID
+///
+/// # Note
+/// UUIDv7 provides:
+/// - Timestamp-based ordering
+/// - Monotonic ordering within the same timestamp
+/// - Standards compliance
 pub fn uuid() -> String {
     let d = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -24,17 +37,49 @@ pub fn uuid() -> String {
     Uuid::new_v7(ts).to_string()
 }
 
+/// Generates a NanoID string of specified length
+///
+/// Creates a URL-safe, unique string using NanoID algorithm
+///
+/// # Arguments
+/// * `size` - Length of the generated ID
+///
+/// # Returns
+/// * String containing the NanoID
+///
+/// # Note
+/// NanoID provides:
+/// - URL-safe characters
+/// - Configurable length
+/// - High collision resistance
 pub fn nanoid(size: usize) -> String {
     nanoid!(size)
 }
 
+/// Formats a floating-point number with specified precision
+///
+/// Converts float to string with fixed number of decimal places
+/// Supports precision from 0 to 4 decimal places
+///
+/// # Arguments
+/// * `value` - Floating point number to format
+/// * `precision` - Number of decimal places (0-4)
+///
+/// # Returns
+/// * String containing formatted number
+///
+/// # Examples
+/// ```
+/// assert_eq!("1.12", float_to_fixed(1.123412, 2));
+/// assert_eq!("1", float_to_fixed(1.123412, 0));
+/// ```
 pub fn float_to_fixed(value: f64, precision: usize) -> String {
     match precision {
         0 => format!("{:.0}", value),
         1 => format!("{:.1}", value),
         2 => format!("{:.2}", value),
         3 => format!("{:.3}", value),
-        _ => format!("{:.4}", value),
+        _ => format!("{:.4}", value), // Default to 4 decimal places
     }
 }
 
@@ -42,6 +87,8 @@ pub fn float_to_fixed(value: f64, precision: usize) -> String {
 mod tests {
     use super::float_to_fixed;
     use pretty_assertions::assert_eq;
+
+    /// Tests float_to_fixed function with various precisions
     #[test]
     fn to_fixed() {
         assert_eq!("1", float_to_fixed(1.123412, 0));

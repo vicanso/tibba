@@ -24,17 +24,42 @@ use tibba_util::{
 };
 use tracing::debug;
 
+/// Entry middleware that sets up request context and handles response headers
+///
+/// This middleware:
+/// 1. Extracts device ID from cookies
+/// 2. Generates a unique trace ID
+/// 3. Creates and manages request context
+/// 4. Sets response headers for caching and tracing
+///
+/// The middleware ensures each request has:
+/// - A unique trace ID for request tracking
+/// - Proper cache control headers
+/// - Access to device identification
+/// - Request-scoped context
 pub async fn entry(jar: CookieJar, req: Request, next: Next) -> Response {
+    // Log middleware entry
     debug!(category = "middleware", "--> entry");
+    // Ensure exit logging happens even if processing panics
     defer!(debug!(category = "middleware", "<-- entry"););
+
+    // Extract device ID from cookies for user/device tracking
     let device_id = get_device_id_from_cookie(&jar);
+    // Generate unique trace ID for request tracking
     let trace_id = uuid();
+    // Create new context with device and trace information
     let ctx = Context::new(&device_id, &trace_id);
+
+    // Process request within context scope
     let mut res = CTX
         .scope(Arc::new(ctx), async { next.run(req).await })
         .await;
+
+    // Add response headers
     let headers = res.headers_mut();
+    // Ensure cache control headers are set
     set_no_cache_if_not_exist(headers);
+    // Add trace ID header for request tracking
     let _ = set_header_if_not_exist(headers, "X-Trace-Id", &trace_id);
 
     res

@@ -13,6 +13,8 @@
 // limitations under the License.
 
 use snafu::Snafu;
+use tibba_error::Error as BaseError;
+use tibba_error::HttpError;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -31,6 +33,39 @@ pub enum Error {
     },
     #[snafu(display("{source}"))]
     Compression { source: tibba_util::Error },
+}
+
+impl From<Error> for BaseError {
+    fn from(val: Error) -> Self {
+        match val {
+            Error::Common { category, message } => HttpError {
+                message,
+                category,
+                ..Default::default()
+            },
+            Error::SingleBuild { source } => HttpError {
+                message: source.to_string(),
+                category: "single_build".to_string(),
+                ..Default::default()
+            },
+            Error::ClusterBuild { source } => HttpError {
+                message: source.to_string(),
+                category: "cluster_build".to_string(),
+                ..Default::default()
+            },
+            Error::Redis { category, source } => HttpError {
+                message: source.to_string(),
+                category,
+                ..Default::default()
+            },
+            Error::Compression { source } => HttpError {
+                message: source.to_string(),
+                category: "compression".to_string(),
+                ..Default::default()
+            },
+        }
+        .into()
+    }
 }
 
 mod cache;

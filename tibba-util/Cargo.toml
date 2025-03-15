@@ -19,6 +19,7 @@ http-body-util = { workspace = true }
 axum-extra = { workspace = true }
 cookie = { workspace = true }
 serde_json = { workspace = true }
+tibba-error = { path = "../tibba-error" }
 
 [dev-dependencies]
 pretty_assertions = "1.4.1"

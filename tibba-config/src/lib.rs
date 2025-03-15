@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 use snafu::Snafu;
+use tibba_error::Error as BaseError;
+use tibba_error::HttpError;
 
 mod app_config;
 
@@ -38,6 +40,34 @@ pub enum Error {
         category: String,
         source: humantime::DurationError,
     },
+}
+
+impl From<Error> for BaseError {
+    fn from(val: Error) -> Self {
+        match val {
+            Error::Url { category, source } => HttpError {
+                message: source.to_string(),
+                category,
+                ..Default::default()
+            },
+            Error::Config { category, source } => HttpError {
+                message: source.to_string(),
+                category,
+                ..Default::default()
+            },
+            Error::Validate { category, source } => HttpError {
+                message: source.to_string(),
+                category,
+                ..Default::default()
+            },
+            Error::ParseDuration { category, source } => HttpError {
+                message: source.to_string(),
+                category,
+                ..Default::default()
+            },
+        }
+        .into()
+    }
 }
 
 pub use app_config::*;

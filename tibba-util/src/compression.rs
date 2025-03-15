@@ -15,26 +15,61 @@
 use super::Error;
 use lz4_flex::block::{compress_prepend_size, decompress_size_prepended};
 
+// Custom Result type using the crate's Error type
 type Result<T> = std::result::Result<T, Error>;
 
-// lz4 decode
+/// Decompresses LZ4 compressed data
+///
+/// Uses size-prepended format where the original size is stored at the start
+/// of the compressed data
+///
+/// # Arguments
+/// * `data` - Compressed data bytes
+///
+/// # Returns
+/// * `Result<Vec<u8>>` - Decompressed data or error
 pub fn lz4_decode(data: &[u8]) -> Result<Vec<u8>> {
     decompress_size_prepended(data).map_err(|e| Error::Lz4Decompress { source: e })
 }
 
-// lz4 encode
+/// Compresses data using LZ4 algorithm
+///
+/// Prepends the original size to the compressed data to allow for
+/// proper decompression later
+///
+/// # Arguments
+/// * `data` - Raw data bytes to compress
+///
+/// # Returns
+/// * `Vec<u8>` - Compressed data with prepended size
 pub fn lz4_encode(data: &[u8]) -> Vec<u8> {
     compress_prepend_size(data)
 }
 
-// zstd decode
+/// Decompresses Zstandard (zstd) compressed data
+///
+/// Uses streaming decompression for better memory efficiency
+///
+/// # Arguments
+/// * `data` - Compressed data bytes
+///
+/// # Returns
+/// * `Result<Vec<u8>>` - Decompressed data or error
 pub fn zstd_decode(data: &[u8]) -> Result<Vec<u8>> {
     let mut buf = vec![];
     zstd::stream::copy_decode(data, &mut buf).map_err(|e| Error::Zstd { source: e })?;
     Ok(buf)
 }
 
-// zstd encode
+/// Compresses data using Zstandard (zstd) algorithm
+///
+/// Uses streaming compression with default compression level
+///
+/// # Arguments
+/// * `data` - Raw data bytes to compress
+///
+/// # Returns
+/// * `Result<Vec<u8>>` - Compressed data or error
 pub fn zstd_encode(data: &[u8]) -> Result<Vec<u8>> {
     let mut buf = vec![];
     zstd::stream::copy_encode(data, &mut buf, zstd::DEFAULT_COMPRESSION_LEVEL)

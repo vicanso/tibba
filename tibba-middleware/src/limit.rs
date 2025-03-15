@@ -21,30 +21,57 @@ use tibba_error::{Error, new_exception_error_with_status};
 use tibba_state::AppState;
 use tracing::debug;
 
+// Custom Result type that uses the application's Error type
 type Result<T> = std::result::Result<T, Error>;
 
+/// Middleware that implements concurrent request processing limits
+///
+/// This middleware:
+/// 1. Tracks number of concurrent requests being processed
+/// 2. Enforces a maximum limit on concurrent requests
+/// 3. Returns 429 Too Many Requests when limit is exceeded
+/// 4. Properly decrements counter when request processing completes
+///
+/// # Arguments
+/// * `State(state)` - Application state containing limit configuration
+/// * `req` - The incoming request
+/// * `next` - The next middleware in the chain
 pub async fn processing_limit(
     State(state): State<&AppState>,
     req: Request,
     next: Next,
 ) -> Result<impl IntoResponse> {
+    // Log middleware entry
     debug!(category = "middleware", "--> processing_limit");
+    // Ensure exit logging happens even if processing panics
     defer!(debug!(category = "middleware", "<-- processing_limit"););
+
+    // Get configured processing limit from app state
     let limit = state.get_processing_limit();
-    // limit < 0 means no limit
+
+    // If limit is negative, processing is unlimited
     if limit < 0 {
         let res = next.run(req).await;
         return Ok(res);
     }
+
+    // Increment processing counter and get new count
     let count = state.inc_processing() + 1;
+
+    // Check if processing limit has been exceeded
     if count > limit {
+        // Decrement counter since request won't be processed
         state.dec_processing();
+        // Return 429 Too Many Requests error
         return Err(new_exception_error_with_status(
             "Too many requests".to_string(),
             429,
         ));
     }
+
+    // Process the request
     let res = next.run(req).await;
+    // Decrement processing counter after request completes
     state.dec_processing();
 
     Ok(res)

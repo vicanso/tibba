@@ -15,6 +15,8 @@
 use lz4_flex::block::DecompressError;
 use snafu::Snafu;
 use std::env;
+use tibba_error::Error as BaseError;
+use tibba_error::HttpError;
 
 #[derive(Snafu, Debug)]
 pub enum Error {
@@ -32,6 +34,39 @@ pub enum Error {
     },
     #[snafu(display("{source}"))]
     Axum { source: axum::Error },
+}
+
+impl From<Error> for BaseError {
+    fn from(val: Error) -> Self {
+        match val {
+            Error::Zstd { source } => HttpError {
+                message: source.to_string(),
+                category: "zstd".to_string(),
+                ..Default::default()
+            },
+            Error::Lz4Decompress { source } => HttpError {
+                message: source.to_string(),
+                category: "lz4_decompress".to_string(),
+                ..Default::default()
+            },
+            Error::InvalidHeaderName { source } => HttpError {
+                message: source.to_string(),
+                category: "invalid_header_name".to_string(),
+                ..Default::default()
+            },
+            Error::InvalidHeaderValue { source } => HttpError {
+                message: source.to_string(),
+                category: "invalid_header_value".to_string(),
+                ..Default::default()
+            },
+            Error::Axum { source } => HttpError {
+                message: source.to_string(),
+                category: "axum".to_string(),
+                ..Default::default()
+            },
+        }
+        .into()
+    }
 }
 
 pub fn get_env() -> String {

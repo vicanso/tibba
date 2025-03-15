@@ -19,3 +19,4 @@ tokio = { workspace = true }
 chrono = { workspace = true }
 tibba-config = { path = "../tibba-config" }
 tibba-util = { path = "../tibba-util" }
+tibba-error = { path = "../tibba-error" }
