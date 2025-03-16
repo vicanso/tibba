@@ -21,6 +21,7 @@ use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 use snafu::Snafu;
 use tracing::error;
+use validator::ValidationErrors;
 
 // Main Error enum that wraps HttpError
 // Uses Snafu for error handling boilerplate generation
@@ -33,6 +34,20 @@ pub enum Error {
 impl From<HttpError> for Error {
     fn from(error: HttpError) -> Self {
         Error::Http { error }
+    }
+}
+impl From<ValidationErrors> for Error {
+    fn from(error: ValidationErrors) -> Self {
+        Error::Http {
+            error: HttpError {
+                message: error.to_string(),
+                category: "validation".to_string(),
+                status: 400,
+                code: "validation_error".to_string(),
+                exception: true,
+                extra: None,
+            },
+        }
     }
 }
 

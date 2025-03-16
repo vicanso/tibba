@@ -13,3 +13,4 @@ axum = { workspace = true }
 serde = { workspace = true }
 tracing = { workspace = true }
 tower = { workspace = true }
+validator = { workspace = true }

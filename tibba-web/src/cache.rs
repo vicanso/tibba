@@ -49,7 +49,8 @@ fn init() {
         16,
         Box::new(|| {
             Box::pin(async {
-                let _ = get_redis_pool()?;
+                let pool = get_redis_pool()?;
+                RedisCacheBuilder::new(pool).build().ping().await?;
                 Ok(())
             })
         }),

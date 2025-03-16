@@ -36,7 +36,5 @@ pub struct UserRouterParams {
 }
 
 pub fn new_user_router(params: UserRouterParams) -> Router {
-    Router::new()
-        .route("/login/token", get(login_token))
-        .with_state(params.secret)
+    Router::new().route("/login/token", get(login_token).with_state(params.secret))
 }

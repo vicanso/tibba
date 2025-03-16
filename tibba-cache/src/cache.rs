@@ -87,6 +87,21 @@ impl RedisCache {
         }
         self.prefix.to_string() + key
     }
+    /// Pings the Redis server to check connection
+    /// # Returns
+    /// * `Ok(())` - Connection is successful
+    /// * `Err(Error)` - Redis operation failed
+    pub async fn ping(&self) -> Result<()> {
+        let mut conn = self.pool.get().await?;
+        let () = cmd("PING")
+            .query_async(&mut conn)
+            .await
+            .map_err(|e| Error::Redis {
+                category: "ping".to_string(),
+                source: e,
+            })?;
+        Ok(())
+    }
     /// Retrieves a raw value from Redis for the given key
     /// # Type Parameters
     /// * `T` - The type to deserialize the Redis value into

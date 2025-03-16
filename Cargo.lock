@@ -2233,6 +2233,7 @@ dependencies = [
  "snafu",
  "tower",
  "tracing",
+ "validator",
 ]
 
 [[package]]
