@@ -54,6 +54,28 @@ pub struct HttpError {
     pub extra: Option<Vec<String>>,
 }
 
+impl HttpError {
+    pub fn with_category(mut self, category: String) -> Self {
+        self.category = category;
+        self
+    }
+    pub fn with_code(mut self, code: String) -> Self {
+        self.code = code;
+        self
+    }
+    pub fn with_status(mut self, status: u16) -> Self {
+        self.status = status;
+        self
+    }
+}
+
+pub fn new_http_error(message: String) -> HttpError {
+    HttpError {
+        message,
+        ..Default::default()
+    }
+}
+
 // Implements conversion of Error into HTTP Response
 // Sets appropriate status code and headers
 impl IntoResponse for Error {

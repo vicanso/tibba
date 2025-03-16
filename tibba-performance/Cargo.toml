@@ -1,0 +1,13 @@
+[package]
+name = "tibba-performance"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "tibba_performance"
+path = "src/lib.rs"
+
+[dependencies]
+memory-stats = { workspace = true }
+serde = { workspace = true }
+sysinfo = { workspace = true }

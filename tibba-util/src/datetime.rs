@@ -87,3 +87,24 @@ pub fn new_get_duration_ms() -> impl FnOnce() -> u32 {
         value.max(1)
     }
 }
+
+/// Creates a closure that measures elapsed time in human-readable format
+///
+/// Similar to new_get_duration but returns a string with human-readable format
+///
+/// # Returns
+/// * Closure that returns elapsed time in human-readable format when called
+///
+/// # Example
+/// ```
+/// let get_human_duration = new_get_human_duration();
+/// // ... do some work ...
+/// let elapsed = get_human_duration(); // get elapsed time
+/// ```
+pub fn new_get_human_duration() -> impl FnOnce() -> String {
+    let start = Instant::now();
+    move || -> String {
+        let duration = start.elapsed();
+        humantime::format_duration(duration).to_string()
+    }
+}

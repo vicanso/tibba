@@ -185,12 +185,12 @@ impl ClientBuilder {
         }
     }
 
-    pub fn base_url(mut self, base_url: &str) -> Self {
+    pub fn with_base_url(mut self, base_url: &str) -> Self {
         self.config.base_url = base_url.to_string();
         self
     }
 
-    pub fn interceptor(mut self, interceptor: Box<dyn HttpInterceptor>) -> Self {
+    pub fn with_interceptor(mut self, interceptor: Box<dyn HttpInterceptor>) -> Self {
         if let Some(interceptors) = &mut self.config.interceptors {
             interceptors.push(interceptor);
         } else {
@@ -199,37 +199,37 @@ impl ClientBuilder {
         self
     }
 
-    pub fn timeout(mut self, timeout: Duration) -> Self {
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.config.timeout = Some(timeout);
         self
     }
 
-    pub fn read_timeout(mut self, read_timeout: Duration) -> Self {
+    pub fn with_read_timeout(mut self, read_timeout: Duration) -> Self {
         self.config.read_timeout = Some(read_timeout);
         self
     }
 
-    pub fn connect_timeout(mut self, connect_timeout: Duration) -> Self {
+    pub fn with_connect_timeout(mut self, connect_timeout: Duration) -> Self {
         self.config.connect_timeout = Some(connect_timeout);
         self
     }
 
-    pub fn pool_idle_timeout(mut self, pool_idle_timeout: Duration) -> Self {
+    pub fn with_pool_idle_timeout(mut self, pool_idle_timeout: Duration) -> Self {
         self.config.pool_idle_timeout = Some(pool_idle_timeout);
         self
     }
 
-    pub fn headers(mut self, headers: HeaderMap) -> Self {
+    pub fn with_headers(mut self, headers: HeaderMap) -> Self {
         self.config.headers = Some(headers);
         self
     }
 
-    pub fn common_interceptor(self) -> Self {
+    pub fn with_common_interceptor(self) -> Self {
         let service = self.config.service.clone();
-        self.interceptor(Box::new(CommonInterceptor::new(&service)))
+        self.with_interceptor(Box::new(CommonInterceptor::new(&service)))
     }
 
-    pub fn pool_max_idle_per_host(mut self, pool_max_idle_per_host: usize) -> Self {
+    pub fn with_pool_max_idle_per_host(mut self, pool_max_idle_per_host: usize) -> Self {
         self.config.pool_max_idle_per_host = pool_max_idle_per_host;
         self
     }

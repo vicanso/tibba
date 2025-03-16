@@ -13,23 +13,23 @@
 // limitations under the License.
 
 use crate::config::must_get_config;
+use crate::router::new_router;
 use crate::state::get_app_state;
 use axum::Router;
 use axum::error_handling::HandleErrorLayer;
 use axum::middleware::from_fn_with_state;
-use axum::routing::get;
 use std::env;
 use std::net::SocketAddr;
 use std::str::FromStr;
 use tibba_error::handle_error;
 use tibba_hook::run_before_tasks;
 use tibba_middleware::{entry, processing_limit, stats};
-use tibba_request::{ClientBuilder, Params};
 use tower::ServiceBuilder;
 use tracing::{Level, error, info};
 use tracing_subscriber::FmtSubscriber;
 
 mod config;
+mod router;
 mod state;
 
 fn init_logger() {
@@ -58,32 +58,35 @@ fn init_logger() {
 
 #[tokio::main]
 async fn run() {
-    let client = ClientBuilder::new("baidu")
-        .base_url("https://baidu.com")
-        .timeout(std::time::Duration::from_secs(10))
-        .common_interceptor()
-        .build()
-        .unwrap();
-    let resp = client
-        .request_raw(Params::<Vec<(&str, &str)>, ()> {
-            url: "/?a=eYtFiWeWeq",
-            method: axum::http::Method::GET,
-            query: Some(&vec![("b", "123")]),
-            ..Default::default()
-        })
-        .await
-        .unwrap();
-    info!("response body size: {}", resp.len());
+    // let client = ClientBuilder::new("baidu")
+    //     .with_base_url("https://baidu.com")
+    //     .with_timeout(std::time::Duration::from_secs(10))
+    //     .with_common_interceptor()
+    //     .build()
+    //     .unwrap();
+    // let resp = client
+    //     .request_raw(Params::<Vec<(&str, &str)>, ()> {
+    //         url: "/?a=eYtFiWeWeq",
+    //         method: axum::http::Method::GET,
+    //         query: Some(&vec![("b", "123")]),
+    //         ..Default::default()
+    //     })
+    //     .await
+    //     .unwrap();
+    // info!("response body size: {}", resp.len());
 
     // only use unwrap in run function
     if let Err(e) = run_before_tasks().await {
         error!(category = "run_before_tasks", message = e.to_string(),);
         return;
     }
+    // set server is running
+    let state = get_app_state();
+    state.run();
     let app_config = must_get_config();
     let basic_config = app_config.new_basic_config().unwrap();
 
-    let app = Router::new().route("/", get(|| async {})).layer(
+    let app = Router::new().merge(new_router(state)).layer(
         // service build layer execute by add order
         ServiceBuilder::new()
             .layer(HandleErrorLayer::new(handle_error))

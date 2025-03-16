@@ -19,7 +19,9 @@ members = [
     "tibba-error",
     "tibba-hook",
     "tibba-middleware",
+    "tibba-performance",
     "tibba-request",
+    "tibba-router-common",
     "tibba-state",
     "tibba-util",
     "tibba-validator",
@@ -72,3 +74,7 @@ bytes = "1.10.1"
 deadpool-redis = { version = "0.20.0", features = ["cluster", "rt_tokio_1"] }
 redis = { version = "0.29.1", features = ["tokio-comp", "aio"] }
 lru = "0.13.0"
+memory-stats = "1.2.0"
+sysinfo = "0.33.1"
+serde_urlencoded = "0.7.1"
+os_info = "3.10.0"

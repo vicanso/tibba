@@ -14,6 +14,54 @@
 
 use serde_json::Value;
 
+/// Extracts multiple string values from JSON data by keys
+///
+/// This function provides a safe way to extract multiple string values from JSON with the following features:
+/// - Handles invalid JSON gracefully
+/// - Converts non-string values to strings
+/// - Returns empty strings for missing keys
+/// - Maintains order of results matching input keys
+///
+/// # Arguments
+/// * `data` - Byte slice containing JSON data
+/// * `keys` - Array of keys to look up in the JSON object
+///
+/// # Returns
+/// * Vector of strings containing the values, with empty strings for:
+///   - JSON is invalid
+///   - Key doesn't exist
+///   - Value cannot be converted to string
+///
+/// # Examples
+/// ```
+/// let json = r#"{"name": "John", "age": 30}"#.as_bytes();
+/// let results = json_get_strings(json, &["name", "age", "missing"]);
+/// assert_eq!(vec!["John", "30", ""], results);
+/// ```
+pub fn json_get_strings(data: &[u8], keys: &[&str]) -> Vec<String> {
+    // Initialize result vector with empty strings matching keys length
+    let mut result = vec!["".to_string(); keys.len()];
+
+    // Try to parse JSON, return empty strings if parsing fails
+    let Ok(value) = serde_json::from_slice::<Value>(data) else {
+        return result;
+    };
+
+    // Process each key and populate result vector
+    for (i, key) in keys.iter().enumerate() {
+        let value = if let Some(value) = value.get(key) {
+            // Convert value to string, handling both string and non-string values
+            value.as_str().map_or(value.to_string(), |s| s.to_string())
+        } else {
+            // Key not found, use empty string
+            "".to_string()
+        };
+        result[i] = value;
+    }
+
+    result
+}
+
 /// Extracts a string value from JSON data by key
 ///
 /// This function provides a safe way to extract string values from JSON with the following features:
@@ -42,22 +90,5 @@ use serde_json::Value;
 /// assert_eq!("", json_get(json, "non_existent"));
 /// ```
 pub fn json_get(data: &[u8], key: &str) -> String {
-    let message = if let Ok(value) = serde_json::from_slice::<Value>(data) {
-        if let Some(value) = value.get(key) {
-            // Convert value to string, handling both string and non-string values
-            value.as_str().map_or(value.to_string(), |s| s.to_string())
-        } else {
-            // Key not found
-            "".to_string()
-        }
-    } else {
-        // Invalid JSON
-        "".to_string()
-    };
-
-    // Convert "null" (case-insensitive) to empty string
-    if message.to_lowercase() == "null" {
-        return "".to_string();
-    }
-    message
+    json_get_strings(data, &[key])[0].clone()
 }

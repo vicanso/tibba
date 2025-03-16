@@ -92,11 +92,13 @@ pub fn is_production() -> bool {
 mod compression;
 mod datetime;
 mod http;
+mod response;
 mod string;
 mod value;
 
 pub use compression::*;
 pub use datetime::*;
 pub use http::*;
+pub use response::*;
 pub use string::*;
 pub use value::*;

@@ -12,7 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use super::timestamp;
+use hex::encode;
 use nanoid::nanoid;
+use sha2::{Digest, Sha256};
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::{NoContext, Timestamp, Uuid};
 
@@ -81,6 +84,46 @@ pub fn float_to_fixed(value: f64, precision: usize) -> String {
         3 => format!("{:.3}", value),
         _ => format!("{:.4}", value), // Default to 4 decimal places
     }
+}
+
+/// Computes the SHA-256 hash of the input data
+///
+/// # Arguments
+/// * `data` - Input data to hash
+///
+/// # Returns
+/// * String containing the SHA-256 hash
+pub fn sha256(data: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    let result = hasher.finalize();
+    encode(result)
+}
+
+/// Computes the SHA-256 hash of the input data and signs it with the secret key
+///
+/// # Arguments
+/// * `value` - Input data to hash
+/// * `secret` - Secret key
+///
+/// # Returns
+/// * String containing the signed hash
+pub fn sign_hash(value: &str, secret: &str) -> String {
+    sha256(format!("{value}:{secret}").as_bytes())
+}
+
+/// Computes the SHA-256 hash of the input data and signs it with the secret key
+///
+/// # Arguments
+/// * `value` - Input data to hash
+/// * `secret` - Secret key
+///
+/// # Returns
+/// * Tuple containing the timestamp and the signed hash
+pub fn timestamp_hash(value: &str, secret: &str) -> (i64, String) {
+    let ts = timestamp();
+    let hash = sign_hash(&format!("{ts}:{value}"), secret);
+    (ts, hash)
 }
 
 #[cfg(test)]

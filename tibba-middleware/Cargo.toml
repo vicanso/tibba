@@ -19,3 +19,4 @@ tokio = { workspace = true }
 tibba-state = { path = "../tibba-state" }
 tibba-error = { path = "../tibba-error" }
 tibba-util = { path = "../tibba-util" }
+tibba-cache = { path = "../tibba-cache" }

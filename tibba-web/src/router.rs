@@ -12,14 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-mod common;
-mod entry;
-mod limit;
-mod session;
-mod stats;
+use axum::Router;
+use tibba_router_common::{CommonRouterParams, new_common_router};
+use tibba_state::AppState;
 
-pub use common::*;
-pub use entry::*;
-pub use limit::*;
-pub use session::*;
-pub use stats::*;
+pub fn new_router(state: &'static AppState) -> Router {
+    let r = new_common_router(CommonRouterParams { state });
+
+    Router::new().merge(r)
+}

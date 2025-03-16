@@ -16,8 +16,13 @@ use axum::extract::Request;
 use axum::extract::State;
 use axum::middleware::Next;
 use axum::response::IntoResponse;
+use axum::response::Response;
+use axum_client_ip::InsecureClientIp;
 use scopeguard::defer;
-use tibba_error::{Error, new_exception_error_with_status};
+use std::net::IpAddr;
+use std::time::Duration;
+use tibba_cache::RedisCache;
+use tibba_error::{Error, new_error_with_category, new_exception_error_with_status};
 use tibba_state::AppState;
 use tracing::debug;
 
@@ -75,4 +80,124 @@ pub async fn processing_limit(
     state.dec_processing();
 
     Ok(res)
+}
+
+/// Type of rate limiting to apply
+#[derive(Debug, Clone, Default)]
+pub enum LimitType {
+    #[default]
+    Ip, // Rate limit based on IP address
+    Header(String), // Rate limit based on header value
+}
+
+/// Configuration parameters for rate limiting middleware
+#[derive(Debug, Clone, Default)]
+pub struct LimitParams {
+    pub limit_type: LimitType, // Type of rate limiting to apply
+    pub category: String,      // Category identifier for the limit
+    pub max: i64,              // Maximum number of requests allowed
+    pub ttl: Duration,         // Time-to-live for the rate limit counter
+}
+
+impl LimitParams {
+    /// Creates a new LimitParams instance with specified parameters
+    ///
+    /// # Arguments
+    /// * `max` - Maximum number of requests allowed
+    /// * `secs` - Duration in seconds for the rate limit window
+    /// * `category` - Category identifier for the limit
+    pub fn new(max: i64, secs: u64, category: &str) -> Self {
+        LimitParams {
+            limit_type: LimitType::Ip,
+            category: category.to_string(),
+            max,
+            ttl: Duration::from_secs(secs),
+        }
+    }
+}
+
+/// Generates the cache key and TTL for rate limiting
+///
+/// # Arguments
+/// * `ip` - Client IP address
+/// * `params` - Rate limiting parameters
+///
+/// # Returns
+/// Tuple of (cache_key, ttl_duration)
+fn get_limit_params(req: &Request, ip: IpAddr, params: &LimitParams) -> (String, Duration) {
+    // Generate key based on limit type (currently only IP-based)
+    let mut key = match &params.limit_type {
+        LimitType::Header(header) => {
+            if let Some(value) = req.headers().get(header) {
+                value.to_str().unwrap_or_default().to_string()
+            } else {
+                "".to_string()
+            }
+        }
+        _ => ip.to_string(),
+    };
+    // Append category to key if specified
+    if !params.category.is_empty() {
+        key = format!("{}:{key}", params.category);
+    }
+    // Use default TTL of 5 minutes if none specified
+    let mut ttl = params.ttl;
+    if ttl.is_zero() {
+        ttl = Duration::from_secs(5 * 60);
+    }
+    (key, ttl)
+}
+
+/// Middleware that limits requests only when errors occur
+/// Increments counter only for responses with status code >= 400
+pub async fn error_limiter(
+    InsecureClientIp(ip): InsecureClientIp,
+    State(params): State<LimitParams>,
+    State(cache): State<&'static RedisCache>,
+    req: Request,
+    next: Next,
+) -> Result<Response> {
+    let (key, ttl) = get_limit_params(&req, ip, &params);
+    // Check if current error count exceeds limit
+    if let Ok(count) = cache.get::<i64>(&key).await {
+        if count > params.max {
+            let msg = format!(
+                "Too many requests, please try again later! ({count}/{})",
+                params.max
+            );
+            return Err(new_error_with_category(msg, "error_limiter".to_string()));
+        }
+    }
+    let resp = next.run(req).await;
+    // Increment counter only on error responses
+    if resp.status().as_u16() >= 400 {
+        // Ignore Redis errors when incrementing
+        let _ = cache.incr(&key, 1, Some(ttl)).await;
+    }
+    Ok(resp)
+}
+
+/// Standard rate limiting middleware
+/// Increments counter for every request regardless of response status
+pub async fn limiter(
+    InsecureClientIp(ip): InsecureClientIp,
+    State(params): State<LimitParams>,
+    State(cache): State<&'static RedisCache>,
+    req: Request,
+    next: Next,
+) -> Result<Response> {
+    let (key, ttl) = get_limit_params(&req, ip, &params);
+
+    // Increment counter and check against limit
+    let count = cache.incr(&key, 1, Some(ttl)).await?;
+    if count > params.max {
+        let msg = format!(
+            "Too many requests, please try again later! ({count}/{})",
+            params.max
+        );
+        return Err(new_error_with_category(msg, "limiter".to_string()));
+    }
+
+    let resp = next.run(req).await;
+    Ok(resp)
 }

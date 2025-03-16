@@ -18,9 +18,13 @@ use axum::middleware::Next;
 use axum::response::Response;
 use scopeguard::defer;
 use std::time::Duration;
+use tibba_cache::RedisCache;
+use tibba_error::{Error, new_error_with_category, new_http_error};
 use tibba_state::CTX;
 use tokio::time::sleep;
 use tracing::debug;
+
+type Result<T> = std::result::Result<T, Error>;
 
 /// Parameters for configuring the wait middleware
 /// Controls the waiting behavior after request processing
@@ -79,4 +83,71 @@ pub async fn wait(State(params): State<WaitParams>, req: Request, next: Next) ->
     }
 
     res
+}
+
+/// Middleware to validate captcha tokens in incoming requests
+///
+/// # Arguments
+/// * `magic_code` - Special code that can bypass normal captcha validation (for testing)
+/// * `cache` - Redis cache instance for storing/retrieving captcha codes
+/// * `req` - The incoming HTTP request
+/// * `next` - The next middleware handler
+///
+/// # Format
+/// The X-Captcha header should contain a colon-separated string with 3 parts:
+/// `prefix:key:code` where:
+/// - prefix: identifier for the captcha type
+/// - key: unique key to look up the stored captcha code
+/// - code: the actual captcha code to validate
+pub async fn validate_captcha(
+    State(magic_code): State<String>,
+    State(cache): State<&'static RedisCache>,
+    req: Request,
+    next: Next,
+) -> Result<Response> {
+    // Category name for error handling
+    let category = "captcha";
+
+    // Extract and parse the X-Captcha header
+    let value = req
+        .headers()
+        .get("X-Captcha")
+        .ok_or(new_error_with_category(
+            "captcha is required".to_string(),
+            category.to_string(),
+        ))?
+        .to_str()
+        .map_err(|err| new_error_with_category(err.to_string(), category.to_string()))?;
+
+    // Split the header value into its components
+    let arr: Vec<&str> = value.split(':').collect();
+
+    // Validate the header format
+    if arr.len() != 3 {
+        return Err(new_error_with_category(
+            "captcha parameter is invalid".to_string(),
+            category.to_string(),
+        ));
+    }
+
+    // Check if this is a mock request using the magic code
+    let is_mock = !magic_code.is_empty() && arr[2] == magic_code;
+
+    // For non-mock requests, validate the captcha code against cache
+    if !is_mock {
+        // Retrieve and delete the stored code from cache using the key (arr[1])
+        let code: String = cache.get_del(arr[1]).await?;
+
+        // Compare the provided code against the stored code
+        if code != arr[2] {
+            let he = new_http_error("captcha input error".to_string())
+                .with_category(category.to_string())
+                .with_code("mismatching".to_string());
+            return Err(he.into());
+        }
+    }
+
+    // If validation passes, continue with the request
+    let resp = next.run(req).await;
+    Ok(resp)
 }

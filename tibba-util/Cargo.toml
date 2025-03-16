@@ -19,6 +19,13 @@ http-body-util = { workspace = true }
 axum-extra = { workspace = true }
 cookie = { workspace = true }
 serde_json = { workspace = true }
+humantime = { workspace = true }
+serde = { workspace = true }
+async-trait = { workspace = true }
+validator = { workspace = true }
+sha2 = { workspace = true }
+serde_urlencoded = { workspace = true }
+hex = { workspace = true }
 tibba-error = { path = "../tibba-error" }
 
 [dev-dependencies]
