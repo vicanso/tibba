@@ -19,7 +19,7 @@ use axum::response::Response;
 use scopeguard::defer;
 use std::time::Duration;
 use tibba_cache::RedisCache;
-use tibba_error::{Error, new_error_with_category, new_http_error};
+use tibba_error::{Error, new_error};
 use tibba_state::CTX;
 use tokio::time::sleep;
 use tracing::debug;
@@ -112,22 +112,18 @@ pub async fn validate_captcha(
     let value = req
         .headers()
         .get("X-Captcha")
-        .ok_or(new_error_with_category(
-            "captcha is required".to_string(),
-            category.to_string(),
-        ))?
+        .ok_or(new_error("captcha is required").with_category(category))?
         .to_str()
-        .map_err(|err| new_error_with_category(err.to_string(), category.to_string()))?;
+        .map_err(|err| new_error(&err.to_string()).with_category(category))?;
 
     // Split the header value into its components
     let arr: Vec<&str> = value.split(':').collect();
 
     // Validate the header format
     if arr.len() != 3 {
-        return Err(new_error_with_category(
-            "captcha parameter is invalid".to_string(),
-            category.to_string(),
-        ));
+        return Err(new_error("captcha parameter is invalid")
+            .with_category(category)
+            .into());
     }
 
     // Check if this is a mock request using the magic code
@@ -140,9 +136,9 @@ pub async fn validate_captcha(
 
         // Compare the provided code against the stored code
         if code != arr[2] {
-            let he = new_http_error("captcha input error".to_string())
-                .with_category(category.to_string())
-                .with_code("mismatching".to_string());
+            let he = new_error("captcha input error")
+                .with_category(category)
+                .with_code("mismatching");
             return Err(he.into());
         }
     }

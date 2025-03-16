@@ -1,0 +1,7 @@
+# redis config
+[redis]
+uri = "redis://127.0.0.1"
+
+# session config
+[session]
+secret = "y0nEeTWOF0Ud8XNoTfYacGC6MrKgxIUnJV1kv0PBh83IeKmyHtuJ5uqGa7hcfBSu"

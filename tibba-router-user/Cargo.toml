@@ -1,0 +1,18 @@
+[package]
+name = "tibba-router-user"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "tibba_router_user"
+path = "src/lib.rs"
+
+
+[dependencies]
+axum = { workspace = true }
+serde = { workspace = true }
+os_info = { workspace = true }
+humantime = { workspace = true }
+tibba-state = { path = "../tibba-state" }
+tibba-error = { path = "../tibba-error" }
+tibba-util = { path = "../tibba-util" }

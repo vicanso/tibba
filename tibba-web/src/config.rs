@@ -16,13 +16,23 @@ use ctor::ctor;
 use once_cell::sync::OnceCell;
 use rust_embed::RustEmbed;
 use tibba_config::{AppConfig, new_app_config};
-use tibba_error::{Error, new_error_with_category};
+use tibba_error::{Error, new_error};
 use tibba_hook::register_before_task;
+use tibba_middleware::SessionParams;
 use tracing::info;
 
+type Result<T> = std::result::Result<T, Error>;
 static CONFIGS: OnceCell<AppConfig> = OnceCell::new();
 
-type Result<T> = std::result::Result<T, Error>;
+static SESSION_PARAMS: OnceCell<SessionParams> = OnceCell::new();
+
+pub fn get_session_params() -> &'static SessionParams {
+    SESSION_PARAMS.get_or_init(|| {
+        // session config is checked in init function
+        let session_config = must_get_config().new_session_config().unwrap();
+        SessionParams::new(vec!["/users/".to_string()]).with_secret(session_config.secret)
+    })
+}
 
 #[derive(RustEmbed)]
 #[folder = "configs/"]
@@ -30,20 +40,18 @@ struct Configs;
 
 fn new_config() -> Result<&'static AppConfig> {
     CONFIGS.get_or_try_init(|| {
+        let category = "config";
         let mut arr = vec![];
         for name in ["default.toml", &format!("{}.toml", tibba_util::get_env())] {
             let data = Configs::get(name)
-                .ok_or(new_error_with_category(
-                    format!("{} not found", name),
-                    "config".to_string(),
-                ))?
+                .ok_or(new_error(&format!("{} not found", name)).with_category(category))?
                 .data;
-            info!(category = "config", "load config from {}", name);
+            info!(category, "load config from {}", name);
             arr.push(std::str::from_utf8(&data).unwrap_or_default().to_string());
         }
 
         new_app_config(arr.iter().map(|s| s.as_str()).collect(), Some("TIBBA_WEB"))
-            .map_err(|e| new_error_with_category(e.to_string(), "config".to_string()))
+            .map_err(|e| new_error(&e.to_string()).with_category(category).into())
     })
 }
 
@@ -59,7 +67,10 @@ fn init() {
         0,
         Box::new(|| {
             Box::pin(async {
-                new_config()?;
+                let app_config = new_config()?;
+                let _ = app_config.new_basic_config()?;
+                let _ = app_config.new_redis_config()?;
+                let _ = app_config.new_session_config()?;
                 Ok(())
             })
         }),

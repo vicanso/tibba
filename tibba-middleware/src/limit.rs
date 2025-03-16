@@ -22,7 +22,7 @@ use scopeguard::defer;
 use std::net::IpAddr;
 use std::time::Duration;
 use tibba_cache::RedisCache;
-use tibba_error::{Error, new_error_with_category, new_exception_error_with_status};
+use tibba_error::{Error, new_error};
 use tibba_state::AppState;
 use tracing::debug;
 
@@ -68,10 +68,10 @@ pub async fn processing_limit(
         // Decrement counter since request won't be processed
         state.dec_processing();
         // Return 429 Too Many Requests error
-        return Err(new_exception_error_with_status(
-            "Too many requests".to_string(),
-            429,
-        ));
+        return Err(new_error("Too many requests")
+            .with_status(429)
+            .with_exception(true)
+            .into());
     }
 
     // Process the request
@@ -165,7 +165,10 @@ pub async fn error_limiter(
                 "Too many requests, please try again later! ({count}/{})",
                 params.max
             );
-            return Err(new_error_with_category(msg, "error_limiter".to_string()));
+            return Err(new_error(&msg)
+                .with_status(429)
+                .with_category("error_limiter")
+                .into());
         }
     }
     let resp = next.run(req).await;
@@ -195,7 +198,10 @@ pub async fn limiter(
             "Too many requests, please try again later! ({count}/{})",
             params.max
         );
-        return Err(new_error_with_category(msg, "limiter".to_string()));
+        return Err(new_error(&msg)
+            .with_status(429)
+            .with_category("limiter")
+            .into());
     }
 
     let resp = next.run(req).await;

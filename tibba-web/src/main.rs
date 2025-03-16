@@ -23,11 +23,12 @@ use std::net::SocketAddr;
 use std::str::FromStr;
 use tibba_error::handle_error;
 use tibba_hook::run_before_tasks;
-use tibba_middleware::{entry, processing_limit, stats};
+use tibba_middleware::{entry, processing_limit, session, stats};
 use tower::ServiceBuilder;
 use tracing::{Level, error, info};
 use tracing_subscriber::FmtSubscriber;
 
+mod cache;
 mod config;
 mod router;
 mod state;
@@ -86,13 +87,17 @@ async fn run() {
     let app_config = must_get_config();
     let basic_config = app_config.new_basic_config().unwrap();
 
-    let app = Router::new().merge(new_router(state)).layer(
+    let app = Router::new().merge(new_router(state, &basic_config)).layer(
         // service build layer execute by add order
         ServiceBuilder::new()
             .layer(HandleErrorLayer::new(handle_error))
             .timeout(basic_config.timeout)
             .layer(from_fn_with_state(get_app_state(), entry))
             .layer(from_fn_with_state(get_app_state(), stats))
+            .layer(from_fn_with_state(
+                (cache::get_redis_cache(), config::get_session_params()),
+                session,
+            ))
             .layer(from_fn_with_state(get_app_state(), processing_limit)),
     );
 

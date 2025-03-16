@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::config::must_get_config;
+use super::config::must_get_config;
 use once_cell::sync::OnceCell;
 use tibba_state::AppState;
 

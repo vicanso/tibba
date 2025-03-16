@@ -14,21 +14,84 @@
 
 use axum::extract::Request;
 use axum::extract::State;
+use axum::http::header::{HeaderMap, HeaderValue};
 use axum::middleware::Next;
 use axum::response::Response;
+use axum_extra::extract::cookie::{Key, SignedCookieJar};
 use scopeguard::defer;
+use serde::{Deserialize, Serialize};
+use tibba_cache::RedisCache;
 use tibba_error::Error;
+use tibba_error::new_error;
 use tracing::debug;
 
 type Result<T> = std::result::Result<T, Error>;
 
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+pub struct Claim {
+    // expiration time
+    exp: i64,
+    // issued at
+    iat: i64,
+    // id
+    id: String,
+    // account
+    account: String,
+}
+
+#[derive(Debug, Clone)]
 pub struct SessionParams {
     pub prefixes: Vec<String>,
+    pub secret: String,
+    pub cookie: String,
+    pub ttl_seconds: u64,
+}
+
+impl SessionParams {
+    pub fn new(prefixes: Vec<String>) -> Self {
+        Self {
+            prefixes,
+            secret: String::new(),
+            cookie: String::new(),
+            ttl_seconds: 2 * 24 * 3600,
+        }
+    }
+    pub fn with_secret(mut self, secret: String) -> Self {
+        self.secret = secret;
+        self
+    }
+    pub fn with_cookie(mut self, cookie: String) -> Self {
+        self.cookie = cookie;
+        self
+    }
+    pub fn with_ttl_seconds(mut self, ttl_seconds: u64) -> Self {
+        self.ttl_seconds = ttl_seconds;
+        self
+    }
+}
+
+async fn get_claim(
+    headers: &HeaderMap<HeaderValue>,
+    cache: &RedisCache,
+    params: &SessionParams,
+) -> Result<Claim> {
+    let key = Key::try_from(params.secret.as_bytes()).map_err(|e| {
+        new_error(&e.to_string())
+            .with_category("session")
+            .with_status(500)
+            .with_exception(true)
+    })?;
+    let jar = SignedCookieJar::from_headers(headers, key);
+    let Some(session_id) = jar.get(&params.cookie) else {
+        return Ok(Claim::default());
+    };
+    let claim = cache.get_struct(session_id.value()).await?;
+    Ok(claim.unwrap_or_default())
 }
 
 pub async fn session(
-    State(params): State<&SessionParams>,
-    req: Request,
+    State((cache, params)): State<(&'static RedisCache, &'static SessionParams)>,
+    mut req: Request,
     next: Next,
 ) -> Result<Response> {
     let path = req.uri().path();
@@ -37,10 +100,11 @@ pub async fn session(
         let res = next.run(req).await;
         return Ok(res);
     }
-    // Log middleware entry
     debug!(category = "middleware", "--> session");
-    // Ensure exit logging happens even if processing panics
     defer!(debug!(category = "middleware", "<-- session"););
+
+    let claim = get_claim(req.headers(), cache, params).await?;
+    req.extensions_mut().insert(claim);
     let res = next.run(req).await;
     Ok(res)
 }

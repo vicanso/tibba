@@ -12,7 +12,9 @@ tibba-util = { path = "../tibba-util" }
 tibba-state = { path = "../tibba-state" }
 tibba-middleware = { path = "../tibba-middleware" }
 tibba-request = { path = "../tibba-request" }
+tibba-cache = { path = "../tibba-cache" }
 tibba-router-common = { path = "../tibba-router-common" }
+tibba-router-user = { path = "../tibba-router-user" }
 time = "0.3.39"
 tokio = { workspace = true }
 tracing = { workspace = true }

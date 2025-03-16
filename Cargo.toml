@@ -22,6 +22,7 @@ members = [
     "tibba-performance",
     "tibba-request",
     "tibba-router-common",
+    "tibba-router-user",
     "tibba-state",
     "tibba-util",
     "tibba-validator",

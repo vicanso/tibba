@@ -55,24 +55,21 @@ pub struct HttpError {
 }
 
 impl HttpError {
-    pub fn with_category(mut self, category: String) -> Self {
-        self.category = category;
+    pub fn with_category(mut self, category: &str) -> Self {
+        self.category = category.to_string();
         self
     }
-    pub fn with_code(mut self, code: String) -> Self {
-        self.code = code;
+    pub fn with_code(mut self, code: &str) -> Self {
+        self.code = code.to_string();
         self
     }
     pub fn with_status(mut self, status: u16) -> Self {
         self.status = status;
         self
     }
-}
-
-pub fn new_http_error(message: String) -> HttpError {
-    HttpError {
-        message,
-        ..Default::default()
+    pub fn with_exception(mut self, exception: bool) -> Self {
+        self.exception = exception;
+        self
     }
 }
 
@@ -94,42 +91,11 @@ impl IntoResponse for Error {
 }
 
 // Creates a new Error with default status code 400 (Bad Request)
-pub fn new_error(message: String) -> Error {
-    new_error_with_status(message, 400)
-}
-
-// Creates a new Error with specified category
-// Uses default values for other fields
-pub fn new_error_with_category(message: String, category: String) -> Error {
+pub fn new_error(message: &str) -> HttpError {
     HttpError {
-        message,
-        category,
+        message: message.to_string(),
         ..Default::default()
     }
-    .into()
-}
-
-// Creates a new Error with custom status code
-// Uses default values for other fields
-pub fn new_error_with_status(message: String, status: u16) -> Error {
-    HttpError {
-        message,
-        status,
-        ..Default::default()
-    }
-    .into()
-}
-
-// Creates a new Error marked as an exception with custom status code
-// Sets exception flag to true
-pub fn new_exception_error_with_status(message: String, status: u16) -> Error {
-    HttpError {
-        message,
-        status,
-        exception: true,
-        ..Default::default()
-    }
-    .into()
 }
 
 // Global error handler for the application

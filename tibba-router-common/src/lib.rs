@@ -17,7 +17,7 @@ use axum::extract::State;
 use axum::routing::get;
 use serde::Serialize;
 use std::time::Duration;
-use tibba_error::{Error, new_error_with_category};
+use tibba_error::{Error, new_error};
 use tibba_state::AppState;
 use tibba_util::{CacheJsonResult, get_env};
 
@@ -27,10 +27,10 @@ const ERROR_CATEGORY: &str = "common_router";
 
 async fn ping(State(state): State<&'static AppState>) -> Result<&'static str> {
     if !state.is_running() {
-        return Err(new_error_with_category(
-            "Server is not running".to_string(),
-            ERROR_CATEGORY.to_string(),
-        ));
+        return Err(new_error("Server is not running")
+            .with_category(ERROR_CATEGORY)
+            .with_status(503)
+            .into());
     }
     Ok("pong")
 }

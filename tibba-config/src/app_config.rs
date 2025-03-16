@@ -289,3 +289,35 @@ impl AppConfig {
         Ok(redis_config)
     }
 }
+
+#[derive(Debug, Clone, Default, Validate)]
+pub struct SessionConfig {
+    // session ttl in seconds
+    #[validate(range(min = 60, max = 2592000))]
+    pub ttl_seconds: u64,
+    // session secret
+    #[validate(length(min = 64))]
+    pub secret: String,
+    // session cookie name
+    #[validate(length(min = 1, max = 64))]
+    pub cookie: String,
+}
+
+impl AppConfig {
+    // Creates a new SessionConfig instance from the configuration
+    pub fn new_session_config(&self) -> Result<SessionConfig> {
+        let config = self.clone().set_prefix("session");
+        let ttl =
+            config.get_duration_from_env_first("ttl", Some(Duration::from_secs(2 * 24 * 3600)));
+        let session_config = SessionConfig {
+            ttl_seconds: ttl.as_secs(),
+            secret: config.get_from_env_first("secret", None),
+            cookie: config.get_from_env_first("cookie", None),
+        };
+        session_config.validate().map_err(|e| Error::Validate {
+            category: "session".to_string(),
+            source: e,
+        })?;
+        Ok(session_config)
+    }
+}

@@ -2252,6 +2252,7 @@ dependencies = [
  "axum-client-ip",
  "axum-extra",
  "scopeguard",
+ "serde",
  "tibba-cache",
  "tibba-error",
  "tibba-state",
@@ -2291,6 +2292,19 @@ dependencies = [
 
 [[package]]
 name = "tibba-router-common"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "humantime",
+ "os_info",
+ "serde",
+ "tibba-error",
+ "tibba-state",
+ "tibba-util",
+]
+
+[[package]]
+name = "tibba-router-user"
 version = "0.1.0"
 dependencies = [
  "axum",
@@ -2350,12 +2364,14 @@ dependencies = [
  "ctor",
  "once_cell",
  "rust-embed",
+ "tibba-cache",
  "tibba-config",
  "tibba-error",
  "tibba-hook",
  "tibba-middleware",
  "tibba-request",
  "tibba-router-common",
+ "tibba-router-user",
  "tibba-state",
  "tibba-util",
  "time",

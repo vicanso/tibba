@@ -19,7 +19,7 @@ use axum::middleware::Next;
 use axum::response::Response;
 use axum_client_ip::InsecureClientIp;
 use scopeguard::defer;
-use tibba_error::{Error, new_exception_error_with_status};
+use tibba_error::{Error, new_error};
 use tibba_state::{AppState, CTX};
 use tibba_util::{get_header_value, json_get, read_http_body};
 use tracing::{debug, info};
@@ -76,7 +76,7 @@ pub async fn stats(
         let (parts, body) = res.into_parts();
         let data = read_http_body(body)
             .await
-            .map_err(|e| new_exception_error_with_status(e.to_string(), 500))?;
+            .map_err(|e| new_error(&e.to_string()).with_status(500))?;
         // Extract error message from response body
         message = Some(json_get(&data, "message"));
         // Reconstruct response

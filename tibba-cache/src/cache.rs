@@ -52,14 +52,14 @@ impl RedisCacheBuilder {
 
     /// Sets the time-to-live duration for cache entries
     /// Returns self for method chaining
-    pub fn ttl(mut self, ttl: Duration) -> Self {
+    pub fn with_ttl(mut self, ttl: Duration) -> Self {
         self.ttl = ttl;
         self
     }
 
     /// Sets the prefix for all cache keys
     /// Returns self for method chaining
-    pub fn prefix(mut self, prefix: String) -> Self {
+    pub fn with_prefix(mut self, prefix: String) -> Self {
         self.prefix = prefix;
         self
     }

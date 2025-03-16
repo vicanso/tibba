@@ -13,11 +13,17 @@
 // limitations under the License.
 
 use axum::Router;
+use tibba_config::BasicConfig;
 use tibba_router_common::{CommonRouterParams, new_common_router};
+use tibba_router_user::{UserRouterParams, new_user_router};
 use tibba_state::AppState;
 
-pub fn new_router(state: &'static AppState) -> Router {
-    let r = new_common_router(CommonRouterParams { state });
-
-    Router::new().merge(r)
+pub fn new_router(state: &'static AppState, basic_config: &BasicConfig) -> Router {
+    let common_router = new_common_router(CommonRouterParams { state });
+    let user_router = new_user_router(UserRouterParams {
+        secret: basic_config.secret.clone(),
+    });
+    Router::new()
+        .nest("/users", user_router)
+        .merge(common_router)
 }
