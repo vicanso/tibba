@@ -57,35 +57,14 @@ fn init_logger() {
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 }
 
-#[tokio::main]
-async fn run() {
-    // let client = ClientBuilder::new("baidu")
-    //     .with_base_url("https://baidu.com")
-    //     .with_timeout(std::time::Duration::from_secs(10))
-    //     .with_common_interceptor()
-    //     .build()
-    //     .unwrap();
-    // let resp = client
-    //     .request_raw(Params::<Vec<(&str, &str)>, ()> {
-    //         url: "/?a=eYtFiWeWeq",
-    //         method: axum::http::Method::GET,
-    //         query: Some(&vec![("b", "123")]),
-    //         ..Default::default()
-    //     })
-    //     .await
-    //     .unwrap();
-    // info!("response body size: {}", resp.len());
-
-    // only use unwrap in run function
-    if let Err(e) = run_before_tasks().await {
-        error!(category = "run_before_tasks", message = e.to_string(),);
-        return;
-    }
-    // set server is running
+async fn run() -> Result<(), Box<dyn std::error::Error>> {
+    run_before_tasks().await?;
     let state = get_app_state();
     state.run();
+
     let app_config = must_get_config();
-    let basic_config = app_config.new_basic_config().unwrap();
+    // config is validated in init function
+    let basic_config = app_config.new_basic_config()?;
 
     let app = Router::new().merge(new_router(state, &basic_config)).layer(
         // service build layer execute by add order
@@ -112,6 +91,33 @@ async fn run() {
     // .with_graceful_shutdown(shutdown_signal())
     .await
     .unwrap();
+    Ok(())
+}
+
+#[tokio::main]
+async fn start() {
+    // let client = ClientBuilder::new("baidu")
+    //     .with_base_url("https://baidu.com")
+    //     .with_timeout(std::time::Duration::from_secs(10))
+    //     .with_common_interceptor()
+    //     .build()
+    //     .unwrap();
+    // let resp = client
+    //     .request_raw(Params::<Vec<(&str, &str)>, ()> {
+    //         url: "/?a=eYtFiWeWeq",
+    //         method: axum::http::Method::GET,
+    //         query: Some(&vec![("b", "123")]),
+    //         ..Default::default()
+    //     })
+    //     .await
+    //     .unwrap();
+    // info!("response body size: {}", resp.len());
+
+    // only use unwrap in run function
+    if let Err(e) = run().await {
+        error!(category = "run", message = e.to_string(),);
+        return;
+    }
 }
 
 fn main() {
@@ -121,5 +127,5 @@ fn main() {
         std::process::exit(1);
     }));
     init_logger();
-    run();
+    start();
 }

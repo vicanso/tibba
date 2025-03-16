@@ -1,0 +1,72 @@
+// Copyright 2025 Tree xie.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+use axum::body::{Body, Bytes};
+use axum::extract::FromRequest;
+use axum::http::header::HeaderMap;
+use axum::http::{Request, header};
+use serde::de::DeserializeOwned;
+use tibba_error::{Error, new_error};
+use validator::Validate;
+
+pub struct JsonParams<T>(pub T);
+
+impl<T, S> FromRequest<S> for JsonParams<T>
+where
+    T: DeserializeOwned + Validate,
+    S: Send + Sync,
+{
+    type Rejection = Error;
+
+    async fn from_request(req: Request<Body>, state: &S) -> Result<Self, Self::Rejection> {
+        if json_content_type(req.headers()) {
+            let bytes = Bytes::from_request(req, state)
+                .await
+                .map_err(|err| new_error(&err.to_string()).with_category("params:read_body"))?;
+            let deserializer = &mut serde_json::Deserializer::from_slice(&bytes);
+
+            let value: T = match serde_path_to_error::deserialize(deserializer) {
+                Ok(value) => value,
+                Err(err) => {
+                    return Err(new_error(&err.to_string())
+                        .with_category("params:serde_json")
+                        .into());
+                }
+            };
+            value.validate()?;
+
+            Ok(JsonParams(value))
+        } else {
+            Err(new_error("Missing json content type")
+                .with_category("params:from_json")
+                .into())
+        }
+    }
+}
+
+fn json_content_type(headers: &HeaderMap) -> bool {
+    let content_type = if let Some(content_type) = headers.get(header::CONTENT_TYPE) {
+        content_type
+    } else {
+        return false;
+    };
+
+    let content_type = if let Ok(content_type) = content_type.to_str() {
+        content_type
+    } else {
+        return false;
+    };
+
+    content_type.contains("application/json")
+}

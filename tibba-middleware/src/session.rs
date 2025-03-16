@@ -12,9 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use axum::extract::FromRequestParts;
 use axum::extract::Request;
 use axum::extract::State;
 use axum::http::header::{HeaderMap, HeaderValue};
+use axum::http::request::Parts;
 use axum::middleware::Next;
 use axum::response::Response;
 use axum_extra::extract::cookie::{Key, SignedCookieJar};
@@ -23,6 +25,7 @@ use serde::{Deserialize, Serialize};
 use tibba_cache::RedisCache;
 use tibba_error::Error;
 use tibba_error::new_error;
+use tibba_util::timestamp;
 use tracing::debug;
 
 type Result<T> = std::result::Result<T, Error>;
@@ -30,13 +33,38 @@ type Result<T> = std::result::Result<T, Error>;
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub struct Claim {
     // expiration time
-    exp: i64,
+    exp: u64,
     // issued at
-    iat: i64,
+    iat: u64,
     // id
     id: String,
     // account
     account: String,
+}
+
+impl Claim {
+    pub fn with_account(mut self, account: String) -> Self {
+        self.account = account;
+        self
+    }
+}
+
+impl<S> FromRequestParts<S> for Claim
+where
+    S: Send + Sync,
+{
+    type Rejection = Error;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        _state: &S,
+    ) -> std::result::Result<Self, Self::Rejection> {
+        let claim = parts
+            .extensions
+            .get::<Claim>()
+            .ok_or::<Error>(new_error("Claim not found").into())?;
+        Ok(claim.clone())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -103,7 +131,12 @@ pub async fn session(
     debug!(category = "middleware", "--> session");
     defer!(debug!(category = "middleware", "<-- session"););
 
-    let claim = get_claim(req.headers(), cache, params).await?;
+    let mut claim = get_claim(req.headers(), cache, params).await?;
+    if claim.iat == 0 {
+        let iat = timestamp() as u64;
+        claim.iat = iat;
+        claim.exp = iat + params.ttl_seconds;
+    }
     req.extensions_mut().insert(claim);
     let res = next.run(req).await;
     Ok(res)
