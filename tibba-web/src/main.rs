@@ -59,14 +59,12 @@ fn init_logger() {
 
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
     run_before_tasks().await?;
-    let state = get_app_state();
-    state.run();
 
     let app_config = must_get_config();
     // config is validated in init function
     let basic_config = app_config.new_basic_config()?;
 
-    let app = Router::new().merge(new_router(state, &basic_config)).layer(
+    let app = Router::new().merge(new_router()?).layer(
         // service build layer execute by add order
         ServiceBuilder::new()
             .layer(HandleErrorLayer::new(handle_error))
@@ -79,6 +77,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             ))
             .layer(from_fn_with_state(get_app_state(), processing_limit)),
     );
+    get_app_state().run();
 
     info!("listening on http://{}/", basic_config.listen);
     let listener = tokio::net::TcpListener::bind(basic_config.listen)

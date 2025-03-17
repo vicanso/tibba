@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::CODE_USER_ACCOUNT;
 use super::is_disabled;
+use super::{CODE_USER_ACCOUNT, CODE_USER_PASSWORD};
 use validator::ValidationError;
 
 type Result<T> = std::result::Result<T, ValidationError>;
@@ -27,6 +27,19 @@ pub fn x_user_account(user: &str) -> Result<()> {
     }
     if user.len() < 2 || user.len() > 20 {
         return Err(ValidationError::new(CODE_USER_ACCOUNT));
+    }
+    Ok(())
+}
+
+pub fn x_user_password(password: &str) -> Result<()> {
+    if is_disabled(CODE_USER_PASSWORD) {
+        return Ok(());
+    }
+    if !password.is_ascii() {
+        return Err(ValidationError::new(CODE_USER_PASSWORD));
+    }
+    if password.len() < 32 {
+        return Err(ValidationError::new(CODE_USER_PASSWORD));
     }
     Ok(())
 }

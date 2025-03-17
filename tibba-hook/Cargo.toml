@@ -11,3 +11,4 @@ path = "src/lib.rs"
 dashmap = { workspace = true }
 futures = { workspace = true }
 once_cell = { workspace = true }
+tibba-error = { path = "../tibba-error" }

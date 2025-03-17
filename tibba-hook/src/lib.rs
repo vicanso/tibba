@@ -14,11 +14,11 @@
 
 use dashmap::DashMap;
 use once_cell::sync::Lazy;
-use std::error::Error;
 use std::pin::Pin;
+use tibba_error::Error;
 
 // Custom Result type that uses Box<dyn Error> for error handling
-type Result<T> = std::result::Result<T, Box<dyn Error>>;
+type Result<T> = std::result::Result<T, Error>;
 
 // Type alias for a pinned, boxed Future that returns Result<()>
 // Used for async hook tasks

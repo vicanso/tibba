@@ -13,6 +13,8 @@ axum = { workspace = true }
 serde = { workspace = true }
 os_info = { workspace = true }
 humantime = { workspace = true }
+captcha = { workspace = true }
 tibba-state = { path = "../tibba-state" }
 tibba-error = { path = "../tibba-error" }
 tibba-util = { path = "../tibba-util" }
+tibba-cache = { path = "../tibba-cache" }

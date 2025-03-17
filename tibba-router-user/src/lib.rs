@@ -15,12 +15,15 @@
 use axum::extract::State;
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use axum_extra::extract::cookie::CookieJar;
 use serde::{Deserialize, Serialize};
 use tibba_error::{Error, new_error};
 use tibba_middleware::Claim;
 use tibba_util::{
-    JsonParams, JsonResult, is_development, is_test, timestamp, timestamp_hash, uuid,
+    JsonParams, JsonResult, is_development, is_test, now, timestamp, timestamp_hash, uuid,
 };
+use tibba_util::{generate_device_id_cookie, get_device_id_from_cookie, validate_timestamp_hash};
+use tibba_validator::*;
 use validator::Validate;
 
 type Result<T> = std::result::Result<T, Error>;
@@ -52,7 +55,7 @@ struct LoginParams {
 }
 
 impl LoginParams {
-    fn validate_token(&self) -> Result<()> {
+    fn validate_token(&self, secret: &str) -> Result<()> {
         // 测试环境需要，设置为0则跳过
         if self.ts <= 0 && (is_development() || is_test()) {
             return Ok(());
@@ -60,17 +63,17 @@ impl LoginParams {
         if (self.ts - timestamp()).abs() > 60 {
             return Err(new_error("Timestamp is invalid").into());
         }
-        // validate_timestamp_hash(self.ts, &self.token, &self.hash)?;
+        validate_timestamp_hash(self.ts, &self.token, &self.hash, secret)?;
         Ok(())
     }
 }
 
-async fn login(claim: Claim, JsonParams(params): JsonParams<LoginParams>) -> JsonResult<Claim> {
-    params.validate_token()?;
-    println!("claim: {claim:?}");
-    println!("{params:?}");
-
-    // params.validate_token()?;
+async fn login(
+    State(secret): State<String>,
+    claim: Claim,
+    JsonParams(params): JsonParams<LoginParams>,
+) -> Result<Claim> {
+    params.validate_token(&secret)?;
 
     // let result = find_user_by_account(&params.account).await?;
     // let account_password_err = HttpError::new("Account or password is wrong");
@@ -83,11 +86,81 @@ async fn login(claim: Claim, JsonParams(params): JsonParams<LoginParams>) -> Jso
     //     return Err(account_password_err);
     // }
 
+    let claim = claim.with_account(params.account);
     // let mut claim = Claim::new(&params.account);
     // // 记录session
-    // claim.save().await?;
+    claim.save().await?;
 
-    Ok(Json(claim.with_account(params.account)))
+    Ok(claim)
+}
+
+#[derive(Debug, Clone, Serialize, Default)]
+struct UserMeResp {
+    name: String,
+    expired_at: String,
+    issued_at: String,
+    time: String,
+}
+
+async fn me(mut jar: CookieJar, claim: Claim) -> Result<(CookieJar, Json<UserMeResp>)> {
+    let account = claim.get_account();
+    // let mut roles = None;
+    // let mut groups = None;
+    // if !account.is_empty() {
+    //     let result = find_user_by_account(&account).await?;
+    //     if result.is_none() {
+    //         return Err(HttpError::new("Account is not exists"));
+    //     }
+    //     let user = result.unwrap();
+    //     roles = user.roles;
+    //     groups = user.groups;
+    // }
+
+    // let me = UserMeResp {
+    //     name: account,
+    //     expired_at: claim.get_expired_at(),
+    //     issued_at: claim.get_issued_at(),
+    //     roles,
+    //     groups,
+    //     time: util::now(),
+    // };
+    // // 如果未设置device，则设置
+    // if util::get_device_id_from_cookie(&jar).is_empty() {
+    //     jar = jar.add(util::generate_device_id_cookie());
+    // }
+    if get_device_id_from_cookie(&jar).is_empty() {
+        jar = jar.add(generate_device_id_cookie());
+    }
+    let info = UserMeResp {
+        name: account,
+        expired_at: claim.get_expired_at(),
+        issued_at: claim.get_issued_at(),
+        time: now(),
+    };
+
+    Ok((jar, Json(info)))
+}
+
+#[derive(Deserialize, Validate)]
+struct RegisterParams {
+    #[validate(custom(function = "x_user_account"))]
+    account: String,
+    #[validate(custom(function = "x_user_password"))]
+    password: String,
+}
+#[derive(Serialize)]
+struct RegisterResp {
+    id: i64,
+    account: String,
+}
+
+async fn register(JsonParams(params): JsonParams<RegisterParams>) -> JsonResult<RegisterResp> {
+    println!("password: {}", params.password);
+    // let result = add_user(&params.account, &params.password).await?;
+    Ok(Json(RegisterResp {
+        id: 123,
+        account: params.account,
+    }))
 }
 
 pub struct UserRouterParams {
@@ -96,6 +169,11 @@ pub struct UserRouterParams {
 
 pub fn new_user_router(params: UserRouterParams) -> Router {
     Router::new()
-        .route("/login/token", get(login_token).with_state(params.secret))
-        .route("/login", post(login))
+        .route(
+            "/login/token",
+            get(login_token).with_state(params.secret.clone()),
+        )
+        .route("/login", post(login).with_state(params.secret))
+        .route("/me", get(me))
+        .route("/register", post(register))
 }

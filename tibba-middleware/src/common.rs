@@ -112,7 +112,7 @@ pub async fn validate_captcha(
     let value = req
         .headers()
         .get("X-Captcha")
-        .ok_or(new_error("captcha is required").with_category(category))?
+        .ok_or(new_error("Captcha is required").with_category(category))?
         .to_str()
         .map_err(|err| new_error(&err.to_string()).with_category(category))?;
 
@@ -121,7 +121,7 @@ pub async fn validate_captcha(
 
     // Validate the header format
     if arr.len() != 3 {
-        return Err(new_error("captcha parameter is invalid")
+        return Err(new_error("Captcha parameter is invalid")
             .with_category(category)
             .into());
     }
@@ -136,7 +136,7 @@ pub async fn validate_captcha(
 
         // Compare the provided code against the stored code
         if code != arr[2] {
-            let he = new_error("captcha input error")
+            let he = new_error("Captcha input error")
                 .with_category(category)
                 .with_code("mismatching");
             return Err(he.into());

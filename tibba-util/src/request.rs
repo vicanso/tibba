@@ -13,8 +13,9 @@
 // limitations under the License.
 
 use axum::body::{Body, Bytes};
-use axum::extract::FromRequest;
+use axum::extract::{FromRequest, FromRequestParts};
 use axum::http::header::HeaderMap;
+use axum::http::request::Parts;
 use axum::http::{Request, header};
 use serde::de::DeserializeOwned;
 use tibba_error::{Error, new_error};
@@ -69,4 +70,22 @@ fn json_content_type(headers: &HeaderMap) -> bool {
     };
 
     content_type.contains("application/json")
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Query<T>(pub T);
+
+impl<T, S> FromRequestParts<S> for Query<T>
+where
+    T: DeserializeOwned,
+    S: Send + Sync,
+{
+    type Rejection = Error;
+
+    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+        let query = parts.uri.query().unwrap_or_default();
+        let params = serde_urlencoded::from_str(query)
+            .map_err(|err| new_error(&err.to_string()).with_category("params:from_query"))?;
+        Ok(Query(params))
+    }
 }

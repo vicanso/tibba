@@ -14,7 +14,9 @@ serde = { workspace = true }
 os_info = { workspace = true }
 humantime = { workspace = true }
 validator = { workspace = true }
+axum-extra = { workspace = true }
 tibba-state = { path = "../tibba-state" }
 tibba-error = { path = "../tibba-error" }
 tibba-util = { path = "../tibba-util" }
 tibba-middleware = { path = "../tibba-middleware" }
+tibba-validator = { path = "../tibba-validator" }

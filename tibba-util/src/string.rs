@@ -17,7 +17,10 @@ use hex::encode;
 use nanoid::nanoid;
 use sha2::{Digest, Sha256};
 use std::time::{SystemTime, UNIX_EPOCH};
+use tibba_error::{Error, new_error};
 use uuid::{NoContext, Timestamp, Uuid};
+
+type Result<T> = std::result::Result<T, Error>;
 
 /// Generates a UUIDv7 string
 ///
@@ -124,6 +127,25 @@ pub fn timestamp_hash(value: &str, secret: &str) -> (i64, String) {
     let ts = timestamp();
     let hash = sign_hash(&format!("{ts}:{value}"), secret);
     (ts, hash)
+}
+
+pub fn validate_sign_hash(value: &str, hash: &str, secret: &str) -> Result<()> {
+    if sign_hash(value, secret) != hash {
+        return Err(new_error("Signature is invalid")
+            .with_category("sign_hash")
+            .into());
+    }
+    Ok(())
+}
+
+pub fn validate_timestamp_hash(ts: i64, value: &str, hash: &str, secret: &str) -> Result<()> {
+    let category = "timestamp_hash";
+    if (timestamp() - ts).abs() > 5 * 60 {
+        return Err(new_error("Signature is expired")
+            .with_category(category)
+            .into());
+    }
+    validate_sign_hash(&format!("{ts}:{value}"), hash, secret)
 }
 
 #[cfg(test)]

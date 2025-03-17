@@ -30,7 +30,10 @@ pub fn get_session_params() -> &'static SessionParams {
     SESSION_PARAMS.get_or_init(|| {
         // session config is checked in init function
         let session_config = must_get_config().new_session_config().unwrap();
-        SessionParams::new(vec!["/users/".to_string()]).with_secret(session_config.secret)
+        SessionParams::new(vec!["/users/".to_string()])
+            .with_secret(session_config.secret)
+            .with_ttl_seconds(session_config.ttl_seconds as i64)
+            .with_cookie(session_config.cookie)
     })
 }
 
@@ -59,20 +62,21 @@ pub fn must_get_config() -> &'static AppConfig {
     new_config().unwrap()
 }
 
+async fn check() -> Result<()> {
+    let app_config = new_config()?;
+    let _ = app_config.new_basic_config()?;
+    let _ = app_config.new_redis_config()?;
+    let _ = app_config.new_session_config()?;
+    let _ = app_config.new_database_config()?;
+    Ok(())
+}
+
 // add application init before application start
 #[ctor]
 fn init() {
     register_before_task(
         "application_config",
         0,
-        Box::new(|| {
-            Box::pin(async {
-                let app_config = new_config()?;
-                let _ = app_config.new_basic_config()?;
-                let _ = app_config.new_redis_config()?;
-                let _ = app_config.new_session_config()?;
-                Ok(())
-            })
-        }),
+        Box::new(|| Box::pin(async { check().await })),
     );
 }

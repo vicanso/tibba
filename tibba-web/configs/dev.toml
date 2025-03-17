@@ -5,3 +5,6 @@ uri = "redis://127.0.0.1"
 # session config
 [session]
 secret = "y0nEeTWOF0Ud8XNoTfYacGC6MrKgxIUnJV1kv0PBh83IeKmyHtuJ5uqGa7hcfBSu"
+
+[database]
+url = "mysql://vicanso:A123123@localhost:3306/tibba"

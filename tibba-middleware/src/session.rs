@@ -12,40 +12,132 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use axum::Json;
 use axum::extract::FromRequestParts;
 use axum::extract::Request;
 use axum::extract::State;
 use axum::http::header::{HeaderMap, HeaderValue};
 use axum::http::request::Parts;
 use axum::middleware::Next;
-use axum::response::Response;
+use axum::response::{IntoResponse, Response};
 use axum_extra::extract::cookie::{Key, SignedCookieJar};
+use cookie::CookieBuilder;
+use derivative::Derivative;
 use scopeguard::defer;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 use tibba_cache::RedisCache;
 use tibba_error::Error;
 use tibba_error::new_error;
-use tibba_util::timestamp;
+use tibba_util::{from_timestamp, timestamp, uuid};
 use tracing::debug;
 
 type Result<T> = std::result::Result<T, Error>;
 
-#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+#[derive(Serialize, Deserialize, Default, Clone, Derivative)]
+#[derivative(Debug)]
 pub struct Claim {
-    // expiration time
-    exp: u64,
-    // issued at
-    iat: u64,
+    #[serde(skip)]
+    #[derivative(Debug = "ignore")]
+    cache: Option<&'static RedisCache>,
+    #[serde(skip)]
+    secret: String,
+    cookie: String,
+    // ttl in seconds
+    ttl: i64,
     // id
     id: String,
+    // issued at
+    iat: i64,
     // account
     account: String,
 }
 
 impl Claim {
+    fn get_key(id: &str) -> String {
+        format!("ss:{id}")
+    }
     pub fn with_account(mut self, account: String) -> Self {
+        if self.id.is_empty() || self.account != account {
+            self.id = uuid();
+        }
         self.account = account;
+        self.iat = timestamp();
         self
+    }
+    pub fn get_account(&self) -> String {
+        self.account.clone()
+    }
+    pub fn get_expired_at(&self) -> String {
+        from_timestamp(self.iat + self.ttl, 0)
+    }
+    pub fn get_issued_at(&self) -> String {
+        from_timestamp(self.iat, 0)
+    }
+    pub fn is_expired(&self) -> bool {
+        self.iat + self.ttl < timestamp()
+    }
+    pub fn reset(&mut self) {
+        self.id = "".to_string();
+        self.account = "".to_string();
+    }
+    pub async fn save(&self) -> Result<()> {
+        if self.id.is_empty() {
+            return Err(new_error("id is empty")
+                .with_status(500)
+                .with_exception(true)
+                .into());
+        }
+        let Some(cache) = self.cache else {
+            return Err(new_error("cache is not set")
+                .with_status(500)
+                .with_exception(true)
+                .into());
+        };
+        cache
+            .set_struct(
+                &Self::get_key(&self.id),
+                &self,
+                Some(Duration::from_secs(self.ttl as u64)),
+            )
+            .await?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ClaimResp {
+    account: String,
+}
+
+impl IntoResponse for Claim {
+    fn into_response(self) -> Response {
+        let c = CookieBuilder::new(self.cookie, self.id.clone())
+            .path("/")
+            .http_only(true)
+            .max_age(time::Duration::seconds(self.ttl));
+
+        match Key::try_from(self.secret.as_bytes()).map_err(|e| {
+            new_error(&e.to_string())
+                .with_category("session")
+                .with_status(500)
+                .with_exception(true)
+        }) {
+            Ok(key) => {
+                let jar = SignedCookieJar::new(key);
+                (
+                    jar.add(c),
+                    Json(ClaimResp {
+                        account: self.account,
+                    }),
+                )
+                    .into_response()
+            }
+            Err(e) => {
+                let err: Error = e.into();
+                err.into_response()
+            }
+        }
     }
 }
 
@@ -72,7 +164,7 @@ pub struct SessionParams {
     pub prefixes: Vec<String>,
     pub secret: String,
     pub cookie: String,
-    pub ttl_seconds: u64,
+    pub ttl_seconds: i64,
 }
 
 impl SessionParams {
@@ -92,7 +184,7 @@ impl SessionParams {
         self.cookie = cookie;
         self
     }
-    pub fn with_ttl_seconds(mut self, ttl_seconds: u64) -> Self {
+    pub fn with_ttl_seconds(mut self, ttl_seconds: i64) -> Self {
         self.ttl_seconds = ttl_seconds;
         self
     }
@@ -113,7 +205,9 @@ async fn get_claim(
     let Some(session_id) = jar.get(&params.cookie) else {
         return Ok(Claim::default());
     };
-    let claim = cache.get_struct(session_id.value()).await?;
+    let claim = cache
+        .get_struct(&Claim::get_key(session_id.value()))
+        .await?;
     Ok(claim.unwrap_or_default())
 }
 
@@ -132,10 +226,16 @@ pub async fn session(
     defer!(debug!(category = "middleware", "<-- session"););
 
     let mut claim = get_claim(req.headers(), cache, params).await?;
+    claim.ttl = params.ttl_seconds;
+    claim.secret = params.secret.clone();
+    claim.cookie = params.cookie.clone();
+    claim.cache = Some(cache);
     if claim.iat == 0 {
-        let iat = timestamp() as u64;
-        claim.iat = iat;
-        claim.exp = iat + params.ttl_seconds;
+        claim.iat = timestamp();
+    }
+    // reset if expired
+    if claim.is_expired() {
+        claim.reset();
     }
     req.extensions_mut().insert(claim);
     let res = next.run(req).await;

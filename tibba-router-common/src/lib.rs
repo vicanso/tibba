@@ -15,11 +15,14 @@
 use axum::Router;
 use axum::extract::State;
 use axum::routing::get;
-use serde::Serialize;
+use captcha::Captcha;
+use captcha::filters::{Noise, Wave};
+use serde::{Deserialize, Serialize};
 use std::time::Duration;
+use tibba_cache::RedisCache;
 use tibba_error::{Error, new_error};
 use tibba_state::AppState;
-use tibba_util::{CacheJsonResult, get_env};
+use tibba_util::{CacheJsonResult, JsonResult, Query, get_env, timestamp_hash, uuid};
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -63,13 +66,69 @@ async fn get_application_info(
     Ok((Duration::from_secs(60), info).into())
 }
 
+#[derive(Debug, Deserialize, Clone)]
+pub struct CaptchaParams {
+    pub level: Option<i8>,
+}
+
+#[derive(Debug, Clone, Serialize, Default)]
+struct CaptchaInfo {
+    ts: i64,
+    hash: String,
+    data: String,
+}
+
+async fn captcha(
+    State((cache, secret)): State<(&'static RedisCache, String)>,
+    Query(params): Query<CaptchaParams>,
+) -> JsonResult<CaptchaInfo> {
+    let level = params.level.unwrap_or_default();
+    // 未实现send，因此需要将其生命周期减短
+    let (text, data) = {
+        let mut c = Captcha::new();
+        // 设置允许0会导致0的时候不展示，后续确认
+        c.set_chars(&"123456789".chars().collect::<Vec<_>>())
+            .add_chars(4)
+            .apply_filter(Noise::new(0.4))
+            .apply_filter(Wave::new(2.0, 8.0).horizontal())
+            .apply_filter(Wave::new(2.0, 8.0).vertical())
+            .view(120, 38);
+        (c.chars_as_string(), c.as_base64().unwrap_or_default())
+    };
+    let mut info = CaptchaInfo {
+        data,
+        ..Default::default()
+    };
+    if level > 0 {
+        let hash = uuid();
+        cache
+            .set(&hash, &text, Some(Duration::from_secs(5 * 60)))
+            .await?;
+        info.hash = hash;
+    } else {
+        let (ts, hash) = timestamp_hash(&text, &secret);
+        info.ts = ts;
+        info.hash = hash;
+    }
+
+    Ok(info.into())
+}
+
 pub struct CommonRouterParams {
     pub state: &'static AppState,
+    pub cache: &'static RedisCache,
+    pub secret: String,
 }
 
 pub fn new_common_router(params: CommonRouterParams) -> Router {
     Router::new()
-        .route("/ping", get(ping))
-        .route("/commons/info", get(get_application_info))
-        .with_state(params.state)
+        .route("/ping", get(ping).with_state(params.state))
+        .route(
+            "/commons/application",
+            get(get_application_info).with_state(params.state),
+        )
+        .route(
+            "/commons/captcha",
+            get(captcha).with_state((params.cache, params.secret)),
+        )
 }

@@ -321,3 +321,82 @@ impl AppConfig {
         Ok(session_config)
     }
 }
+
+#[derive(Debug, Clone, Default, Validate)]
+pub struct DatabaseConfig {
+    pub origin_url: String,
+    #[validate(length(min = 10))]
+    pub url: String,
+    #[validate(range(min = 2, max = 1000))]
+    pub max_connections: u32,
+    #[validate(range(min = 0, max = 10))]
+    pub min_connections: u32,
+    pub connect_timeout: Duration,
+    pub acquire_timeout: Duration,
+    pub idle_timeout: Duration,
+}
+
+impl AppConfig {
+    // Creates a new DatabaseConfig instance from the configuration
+    pub fn new_database_config(&self) -> Result<DatabaseConfig> {
+        let config = self.clone().set_prefix("database");
+        let origin_url = config.get_from_env_first("url", None);
+        let mut url = origin_url.clone();
+        let info = Url::parse(&url).unwrap();
+        let mut max_connections = 10;
+        let mut min_connections = 2;
+        let mut connect_timeout = Duration::from_secs(3);
+        let mut acquire_timeout = Duration::from_secs(5);
+        let mut idle_timeout = Duration::from_secs(60);
+
+        if let Some(query) = info.query() {
+            url = url.replace(&format!("?{query}"), "");
+            for (key, value) in info.query_pairs() {
+                match key.to_string().as_str() {
+                    "max_connections" => {
+                        let value = convert_string_to_i32(value.to_string());
+                        if value > 0 {
+                            max_connections = value as u32;
+                        }
+                    }
+                    "min_connections" => {
+                        let value = convert_string_to_i32(value.to_string());
+                        if value > 0 {
+                            min_connections = value as u32;
+                        }
+                    }
+                    "connect_timeout" => {
+                        if let Ok(value) = humantime::parse_duration(&value) {
+                            connect_timeout = value;
+                        }
+                    }
+                    "acquire_timeout" => {
+                        if let Ok(value) = humantime::parse_duration(&value) {
+                            acquire_timeout = value;
+                        }
+                    }
+                    "idle_timeout" => {
+                        if let Ok(value) = humantime::parse_duration(&value) {
+                            idle_timeout = value;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let database_config = DatabaseConfig {
+            origin_url,
+            url,
+            max_connections,
+            min_connections,
+            connect_timeout,
+            acquire_timeout,
+            idle_timeout,
+        };
+        database_config.validate().map_err(|e| Error::Validate {
+            category: "database".to_string(),
+            source: e,
+        })?;
+        Ok(database_config)
+    }
+}
