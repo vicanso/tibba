@@ -71,6 +71,9 @@ impl Claim {
     pub fn get_expired_at(&self) -> String {
         from_timestamp(self.iat + self.ttl, 0)
     }
+    pub fn is_will_expired(&self) -> bool {
+        self.iat + self.ttl - timestamp() < 3600
+    }
     pub fn get_issued_at(&self) -> String {
         from_timestamp(self.iat, 0)
     }

@@ -13,14 +13,16 @@
 // limitations under the License.
 
 use axum::extract::State;
-use axum::routing::{get, post};
+use axum::routing::{get, patch, post};
 use axum::{Json, Router};
 use axum_extra::extract::cookie::CookieJar;
 use serde::{Deserialize, Serialize};
+use sqlx::MySqlPool;
 use tibba_error::{Error, new_error};
 use tibba_middleware::Claim;
+use tibba_model::ModelUser;
 use tibba_util::{
-    JsonParams, JsonResult, is_development, is_test, now, timestamp, timestamp_hash, uuid,
+    JsonParams, JsonResult, is_development, is_test, now, sha256, timestamp, timestamp_hash, uuid,
 };
 use tibba_util::{generate_device_id_cookie, get_device_id_from_cookie, validate_timestamp_hash};
 use tibba_validator::*;
@@ -56,7 +58,7 @@ struct LoginParams {
 
 impl LoginParams {
     fn validate_token(&self, secret: &str) -> Result<()> {
-        // 测试环境需要，设置为0则跳过
+        // only for test
         if self.ts <= 0 && (is_development() || is_test()) {
             return Ok(());
         }
@@ -69,26 +71,23 @@ impl LoginParams {
 }
 
 async fn login(
-    State(secret): State<String>,
+    State((secret, pool)): State<(String, &'static MySqlPool)>,
     claim: Claim,
     JsonParams(params): JsonParams<LoginParams>,
 ) -> Result<Claim> {
     params.validate_token(&secret)?;
+    let account_password_err = new_error("Account or password is wrong");
+    let Some(user) = ModelUser::get_by_account(pool, &params.account).await? else {
+        return Err(account_password_err.into());
+    };
 
-    // let result = find_user_by_account(&params.account).await?;
-    // let account_password_err = HttpError::new("Account or password is wrong");
-    // if result.is_none() {
-    //     return Err(account_password_err);
-    // }
-    // let password = result.unwrap().password;
-    // let msg = format!("{}:{password}", params.hash);
-    // if util::sha256(msg.as_bytes()) != params.password {
-    //     return Err(account_password_err);
-    // }
+    let password = user.password;
+    let msg = format!("{}:{password}", params.hash);
+    if sha256(msg.as_bytes()) != params.password {
+        return Err(account_password_err.into());
+    }
 
     let claim = claim.with_account(params.account);
-    // let mut claim = Claim::new(&params.account);
-    // // 记录session
     claim.save().await?;
 
     Ok(claim)
@@ -104,30 +103,6 @@ struct UserMeResp {
 
 async fn me(mut jar: CookieJar, claim: Claim) -> Result<(CookieJar, Json<UserMeResp>)> {
     let account = claim.get_account();
-    // let mut roles = None;
-    // let mut groups = None;
-    // if !account.is_empty() {
-    //     let result = find_user_by_account(&account).await?;
-    //     if result.is_none() {
-    //         return Err(HttpError::new("Account is not exists"));
-    //     }
-    //     let user = result.unwrap();
-    //     roles = user.roles;
-    //     groups = user.groups;
-    // }
-
-    // let me = UserMeResp {
-    //     name: account,
-    //     expired_at: claim.get_expired_at(),
-    //     issued_at: claim.get_issued_at(),
-    //     roles,
-    //     groups,
-    //     time: util::now(),
-    // };
-    // // 如果未设置device，则设置
-    // if util::get_device_id_from_cookie(&jar).is_empty() {
-    //     jar = jar.add(util::generate_device_id_cookie());
-    // }
     if get_device_id_from_cookie(&jar).is_empty() {
         jar = jar.add(generate_device_id_cookie());
     }
@@ -154,17 +129,27 @@ struct RegisterResp {
     account: String,
 }
 
-async fn register(JsonParams(params): JsonParams<RegisterParams>) -> JsonResult<RegisterResp> {
-    println!("password: {}", params.password);
-    // let result = add_user(&params.account, &params.password).await?;
+async fn register(
+    State(pool): State<&'static MySqlPool>,
+    JsonParams(params): JsonParams<RegisterParams>,
+) -> JsonResult<RegisterResp> {
+    let id = ModelUser::insert(pool, &params.account, &params.password).await?;
     Ok(Json(RegisterResp {
-        id: 123,
+        id,
         account: params.account,
     }))
 }
 
+async fn refresh_session(claim: Claim) -> Result<Claim> {
+    let account = claim.get_account();
+    let claim = claim.with_account(account);
+    claim.save().await?;
+    Ok(claim)
+}
+
 pub struct UserRouterParams {
     pub secret: String,
+    pub pool: &'static MySqlPool,
 }
 
 pub fn new_user_router(params: UserRouterParams) -> Router {
@@ -173,7 +158,11 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
             "/login/token",
             get(login_token).with_state(params.secret.clone()),
         )
-        .route("/login", post(login).with_state(params.secret))
+        .route(
+            "/login",
+            post(login).with_state((params.secret, params.pool)),
+        )
         .route("/me", get(me))
-        .route("/register", post(register))
+        .route("/refresh", patch(refresh_session))
+        .route("/register", post(register).with_state(params.pool))
 }

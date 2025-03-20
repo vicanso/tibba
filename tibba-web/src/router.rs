@@ -14,6 +14,7 @@
 
 use crate::cache::get_redis_cache;
 use crate::config::must_get_config;
+use crate::sql::get_db_pool;
 use crate::state::get_app_state;
 use axum::Router;
 use tibba_error::Error;
@@ -32,6 +33,7 @@ pub fn new_router() -> Result<Router> {
     });
     let user_router = new_user_router(UserRouterParams {
         secret: basic_config.secret.clone(),
+        pool: get_db_pool(),
     });
     Ok(Router::new()
         .nest("/users", user_router)

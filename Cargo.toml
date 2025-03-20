@@ -19,10 +19,12 @@ members = [
     "tibba-error",
     "tibba-hook",
     "tibba-middleware",
+    "tibba-model",
     "tibba-performance",
     "tibba-request",
     "tibba-router-common",
     "tibba-router-user",
+    "tibba-sql",
     "tibba-state",
     "tibba-util",
     "tibba-validator",
@@ -80,7 +82,7 @@ sysinfo = "0.33.1"
 serde_urlencoded = "0.7.1"
 os_info = "3.10.0"
 serde_path_to_error = "0.1.17"
-time = "0.3.39"
+time = { version = "0.3.39", features = ["serde"] }
 derivative = "2.2.0"
 captcha = "0.0.9"
-sqlx = { version = "0.8.3", features = ["runtime-tokio", "mysql"] }
+sqlx = { version = "0.8.3", features = ["runtime-tokio", "mysql", "time"] }

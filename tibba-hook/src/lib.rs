@@ -16,6 +16,7 @@ use dashmap::DashMap;
 use once_cell::sync::Lazy;
 use std::pin::Pin;
 use tibba_error::Error;
+use tracing::info;
 
 // Custom Result type that uses Box<dyn Error> for error handling
 type Result<T> = std::result::Result<T, Error>;
@@ -68,6 +69,7 @@ async fn run_task(tasks: &DashMap<String, (u8, HookTaskFuture)>) -> Result<()> {
 
     // Execute tasks in priority order
     for (name, _) in names {
+        info!(category = "hook", name, "start to run task");
         if let Some(item) = tasks.get(&name) {
             item.1().await?;
         }

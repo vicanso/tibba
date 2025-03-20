@@ -15,7 +15,9 @@ tibba-request = { path = "../tibba-request" }
 tibba-cache = { path = "../tibba-cache" }
 tibba-router-common = { path = "../tibba-router-common" }
 tibba-router-user = { path = "../tibba-router-user" }
-time = "0.3.39"
+tibba-sql = { path = "../tibba-sql" }
+sqlx = { workspace = true }
+time = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { version = "0.3.19", features = ["local-time"] }

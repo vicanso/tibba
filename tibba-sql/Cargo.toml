@@ -1,0 +1,14 @@
+[package]
+name = "tibba-sql"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "tibba_sql"
+path = "src/lib.rs"
+
+[dependencies]
+sqlx = { workspace = true }
+snafu = { workspace = true }
+tibba-config = { path = "../tibba-config" }
+tibba-error = { path = "../tibba-error" }

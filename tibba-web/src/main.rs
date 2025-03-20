@@ -31,6 +31,7 @@ use tracing_subscriber::FmtSubscriber;
 mod cache;
 mod config;
 mod router;
+mod sql;
 mod state;
 
 fn init_logger() {
