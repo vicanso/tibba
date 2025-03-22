@@ -86,3 +86,4 @@ time = { version = "0.3.39", features = ["serde"] }
 derivative = "2.2.0"
 captcha = "0.0.9"
 sqlx = { version = "0.8.3", features = ["runtime-tokio", "mysql", "time"] }
+base64 = "0.22.1"

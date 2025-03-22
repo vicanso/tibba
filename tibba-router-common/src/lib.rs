@@ -12,9 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use axum::Json;
 use axum::Router;
 use axum::extract::State;
+use axum::http::header;
+use axum::response::IntoResponse;
 use axum::routing::get;
+use base64::{Engine, engine::general_purpose::STANDARD};
 use captcha::Captcha;
 use captcha::filters::{Noise, Wave};
 use serde::{Deserialize, Serialize};
@@ -22,7 +26,7 @@ use std::time::Duration;
 use tibba_cache::RedisCache;
 use tibba_error::{Error, new_error};
 use tibba_state::AppState;
-use tibba_util::{CacheJsonResult, JsonResult, Query, get_env, timestamp_hash, uuid};
+use tibba_util::{CacheJsonResult, Query, get_env, uuid};
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -68,22 +72,20 @@ async fn get_application_info(
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct CaptchaParams {
-    pub level: Option<i8>,
+    pub preview: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
 struct CaptchaInfo {
-    ts: i64,
     hash: String,
     data: String,
 }
 
 async fn captcha(
-    State((cache, secret)): State<(&'static RedisCache, String)>,
+    State(cache): State<&'static RedisCache>,
     Query(params): Query<CaptchaParams>,
-) -> JsonResult<CaptchaInfo> {
-    let level = params.level.unwrap_or_default();
-    // 未实现send，因此需要将其生命周期减短
+) -> Result<impl IntoResponse> {
+    // captcha is not supported send
     let (text, data) = {
         let mut c = Captcha::new();
         // 设置允许0会导致0的时候不展示，后续确认
@@ -93,25 +95,25 @@ async fn captcha(
             .apply_filter(Wave::new(2.0, 8.0).horizontal())
             .apply_filter(Wave::new(2.0, 8.0).vertical())
             .view(120, 38);
-        (c.chars_as_string(), c.as_base64().unwrap_or_default())
+        (c.chars_as_string(), c.as_png().unwrap_or_default())
     };
-    let mut info = CaptchaInfo {
-        data,
-        ..Default::default()
-    };
-    if level > 0 {
-        let hash = uuid();
-        cache
-            .set(&hash, &text, Some(Duration::from_secs(5 * 60)))
-            .await?;
-        info.hash = hash;
-    } else {
-        let (ts, hash) = timestamp_hash(&text, &secret);
-        info.ts = ts;
-        info.hash = hash;
+
+    if params.preview.unwrap_or_default() {
+        let headers = [(header::CONTENT_TYPE, "image/png")];
+        return Ok((headers, data).into_response());
     }
 
-    Ok(info.into())
+    let mut info = CaptchaInfo {
+        data: STANDARD.encode(data),
+        ..Default::default()
+    };
+    let hash = uuid();
+    cache
+        .set(&hash, &text, Some(Duration::from_secs(5 * 60)))
+        .await?;
+    info.hash = hash;
+
+    Ok(Json(info).into_response())
 }
 
 pub struct CommonRouterParams {
@@ -127,8 +129,5 @@ pub fn new_common_router(params: CommonRouterParams) -> Router {
             "/commons/application",
             get(get_application_info).with_state(params.state),
         )
-        .route(
-            "/commons/captcha",
-            get(captcha).with_state((params.cache, params.secret)),
-        )
+        .route("/commons/captcha", get(captcha).with_state(params.cache))
 }

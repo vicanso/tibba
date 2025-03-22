@@ -509,4 +509,7 @@ impl Client {
         })
         .await
     }
+    pub fn get_processing(&self) -> u32 {
+        self.processing.load(Ordering::Relaxed)
+    }
 }

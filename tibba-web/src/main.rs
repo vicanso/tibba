@@ -24,6 +24,7 @@ use std::str::FromStr;
 use tibba_error::handle_error;
 use tibba_hook::run_before_tasks;
 use tibba_middleware::{entry, processing_limit, session, stats};
+use tibba_util::is_development;
 use tower::ServiceBuilder;
 use tracing::{Level, error, info};
 use tracing_subscriber::FmtSubscriber;
@@ -53,7 +54,7 @@ fn init_logger() {
     let subscriber = FmtSubscriber::builder()
         .with_max_level(level)
         .with_timer(timer)
-        // .with_ansi(is_development())
+        .with_ansi(is_development())
         .finish();
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 }
@@ -96,23 +97,6 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
 #[tokio::main]
 async fn start() {
-    // let client = ClientBuilder::new("baidu")
-    //     .with_base_url("https://baidu.com")
-    //     .with_timeout(std::time::Duration::from_secs(10))
-    //     .with_common_interceptor()
-    //     .build()
-    //     .unwrap();
-    // let resp = client
-    //     .request_raw(Params::<Vec<(&str, &str)>, ()> {
-    //         url: "/?a=eYtFiWeWeq",
-    //         method: axum::http::Method::GET,
-    //         query: Some(&vec![("b", "123")]),
-    //         ..Default::default()
-    //     })
-    //     .await
-    //     .unwrap();
-    // info!("response body size: {}", resp.len());
-
     // only use unwrap in run function
     if let Err(e) = run().await {
         error!(category = "run", message = e.to_string(),);
