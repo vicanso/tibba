@@ -1,0 +1,13 @@
+[package]
+name = "tibba-open-dal"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "tibba_open_dal"
+path = "src/lib.rs"
+
+[dependencies]
+snafu = { workspace = true }
+opendal = { workspace = true }
+tibba-config = { path = "../tibba-config" }

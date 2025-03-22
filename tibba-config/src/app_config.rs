@@ -400,3 +400,22 @@ impl AppConfig {
         Ok(database_config)
     }
 }
+
+#[derive(Debug, Clone, Default, Validate)]
+pub struct OpenDalConfig {
+    #[validate(length(min = 10))]
+    pub url: String,
+}
+
+impl AppConfig {
+    pub fn new_opendal_config(&self) -> Result<OpenDalConfig> {
+        let config = self.clone().set_prefix("opendal");
+        let url = config.get_from_env_first("url", None);
+        let open_dal_config = OpenDalConfig { url };
+        open_dal_config.validate().map_err(|e| Error::Validate {
+            category: "opendal".to_string(),
+            source: e,
+        })?;
+        Ok(open_dal_config)
+    }
+}

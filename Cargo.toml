@@ -20,6 +20,7 @@ members = [
     "tibba-hook",
     "tibba-middleware",
     "tibba-model",
+    "tibba-open-dal",
     "tibba-performance",
     "tibba-request",
     "tibba-router-common",
@@ -87,3 +88,7 @@ derivative = "2.2.0"
 captcha = "0.0.9"
 sqlx = { version = "0.8.3", features = ["runtime-tokio", "mysql", "time"] }
 base64 = "0.22.1"
+opendal = { version = "0.52.0", features = [
+    "services-mysql",
+    "layers-mime-guess",
+] }
