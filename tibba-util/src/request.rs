@@ -77,15 +77,16 @@ pub struct Query<T>(pub T);
 
 impl<T, S> FromRequestParts<S> for Query<T>
 where
-    T: DeserializeOwned,
+    T: DeserializeOwned + Validate,
     S: Send + Sync,
 {
     type Rejection = Error;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
         let query = parts.uri.query().unwrap_or_default();
-        let params = serde_urlencoded::from_str(query)
+        let params: T = serde_urlencoded::from_str(query)
             .map_err(|err| new_error(&err.to_string()).with_category("params:from_query"))?;
+        params.validate()?;
         Ok(Query(params))
     }
 }

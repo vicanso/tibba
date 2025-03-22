@@ -20,6 +20,7 @@ use axum::http::{Method, Uri};
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 use snafu::Snafu;
+use std::fmt;
 use tracing::error;
 use validator::ValidationErrors;
 
@@ -27,6 +28,7 @@ use validator::ValidationErrors;
 // Uses Snafu for error handling boilerplate generation
 #[derive(Debug, Snafu)]
 pub enum Error {
+    #[snafu(display("http error: {error}"))]
     Http { error: HttpError },
 }
 
@@ -67,6 +69,12 @@ pub struct HttpError {
     pub exception: bool,
     // other extra information
     pub extra: Option<Vec<String>>,
+}
+
+impl fmt::Display for HttpError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.message)
+    }
 }
 
 impl HttpError {

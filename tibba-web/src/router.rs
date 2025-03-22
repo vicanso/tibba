@@ -14,11 +14,13 @@
 
 use crate::cache::get_redis_cache;
 use crate::config::must_get_config;
+use crate::dal::get_opendal_storage;
 use crate::sql::get_db_pool;
 use crate::state::get_app_state;
 use axum::Router;
 use tibba_error::Error;
 use tibba_router_common::{CommonRouterParams, new_common_router};
+use tibba_router_file::{FileRouterParams, new_file_router};
 use tibba_router_user::{UserRouterParams, new_user_router};
 
 type Result<T> = std::result::Result<T, Error>;
@@ -35,7 +37,11 @@ pub fn new_router() -> Result<Router> {
         secret: basic_config.secret.clone(),
         pool: get_db_pool(),
     });
+    let file_router = new_file_router(FileRouterParams {
+        storage: get_opendal_storage(),
+    });
     Ok(Router::new()
         .nest("/users", user_router)
+        .nest("/files", file_router)
         .merge(common_router))
 }

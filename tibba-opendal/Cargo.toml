@@ -1,14 +1,15 @@
 [package]
-name = "tibba-open-dal"
+name = "tibba-opendal"
 version = "0.1.0"
 edition = "2024"
 
 [lib]
-name = "tibba_open_dal"
+name = "tibba_opendal"
 path = "src/lib.rs"
 
 [dependencies]
 snafu = { workspace = true }
 opendal = { workspace = true }
+url = { workspace = true }
 tibba-config = { path = "../tibba-config" }
 tibba-error = { path = "../tibba-error" }

@@ -15,6 +15,7 @@ os_info = { workspace = true }
 humantime = { workspace = true }
 captcha = { workspace = true }
 base64 = { workspace = true }
+validator = { workspace = true }
 tibba-state = { path = "../tibba-state" }
 tibba-error = { path = "../tibba-error" }
 tibba-util = { path = "../tibba-util" }

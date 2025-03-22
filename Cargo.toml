@@ -20,10 +20,11 @@ members = [
     "tibba-hook",
     "tibba-middleware",
     "tibba-model",
-    "tibba-open-dal",
+    "tibba-opendal",
     "tibba-performance",
     "tibba-request",
     "tibba-router-common",
+    "tibba-router-file",
     "tibba-router-user",
     "tibba-sql",
     "tibba-state",
@@ -44,7 +45,7 @@ tracing = "0.1.41"
 rust-embed = "8.6.0"
 futures = "0.3.31"
 snafu = "0.8.5"
-axum = "0.8.1"
+axum = { version = "0.8.1", features = ["multipart"] }
 serde = { version = "1.0.218", features = ["derive"] }
 tower = { version = "0.5.2", features = ["timeout"] }
 uuid = { version = "1.15.1", features = ["v7"] }
@@ -91,4 +92,5 @@ base64 = "0.22.1"
 opendal = { version = "0.52.0", features = [
     "services-mysql",
     "layers-mime-guess",
+    "services-s3",
 ] }

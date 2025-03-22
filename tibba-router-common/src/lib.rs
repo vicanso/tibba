@@ -27,7 +27,7 @@ use tibba_cache::RedisCache;
 use tibba_error::{Error, new_error};
 use tibba_state::AppState;
 use tibba_util::{CacheJsonResult, Query, get_env, uuid};
-
+use validator::Validate;
 type Result<T> = std::result::Result<T, Error>;
 
 const ERROR_CATEGORY: &str = "common_router";
@@ -70,7 +70,7 @@ async fn get_application_info(
     Ok((Duration::from_secs(60), info).into())
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, Validate)]
 pub struct CaptchaParams {
     pub preview: Option<bool>,
 }

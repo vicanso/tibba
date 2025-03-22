@@ -15,7 +15,9 @@ tibba-request = { path = "../tibba-request" }
 tibba-cache = { path = "../tibba-cache" }
 tibba-router-common = { path = "../tibba-router-common" }
 tibba-router-user = { path = "../tibba-router-user" }
+tibba-router-file = { path = "../tibba-router-file" }
 tibba-sql = { path = "../tibba-sql" }
+tibba-opendal = { path = "../tibba-opendal" }
 sqlx = { workspace = true }
 time = { workspace = true }
 tokio = { workspace = true }

@@ -68,6 +68,7 @@ async fn check() -> Result<()> {
     let _ = app_config.new_redis_config()?;
     let _ = app_config.new_session_config()?;
     let _ = app_config.new_database_config()?;
+    let _ = app_config.new_opendal_config()?;
     Ok(())
 }
 

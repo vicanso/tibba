@@ -31,6 +31,7 @@ use tracing_subscriber::FmtSubscriber;
 
 mod cache;
 mod config;
+mod dal;
 mod router;
 mod sql;
 mod state;
@@ -49,6 +50,8 @@ fn init_logger() {
             time::format_description::well_known::Rfc3339,
         )
     });
+
+    // dal::get_opendal_storage().dal.write(path, bs)
 
     // .with(httptrace::HTTPTraceLayer)
     let subscriber = FmtSubscriber::builder()

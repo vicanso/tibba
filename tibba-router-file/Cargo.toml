@@ -1,0 +1,18 @@
+[package]
+name = "tibba-router-file"
+version = "0.1.0"
+edition = "2024"
+
+
+[lib]
+name = "tibba_router_file"
+path = "src/lib.rs"
+
+[dependencies]
+axum = { workspace = true }
+serde = { workspace = true }
+validator = { workspace = true }
+tibba-opendal = { path = "../tibba-opendal" }
+tibba-util = { path = "../tibba-util" }
+tibba-error = { path = "../tibba-error" }
+tibba-validator = { path = "../tibba-validator" }

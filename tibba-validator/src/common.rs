@@ -12,10 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::CODE_LISTEN_ADDR;
 use super::is_disabled;
+use super::{CODE_FILE_NAME, CODE_LISTEN_ADDR, CODE_UUID};
 use std::borrow::Cow;
 use std::net::ToSocketAddrs;
+use std::path::Path;
 use validator::ValidationError;
 
 type Result<T> = std::result::Result<T, ValidationError>;
@@ -52,6 +53,31 @@ pub fn x_listen_addr(addr: &str) -> Result<()> {
             return Err(ValidationError::new(CODE_LISTEN_ADDR)
                 .with_message(Cow::from("Invalid address format")));
         }
+    }
+    Ok(())
+}
+
+pub fn x_uuid(uuid: &str) -> Result<()> {
+    if is_disabled(CODE_UUID) {
+        return Ok(());
+    }
+    if uuid.len() != 36 {
+        return Err(ValidationError::new(CODE_UUID).with_message(Cow::from("Invalid UUID format")));
+    }
+    Ok(())
+}
+
+pub fn x_file_name(name: &str) -> Result<()> {
+    if is_disabled(CODE_FILE_NAME) {
+        return Ok(());
+    }
+    if name.is_empty() {
+        return Err(ValidationError::new(CODE_FILE_NAME)
+            .with_message(Cow::from("File name cannot be empty")));
+    }
+    if Path::new(name).extension().is_none() {
+        return Err(ValidationError::new(CODE_FILE_NAME)
+            .with_message(Cow::from("File name must have an extension")));
     }
     Ok(())
 }
