@@ -16,11 +16,26 @@ use opendal::Operator;
 use opendal::layers::MimeGuessLayer;
 use snafu::Snafu;
 use tibba_config::OpenDalConfig;
-
+use tibba_error::{Error as BaseError, new_error};
 #[derive(Debug, Snafu)]
 pub enum Error {
     #[snafu(display("open dal {source}"))]
     OpenDal { source: opendal::Error },
+}
+
+impl From<Error> for BaseError {
+    fn from(source: Error) -> Self {
+        let error_category = "open_dal";
+        match source {
+            Error::OpenDal { source } => {
+                let he = new_error(&source.to_string())
+                    .with_category(error_category)
+                    .with_sub_category("open_dal")
+                    .with_exception(true);
+                he.into()
+            }
+        }
+    }
 }
 
 type Result<T, E = Error> = std::result::Result<T, E>;

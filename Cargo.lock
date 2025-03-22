@@ -3044,6 +3044,7 @@ dependencies = [
  "derivative",
  "scopeguard",
  "serde",
+ "snafu",
  "tibba-cache",
  "tibba-error",
  "tibba-state",
@@ -3073,6 +3074,7 @@ dependencies = [
  "opendal",
  "snafu",
  "tibba-config",
+ "tibba-error",
 ]
 
 [[package]]

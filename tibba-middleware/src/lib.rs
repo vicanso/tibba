@@ -12,6 +12,63 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use snafu::Snafu;
+use tibba_error::{Error as BaseError, new_error};
+
+#[derive(Debug, Snafu)]
+pub enum Error {
+    #[snafu(display("{message}"))]
+    Common { message: String, category: String },
+    #[snafu(display("Too many requests, limit: {limit}, current: {current}"))]
+    TooManyRequests { limit: i64, current: i64 },
+    #[snafu(display("Session id is empty"))]
+    SessionIdEmpty,
+    #[snafu(display("Session cache is not set"))]
+    SessionCacheNotSet,
+    #[snafu(display("{source}"))]
+    Key { source: cookie::KeyError },
+    #[snafu(display("Claim not found"))]
+    ClaimNotFound,
+}
+
+impl From<Error> for BaseError {
+    fn from(val: Error) -> Self {
+        let error_category = "middleware";
+        match val {
+            Error::Common { message, category } => new_error(&message)
+                .with_category(error_category)
+                .with_sub_category(&category),
+            Error::TooManyRequests { limit, current } => new_error(&format!(
+                "Too many requests, limit: {limit}, current: {current}"
+            ))
+            .with_category(error_category)
+            .with_sub_category("too_many_requests")
+            .with_status(429),
+            Error::SessionIdEmpty => new_error("Session id is empty")
+                .with_category(error_category)
+                .with_sub_category("session")
+                .with_status(500)
+                .with_exception(true),
+            Error::SessionCacheNotSet => new_error("Session cache is not set")
+                .with_category(error_category)
+                .with_sub_category("session")
+                .with_status(500)
+                .with_exception(true),
+            Error::Key { source } => new_error(&source.to_string())
+                .with_category(error_category)
+                .with_sub_category("cookie")
+                .with_status(500)
+                .with_exception(true),
+            Error::ClaimNotFound => new_error("Claim not found")
+                .with_category(error_category)
+                .with_sub_category("claim")
+                .with_status(500)
+                .with_exception(true),
+        }
+        .into()
+    }
+}
+
 mod common;
 mod entry;
 mod limit;

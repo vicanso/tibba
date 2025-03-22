@@ -24,10 +24,12 @@ pub enum Error {
 
 impl From<Error> for BaseError {
     fn from(source: Error) -> Self {
+        let error_category = "model";
         match source {
             Error::Sqlx { source } => {
                 let he = new_error(&source.to_string())
-                    .with_category("sqlx")
+                    .with_category(error_category)
+                    .with_sub_category("sqlx")
                     .with_exception(true);
                 he.into()
             }

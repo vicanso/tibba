@@ -74,6 +74,15 @@ impl HttpError {
         self.category = category.to_string();
         self
     }
+    pub fn with_sub_category(mut self, sub_category: &str) -> Self {
+        if self.category.is_empty() {
+            self.category = sub_category.to_string();
+        } else {
+            self.category = format!("{}.{}", self.category, sub_category);
+        }
+        self
+    }
+
     pub fn with_code(mut self, code: &str) -> Self {
         self.code = code.to_string();
         self

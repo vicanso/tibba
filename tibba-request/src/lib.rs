@@ -13,7 +13,7 @@
 // limitations under the License.
 use snafu::Snafu;
 use tibba_error::Error as BaseError;
-use tibba_error::HttpError;
+use tibba_error::new_error;
 
 mod request;
 
@@ -46,36 +46,33 @@ pub enum Error {
 
 impl From<Error> for BaseError {
     fn from(val: Error) -> Self {
+        let error_category = "request";
         match val {
-            Error::Common { service, message } => HttpError {
-                message,
-                category: service,
-                ..Default::default()
-            },
-            Error::Build { service, source } => HttpError {
-                message: source.to_string(),
-                category: service,
-                ..Default::default()
-            },
-            Error::Uri { service, source } => HttpError {
-                message: source.to_string(),
-                category: service,
-                ..Default::default()
-            },
+            Error::Common { service, message } => new_error(&message)
+                .with_category(error_category)
+                .with_sub_category(&service),
+            Error::Build { service, source } => new_error(&source.to_string())
+                .with_category(error_category)
+                .with_sub_category(&service),
+            Error::Uri { service, source } => new_error(&source.to_string())
+                .with_category(error_category)
+                .with_sub_category(&service),
             Error::Request {
                 service,
                 path: _,
                 source,
-            } => HttpError {
-                message: source.to_string(),
-                category: service,
-                ..Default::default()
-            },
-            Error::Serde { service, source } => HttpError {
-                message: source.to_string(),
-                category: service,
-                ..Default::default()
-            },
+            } => {
+                let status = source.status().map_or(400, |v| v.as_u16());
+                let exception = source.is_timeout() || source.is_request() || source.is_connect();
+                new_error(&source.to_string())
+                    .with_category(error_category)
+                    .with_sub_category(&service)
+                    .with_status(status)
+                    .with_exception(exception)
+            }
+            Error::Serde { service, source } => new_error(&source.to_string())
+                .with_category(error_category)
+                .with_sub_category(&service),
         }
         .into()
     }

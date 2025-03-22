@@ -14,7 +14,7 @@
 
 use snafu::Snafu;
 use tibba_error::Error as BaseError;
-use tibba_error::HttpError;
+use tibba_error::new_error;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -37,32 +37,30 @@ pub enum Error {
 
 impl From<Error> for BaseError {
     fn from(val: Error) -> Self {
+        let error_category = "cache";
         match val {
-            Error::Common { category, message } => HttpError {
-                message,
-                category,
-                ..Default::default()
-            },
-            Error::SingleBuild { source } => HttpError {
-                message: source.to_string(),
-                category: "single_build".to_string(),
-                ..Default::default()
-            },
-            Error::ClusterBuild { source } => HttpError {
-                message: source.to_string(),
-                category: "cluster_build".to_string(),
-                ..Default::default()
-            },
-            Error::Redis { category, source } => HttpError {
-                message: source.to_string(),
-                category,
-                ..Default::default()
-            },
-            Error::Compression { source } => HttpError {
-                message: source.to_string(),
-                category: "compression".to_string(),
-                ..Default::default()
-            },
+            Error::Common { category, message } => new_error(&message)
+                .with_category(error_category)
+                .with_sub_category(&category),
+            Error::SingleBuild { source } => new_error(&source.to_string())
+                .with_category(error_category)
+                .with_sub_category("single_build")
+                .with_status(500)
+                .with_exception(true),
+            Error::ClusterBuild { source } => new_error(&source.to_string())
+                .with_category(error_category)
+                .with_sub_category("cluster_build")
+                .with_status(500)
+                .with_exception(true),
+            Error::Redis { category, source } => new_error(&source.to_string())
+                .with_category(error_category)
+                .with_sub_category(&category)
+                .with_status(500)
+                .with_exception(true),
+            Error::Compression { source } => new_error(&source.to_string())
+                .with_category(error_category)
+                .with_sub_category("compression")
+                .with_exception(true),
         }
         .into()
     }

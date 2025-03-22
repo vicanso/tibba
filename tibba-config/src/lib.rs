@@ -13,7 +13,7 @@
 // limitations under the License.
 use snafu::Snafu;
 use tibba_error::Error as BaseError;
-use tibba_error::HttpError;
+use tibba_error::new_error;
 
 mod app_config;
 
@@ -44,27 +44,24 @@ pub enum Error {
 
 impl From<Error> for BaseError {
     fn from(val: Error) -> Self {
+        let error_category = "config";
         match val {
-            Error::Url { category, source } => HttpError {
-                message: source.to_string(),
-                category,
-                ..Default::default()
-            },
-            Error::Config { category, source } => HttpError {
-                message: source.to_string(),
-                category,
-                ..Default::default()
-            },
-            Error::Validate { category, source } => HttpError {
-                message: source.to_string(),
-                category,
-                ..Default::default()
-            },
-            Error::ParseDuration { category, source } => HttpError {
-                message: source.to_string(),
-                category,
-                ..Default::default()
-            },
+            Error::Url { category, source } => new_error(&source.to_string())
+                .with_category(error_category)
+                .with_sub_category(&category)
+                .with_exception(true),
+            Error::Config { category, source } => new_error(&source.to_string())
+                .with_category(error_category)
+                .with_sub_category(&category)
+                .with_exception(true),
+            Error::Validate { category, source } => new_error(&source.to_string())
+                .with_category(error_category)
+                .with_sub_category(&category)
+                .with_exception(true),
+            Error::ParseDuration { category, source } => new_error(&source.to_string())
+                .with_category(error_category)
+                .with_sub_category(&category)
+                .with_exception(true),
         }
         .into()
     }

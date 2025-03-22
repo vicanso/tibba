@@ -22,12 +22,13 @@ use scopeguard::defer;
 use std::net::IpAddr;
 use std::time::Duration;
 use tibba_cache::RedisCache;
-use tibba_error::{Error, new_error};
+// use tibba_error::{Error, new_error};
+use super::Error;
 use tibba_state::AppState;
 use tracing::debug;
 
 // Custom Result type that uses the application's Error type
-type Result<T> = std::result::Result<T, Error>;
+type Result<T> = std::result::Result<T, tibba_error::Error>;
 
 /// Middleware that implements concurrent request processing limits
 ///
@@ -68,10 +69,11 @@ pub async fn processing_limit(
         // Decrement counter since request won't be processed
         state.dec_processing();
         // Return 429 Too Many Requests error
-        return Err(new_error("Too many requests")
-            .with_status(429)
-            .with_exception(true)
-            .into());
+        return Err(Error::TooManyRequests {
+            limit: limit as i64,
+            current: count as i64,
+        }
+        .into());
     }
 
     // Process the request
@@ -161,14 +163,11 @@ pub async fn error_limiter(
     // Check if current error count exceeds limit
     if let Ok(count) = cache.get::<i64>(&key).await {
         if count > params.max {
-            let msg = format!(
-                "Too many requests, please try again later! ({count}/{})",
-                params.max
-            );
-            return Err(new_error(&msg)
-                .with_status(429)
-                .with_category("error_limiter")
-                .into());
+            return Err(Error::TooManyRequests {
+                limit: params.max,
+                current: count,
+            }
+            .into());
         }
     }
     let resp = next.run(req).await;
@@ -194,14 +193,11 @@ pub async fn limiter(
     // Increment counter and check against limit
     let count = cache.incr(&key, 1, Some(ttl)).await?;
     if count > params.max {
-        let msg = format!(
-            "Too many requests, please try again later! ({count}/{})",
-            params.max
-        );
-        return Err(new_error(&msg)
-            .with_status(429)
-            .with_category("limiter")
-            .into());
+        return Err(Error::TooManyRequests {
+            limit: params.max,
+            current: count,
+        }
+        .into());
     }
 
     let resp = next.run(req).await;

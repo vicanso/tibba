@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use super::Error;
 use axum::Json;
 use axum::extract::FromRequestParts;
 use axum::extract::Request;
@@ -27,12 +28,10 @@ use scopeguard::defer;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tibba_cache::RedisCache;
-use tibba_error::Error;
-use tibba_error::new_error;
 use tibba_util::{from_timestamp, timestamp, uuid};
 use tracing::debug;
 
-type Result<T> = std::result::Result<T, Error>;
+type Result<T> = std::result::Result<T, tibba_error::Error>;
 
 #[derive(Serialize, Deserialize, Default, Clone, Derivative)]
 #[derivative(Debug)]
@@ -86,16 +85,10 @@ impl Claim {
     }
     pub async fn save(&self) -> Result<()> {
         if self.id.is_empty() {
-            return Err(new_error("id is empty")
-                .with_status(500)
-                .with_exception(true)
-                .into());
+            return Err(Error::SessionIdEmpty.into());
         }
         let Some(cache) = self.cache else {
-            return Err(new_error("cache is not set")
-                .with_status(500)
-                .with_exception(true)
-                .into());
+            return Err(Error::SessionCacheNotSet.into());
         };
         cache
             .set_struct(
@@ -120,12 +113,7 @@ impl IntoResponse for Claim {
             .http_only(true)
             .max_age(time::Duration::seconds(self.ttl));
 
-        match Key::try_from(self.secret.as_bytes()).map_err(|e| {
-            new_error(&e.to_string())
-                .with_category("session")
-                .with_status(500)
-                .with_exception(true)
-        }) {
+        match Key::try_from(self.secret.as_bytes()).map_err(|e| Error::Key { source: e }) {
             Ok(key) => {
                 let jar = SignedCookieJar::new(key);
                 (
@@ -137,7 +125,7 @@ impl IntoResponse for Claim {
                     .into_response()
             }
             Err(e) => {
-                let err: Error = e.into();
+                let err: tibba_error::Error = e.into();
                 err.into_response()
             }
         }
@@ -148,7 +136,7 @@ impl<S> FromRequestParts<S> for Claim
 where
     S: Send + Sync,
 {
-    type Rejection = Error;
+    type Rejection = tibba_error::Error;
 
     async fn from_request_parts(
         parts: &mut Parts,
@@ -157,7 +145,7 @@ where
         let claim = parts
             .extensions
             .get::<Claim>()
-            .ok_or::<Error>(new_error("Claim not found").into())?;
+            .ok_or::<Error>(Error::ClaimNotFound)?;
         Ok(claim.clone())
     }
 }
@@ -198,12 +186,7 @@ async fn get_claim(
     cache: &RedisCache,
     params: &SessionParams,
 ) -> Result<Claim> {
-    let key = Key::try_from(params.secret.as_bytes()).map_err(|e| {
-        new_error(&e.to_string())
-            .with_category("session")
-            .with_status(500)
-            .with_exception(true)
-    })?;
+    let key = Key::try_from(params.secret.as_bytes()).map_err(|e| Error::Key { source: e })?;
     let jar = SignedCookieJar::from_headers(headers, key);
     let Some(session_id) = jar.get(&params.cookie) else {
         return Ok(Claim::default());

@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use super::Error;
 use axum::extract::Request;
 use axum::extract::State;
 use axum::middleware::Next;
@@ -19,12 +20,11 @@ use axum::response::Response;
 use scopeguard::defer;
 use std::time::Duration;
 use tibba_cache::RedisCache;
-use tibba_error::{Error, new_error};
 use tibba_state::CTX;
 use tokio::time::sleep;
 use tracing::debug;
 
-type Result<T> = std::result::Result<T, Error>;
+type Result<T> = std::result::Result<T, tibba_error::Error>;
 
 /// Parameters for configuring the wait middleware
 /// Controls the waiting behavior after request processing
@@ -112,18 +112,26 @@ pub async fn validate_captcha(
     let value = req
         .headers()
         .get("X-Captcha")
-        .ok_or(new_error("Captcha is required").with_category(category))?
+        .ok_or(Error::Common {
+            message: "Captcha is required".to_string(),
+            category: category.to_string(),
+        })?
         .to_str()
-        .map_err(|err| new_error(&err.to_string()).with_category(category))?;
+        .map_err(|err| Error::Common {
+            message: err.to_string(),
+            category: category.to_string(),
+        })?;
 
     // Split the header value into its components
     let arr: Vec<&str> = value.split(':').collect();
 
     // Validate the header format
     if arr.len() != 3 {
-        return Err(new_error("Captcha parameter is invalid")
-            .with_category(category)
-            .into());
+        return Err(Error::Common {
+            message: "Captcha parameter is invalid".to_string(),
+            category: category.to_string(),
+        }
+        .into());
     }
 
     // Check if this is a mock request using the magic code
@@ -136,10 +144,14 @@ pub async fn validate_captcha(
 
         // Compare the provided code against the stored code
         if code != arr[2] {
-            let he = new_error("Captcha input error")
-                .with_category(category)
-                .with_code("mismatching");
-            return Err(he.into());
+            // let he = new_error("Captcha input error")
+            //     .with_category(category)
+            //     .with_code("mismatching");
+            return Err(Error::Common {
+                message: "Captcha input error".to_string(),
+                category: category.to_string(),
+            }
+            .into());
         }
     }
 
