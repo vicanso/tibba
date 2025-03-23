@@ -50,15 +50,23 @@ pub struct Claim {
     iat: i64,
     // account
     account: String,
+    // renewal count
+    renewal_count: u8,
 }
 
 impl Claim {
     fn get_key(id: &str) -> String {
         format!("ss:{id}")
     }
+    pub fn can_renew(&self) -> bool {
+        self.renewal_count < 10
+    }
     pub fn with_account(mut self, account: String) -> Self {
         if self.id.is_empty() || self.account != account {
             self.id = uuid();
+        }
+        if self.account == account {
+            self.renewal_count += 1;
         }
         self.account = account;
         self.iat = timestamp();
@@ -104,6 +112,7 @@ impl Claim {
 #[derive(Debug, Serialize, Deserialize)]
 struct ClaimResp {
     account: String,
+    renewal_count: u8,
 }
 
 impl IntoResponse for Claim {
@@ -120,6 +129,7 @@ impl IntoResponse for Claim {
                     jar.add(c),
                     Json(ClaimResp {
                         account: self.account,
+                        renewal_count: self.renewal_count,
                     }),
                 )
                     .into_response()

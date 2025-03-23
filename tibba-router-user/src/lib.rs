@@ -141,6 +141,9 @@ async fn register(
 }
 
 async fn refresh_session(claim: Claim) -> Result<Claim> {
+    if !claim.can_renew() {
+        return Ok(claim);
+    }
     let account = claim.get_account();
     let claim = claim.with_account(account);
     claim.save().await?;

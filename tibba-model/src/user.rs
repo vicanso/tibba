@@ -31,8 +31,8 @@ pub enum UserStatus {
 pub struct ModelUser {
     pub id: i64,
     pub status: i8,
-    pub created_at: OffsetDateTime,
-    pub updated_at: OffsetDateTime,
+    pub created: OffsetDateTime,
+    pub modified: OffsetDateTime,
     pub account: String,
     #[serde(skip_serializing)]
     pub password: String,
@@ -46,20 +46,17 @@ impl ModelUser {
     /// Create a new user with the given account and password
     pub async fn insert(pool: &Pool<MySql>, account: &str, password: &str) -> Result<i64> {
         // Get current time for created_at and updated_at
-        let now = OffsetDateTime::now_utc();
 
         // Insert user and return the last insert ID
         let result = sqlx::query!(
             r#"
             INSERT INTO users (
-                status, created_at, updated_at, account, password
+                status, account, password
             ) VALUES (
-                ?, ?, ?, ?, ?
+                ?, ?, ?
             )
             "#,
             UserStatus::Enabled as i8,
-            now,
-            now,
             account,
             password
         )
