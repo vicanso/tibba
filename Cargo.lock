@@ -3212,6 +3212,7 @@ dependencies = [
  "axum",
  "serde",
  "tibba-error",
+ "tibba-middleware",
  "tibba-opendal",
  "tibba-util",
  "tibba-validator",

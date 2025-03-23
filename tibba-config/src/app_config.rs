@@ -301,6 +301,9 @@ pub struct SessionConfig {
     // session cookie name
     #[validate(length(min = 1, max = 64))]
     pub cookie: String,
+    // session max renewal
+    #[validate(range(min = 1, max = 52))]
+    pub max_renewal: u8,
 }
 
 impl AppConfig {
@@ -313,6 +316,7 @@ impl AppConfig {
             ttl_seconds: ttl.as_secs(),
             secret: config.get_from_env_first("secret", None),
             cookie: config.get_from_env_first("cookie", None),
+            max_renewal: config.get_int_from_env_first("max_renewal", Some(52)) as u8,
         };
         session_config.validate().map_err(|e| Error::Validate {
             category: "session".to_string(),

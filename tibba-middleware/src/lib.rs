@@ -29,6 +29,8 @@ pub enum Error {
     Key { source: cookie::KeyError },
     #[snafu(display("Claim not found"))]
     ClaimNotFound,
+    #[snafu(display("User not login"))]
+    UserNotLogin,
 }
 
 impl From<Error> for BaseError {
@@ -64,6 +66,11 @@ impl From<Error> for BaseError {
                 .with_sub_category("claim")
                 .with_status(500)
                 .with_exception(true),
+            Error::UserNotLogin => new_error("User not login")
+                .with_category(error_category)
+                .with_sub_category("user")
+                .with_status(401)
+                .with_exception(false),
         }
         .into()
     }

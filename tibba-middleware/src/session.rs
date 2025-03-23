@@ -52,14 +52,22 @@ pub struct Claim {
     account: String,
     // renewal count
     renewal_count: u8,
+    // max renewal
+    max_renewal: u8,
 }
 
 impl Claim {
     fn get_key(id: &str) -> String {
         format!("ss:{id}")
     }
+    pub fn validate_login(&self) -> Result<()> {
+        if self.id.is_empty() {
+            return Err(Error::UserNotLogin.into());
+        }
+        Ok(())
+    }
     pub fn can_renew(&self) -> bool {
-        self.renewal_count < 10
+        self.renewal_count < self.max_renewal
     }
     pub fn with_account(mut self, account: String) -> Self {
         if self.id.is_empty() || self.account != account {
@@ -166,6 +174,7 @@ pub struct SessionParams {
     pub secret: String,
     pub cookie: String,
     pub ttl_seconds: i64,
+    pub max_renewal: u8,
 }
 
 impl SessionParams {
@@ -175,6 +184,7 @@ impl SessionParams {
             secret: String::new(),
             cookie: String::new(),
             ttl_seconds: 2 * 24 * 3600,
+            max_renewal: 52,
         }
     }
     pub fn with_secret(mut self, secret: String) -> Self {
@@ -226,6 +236,7 @@ pub async fn session(
     claim.secret = params.secret.clone();
     claim.cookie = params.cookie.clone();
     claim.cache = Some(cache);
+    claim.max_renewal = params.max_renewal;
     if claim.iat == 0 {
         claim.iat = timestamp();
     }

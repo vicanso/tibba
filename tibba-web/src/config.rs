@@ -30,7 +30,10 @@ pub fn get_session_params() -> &'static SessionParams {
     SESSION_PARAMS.get_or_init(|| {
         // session config is checked in init function
         let session_config = must_get_config().new_session_config().unwrap();
-        SessionParams::new(vec!["/users/".to_string()])
+
+        let session_prefixes = vec!["/users/".to_string(), "/files/upload".to_string()];
+
+        SessionParams::new(session_prefixes)
             .with_secret(session_config.secret)
             .with_ttl_seconds(session_config.ttl_seconds as i64)
             .with_cookie(session_config.cookie)

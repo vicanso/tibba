@@ -99,6 +99,7 @@ struct UserMeResp {
     expired_at: String,
     issued_at: String,
     time: String,
+    can_renew: bool,
 }
 
 async fn me(mut jar: CookieJar, claim: Claim) -> Result<(CookieJar, Json<UserMeResp>)> {
@@ -111,6 +112,7 @@ async fn me(mut jar: CookieJar, claim: Claim) -> Result<(CookieJar, Json<UserMeR
         expired_at: claim.get_expired_at(),
         issued_at: claim.get_issued_at(),
         time: now(),
+        can_renew: claim.can_renew(),
     };
 
     Ok((jar, Json(info)))

@@ -24,6 +24,7 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::Path;
 use tibba_error::{Error, new_error};
+use tibba_middleware::Claim;
 use tibba_opendal::Storage;
 use tibba_util::{JsonResult, Query, uuid};
 use tibba_validator::x_file_name;
@@ -35,8 +36,10 @@ const ERROR_CATEGORY: &str = "file_router";
 
 async fn create_file(
     State(storage): State<&'static Storage>,
+    claim: Claim,
     mut multipart: Multipart,
 ) -> JsonResult<HashMap<String, String>> {
+    claim.validate_login()?;
     let mut files = HashMap::new();
     while let Some(field) = multipart
         .next_field()
