@@ -35,7 +35,7 @@ type Result<T> = std::result::Result<T, tibba_error::Error>;
 
 #[derive(Serialize, Deserialize, Default, Clone, Derivative)]
 #[derivative(Debug)]
-pub struct Claim {
+pub struct Session {
     #[serde(skip)]
     #[derivative(Debug = "ignore")]
     cache: Option<&'static RedisCache>,
@@ -56,11 +56,11 @@ pub struct Claim {
     max_renewal: u8,
 }
 
-impl Claim {
+impl Session {
     fn get_key(id: &str) -> String {
         format!("ss:{id}")
     }
-    pub fn validate_login(&self) -> Result<()> {
+    fn validate_login(&self) -> Result<()> {
         if self.id.is_empty() {
             return Err(Error::UserNotLogin.into());
         }
@@ -118,12 +118,12 @@ impl Claim {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct ClaimResp {
+struct SessionResp {
     account: String,
     renewal_count: u8,
 }
 
-impl IntoResponse for Claim {
+impl IntoResponse for Session {
     fn into_response(self) -> Response {
         let c = CookieBuilder::new(self.cookie, self.id.clone())
             .path("/")
@@ -135,7 +135,7 @@ impl IntoResponse for Claim {
                 let jar = SignedCookieJar::new(key);
                 (
                     jar.add(c),
-                    Json(ClaimResp {
+                    Json(SessionResp {
                         account: self.account,
                         renewal_count: self.renewal_count,
                     }),
@@ -150,7 +150,7 @@ impl IntoResponse for Claim {
     }
 }
 
-impl<S> FromRequestParts<S> for Claim
+impl<S> FromRequestParts<S> for Session
 where
     S: Send + Sync,
 {
@@ -160,11 +160,46 @@ where
         parts: &mut Parts,
         _state: &S,
     ) -> std::result::Result<Self, Self::Rejection> {
-        let claim = parts
+        let se = parts
             .extensions
-            .get::<Claim>()
-            .ok_or::<Error>(Error::ClaimNotFound)?;
-        Ok(claim.clone())
+            .get::<Session>()
+            .ok_or::<Error>(Error::SessionNotFound)?;
+        Ok(se.clone())
+    }
+}
+
+pub struct UserSession(Session);
+
+impl<S> FromRequestParts<S> for UserSession
+where
+    S: Send + Sync,
+{
+    type Rejection = tibba_error::Error;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        _state: &S,
+    ) -> std::result::Result<Self, Self::Rejection> {
+        let se = parts
+            .extensions
+            .get::<Session>()
+            .ok_or::<Error>(Error::SessionNotFound)?;
+        se.validate_login()?;
+        Ok(UserSession(se.clone()))
+    }
+}
+
+impl std::ops::Deref for UserSession {
+    type Target = Session;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for UserSession {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
     }
 }
 
@@ -201,20 +236,20 @@ impl SessionParams {
     }
 }
 
-async fn get_claim(
+async fn get_session(
     headers: &HeaderMap<HeaderValue>,
     cache: &RedisCache,
     params: &SessionParams,
-) -> Result<Claim> {
+) -> Result<Session> {
     let key = Key::try_from(params.secret.as_bytes()).map_err(|e| Error::Key { source: e })?;
     let jar = SignedCookieJar::from_headers(headers, key);
     let Some(session_id) = jar.get(&params.cookie) else {
-        return Ok(Claim::default());
+        return Ok(Session::default());
     };
-    let claim = cache
-        .get_struct(&Claim::get_key(session_id.value()))
+    let se = cache
+        .get_struct(&Session::get_key(session_id.value()))
         .await?;
-    Ok(claim.unwrap_or_default())
+    Ok(se.unwrap_or_default())
 }
 
 pub async fn session(
@@ -231,20 +266,20 @@ pub async fn session(
     debug!(category = "middleware", "--> session");
     defer!(debug!(category = "middleware", "<-- session"););
 
-    let mut claim = get_claim(req.headers(), cache, params).await?;
-    claim.ttl = params.ttl_seconds;
-    claim.secret = params.secret.clone();
-    claim.cookie = params.cookie.clone();
-    claim.cache = Some(cache);
-    claim.max_renewal = params.max_renewal;
-    if claim.iat == 0 {
-        claim.iat = timestamp();
+    let mut se = get_session(req.headers(), cache, params).await?;
+    se.ttl = params.ttl_seconds;
+    se.secret = params.secret.clone();
+    se.cookie = params.cookie.clone();
+    se.cache = Some(cache);
+    se.max_renewal = params.max_renewal;
+    if se.iat == 0 {
+        se.iat = timestamp();
     }
     // reset if expired
-    if claim.is_expired() {
-        claim.reset();
+    if se.is_expired() {
+        se.reset();
     }
-    req.extensions_mut().insert(claim);
+    req.extensions_mut().insert(se);
     let res = next.run(req).await;
     Ok(res)
 }

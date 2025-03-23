@@ -24,7 +24,7 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::Path;
 use tibba_error::{Error, new_error};
-use tibba_middleware::Claim;
+use tibba_middleware::UserSession;
 use tibba_opendal::Storage;
 use tibba_util::{JsonResult, Query, uuid};
 use tibba_validator::x_file_name;
@@ -36,10 +36,9 @@ const ERROR_CATEGORY: &str = "file_router";
 
 async fn create_file(
     State(storage): State<&'static Storage>,
-    claim: Claim,
+    session: UserSession,
     mut multipart: Multipart,
 ) -> JsonResult<HashMap<String, String>> {
-    claim.validate_login()?;
     let mut files = HashMap::new();
     while let Some(field) = multipart
         .next_field()
@@ -64,16 +63,14 @@ async fn create_file(
             .bytes()
             .await
             .map_err(|e| new_error(&e.to_string()).with_category(ERROR_CATEGORY))?;
-        let _ = storage
-            .write_with(
-                &file,
-                data,
-                vec![(
-                    header::CACHE_CONTROL.to_string(),
-                    "public, max-age=108000".to_string(),
-                )],
-            )
-            .await?;
+        let user_metadata = vec![
+            (
+                header::CACHE_CONTROL.to_string(),
+                "public, max-age=108000".to_string(),
+            ),
+            ("uploader".to_string(), session.get_account()),
+        ];
+        let _ = storage.write_with(&file, data, user_metadata).await?;
         files.insert(name.to_string(), file);
     }
     Ok(Json(files))
@@ -102,8 +99,13 @@ async fn get_file(
     if size > 0 {
         headers.insert(header::CONTENT_LENGTH, HeaderValue::from(size));
     }
+    let ignore_headers = ["uploader".to_string()];
+
     if let Some(user_metadata) = stat.user_metadata() {
         for (key, value) in user_metadata {
+            if ignore_headers.contains(key) {
+                continue;
+            }
             let Ok(key) = HeaderName::from_bytes(key.as_bytes()) else {
                 continue;
             };

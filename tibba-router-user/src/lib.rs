@@ -19,7 +19,7 @@ use axum_extra::extract::cookie::CookieJar;
 use serde::{Deserialize, Serialize};
 use sqlx::MySqlPool;
 use tibba_error::{Error, new_error};
-use tibba_middleware::Claim;
+use tibba_middleware::Session;
 use tibba_model::ModelUser;
 use tibba_util::{
     JsonParams, JsonResult, is_development, is_test, now, sha256, timestamp, timestamp_hash, uuid,
@@ -72,9 +72,9 @@ impl LoginParams {
 
 async fn login(
     State((secret, pool)): State<(String, &'static MySqlPool)>,
-    claim: Claim,
+    session: Session,
     JsonParams(params): JsonParams<LoginParams>,
-) -> Result<Claim> {
+) -> Result<Session> {
     params.validate_token(&secret)?;
     let account_password_err = new_error("Account or password is wrong");
     let Some(user) = ModelUser::get_by_account(pool, &params.account).await? else {
@@ -87,10 +87,10 @@ async fn login(
         return Err(account_password_err.into());
     }
 
-    let claim = claim.with_account(params.account);
-    claim.save().await?;
+    let session = session.with_account(params.account);
+    session.save().await?;
 
-    Ok(claim)
+    Ok(session)
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -102,17 +102,17 @@ struct UserMeResp {
     can_renew: bool,
 }
 
-async fn me(mut jar: CookieJar, claim: Claim) -> Result<(CookieJar, Json<UserMeResp>)> {
-    let account = claim.get_account();
+async fn me(mut jar: CookieJar, session: Session) -> Result<(CookieJar, Json<UserMeResp>)> {
+    let account = session.get_account();
     if get_device_id_from_cookie(&jar).is_empty() {
         jar = jar.add(generate_device_id_cookie());
     }
     let info = UserMeResp {
         name: account,
-        expired_at: claim.get_expired_at(),
-        issued_at: claim.get_issued_at(),
+        expired_at: session.get_expired_at(),
+        issued_at: session.get_issued_at(),
         time: now(),
-        can_renew: claim.can_renew(),
+        can_renew: session.can_renew(),
     };
 
     Ok((jar, Json(info)))
@@ -142,14 +142,14 @@ async fn register(
     }))
 }
 
-async fn refresh_session(claim: Claim) -> Result<Claim> {
-    if !claim.can_renew() {
-        return Ok(claim);
+async fn refresh_session(session: Session) -> Result<Session> {
+    if !session.can_renew() {
+        return Ok(session);
     }
-    let account = claim.get_account();
-    let claim = claim.with_account(account);
-    claim.save().await?;
-    Ok(claim)
+    let account = session.get_account();
+    let session = session.with_account(account);
+    session.save().await?;
+    Ok(session)
 }
 
 pub struct UserRouterParams {

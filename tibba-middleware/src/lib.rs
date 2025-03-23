@@ -27,8 +27,8 @@ pub enum Error {
     SessionCacheNotSet,
     #[snafu(display("{source}"))]
     Key { source: cookie::KeyError },
-    #[snafu(display("Claim not found"))]
-    ClaimNotFound,
+    #[snafu(display("Session not found"))]
+    SessionNotFound,
     #[snafu(display("User not login"))]
     UserNotLogin,
 }
@@ -61,9 +61,9 @@ impl From<Error> for BaseError {
                 .with_sub_category("cookie")
                 .with_status(500)
                 .with_exception(true),
-            Error::ClaimNotFound => new_error("Claim not found")
+            Error::SessionNotFound => new_error("Session not found")
                 .with_category(error_category)
-                .with_sub_category("claim")
+                .with_sub_category("session")
                 .with_status(500)
                 .with_exception(true),
             Error::UserNotLogin => new_error("User not login")
