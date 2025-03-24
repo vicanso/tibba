@@ -61,7 +61,7 @@ impl Session {
         format!("ss:{id}")
     }
     fn validate_login(&self) -> Result<()> {
-        if self.id.is_empty() {
+        if self.account.is_empty() {
             return Err(Error::UserNotLogin.into());
         }
         Ok(())
@@ -73,12 +73,13 @@ impl Session {
         if self.id.is_empty() || self.account != account {
             self.id = uuid();
         }
-        if self.account == account {
-            self.renewal_count += 1;
-        }
         self.account = account;
         self.iat = timestamp();
         self
+    }
+    pub fn refresh(&mut self) {
+        self.renewal_count += 1;
+        self.iat = timestamp();
     }
     pub fn get_account(&self) -> String {
         self.account.clone()
@@ -169,6 +170,12 @@ where
 }
 
 pub struct UserSession(Session);
+
+impl From<UserSession> for Session {
+    fn from(se: UserSession) -> Self {
+        se.0
+    }
+}
 
 impl<S> FromRequestParts<S> for UserSession
 where

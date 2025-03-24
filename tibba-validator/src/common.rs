@@ -62,7 +62,7 @@ pub fn x_uuid(uuid: &str) -> Result<()> {
         return Ok(());
     }
     if uuid.len() != 36 {
-        return Err(ValidationError::new(CODE_UUID).with_message(Cow::from("Invalid UUID format")));
+        return Err(ValidationError::new(CODE_UUID).with_message(Cow::from("Invalid uuid format")));
     }
     Ok(())
 }

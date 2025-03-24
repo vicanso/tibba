@@ -19,7 +19,7 @@ use axum_extra::extract::cookie::CookieJar;
 use serde::{Deserialize, Serialize};
 use sqlx::MySqlPool;
 use tibba_error::{Error, new_error};
-use tibba_middleware::Session;
+use tibba_middleware::{Session, UserSession};
 use tibba_model::ModelUser;
 use tibba_util::{
     JsonParams, JsonResult, is_development, is_test, now, sha256, timestamp, timestamp_hash, uuid,
@@ -142,14 +142,13 @@ async fn register(
     }))
 }
 
-async fn refresh_session(session: Session) -> Result<Session> {
+async fn refresh_session(mut session: UserSession) -> Result<Session> {
     if !session.can_renew() {
-        return Ok(session);
+        return Ok(session.into());
     }
-    let account = session.get_account();
-    let session = session.with_account(account);
+    session.refresh();
     session.save().await?;
-    Ok(session)
+    Ok(session.into())
 }
 
 pub struct UserRouterParams {
