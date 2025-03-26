@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use super::is_disabled;
-use super::{CODE_USER_ACCOUNT, CODE_USER_PASSWORD};
-use validator::ValidationError;
+use super::{CODE_USER_ACCOUNT, CODE_USER_EMAIL, CODE_USER_PASSWORD};
+use validator::{ValidateEmail, ValidationError};
 
 type Result<T> = std::result::Result<T, ValidationError>;
 
@@ -40,6 +40,16 @@ pub fn x_user_password(password: &str) -> Result<()> {
     }
     if password.len() < 32 {
         return Err(ValidationError::new(CODE_USER_PASSWORD));
+    }
+    Ok(())
+}
+
+pub fn x_user_email(email: &str) -> Result<()> {
+    if is_disabled(CODE_USER_EMAIL) {
+        return Ok(());
+    }
+    if !email.validate_email() {
+        return Err(ValidationError::new(CODE_USER_EMAIL));
     }
     Ok(())
 }

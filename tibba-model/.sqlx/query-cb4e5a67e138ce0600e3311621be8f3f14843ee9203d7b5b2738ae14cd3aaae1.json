@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "\n            UPDATE users SET \n                email = COALESCE(?, email),\n                avatar = COALESCE(?, avatar)\n            WHERE account = ?\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "cb4e5a67e138ce0600e3311621be8f3f14843ee9203d7b5b2738ae14cd3aaae1"
+}

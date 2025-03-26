@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use axum::extract::State;
+use axum::http::StatusCode;
 use axum::middleware::from_fn_with_state;
 use axum::routing::{delete, get, patch, post};
 use axum::{Json, Router};
@@ -22,7 +23,7 @@ use sqlx::MySqlPool;
 use tibba_cache::RedisCache;
 use tibba_error::{Error, new_error};
 use tibba_middleware::{Session, UserSession, validate_captcha};
-use tibba_model::ModelUser;
+use tibba_model::{User, UserUpdateParams};
 use tibba_util::{
     JsonParams, JsonResult, is_development, is_test, now, sha256, timestamp, timestamp_hash, uuid,
 };
@@ -79,7 +80,7 @@ async fn login(
 ) -> Result<Session> {
     params.validate_token(&secret)?;
     let account_password_err = new_error("Account or password is wrong");
-    let Some(user) = ModelUser::get_by_account(pool, &params.account).await? else {
+    let Some(user) = User::get_by_account(pool, &params.account).await? else {
         return Err(account_password_err.into());
     };
 
@@ -118,7 +119,7 @@ async fn me(
     if !session.is_login() {
         return Ok((jar, Json(UserMeResp::default())));
     }
-    let user = ModelUser::get_by_account(pool, &account)
+    let user = User::get_by_account(pool, &account)
         .await?
         .ok_or(new_error("User not found"))?;
     let info = UserMeResp {
@@ -151,7 +152,7 @@ async fn register(
     State(pool): State<&'static MySqlPool>,
     JsonParams(params): JsonParams<RegisterParams>,
 ) -> JsonResult<RegisterResp> {
-    let id = ModelUser::insert(pool, &params.account, &params.password).await?;
+    let id = User::insert(pool, &params.account, &params.password).await?;
     Ok(Json(RegisterResp {
         id,
         account: params.account,
@@ -170,6 +171,28 @@ async fn refresh_session(mut session: UserSession) -> Result<Session> {
 async fn logout(mut session: Session) -> Session {
     session.reset();
     session
+}
+
+#[derive(Deserialize, Validate)]
+struct UpdateProfileParams {
+    #[validate(custom(function = "x_user_email"))]
+    email: Option<String>,
+    #[validate(url)]
+    avatar: Option<String>,
+}
+
+async fn update_profile(
+    State(pool): State<&'static MySqlPool>,
+    session: UserSession,
+    JsonParams(params): JsonParams<UpdateProfileParams>,
+) -> Result<StatusCode> {
+    let account = session.get_account();
+    let params = UserUpdateParams {
+        email: params.email,
+        avatar: params.avatar,
+    };
+    User::update(pool, &account, params).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 pub struct UserRouterParams {
@@ -198,4 +221,5 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
         .route("/refresh", patch(refresh_session))
         .route("/register", post(register).with_state(params.pool))
         .route("/logout", delete(logout))
+        .route("/profile", patch(update_profile).with_state(params.pool))
 }

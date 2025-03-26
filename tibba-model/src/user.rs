@@ -28,7 +28,7 @@ pub enum UserStatus {
 }
 
 #[derive(FromRow, Deserialize, Serialize)]
-pub struct ModelUser {
+pub struct User {
     pub id: i64,
     pub status: i8,
     pub created: OffsetDateTime,
@@ -43,7 +43,13 @@ pub struct ModelUser {
     pub avatar: Option<String>,
 }
 
-impl ModelUser {
+#[derive(Debug, Clone, Deserialize)]
+pub struct UserUpdateParams {
+    pub email: Option<String>,
+    pub avatar: Option<String>,
+}
+
+impl User {
     /// Create a new user with the given account and password
     pub async fn insert(pool: &Pool<MySql>, account: &str, password: &str) -> Result<i64> {
         // Get current time for created_at and updated_at
@@ -75,5 +81,23 @@ impl ModelUser {
             .map_err(|e| Error::Sqlx { source: e })?;
 
         Ok(result)
+    }
+    pub async fn update(pool: &Pool<MySql>, account: &str, params: UserUpdateParams) -> Result<()> {
+        let _ = sqlx::query!(
+            r#"
+            UPDATE users SET 
+                email = COALESCE(?, email),
+                avatar = COALESCE(?, avatar)
+            WHERE account = ?
+            "#,
+            params.email.as_deref(),
+            params.avatar.as_deref(),
+            account
+        )
+        .execute(pool)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+
+        Ok(())
     }
 }
