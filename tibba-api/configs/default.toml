@@ -6,6 +6,7 @@ timeout = 60
 listen = "127.0.0.1:5000"
 processing_limit = 1_000
 secret = "osbhdlycJ0"
+prefix = "/api"
 
 
 # session config

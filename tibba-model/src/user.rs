@@ -40,6 +40,7 @@ pub struct ModelUser {
     pub groups: Option<Json<Vec<String>>>,
     pub remark: Option<String>,
     pub email: Option<String>,
+    pub avatar: Option<String>,
 }
 
 impl ModelUser {

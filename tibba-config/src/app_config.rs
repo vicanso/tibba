@@ -188,6 +188,8 @@ pub struct BasicConfig {
     pub timeout: Duration,
     // secret
     pub secret: String,
+    // prefix
+    pub prefix: String,
 }
 
 impl AppConfig {
@@ -200,6 +202,7 @@ impl AppConfig {
             processing_limit: config.get_int_from_env_first("processing_limit", Some(5000)),
             timeout,
             secret: config.get_from_env_first("secret", None),
+            prefix: config.get_from_env_first("prefix", None),
         };
         basic_config.validate().map_err(|e| Error::Validate {
             category: "basic".to_string(),

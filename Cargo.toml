@@ -30,8 +30,10 @@ members = [
     "tibba-state",
     "tibba-util",
     "tibba-validator",
-    "tibba-web",
+    "tibba-api",
+    "tibba-scheduler",
 ]
+
 
 [workspace.dependencies]
 config = "0.15.9"
@@ -94,3 +96,4 @@ opendal = { version = "0.52.0", features = [
     "layers-mime-guess",
     "services-s3",
 ] }
+tokio-cron-scheduler = { version = "0.13.0", features = ["signal"] }

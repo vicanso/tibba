@@ -100,8 +100,7 @@ pub async fn wait(State(params): State<WaitParams>, req: Request, next: Next) ->
 /// - key: unique key to look up the stored captcha code
 /// - code: the actual captcha code to validate
 pub async fn validate_captcha(
-    State(magic_code): State<String>,
-    State(cache): State<&'static RedisCache>,
+    State((magic_code, cache)): State<(String, &'static RedisCache)>,
     req: Request,
     next: Next,
 ) -> Result<Response> {
@@ -126,7 +125,7 @@ pub async fn validate_captcha(
     let arr: Vec<&str> = value.split(':').collect();
 
     // Validate the header format
-    if arr.len() != 3 {
+    if arr.len() != 2 {
         return Err(Error::Common {
             message: "Captcha parameter is invalid".to_string(),
             category: category.to_string(),
@@ -135,20 +134,24 @@ pub async fn validate_captcha(
     }
 
     // Check if this is a mock request using the magic code
-    let is_mock = !magic_code.is_empty() && arr[2] == magic_code;
+    let is_mock = !magic_code.is_empty() && arr[1] == magic_code;
 
     // For non-mock requests, validate the captcha code against cache
     if !is_mock {
         // Retrieve and delete the stored code from cache using the key (arr[1])
-        let code: String = cache.get_del(arr[1]).await?;
+        let code: Option<String> = cache.get_del(arr[0]).await?;
+        let Some(code) = code else {
+            return Err(Error::Common {
+                message: "Captcha is expired".to_string(),
+                category: category.to_string(),
+            }
+            .into());
+        };
 
         // Compare the provided code against the stored code
-        if code != arr[2] {
-            // let he = new_error("Captcha input error")
-            //     .with_category(category)
-            //     .with_code("mismatching");
+        if code != arr[1] {
             return Err(Error::Common {
-                message: "Captcha input error".to_string(),
+                message: "Captcha is invalid".to_string(),
                 category: category.to_string(),
             }
             .into());

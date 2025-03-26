@@ -23,3 +23,4 @@ tibba-middleware = { path = "../tibba-middleware" }
 tibba-validator = { path = "../tibba-validator" }
 tibba-sql = { path = "../tibba-sql" }
 tibba-model = { path = "../tibba-model" }
+tibba-cache = { path = "../tibba-cache" }

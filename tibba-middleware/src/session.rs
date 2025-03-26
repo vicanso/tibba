@@ -21,6 +21,7 @@ use axum::http::header::{HeaderMap, HeaderValue};
 use axum::http::request::Parts;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
+use axum_extra::extract::CookieJar;
 use axum_extra::extract::cookie::{Key, SignedCookieJar};
 use cookie::CookieBuilder;
 use derivative::Derivative;
@@ -61,10 +62,13 @@ impl Session {
         format!("ss:{id}")
     }
     fn validate_login(&self) -> Result<()> {
-        if self.account.is_empty() {
+        if !self.is_login() {
             return Err(Error::UserNotLogin.into());
         }
         Ok(())
+    }
+    pub fn is_login(&self) -> bool {
+        !self.account.is_empty()
     }
     pub fn can_renew(&self) -> bool {
         self.renewal_count < self.max_renewal
@@ -118,7 +122,7 @@ impl Session {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Default)]
 struct SessionResp {
     account: String,
     renewal_count: u8,
@@ -130,6 +134,11 @@ impl IntoResponse for Session {
             .path("/")
             .http_only(true)
             .max_age(time::Duration::seconds(self.ttl));
+
+        if self.id.is_empty() {
+            let jar = CookieJar::new().add(c.max_age(time::Duration::days(0)));
+            return (jar, Json(SessionResp::default())).into_response();
+        }
 
         match Key::try_from(self.secret.as_bytes()).map_err(|e| Error::Key { source: e }) {
             Ok(key) => {

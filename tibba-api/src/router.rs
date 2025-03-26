@@ -22,6 +22,7 @@ use tibba_error::Error;
 use tibba_router_common::{CommonRouterParams, new_common_router};
 use tibba_router_file::{FileRouterParams, new_file_router};
 use tibba_router_user::{UserRouterParams, new_user_router};
+use tibba_util::{is_development, is_test};
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -33,9 +34,16 @@ pub fn new_router() -> Result<Router> {
         secret: basic_config.secret.clone(),
         cache,
     });
+    let mut magic_code = "".to_string();
+    // only for test
+    if is_test() || is_development() {
+        magic_code = "1234".to_string();
+    }
     let user_router = new_user_router(UserRouterParams {
         secret: basic_config.secret.clone(),
+        magic_code,
         pool: get_db_pool(),
+        cache,
     });
     let file_router = new_file_router(FileRouterParams {
         storage: get_opendal_storage(),

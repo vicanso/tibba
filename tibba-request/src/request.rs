@@ -24,6 +24,8 @@ use reqwest::RequestBuilder;
 use scopeguard::defer;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 use tibba_util::{json_get, new_get_duration_ms};
@@ -150,15 +152,16 @@ impl HttpInterceptor for CommonInterceptor {
 
 /// HTTP client configuration
 struct ClientConfig {
-    service: String,                                     // Service name
-    base_url: String,                                    // Base URL for requests
-    read_timeout: Option<Duration>,                      // Read timeout
-    timeout: Option<Duration>,                           // Overall timeout
-    connect_timeout: Option<Duration>,                   // Connection timeout
-    pool_idle_timeout: Option<Duration>,                 // Connection pool idle timeout
-    pool_max_idle_per_host: usize,                       // Max idle connections per host
-    max_processing: Option<u32>,                         // Max concurrent requests
-    headers: Option<HeaderMap>,                          // Default headers
+    service: String,                     // Service name
+    base_url: String,                    // Base URL for requests
+    read_timeout: Option<Duration>,      // Read timeout
+    timeout: Option<Duration>,           // Overall timeout
+    connect_timeout: Option<Duration>,   // Connection timeout
+    pool_idle_timeout: Option<Duration>, // Connection pool idle timeout
+    pool_max_idle_per_host: usize,       // Max idle connections per host
+    max_processing: Option<u32>,         // Max concurrent requests
+    headers: Option<HeaderMap>,          // Default headers
+    dns_overrides: Option<HashMap<String, Vec<SocketAddr>>>,
     interceptors: Option<Vec<Box<dyn HttpInterceptor>>>, // Request interceptors
 }
 
@@ -181,6 +184,7 @@ impl ClientBuilder {
                 headers: None,
                 interceptors: None,
                 max_processing: None,
+                dns_overrides: None,
             },
         }
     }
@@ -234,6 +238,11 @@ impl ClientBuilder {
         self
     }
 
+    pub fn with_dns_overrides(mut self, dns_overrides: HashMap<String, Vec<SocketAddr>>) -> Self {
+        self.config.dns_overrides = Some(dns_overrides);
+        self
+    }
+
     pub fn build(self) -> Result<Client> {
         let mut builder = ReqwestClient::builder()
             .user_agent("tibba-request/1.0")
@@ -255,6 +264,11 @@ impl ClientBuilder {
         }
         if self.config.pool_max_idle_per_host > 0 {
             builder = builder.pool_max_idle_per_host(self.config.pool_max_idle_per_host);
+        }
+        if let Some(dns_overrides) = &self.config.dns_overrides {
+            for (host, addrs) in dns_overrides {
+                builder = builder.resolve_to_addrs(host, addrs);
+            }
         }
 
         let client = builder.build().map_err(|e| Error::Build {

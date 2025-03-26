@@ -77,7 +77,7 @@ pub struct CaptchaParams {
 
 #[derive(Debug, Clone, Serialize, Default)]
 struct CaptchaInfo {
-    hash: String,
+    id: String,
     data: String,
 }
 
@@ -107,11 +107,11 @@ async fn captcha(
         data: STANDARD.encode(data),
         ..Default::default()
     };
-    let hash = uuid();
+    let id = uuid();
     cache
-        .set(&hash, &text, Some(Duration::from_secs(5 * 60)))
+        .set(&id, &text, Some(Duration::from_secs(5 * 60)))
         .await?;
-    info.hash = hash;
+    info.id = id;
 
     Ok(Json(info).into_response())
 }

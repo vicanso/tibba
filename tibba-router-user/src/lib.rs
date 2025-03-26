@@ -13,13 +13,15 @@
 // limitations under the License.
 
 use axum::extract::State;
-use axum::routing::{get, patch, post};
+use axum::middleware::from_fn_with_state;
+use axum::routing::{delete, get, patch, post};
 use axum::{Json, Router};
 use axum_extra::extract::cookie::CookieJar;
 use serde::{Deserialize, Serialize};
 use sqlx::MySqlPool;
+use tibba_cache::RedisCache;
 use tibba_error::{Error, new_error};
-use tibba_middleware::{Session, UserSession};
+use tibba_middleware::{Session, UserSession, validate_captcha};
 use tibba_model::ModelUser;
 use tibba_util::{
     JsonParams, JsonResult, is_development, is_test, now, sha256, timestamp, timestamp_hash, uuid,
@@ -95,24 +97,38 @@ async fn login(
 
 #[derive(Debug, Clone, Serialize, Default)]
 struct UserMeResp {
-    name: String,
+    account: String,
     expired_at: String,
     issued_at: String,
     time: String,
     can_renew: bool,
+    email: Option<String>,
+    avatar: Option<String>,
 }
 
-async fn me(mut jar: CookieJar, session: Session) -> Result<(CookieJar, Json<UserMeResp>)> {
+async fn me(
+    State(pool): State<&'static MySqlPool>,
+    mut jar: CookieJar,
+    session: Session,
+) -> Result<(CookieJar, Json<UserMeResp>)> {
     let account = session.get_account();
     if get_device_id_from_cookie(&jar).is_empty() {
         jar = jar.add(generate_device_id_cookie());
     }
+    if !session.is_login() {
+        return Ok((jar, Json(UserMeResp::default())));
+    }
+    let user = ModelUser::get_by_account(pool, &account)
+        .await?
+        .ok_or(new_error("User not found"))?;
     let info = UserMeResp {
-        name: account,
+        account,
         expired_at: session.get_expired_at(),
         issued_at: session.get_issued_at(),
         time: now(),
         can_renew: session.can_renew(),
+        email: user.email,
+        avatar: user.avatar,
     };
 
     Ok((jar, Json(info)))
@@ -151,9 +167,16 @@ async fn refresh_session(mut session: UserSession) -> Result<Session> {
     Ok(session.into())
 }
 
+async fn logout(mut session: Session) -> Session {
+    session.reset();
+    session
+}
+
 pub struct UserRouterParams {
     pub secret: String,
+    pub magic_code: String,
     pub pool: &'static MySqlPool,
+    pub cache: &'static RedisCache,
 }
 
 pub fn new_user_router(params: UserRouterParams) -> Router {
@@ -164,9 +187,15 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
         )
         .route(
             "/login",
-            post(login).with_state((params.secret, params.pool)),
+            post(login)
+                .with_state((params.secret, params.pool))
+                .layer(from_fn_with_state(
+                    (params.magic_code, params.cache),
+                    validate_captcha,
+                )),
         )
-        .route("/me", get(me))
+        .route("/me", get(me).with_state(params.pool))
         .route("/refresh", patch(refresh_session))
         .route("/register", post(register).with_state(params.pool))
+        .route("/logout", delete(logout))
 }

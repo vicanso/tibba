@@ -29,9 +29,14 @@ static SESSION_PARAMS: OnceCell<SessionParams> = OnceCell::new();
 pub fn get_session_params() -> &'static SessionParams {
     SESSION_PARAMS.get_or_init(|| {
         // session config is checked in init function
-        let session_config = must_get_config().new_session_config().unwrap();
+        let app_config = must_get_config();
+        let session_config = app_config.new_session_config().unwrap();
+        let basic_config = app_config.new_basic_config().unwrap();
 
-        let session_prefixes = vec!["/users/".to_string(), "/files/upload".to_string()];
+        let session_prefixes = ["/users/".to_string(), "/files/upload".to_string()]
+            .iter()
+            .map(|s| format!("{}{}", basic_config.prefix, s))
+            .collect();
 
         SessionParams::new(session_prefixes)
             .with_secret(session_config.secret)
