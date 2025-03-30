@@ -49,13 +49,13 @@ async fn login_token(State(secret): State<String>) -> JsonResult<LoginTokenResp>
 #[derive(Deserialize, Validate, Debug)]
 struct LoginParams {
     ts: i64,
-    #[validate(length(min = 32))]
+    #[validate(custom(function = "x_uuid"))]
     token: String,
-    #[validate(length(min = 32))]
+    #[validate(custom(function = "x_sha256"))]
     hash: String,
-    #[validate(length(min = 2))]
+    #[validate(custom(function = "x_user_account"))]
     account: String,
-    #[validate(length(min = 32))]
+    #[validate(custom(function = "x_user_password"))]
     password: String,
 }
 
@@ -105,6 +105,8 @@ struct UserMeResp {
     can_renew: bool,
     email: Option<String>,
     avatar: Option<String>,
+    roles: Option<Vec<String>>,
+    groups: Option<Vec<String>>,
 }
 
 async fn me(
@@ -130,6 +132,8 @@ async fn me(
         can_renew: session.can_renew(),
         email: user.email,
         avatar: user.avatar,
+        roles: user.roles.map(|roles| roles.0),
+        groups: user.groups.map(|groups| groups.0),
     };
 
     Ok((jar, Json(info)))
@@ -179,6 +183,10 @@ struct UpdateProfileParams {
     email: Option<String>,
     #[validate(url)]
     avatar: Option<String>,
+    #[validate(custom(function = "x_user_roles"))]
+    roles: Option<Vec<String>>,
+    #[validate(custom(function = "x_user_groups"))]
+    groups: Option<Vec<String>>,
 }
 
 async fn update_profile(
@@ -190,6 +198,8 @@ async fn update_profile(
     let params = UserUpdateParams {
         email: params.email,
         avatar: params.avatar,
+        roles: params.roles,
+        groups: params.groups,
     };
     User::update(pool, &account, params).await?;
     Ok(StatusCode::NO_CONTENT)

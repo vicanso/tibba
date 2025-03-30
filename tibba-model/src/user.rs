@@ -47,6 +47,8 @@ pub struct User {
 pub struct UserUpdateParams {
     pub email: Option<String>,
     pub avatar: Option<String>,
+    pub roles: Option<Vec<String>>,
+    pub groups: Option<Vec<String>>,
 }
 
 impl User {
@@ -83,17 +85,21 @@ impl User {
         Ok(result)
     }
     pub async fn update(pool: &Pool<MySql>, account: &str, params: UserUpdateParams) -> Result<()> {
-        let _ = sqlx::query!(
+        let _ = sqlx::query(
             r#"
             UPDATE users SET 
                 email = COALESCE(?, email),
-                avatar = COALESCE(?, avatar)
+                avatar = COALESCE(?, avatar),
+                roles = COALESCE(?, roles),
+                `groups` = COALESCE(?, `groups`)
             WHERE account = ?
             "#,
-            params.email.as_deref(),
-            params.avatar.as_deref(),
-            account
         )
+        .bind(params.email.as_deref())
+        .bind(params.avatar.as_deref())
+        .bind(params.roles.map(Json))
+        .bind(params.groups.map(Json))
+        .bind(account)
         .execute(pool)
         .await
         .map_err(|e| Error::Sqlx { source: e })?;

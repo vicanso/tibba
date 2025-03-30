@@ -13,7 +13,9 @@
 // limitations under the License.
 
 use super::is_disabled;
-use super::{CODE_USER_ACCOUNT, CODE_USER_EMAIL, CODE_USER_PASSWORD};
+use super::{
+    CODE_USER_ACCOUNT, CODE_USER_EMAIL, CODE_USER_GROUPS, CODE_USER_PASSWORD, CODE_USER_ROLES,
+};
 use validator::{ValidateEmail, ValidationError};
 
 type Result<T> = std::result::Result<T, ValidationError>;
@@ -50,6 +52,30 @@ pub fn x_user_email(email: &str) -> Result<()> {
     }
     if !email.validate_email() {
         return Err(ValidationError::new(CODE_USER_EMAIL));
+    }
+    Ok(())
+}
+
+pub fn x_user_roles(roles: &[String]) -> Result<()> {
+    if is_disabled(CODE_USER_ROLES) {
+        return Ok(());
+    }
+    for role in roles {
+        if !role.is_ascii() {
+            return Err(ValidationError::new(CODE_USER_ROLES));
+        }
+    }
+    Ok(())
+}
+
+pub fn x_user_groups(groups: &[String]) -> Result<()> {
+    if is_disabled(CODE_USER_GROUPS) {
+        return Ok(());
+    }
+    for group in groups {
+        if !group.is_ascii() {
+            return Err(ValidationError::new(CODE_USER_GROUPS));
+        }
     }
     Ok(())
 }

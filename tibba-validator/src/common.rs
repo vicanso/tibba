@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use super::is_disabled;
-use super::{CODE_FILE_NAME, CODE_LISTEN_ADDR, CODE_UUID};
+use super::{CODE_FILE_NAME, CODE_LISTEN_ADDR, CODE_SHA256, CODE_UUID};
 use std::borrow::Cow;
 use std::net::ToSocketAddrs;
 use std::path::Path;
@@ -63,6 +63,18 @@ pub fn x_uuid(uuid: &str) -> Result<()> {
     }
     if uuid.len() != 36 {
         return Err(ValidationError::new(CODE_UUID).with_message(Cow::from("Invalid uuid format")));
+    }
+    Ok(())
+}
+
+pub fn x_sha256(sha256: &str) -> Result<()> {
+    if is_disabled(CODE_SHA256) {
+        return Ok(());
+    }
+    if sha256.len() != 64 {
+        return Err(
+            ValidationError::new(CODE_SHA256).with_message(Cow::from("Invalid sha256 format"))
+        );
     }
     Ok(())
 }

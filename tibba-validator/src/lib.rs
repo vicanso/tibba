@@ -28,8 +28,11 @@ fn is_disabled(code: &str) -> bool {
 pub const CODE_USER_ACCOUNT: &str = "x-user-account";
 pub const CODE_USER_PASSWORD: &str = "x-user-password";
 pub const CODE_USER_EMAIL: &str = "x-user-email";
+pub const CODE_USER_ROLES: &str = "x-user-roles";
+pub const CODE_USER_GROUPS: &str = "x-user-groups";
 pub const CODE_LISTEN_ADDR: &str = "x-listen-addr";
 pub const CODE_UUID: &str = "x-uuid";
+pub const CODE_SHA256: &str = "x-sha256";
 pub const CODE_FILE_NAME: &str = "x-file-name";
 
 pub use common::*;
