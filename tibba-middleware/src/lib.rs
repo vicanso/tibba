@@ -31,6 +31,8 @@ pub enum Error {
     SessionNotFound,
     #[snafu(display("User not login"))]
     UserNotLogin,
+    #[snafu(display("User not admin"))]
+    UserNotAdmin,
 }
 
 impl From<Error> for BaseError {
@@ -70,6 +72,11 @@ impl From<Error> for BaseError {
                 .with_category(error_category)
                 .with_sub_category("user")
                 .with_status(401)
+                .with_exception(false),
+            Error::UserNotAdmin => new_error("User not admin")
+                .with_category(error_category)
+                .with_sub_category("user")
+                .with_status(403)
                 .with_exception(false),
         }
         .into()

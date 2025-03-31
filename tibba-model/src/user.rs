@@ -13,11 +13,13 @@
 // limitations under the License.
 
 use super::Error;
+use schemars::{JsonSchema, Schema, schema_for};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use sqlx::types::Json;
 use sqlx::{MySql, Pool};
-use time::OffsetDateTime;
+use substring::Substring;
+use time::{OffsetDateTime, UtcOffset};
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -27,14 +29,13 @@ pub enum UserStatus {
     Enabled = 1,
 }
 
-#[derive(FromRow, Deserialize, Serialize)]
-pub struct User {
+#[derive(FromRow)]
+struct UserSchema {
     pub id: i64,
     pub status: i8,
     pub created: OffsetDateTime,
     pub modified: OffsetDateTime,
     pub account: String,
-    #[serde(skip_serializing)]
     pub password: String,
     pub roles: Option<Json<Vec<String>>>,
     pub groups: Option<Json<Vec<String>>>,
@@ -43,12 +44,59 @@ pub struct User {
     pub avatar: Option<String>,
 }
 
+#[derive(Deserialize, Serialize, JsonSchema)]
+pub struct User {
+    pub id: i64,
+    pub status: i8,
+    pub created: String,
+    pub modified: String,
+    pub account: String,
+    #[serde(skip_serializing)]
+    pub password: String,
+    pub roles: Option<Vec<String>>,
+    pub groups: Option<Vec<String>>,
+    pub remark: Option<String>,
+    pub email: Option<String>,
+    pub avatar: Option<String>,
+}
+
+impl From<UserSchema> for User {
+    fn from(user: UserSchema) -> Self {
+        let offset = UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC);
+        User {
+            id: user.id,
+            status: user.status,
+            created: user.created.to_offset(offset).to_string(),
+            modified: user.modified.to_offset(offset).to_string(),
+            account: user.account,
+            password: user.password,
+            roles: user.roles.map(|roles| roles.0),
+            groups: user.groups.map(|groups| groups.0),
+            remark: user.remark,
+            email: user.email,
+            avatar: user.avatar,
+        }
+    }
+}
+impl User {
+    pub fn schema() -> Schema {
+        schema_for!(User)
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct UserUpdateParams {
     pub email: Option<String>,
     pub avatar: Option<String>,
     pub roles: Option<Vec<String>>,
     pub groups: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UserListParams {
+    pub page: u64,
+    pub limit: u64,
+    pub order_by: Option<String>,
 }
 
 impl User {
@@ -76,13 +124,13 @@ impl User {
         Ok(result.last_insert_id() as i64)
     }
     pub async fn get_by_account(pool: &Pool<MySql>, account: &str) -> Result<Option<Self>> {
-        let result = sqlx::query_as::<_, Self>(r#"SELECT * FROM users WHERE account = ?"#)
+        let result = sqlx::query_as::<_, UserSchema>(r#"SELECT * FROM users WHERE account = ?"#)
             .bind(account)
             .fetch_optional(pool)
             .await
             .map_err(|e| Error::Sqlx { source: e })?;
 
-        Ok(result)
+        Ok(result.map(|user| user.into()))
     }
     pub async fn update(pool: &Pool<MySql>, account: &str, params: UserUpdateParams) -> Result<()> {
         let _ = sqlx::query(
@@ -105,5 +153,28 @@ impl User {
         .map_err(|e| Error::Sqlx { source: e })?;
 
         Ok(())
+    }
+    pub async fn list(pool: &Pool<MySql>, params: UserListParams) -> Result<Vec<Self>> {
+        let limit = params.limit.min(200);
+        let mut sql = String::from("SELECT * FROM users");
+
+        if let Some(order_by) = params.order_by {
+            let (order_by, direction) = if order_by.starts_with("-") {
+                (order_by.substring(1, order_by.len()).to_string(), "DESC")
+            } else {
+                (order_by, "ASC")
+            };
+            sql.push_str(&format!(" ORDER BY {} {}", order_by, direction));
+        }
+
+        let offset = (params.page - 1) * limit;
+        sql.push_str(&format!(" LIMIT {} OFFSET {}", limit, offset));
+
+        let result = sqlx::query_as::<_, UserSchema>(&sql)
+            .fetch_all(pool)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+
+        Ok(result.into_iter().map(|user| user.into()).collect())
     }
 }

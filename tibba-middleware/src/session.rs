@@ -34,6 +34,9 @@ use tracing::debug;
 
 type Result<T> = std::result::Result<T, tibba_error::Error>;
 
+static ROLE_ADMIN: &str = "admin";
+static ROLE_SUPER_ADMIN: &str = "su";
+
 #[derive(Serialize, Deserialize, Default, Clone, Derivative)]
 #[derivative(Debug)]
 pub struct Session {
@@ -55,6 +58,10 @@ pub struct Session {
     renewal_count: u8,
     // max renewal
     max_renewal: u8,
+    // roles
+    roles: Vec<String>,
+    // groups
+    groups: Vec<String>,
 }
 
 impl Session {
@@ -79,6 +86,14 @@ impl Session {
         }
         self.account = account;
         self.iat = timestamp();
+        self
+    }
+    pub fn with_roles(mut self, roles: Vec<String>) -> Self {
+        self.roles = roles;
+        self
+    }
+    pub fn with_groups(mut self, groups: Vec<String>) -> Self {
+        self.groups = groups;
         self
     }
     pub fn refresh(&mut self) {
@@ -262,10 +277,24 @@ async fn get_session(
     let Some(session_id) = jar.get(&params.cookie) else {
         return Ok(Session::default());
     };
+    println!("session_id: {}", session_id.value());
     let se = cache
         .get_struct(&Session::get_key(session_id.value()))
         .await?;
     Ok(se.unwrap_or_default())
+}
+
+pub async fn should_admin(se: UserSession, req: Request, next: Next) -> Result<Response> {
+    if se
+        .roles
+        .iter()
+        .any(|role| role == ROLE_ADMIN || role == ROLE_SUPER_ADMIN)
+    {
+        let res = next.run(req).await;
+        Ok(res)
+    } else {
+        Err(Error::UserNotAdmin.into())
+    }
 }
 
 pub async fn session(

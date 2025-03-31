@@ -97,3 +97,4 @@ opendal = { version = "0.52.0", features = [
     "services-s3",
 ] }
 tokio-cron-scheduler = { version = "0.13.0", features = ["signal"] }
+schemars = "1.0.0-alpha.17"

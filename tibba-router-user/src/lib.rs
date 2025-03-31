@@ -14,7 +14,7 @@
 
 use axum::extract::State;
 use axum::http::StatusCode;
-use axum::middleware::from_fn_with_state;
+use axum::middleware::{from_fn, from_fn_with_state};
 use axum::routing::{delete, get, patch, post};
 use axum::{Json, Router};
 use axum_extra::extract::cookie::CookieJar;
@@ -22,10 +22,11 @@ use serde::{Deserialize, Serialize};
 use sqlx::MySqlPool;
 use tibba_cache::RedisCache;
 use tibba_error::{Error, new_error};
-use tibba_middleware::{Session, UserSession, validate_captcha};
-use tibba_model::{User, UserUpdateParams};
+use tibba_middleware::{Session, UserSession, should_admin, validate_captcha};
+use tibba_model::{User, UserListParams, UserUpdateParams};
 use tibba_util::{
-    JsonParams, JsonResult, is_development, is_test, now, sha256, timestamp, timestamp_hash, uuid,
+    JsonParams, JsonResult, Query, is_development, is_test, now, sha256, timestamp, timestamp_hash,
+    uuid,
 };
 use tibba_util::{generate_device_id_cookie, get_device_id_from_cookie, validate_timestamp_hash};
 use tibba_validator::*;
@@ -90,7 +91,10 @@ async fn login(
         return Err(account_password_err.into());
     }
 
-    let session = session.with_account(params.account);
+    let session = session
+        .with_account(params.account)
+        .with_groups(user.groups.unwrap_or_default())
+        .with_roles(user.roles.unwrap_or_default());
     session.save().await?;
 
     Ok(session)
@@ -132,8 +136,8 @@ async fn me(
         can_renew: session.can_renew(),
         email: user.email,
         avatar: user.avatar,
-        roles: user.roles.map(|roles| roles.0),
-        groups: user.groups.map(|groups| groups.0),
+        roles: user.roles,
+        groups: user.groups,
     };
 
     Ok((jar, Json(info)))
@@ -205,6 +209,38 @@ async fn update_profile(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[derive(Deserialize, Validate)]
+struct ListParams {
+    page: u64,
+    limit: u64,
+    order_by: Option<String>,
+}
+
+#[derive(Serialize)]
+struct ListResp {
+    count: u64,
+    users: Vec<User>,
+}
+
+async fn list(
+    State(pool): State<&'static MySqlPool>,
+    Query(params): Query<ListParams>,
+) -> Result<Json<ListResp>> {
+    let users = User::list(
+        pool,
+        UserListParams {
+            page: params.page,
+            limit: params.limit,
+            order_by: params.order_by,
+        },
+    )
+    .await?;
+    Ok(Json(ListResp {
+        count: users.len() as u64,
+        users,
+    }))
+}
+
 pub struct UserRouterParams {
     pub secret: String,
     pub magic_code: String,
@@ -232,4 +268,10 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
         .route("/register", post(register).with_state(params.pool))
         .route("/logout", delete(logout))
         .route("/profile", patch(update_profile).with_state(params.pool))
+        .route(
+            "/list",
+            get(list)
+                .with_state(params.pool)
+                .layer(from_fn(should_admin)),
+        )
 }

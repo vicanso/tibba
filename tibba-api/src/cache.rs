@@ -37,7 +37,7 @@ pub fn get_redis_cache() -> &'static RedisCache {
         // so it can be unwrap here
         let pool = get_redis_pool().unwrap();
         RedisCacheBuilder::new(pool)
-            .with_prefix("tibba_web".to_string())
+            .with_prefix("tw:".to_string())
             .build()
     })
 }

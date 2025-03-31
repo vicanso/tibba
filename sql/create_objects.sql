@@ -2,8 +2,8 @@ CREATE TABLE `objects` (
     `id` BIGINT NOT NULL AUTO_INCREMENT,
     `key` VARCHAR(2048) NOT NULL,        -- 对象路径
     `value` MEDIUMBLOB,                 -- 对象内容
-    `modified` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, -- 修改时间
-    `created` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,  -- 创建时间
+    `modified` TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3), -- 修改时间
+    `created` TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),  -- 创建时间
 
     PRIMARY KEY (`id`),
     UNIQUE KEY `idx_key` (`key`(768)),
