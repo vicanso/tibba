@@ -29,6 +29,9 @@ pub enum UserStatus {
     Enabled = 1,
 }
 
+pub static ROLE_ADMIN: &str = "admin";
+pub static ROLE_SUPER_ADMIN: &str = "su";
+
 #[derive(FromRow)]
 struct UserSchema {
     pub id: i64,
@@ -84,7 +87,7 @@ impl User {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct UserUpdateParams {
     pub email: Option<String>,
     pub avatar: Option<String>,

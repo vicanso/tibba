@@ -23,7 +23,7 @@ use sqlx::MySqlPool;
 use tibba_cache::RedisCache;
 use tibba_error::{Error, new_error};
 use tibba_middleware::{Session, SessionResponse, UserSession, should_admin, validate_captcha};
-use tibba_model::{User, UserListParams, UserUpdateParams};
+use tibba_model::{ROLE_SUPER_ADMIN, User, UserListParams, UserUpdateParams};
 use tibba_util::{
     JsonParams, JsonResult, Query, is_development, is_test, now, sha256, timestamp, timestamp_hash,
     uuid,
@@ -177,6 +177,17 @@ async fn register(
     JsonParams(params): JsonParams<RegisterParams>,
 ) -> JsonResult<RegisterResp> {
     let id = User::insert(pool, &params.account, &params.password).await?;
+    if id == 1 {
+        User::update(
+            pool,
+            &params.account,
+            UserUpdateParams {
+                roles: Some(vec![ROLE_SUPER_ADMIN.to_string()]),
+                ..Default::default()
+            },
+        )
+        .await?;
+    }
     Ok(Json(RegisterResp {
         id,
         account: params.account,
