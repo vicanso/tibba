@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::MySqlPool;
 use tibba_cache::RedisCache;
 use tibba_error::{Error, new_error};
-use tibba_middleware::{Session, UserSession, should_admin, validate_captcha};
+use tibba_middleware::{Session, SessionResponse, UserSession, should_admin, validate_captcha};
 use tibba_model::{User, UserListParams, UserUpdateParams};
 use tibba_util::{
     JsonParams, JsonResult, Query, is_development, is_test, now, sha256, timestamp, timestamp_hash,
@@ -74,32 +74,6 @@ impl LoginParams {
     }
 }
 
-async fn login(
-    State((secret, pool)): State<(String, &'static MySqlPool)>,
-    session: Session,
-    JsonParams(params): JsonParams<LoginParams>,
-) -> Result<Session> {
-    params.validate_token(&secret)?;
-    let account_password_err = new_error("Account or password is wrong");
-    let Some(user) = User::get_by_account(pool, &params.account).await? else {
-        return Err(account_password_err.into());
-    };
-
-    let password = user.password;
-    let msg = format!("{}:{password}", params.hash);
-    if sha256(msg.as_bytes()) != params.password {
-        return Err(account_password_err.into());
-    }
-
-    let session = session
-        .with_account(params.account)
-        .with_groups(user.groups.unwrap_or_default())
-        .with_roles(user.roles.unwrap_or_default());
-    session.save().await?;
-
-    Ok(session)
-}
-
 #[derive(Debug, Clone, Serialize, Default)]
 struct UserMeResp {
     account: String,
@@ -111,6 +85,48 @@ struct UserMeResp {
     avatar: Option<String>,
     roles: Option<Vec<String>>,
     groups: Option<Vec<String>>,
+}
+
+async fn login(
+    State((secret, pool)): State<(String, &'static MySqlPool)>,
+    session: Session,
+    JsonParams(params): JsonParams<LoginParams>,
+) -> Result<SessionResponse<Json<UserMeResp>>> {
+    params.validate_token(&secret)?;
+    let account = params.account;
+    let account_password_err = new_error("Account or password is wrong");
+    let Some(user) = User::get_by_account(pool, &account).await? else {
+        return Err(account_password_err.into());
+    };
+
+    let password = user.password;
+    let msg = format!("{}:{password}", params.hash);
+    if sha256(msg.as_bytes()) != params.password {
+        return Err(account_password_err.into());
+    }
+
+    let groups = user.groups.clone().unwrap_or_default();
+    let roles = user.roles.clone().unwrap_or_default();
+
+    let session = session
+        .with_account(&account)
+        .with_groups(groups)
+        .with_roles(roles);
+    session.save().await?;
+
+    let info = UserMeResp {
+        account,
+        expired_at: session.get_expired_at(),
+        issued_at: session.get_issued_at(),
+        time: now(),
+        can_renew: session.can_renew(),
+        email: user.email,
+        avatar: user.avatar,
+        roles: user.roles,
+        groups: user.groups,
+    };
+
+    Ok(SessionResponse(session, Json(info)))
 }
 
 async fn me(

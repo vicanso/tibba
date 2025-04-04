@@ -21,7 +21,6 @@ use axum::http::header::{HeaderMap, HeaderValue};
 use axum::http::request::Parts;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
-use axum_extra::extract::CookieJar;
 use axum_extra::extract::cookie::{Key, SignedCookieJar};
 use cookie::CookieBuilder;
 use derivative::Derivative;
@@ -32,7 +31,7 @@ use tibba_cache::RedisCache;
 use tibba_util::{from_timestamp, timestamp, uuid};
 use tracing::debug;
 
-type Result<T> = std::result::Result<T, tibba_error::Error>;
+type Result<T, E = tibba_error::Error> = std::result::Result<T, E>;
 
 static ROLE_ADMIN: &str = "admin";
 static ROLE_SUPER_ADMIN: &str = "su";
@@ -80,11 +79,11 @@ impl Session {
     pub fn can_renew(&self) -> bool {
         self.renewal_count < self.max_renewal
     }
-    pub fn with_account(mut self, account: String) -> Self {
+    pub fn with_account(mut self, account: &str) -> Self {
         if self.id.is_empty() || self.account != account {
             self.id = uuid();
         }
-        self.account = account;
+        self.account = account.to_string();
         self.iat = timestamp();
         self
     }
@@ -137,6 +136,25 @@ impl Session {
     }
 }
 
+impl TryFrom<&Session> for SignedCookieJar {
+    type Error = tibba_error::Error;
+
+    fn try_from(se: &Session) -> Result<Self, Self::Error> {
+        let mut c = CookieBuilder::new(se.cookie.clone(), se.id.clone())
+            .path("/")
+            .http_only(true)
+            .max_age(time::Duration::seconds(se.ttl));
+
+        if se.id.is_empty() {
+            c = c.max_age(time::Duration::days(0));
+        }
+        let key = Key::try_from(se.secret.as_bytes()).map_err(|e| Error::Key { source: e })?;
+
+        let jar = SignedCookieJar::new(key);
+        Ok(jar.add(c))
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Default)]
 struct SessionResp {
     account: String,
@@ -145,32 +163,32 @@ struct SessionResp {
 
 impl IntoResponse for Session {
     fn into_response(self) -> Response {
-        let c = CookieBuilder::new(self.cookie, self.id.clone())
-            .path("/")
-            .http_only(true)
-            .max_age(time::Duration::seconds(self.ttl));
-
-        if self.id.is_empty() {
-            let jar = CookieJar::new().add(c.max_age(time::Duration::days(0)));
-            return (jar, Json(SessionResp::default())).into_response();
+        let result: Result<SignedCookieJar, _> = (&self).try_into();
+        match result {
+            Ok(jar) => (
+                jar,
+                Json(SessionResp {
+                    account: self.account,
+                    renewal_count: self.renewal_count,
+                }),
+            )
+                .into_response(),
+            Err(err) => err.into_response(),
         }
+    }
+}
 
-        match Key::try_from(self.secret.as_bytes()).map_err(|e| Error::Key { source: e }) {
-            Ok(key) => {
-                let jar = SignedCookieJar::new(key);
-                (
-                    jar.add(c),
-                    Json(SessionResp {
-                        account: self.account,
-                        renewal_count: self.renewal_count,
-                    }),
-                )
-                    .into_response()
-            }
-            Err(e) => {
-                let err: tibba_error::Error = e.into();
-                err.into_response()
-            }
+pub struct SessionResponse<T>(pub Session, pub T);
+
+impl<T> IntoResponse for SessionResponse<T>
+where
+    T: IntoResponse,
+{
+    fn into_response(self) -> Response {
+        let result: Result<SignedCookieJar, _> = (&self.0).try_into();
+        match result {
+            Ok(jar) => (jar, self.1).into_response(),
+            Err(err) => err.into_response(),
         }
     }
 }
