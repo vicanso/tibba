@@ -17,6 +17,9 @@ serde_json = { workspace = true }
 lru = { workspace = true }
 tokio = { workspace = true }
 chrono = { workspace = true }
+validator = { workspace = true }
+substring = { workspace = true }
+url = { workspace = true }
 tibba-config = { path = "../tibba-config" }
 tibba-util = { path = "../tibba-util" }
 tibba-error = { path = "../tibba-error" }

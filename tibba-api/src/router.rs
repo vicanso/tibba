@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use crate::cache::get_redis_cache;
-use crate::config::must_get_config;
+use crate::config::must_get_basic_config;
 use crate::dal::get_opendal_storage;
 use crate::sql::get_db_pool;
 use crate::state::get_app_state;
@@ -27,7 +27,7 @@ use tibba_util::{is_development, is_test};
 type Result<T> = std::result::Result<T, Error>;
 
 pub fn new_router() -> Result<Router> {
-    let basic_config = must_get_config().new_basic_config()?;
+    let basic_config = must_get_basic_config();
     let cache = get_redis_cache();
     let common_router = new_common_router(CommonRouterParams {
         state: get_app_state(),

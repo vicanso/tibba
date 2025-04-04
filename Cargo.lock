@@ -3157,6 +3157,7 @@ dependencies = [
  "tower",
  "tracing",
  "tracing-subscriber",
+ "validator",
 ]
 
 [[package]]
@@ -3171,10 +3172,13 @@ dependencies = [
  "serde",
  "serde_json",
  "snafu",
+ "substring",
  "tibba-config",
  "tibba-error",
  "tibba-util",
  "tokio",
+ "url",
+ "validator",
 ]
 
 [[package]]
@@ -3182,15 +3186,10 @@ name = "tibba-config"
 version = "0.1.0"
 dependencies = [
  "config",
- "dashmap",
  "humantime",
- "once_cell",
  "snafu",
- "substring",
  "tibba-error",
- "tibba-validator",
  "url",
- "validator",
 ]
 
 [[package]]
@@ -3272,6 +3271,7 @@ dependencies = [
  "tibba-config",
  "tibba-error",
  "url",
+ "validator",
 ]
 
 [[package]]
@@ -3373,6 +3373,8 @@ dependencies = [
  "sqlx",
  "tibba-config",
  "tibba-error",
+ "url",
+ "validator",
 ]
 
 [[package]]

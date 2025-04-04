@@ -10,5 +10,7 @@ path = "src/lib.rs"
 [dependencies]
 sqlx = { workspace = true }
 snafu = { workspace = true }
+validator = { workspace = true }
+url = { workspace = true }
 tibba-config = { path = "../tibba-config" }
 tibba-error = { path = "../tibba-error" }

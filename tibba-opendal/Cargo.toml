@@ -11,5 +11,6 @@ path = "src/lib.rs"
 snafu = { workspace = true }
 opendal = { workspace = true }
 url = { workspace = true }
+validator = { workspace = true }
 tibba-config = { path = "../tibba-config" }
 tibba-error = { path = "../tibba-error" }

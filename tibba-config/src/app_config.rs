@@ -13,36 +13,16 @@
 // limitations under the License.
 
 use super::Error;
-use config::{Config, File, FileFormat, FileSourceString};
+use config::{File, FileFormat, FileSourceString};
 use std::collections::HashMap;
 use std::env;
 use std::time::Duration;
-use substring::Substring;
-use tibba_validator::x_listen_addr;
-use url::Url;
-use validator::Validate;
 
 type Result<T> = std::result::Result<T, Error>;
-
-// Helper function to convert string to i32, returns 0 if parsing fails
-fn convert_string_to_i32(value: String) -> i32 {
-    if let Ok(result) = value.parse::<i32>() {
-        return result;
-    }
-    0
-}
-
-// fn convert_string_to_bool(value: String) -> bool {
-//     if let Ok(result) = value.parse::<bool>() {
-//         return result;
-//     }
-//     false
-// }
-
-// AppConfig struct represents the application configuration
+// Config struct represents the application configuration
 // It manages configuration settings with environment variable support
 #[derive(Debug, Clone, Default)]
-pub struct AppConfig {
+pub struct Config {
     // Prefix for environment variables
     env_prefix: String,
     // Prefix for configuration keys
@@ -51,9 +31,9 @@ pub struct AppConfig {
     settings: HashMap<String, HashMap<String, String>>,
 }
 
-impl AppConfig {
-    // Sets a new prefix and returns a new AppConfig instance
-    fn set_prefix(&self, prefix: &str) -> AppConfig {
+impl Config {
+    // Sets a new prefix and returns a new Config instance
+    fn set_prefix(&self, prefix: &str) -> Config {
         let mut config = self.clone();
         config.prefix = prefix.to_string();
         config
@@ -65,8 +45,26 @@ impl AppConfig {
         }
         format!("{}.{key}", self.prefix)
     }
+    pub fn convert_string_to_i32(value: &str) -> i32 {
+        if let Ok(result) = value.parse::<i32>() {
+            return result;
+        }
+        0
+    }
+    pub fn convert_string_to_bool(value: &str) -> bool {
+        if let Ok(result) = value.parse::<bool>() {
+            return result;
+        }
+        false
+    }
+    pub fn parse_duration(value: &str) -> Result<Duration> {
+        humantime::parse_duration(value).map_err(|e| Error::ParseDuration {
+            category: "config".to_string(),
+            source: e,
+        })
+    }
     // Retrieves a configuration value by key with optional default value
-    fn get(&self, key: &str, default_value: Option<String>) -> String {
+    pub fn get(&self, key: &str, default_value: Option<String>) -> String {
         let mut s = "".to_string();
         let k = self.get_key(key);
         let arr: Vec<&str> = k.split('.').collect();
@@ -82,31 +80,29 @@ impl AppConfig {
         }
         default_value.unwrap_or(s)
     }
-    // fn get_int(&self, key: &str, default_value: Option<i32>) -> i32 {
-    //     let value = self.get(key, None);
-    //     if !value.is_empty() {
-    //         return convert_string_to_i32(value);
-    //     }
-    //     default_value.unwrap_or_default()
-    // }
-    // fn get_duration(&self, key: &str, default_value: Option<Duration>) -> Result<Duration> {
-    //     let value = self.get(key, None);
-    //     if !value.is_empty() {
-    //         return humantime::parse_duration(&value).context(ParseDurationSnafu {
-    //             category: key.to_string(),
-    //         });
-    //     }
-    //     Ok(default_value.unwrap_or_default())
-    // }
-    // fn get_bool(&self, key: &str, default_value: Option<bool>) -> bool {
-    //     let value = self.get(key, None);
-    //     if !value.is_empty() {
-    //         return convert_string_to_bool(value);
-    //     }
-    //     default_value.unwrap_or_default()
-    // }
+    pub fn get_int(&self, key: &str, default_value: Option<i32>) -> i32 {
+        let value = self.get(key, None);
+        if !value.is_empty() {
+            return Self::convert_string_to_i32(&value);
+        }
+        default_value.unwrap_or_default()
+    }
+    pub fn get_duration(&self, key: &str, default_value: Option<Duration>) -> Result<Duration> {
+        let value = self.get(key, None);
+        if !value.is_empty() {
+            return Self::parse_duration(&value);
+        }
+        Ok(default_value.unwrap_or_default())
+    }
+    pub fn get_bool(&self, key: &str, default_value: Option<bool>) -> bool {
+        let value = self.get(key, None);
+        if !value.is_empty() {
+            return Self::convert_string_to_bool(&value);
+        }
+        default_value.unwrap_or_default()
+    }
     // Retrieves value from environment variable first, falls back to config file
-    fn get_from_env_first(&self, key: &str, default_value: Option<String>) -> String {
+    pub fn get_from_env_first(&self, key: &str, default_value: Option<String>) -> String {
         let k = self.get_key(key);
         let mut env_key = k.replace('.', "_").to_uppercase();
         if !self.env_prefix.is_empty() {
@@ -118,28 +114,36 @@ impl AppConfig {
         self.get(key, default_value)
     }
     // Similar to get_from_env_first but converts the value to integer
-    fn get_int_from_env_first(&self, key: &str, default_value: Option<i32>) -> i32 {
+    pub fn get_int_from_env_first(&self, key: &str, default_value: Option<i32>) -> i32 {
         let value = self.get_from_env_first(key, None);
         if !value.is_empty() {
-            return convert_string_to_i32(value);
+            return Self::convert_string_to_i32(&value);
         }
         default_value.unwrap_or_default()
     }
-    // fn get_bool_from_env_first(&self, key: &str, default_value: Option<bool>) -> bool {
-    //     let value = self.get_from_env_first(key, None);
-    //     if !value.is_empty() {
-    //         return convert_string_to_bool(value);
-    //     }
-    //     default_value.unwrap_or_default()
-    // }
+    pub fn get_bool_from_env_first(&self, key: &str, default_value: Option<bool>) -> bool {
+        let value = self.get_from_env_first(key, None);
+        if !value.is_empty() {
+            return Self::convert_string_to_bool(&value);
+        }
+        default_value.unwrap_or_default()
+    }
     // Similar to get_from_env_first but converts the value to Duration
-    fn get_duration_from_env_first(&self, key: &str, default_value: Option<Duration>) -> Duration {
+    pub fn get_duration_from_env_first(
+        &self,
+        key: &str,
+        default_value: Option<Duration>,
+    ) -> Duration {
         let value = self.get_from_env_first(key, None);
         let v = default_value.unwrap_or_default();
         if !value.is_empty() {
-            return humantime::parse_duration(&value).unwrap_or(v);
+            return Self::parse_duration(&value).unwrap_or(v);
         }
         v
+    }
+    /// Create a new sub config
+    pub fn sub_config(&self, prefix: &str) -> Config {
+        self.clone().set_prefix(prefix)
     }
 }
 
@@ -149,8 +153,8 @@ fn new_source(data: &str) -> File<FileSourceString, FileFormat> {
 }
 
 // Creates a new AppConfig instance from multiple TOML configuration strings
-pub fn new_app_config(data: Vec<&str>, env_prefix: Option<&str>) -> Result<AppConfig> {
-    let mut builder = Config::builder();
+pub fn new_config(data: Vec<&str>, env_prefix: Option<&str>) -> Result<Config> {
+    let mut builder = config::Config::builder();
     for d in data {
         if !d.is_empty() {
             builder = builder.add_source(new_source(d));
@@ -167,262 +171,9 @@ pub fn new_app_config(data: Vec<&str>, env_prefix: Option<&str>) -> Result<AppCo
             category: "config_deserialize".to_string(),
             source: e,
         })?;
-    Ok(AppConfig {
+    Ok(Config {
         env_prefix: env_prefix.unwrap_or_default().to_string(),
         settings,
         ..Default::default()
     })
-}
-
-// BasicConfig struct defines the basic application settings
-// with validation rules for each field
-#[derive(Debug, Clone, Default, Validate)]
-pub struct BasicConfig {
-    // listen address
-    #[validate(custom(function = "x_listen_addr"))]
-    pub listen: String,
-    // processing limit
-    #[validate(range(min = 0, max = 100000))]
-    pub processing_limit: i32,
-    // timeout
-    pub timeout: Duration,
-    // secret
-    pub secret: String,
-    // prefix
-    pub prefix: String,
-}
-
-impl AppConfig {
-    /// Create a new basic config, if the config is invalid, it will panic
-    pub fn new_basic_config(&self) -> Result<BasicConfig> {
-        let config = self.clone().set_prefix("basic");
-        let timeout = config.get_duration_from_env_first("timeout", Some(Duration::from_secs(60)));
-        let basic_config = BasicConfig {
-            listen: config.get_from_env_first("listen", None),
-            processing_limit: config.get_int_from_env_first("processing_limit", Some(5000)),
-            timeout,
-            secret: config.get_from_env_first("secret", None),
-            prefix: config.get_from_env_first("prefix", None),
-        };
-        basic_config.validate().map_err(|e| Error::Validate {
-            category: "basic".to_string(),
-            source: e,
-        })?;
-        Ok(basic_config)
-    }
-}
-
-// RedisConfig struct defines Redis-specific configuration
-// with validation rules for connection parameters
-#[derive(Debug, Clone, Default, Validate)]
-pub struct RedisConfig {
-    // redis nodes
-    #[validate(length(min = 1))]
-    pub nodes: Vec<String>,
-    // pool size
-    pub pool_size: u32,
-    // connection timeout
-    pub connection_timeout: Duration,
-    // wait timeout
-    pub wait_timeout: Duration,
-    // recycle timeout
-    pub recycle_timeout: Duration,
-}
-
-impl AppConfig {
-    // Creates a new RedisConfig instance from the configuration
-    // Parses Redis URI and extracts connection parameters
-    pub fn new_redis_config(&self) -> Result<RedisConfig> {
-        let config = self.clone().set_prefix("redis");
-        let uri = config.get_from_env_first("uri", None);
-        let start = if let Some(index) = uri.find('@') {
-            index + 1
-        } else {
-            uri.find("//").unwrap_or_default() + 2
-        };
-
-        let mut host = uri.substring(start, uri.len());
-        if let Some(end) = host.find('/') {
-            host = host.substring(0, end);
-        }
-        let mut nodes = vec![];
-        for item in host.split(',') {
-            nodes.push(uri.replace(host, item));
-        }
-        let info = Url::parse(&nodes[0]).map_err(|e| Error::Url {
-            category: "redis".to_string(),
-            source: e,
-        })?;
-        let mut redis_config = RedisConfig {
-            nodes,
-            pool_size: 10,
-            connection_timeout: Duration::from_secs(3),
-            wait_timeout: Duration::from_secs(3),
-            recycle_timeout: Duration::from_secs(60),
-        };
-        for (key, value) in info.query_pairs() {
-            match key.to_string().as_str() {
-                "pool_size" => {
-                    if let Ok(num) = value.parse::<u32>() {
-                        redis_config.pool_size = num;
-                    }
-                }
-                "connection_timeout" => {
-                    if let Ok(value) = humantime::parse_duration(&value) {
-                        redis_config.connection_timeout = value;
-                    }
-                }
-                "wait_timeout" => {
-                    if let Ok(value) = humantime::parse_duration(&value) {
-                        redis_config.wait_timeout = value;
-                    }
-                }
-                "recycle_timeout" => {
-                    if let Ok(value) = humantime::parse_duration(&value) {
-                        redis_config.recycle_timeout = value;
-                    }
-                }
-                _ => (),
-            }
-        }
-        redis_config.validate().map_err(|e| Error::Validate {
-            category: "redis".to_string(),
-            source: e,
-        })?;
-        Ok(redis_config)
-    }
-}
-
-#[derive(Debug, Clone, Default, Validate)]
-pub struct SessionConfig {
-    // session ttl in seconds
-    #[validate(range(min = 60, max = 2592000))]
-    pub ttl_seconds: u64,
-    // session secret
-    #[validate(length(min = 64))]
-    pub secret: String,
-    // session cookie name
-    #[validate(length(min = 1, max = 64))]
-    pub cookie: String,
-    // session max renewal
-    #[validate(range(min = 1, max = 52))]
-    pub max_renewal: u8,
-}
-
-impl AppConfig {
-    // Creates a new SessionConfig instance from the configuration
-    pub fn new_session_config(&self) -> Result<SessionConfig> {
-        let config = self.clone().set_prefix("session");
-        let ttl =
-            config.get_duration_from_env_first("ttl", Some(Duration::from_secs(2 * 24 * 3600)));
-        let session_config = SessionConfig {
-            ttl_seconds: ttl.as_secs(),
-            secret: config.get_from_env_first("secret", None),
-            cookie: config.get_from_env_first("cookie", None),
-            max_renewal: config.get_int_from_env_first("max_renewal", Some(52)) as u8,
-        };
-        session_config.validate().map_err(|e| Error::Validate {
-            category: "session".to_string(),
-            source: e,
-        })?;
-        Ok(session_config)
-    }
-}
-
-#[derive(Debug, Clone, Default, Validate)]
-pub struct DatabaseConfig {
-    pub origin_url: String,
-    #[validate(length(min = 10))]
-    pub url: String,
-    #[validate(range(min = 2, max = 1000))]
-    pub max_connections: u32,
-    #[validate(range(min = 0, max = 10))]
-    pub min_connections: u32,
-    pub connect_timeout: Duration,
-    pub acquire_timeout: Duration,
-    pub idle_timeout: Duration,
-}
-
-impl AppConfig {
-    // Creates a new DatabaseConfig instance from the configuration
-    pub fn new_database_config(&self) -> Result<DatabaseConfig> {
-        let config = self.clone().set_prefix("database");
-        let origin_url = config.get_from_env_first("url", None);
-        let mut url = origin_url.clone();
-        let info = Url::parse(&url).unwrap();
-        let mut max_connections = 10;
-        let mut min_connections = 2;
-        let mut connect_timeout = Duration::from_secs(3);
-        let mut acquire_timeout = Duration::from_secs(5);
-        let mut idle_timeout = Duration::from_secs(60);
-
-        if let Some(query) = info.query() {
-            url = url.replace(&format!("?{query}"), "");
-            for (key, value) in info.query_pairs() {
-                match key.to_string().as_str() {
-                    "max_connections" => {
-                        let value = convert_string_to_i32(value.to_string());
-                        if value > 0 {
-                            max_connections = value as u32;
-                        }
-                    }
-                    "min_connections" => {
-                        let value = convert_string_to_i32(value.to_string());
-                        if value > 0 {
-                            min_connections = value as u32;
-                        }
-                    }
-                    "connect_timeout" => {
-                        if let Ok(value) = humantime::parse_duration(&value) {
-                            connect_timeout = value;
-                        }
-                    }
-                    "acquire_timeout" => {
-                        if let Ok(value) = humantime::parse_duration(&value) {
-                            acquire_timeout = value;
-                        }
-                    }
-                    "idle_timeout" => {
-                        if let Ok(value) = humantime::parse_duration(&value) {
-                            idle_timeout = value;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-        let database_config = DatabaseConfig {
-            origin_url,
-            url,
-            max_connections,
-            min_connections,
-            connect_timeout,
-            acquire_timeout,
-            idle_timeout,
-        };
-        database_config.validate().map_err(|e| Error::Validate {
-            category: "database".to_string(),
-            source: e,
-        })?;
-        Ok(database_config)
-    }
-}
-
-#[derive(Debug, Clone, Default, Validate)]
-pub struct OpenDalConfig {
-    #[validate(length(min = 10))]
-    pub url: String,
-}
-
-impl AppConfig {
-    pub fn new_opendal_config(&self) -> Result<OpenDalConfig> {
-        let config = self.clone().set_prefix("opendal");
-        let url = config.get_from_env_first("url", None);
-        let open_dal_config = OpenDalConfig { url };
-        open_dal_config.validate().map_err(|e| Error::Validate {
-            category: "opendal".to_string(),
-            source: e,
-        })?;
-        Ok(open_dal_config)
-    }
 }

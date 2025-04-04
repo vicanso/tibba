@@ -12,11 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::Error;
+use super::{Error, new_redis_config};
 use async_trait::async_trait;
 use redis::aio::ConnectionLike;
 use redis::{Cmd, Pipeline, RedisFuture, Value};
-use tibba_config::RedisConfig;
+use tibba_config::Config;
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -115,22 +115,25 @@ impl ConnectionLike for RedisConnection {
 /// * Creates a single node pool if only one node is configured
 /// * Creates a cluster pool if multiple nodes are configured
 /// * Configures pool size and various timeouts from the provided config
-pub fn new_redis_pool(config: &RedisConfig) -> Result<RedisPool> {
-    let pool = if config.nodes.len() <= 1 {
+pub fn new_redis_pool(config: &Config) -> Result<RedisPool> {
+    let redis_config = new_redis_config(config)?;
+    let pool = if redis_config.nodes.len() <= 1 {
         // Single node configuration
         let p = deadpool_redis::Pool::builder(
-            deadpool_redis::Manager::new(config.nodes[0].as_str()).map_err(|e| Error::Redis {
-                category: "new_pool".to_string(),
-                source: e,
+            deadpool_redis::Manager::new(redis_config.nodes[0].as_str()).map_err(|e| {
+                Error::Redis {
+                    category: "new_pool".to_string(),
+                    source: e,
+                }
             })?,
         );
         let pool = p
             .config(deadpool_redis::PoolConfig {
-                max_size: config.pool_size as usize,
+                max_size: redis_config.pool_size as usize,
                 timeouts: deadpool_redis::Timeouts {
-                    wait: Some(config.wait_timeout), // Maximum time to wait for connection
-                    create: Some(config.connection_timeout), // Maximum time to establish connection
-                    recycle: Some(config.recycle_timeout), // Maximum connection lifetime
+                    wait: Some(redis_config.wait_timeout), // Maximum time to wait for connection
+                    create: Some(redis_config.connection_timeout), // Maximum time to establish connection
+                    recycle: Some(redis_config.recycle_timeout),   // Maximum connection lifetime
                 },
                 ..Default::default()
             })
@@ -140,13 +143,13 @@ pub fn new_redis_pool(config: &RedisConfig) -> Result<RedisPool> {
         RedisPool::Single(pool)
     } else {
         // Cluster configuration
-        let mut cfg = deadpool_redis::cluster::Config::from_urls(config.nodes.clone());
+        let mut cfg = deadpool_redis::cluster::Config::from_urls(redis_config.nodes.clone());
         cfg.pool = Some(deadpool_redis::cluster::PoolConfig {
-            max_size: config.pool_size as usize,
+            max_size: redis_config.pool_size as usize,
             timeouts: deadpool_redis::Timeouts {
-                wait: Some(config.wait_timeout), // Maximum time to wait for connection
-                create: Some(config.connection_timeout), // Maximum time to establish connection
-                recycle: Some(config.recycle_timeout), // Maximum connection lifetime
+                wait: Some(redis_config.wait_timeout), // Maximum time to wait for connection
+                create: Some(redis_config.connection_timeout), // Maximum time to establish connection
+                recycle: Some(redis_config.recycle_timeout),   // Maximum connection lifetime
             },
             ..Default::default()
         });

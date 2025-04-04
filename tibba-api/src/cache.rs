@@ -25,8 +25,7 @@ static REDIS_POOL: OnceCell<RedisPool> = OnceCell::new();
 
 fn get_redis_pool() -> Result<&'static RedisPool> {
     REDIS_POOL.get_or_try_init(|| {
-        let redis_config = must_get_config().new_redis_config()?;
-        let pool = new_redis_pool(&redis_config)?;
+        let pool = new_redis_pool(&must_get_config().sub_config("redis"))?;
         Ok(pool)
     })
 }

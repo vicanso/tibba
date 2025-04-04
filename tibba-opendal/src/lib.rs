@@ -16,13 +16,29 @@ use opendal::Operator;
 use opendal::layers::MimeGuessLayer;
 use snafu::Snafu;
 use std::collections::HashMap;
-use tibba_config::OpenDalConfig;
+use tibba_config::Config;
 use tibba_error::{Error as BaseError, new_error};
 use url::Url;
+use validator::Validate;
 
 mod storage;
 
 pub use storage::*;
+
+#[derive(Debug, Clone, Default, Validate)]
+pub struct OpenDalConfig {
+    #[validate(length(min = 10))]
+    pub url: String,
+}
+
+fn new_opendal_config(config: &Config) -> Result<OpenDalConfig> {
+    let url = config.get_from_env_first("url", None);
+    let open_dal_config = OpenDalConfig { url };
+    open_dal_config
+        .validate()
+        .map_err(|e| Error::Validate { source: e })?;
+    Ok(open_dal_config)
+}
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -30,6 +46,8 @@ pub enum Error {
     OpenDal { source: opendal::Error },
     #[snafu(display("parse url {source}"))]
     ParseUrl { source: url::ParseError },
+    #[snafu(display("validate {source}"))]
+    Validate { source: validator::ValidationErrors },
 }
 
 impl From<Error> for BaseError {
@@ -47,6 +65,13 @@ impl From<Error> for BaseError {
                 let he = new_error(&source.to_string())
                     .with_category(error_category)
                     .with_sub_category("parse_url")
+                    .with_exception(true);
+                he.into()
+            }
+            Error::Validate { source } => {
+                let he = new_error(&source.to_string())
+                    .with_category(error_category)
+                    .with_sub_category("validate")
                     .with_exception(true);
                 he.into()
             }
@@ -123,8 +148,9 @@ fn new_mysql_dal(url: &str) -> Result<Storage> {
     Ok(Storage::new(dal))
 }
 
-pub fn new_opendal_storage(config: &OpenDalConfig) -> Result<Storage> {
-    let url = config.url.as_str();
+pub fn new_opendal_storage(config: &Config) -> Result<Storage> {
+    let opendal_config = new_opendal_config(config)?;
+    let url = opendal_config.url.as_str();
     if url.starts_with("mysql://") {
         new_mysql_dal(url)
     } else {

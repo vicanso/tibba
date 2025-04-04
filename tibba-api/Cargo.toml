@@ -28,6 +28,7 @@ rust-embed = { workspace = true }
 once_cell = { workspace = true }
 tower = { workspace = true }
 ctor = "0.4.0"
+validator = { workspace = true }
 
 [profile.release]
 codegen-units = 1

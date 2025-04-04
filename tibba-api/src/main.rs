@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::config::must_get_config;
 use crate::router::new_router;
 use crate::state::get_app_state;
 use axum::Router;
@@ -66,9 +65,8 @@ fn init_logger() {
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
     run_before_tasks().await?;
 
-    let app_config = must_get_config();
     // config is validated in init function
-    let basic_config = app_config.new_basic_config()?;
+    let basic_config = config::must_get_basic_config();
 
     let app = Router::new()
         .nest(&basic_config.prefix, new_router()?)
@@ -90,7 +88,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     run_scheduler_jobs().await?;
 
     info!("listening on http://{}/", basic_config.listen);
-    let listener = tokio::net::TcpListener::bind(basic_config.listen)
+    let listener = tokio::net::TcpListener::bind(basic_config.listen.clone())
         .await
         .unwrap();
     axum::serve(

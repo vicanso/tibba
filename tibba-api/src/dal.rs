@@ -35,8 +35,7 @@ fn init() {
         Box::new(|| {
             Box::pin(async {
                 let app_config = must_get_config();
-                let opendal_config = app_config.new_opendal_config()?;
-                let storage = new_opendal_storage(&opendal_config)?;
+                let storage = new_opendal_storage(&app_config.sub_config("opendal"))?;
                 let info = storage.info();
                 OPENDAL_STORAGE
                     .set(storage)

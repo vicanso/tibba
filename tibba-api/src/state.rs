@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::config::must_get_config;
+use super::config::must_get_basic_config;
 use once_cell::sync::OnceCell;
 use tibba_state::AppState;
 
@@ -20,8 +20,7 @@ static STATE: OnceCell<AppState> = OnceCell::new();
 
 pub fn get_app_state() -> &'static AppState {
     STATE.get_or_init(|| {
-        let app_config = must_get_config();
-        let basic_config = app_config.new_basic_config().unwrap();
+        let basic_config = must_get_basic_config();
         AppState::new(basic_config.processing_limit)
     })
 }

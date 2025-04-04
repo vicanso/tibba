@@ -13,8 +13,13 @@
 // limitations under the License.
 
 use snafu::Snafu;
+use std::time::Duration;
+use substring::Substring;
+use tibba_config::Config;
 use tibba_error::Error as BaseError;
 use tibba_error::new_error;
+use url::Url;
+use validator::Validate;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -33,6 +38,96 @@ pub enum Error {
     },
     #[snafu(display("{source}"))]
     Compression { source: tibba_util::Error },
+    #[snafu(display("category: {category}, error: {source}"))]
+    Url {
+        category: String,
+        source: url::ParseError,
+    },
+    #[snafu(display("category: {category}, error: {source}"))]
+    Validate {
+        category: String,
+        source: validator::ValidationErrors,
+    },
+}
+
+type Result<T> = std::result::Result<T, Error>;
+
+// RedisConfig struct defines Redis-specific configuration
+// with validation rules for connection parameters
+#[derive(Debug, Clone, Default, Validate)]
+pub struct RedisConfig {
+    // redis nodes
+    #[validate(length(min = 1))]
+    pub nodes: Vec<String>,
+    // pool size
+    pub pool_size: u32,
+    // connection timeout
+    pub connection_timeout: Duration,
+    // wait timeout
+    pub wait_timeout: Duration,
+    // recycle timeout
+    pub recycle_timeout: Duration,
+}
+
+// Creates a new RedisConfig instance from the configuration
+// Parses Redis URI and extracts connection parameters
+fn new_redis_config(config: &Config) -> Result<RedisConfig> {
+    let uri = config.get_from_env_first("uri", None);
+    let start = if let Some(index) = uri.find('@') {
+        index + 1
+    } else {
+        uri.find("//").unwrap_or_default() + 2
+    };
+
+    let mut host = uri.substring(start, uri.len());
+    if let Some(end) = host.find('/') {
+        host = host.substring(0, end);
+    }
+    let mut nodes = vec![];
+    for item in host.split(',') {
+        nodes.push(uri.replace(host, item));
+    }
+    let info = Url::parse(&nodes[0]).map_err(|e| Error::Url {
+        category: "redis".to_string(),
+        source: e,
+    })?;
+    let mut redis_config = RedisConfig {
+        nodes,
+        pool_size: 10,
+        connection_timeout: Duration::from_secs(3),
+        wait_timeout: Duration::from_secs(3),
+        recycle_timeout: Duration::from_secs(60),
+    };
+    for (key, value) in info.query_pairs() {
+        match key.to_string().as_str() {
+            "pool_size" => {
+                if let Ok(num) = value.parse::<u32>() {
+                    redis_config.pool_size = num;
+                }
+            }
+            "connection_timeout" => {
+                if let Ok(value) = Config::parse_duration(&value) {
+                    redis_config.connection_timeout = value;
+                }
+            }
+            "wait_timeout" => {
+                if let Ok(value) = Config::parse_duration(&value) {
+                    redis_config.wait_timeout = value;
+                }
+            }
+            "recycle_timeout" => {
+                if let Ok(value) = Config::parse_duration(&value) {
+                    redis_config.recycle_timeout = value;
+                }
+            }
+            _ => (),
+        }
+    }
+    redis_config.validate().map_err(|e| Error::Validate {
+        category: "redis".to_string(),
+        source: e,
+    })?;
+    Ok(redis_config)
 }
 
 impl From<Error> for BaseError {
@@ -61,6 +156,14 @@ impl From<Error> for BaseError {
                 .with_category(error_category)
                 .with_sub_category("compression")
                 .with_exception(true),
+            Error::Url { category, source } => new_error(&source.to_string())
+                .with_category(error_category)
+                .with_sub_category(&category)
+                .with_status(500)
+                .with_exception(true),
+            Error::Validate { category, source } => new_error(&source.to_string())
+                .with_category(error_category)
+                .with_sub_category(&category),
         }
         .into()
     }

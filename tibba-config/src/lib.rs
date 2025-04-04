@@ -30,11 +30,6 @@ pub enum Error {
         category: String,
         source: config::ConfigError,
     },
-    #[snafu(display("{category}, validate error {source}"))]
-    Validate {
-        category: String,
-        source: validator::ValidationErrors,
-    },
     #[snafu(display("{category}, parse duration error {source}"))]
     ParseDuration {
         category: String,
@@ -51,10 +46,6 @@ impl From<Error> for BaseError {
                 .with_sub_category(&category)
                 .with_exception(true),
             Error::Config { category, source } => new_error(&source.to_string())
-                .with_category(error_category)
-                .with_sub_category(&category)
-                .with_exception(true),
-            Error::Validate { category, source } => new_error(&source.to_string())
                 .with_category(error_category)
                 .with_sub_category(&category)
                 .with_exception(true),

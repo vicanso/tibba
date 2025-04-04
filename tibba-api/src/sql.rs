@@ -35,8 +35,7 @@ fn init() {
         Box::new(|| {
             Box::pin(async {
                 let app_config = must_get_config();
-                let db_config = app_config.new_database_config()?;
-                let pool = new_mysql_pool(&db_config)
+                let pool = new_mysql_pool(&app_config.sub_config("database"))
                     .await
                     .map_err(|e| new_error(&e.to_string()))?;
                 DB_POOL
