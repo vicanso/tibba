@@ -17,7 +17,6 @@ use axum::Json;
 use axum::extract::FromRequestParts;
 use axum::extract::Request;
 use axum::extract::State;
-use axum::http::header::{HeaderMap, HeaderValue};
 use axum::http::request::Parts;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
@@ -207,7 +206,33 @@ where
             .extensions
             .get::<Session>()
             .ok_or::<Error>(Error::SessionNotFound)?;
-        Ok(se.clone())
+        let Some(cache) = se.cache else {
+            return Err(Error::SessionCacheNotSet.into());
+        };
+        // not fetch
+        if se.iat == 0 {
+            let key = Key::try_from(se.secret.as_bytes()).map_err(|e| Error::Key { source: e })?;
+            let jar = SignedCookieJar::from_headers(&parts.headers, key);
+            let Some(session_id) = jar.get(&se.cookie) else {
+                return Ok(Session {
+                    iat: timestamp(),
+                    ..se.clone()
+                });
+            };
+            if let Some(mut data) = cache
+                .get_struct::<Session>(&Session::get_key(session_id.value()))
+                .await?
+            {
+                data.secret = se.secret.clone();
+                data.cache = Some(cache);
+                parts.extensions.insert(data.clone());
+                return Ok(data);
+            }
+        }
+        Ok(Session {
+            iat: timestamp(),
+            ..se.clone()
+        })
     }
 }
 
@@ -229,10 +254,7 @@ where
         parts: &mut Parts,
         _state: &S,
     ) -> std::result::Result<Self, Self::Rejection> {
-        let se = parts
-            .extensions
-            .get::<Session>()
-            .ok_or::<Error>(Error::SessionNotFound)?;
+        let se = Session::from_request_parts(parts, _state).await?;
         se.validate_login()?;
         Ok(UserSession(se.clone()))
     }
@@ -285,23 +307,6 @@ impl SessionParams {
     }
 }
 
-async fn get_session(
-    headers: &HeaderMap<HeaderValue>,
-    cache: &RedisCache,
-    params: &SessionParams,
-) -> Result<Session> {
-    let key = Key::try_from(params.secret.as_bytes()).map_err(|e| Error::Key { source: e })?;
-    let jar = SignedCookieJar::from_headers(headers, key);
-    let Some(session_id) = jar.get(&params.cookie) else {
-        return Ok(Session::default());
-    };
-    println!("session_id: {}", session_id.value());
-    let se = cache
-        .get_struct(&Session::get_key(session_id.value()))
-        .await?;
-    Ok(se.unwrap_or_default())
-}
-
 pub async fn should_admin(se: UserSession, req: Request, next: Next) -> Result<Response> {
     if se
         .roles
@@ -329,19 +334,14 @@ pub async fn session(
     debug!(category = "middleware", "--> session");
     defer!(debug!(category = "middleware", "<-- session"););
 
-    let mut se = get_session(req.headers(), cache, params).await?;
-    se.ttl = params.ttl_seconds;
-    se.secret = params.secret.clone();
-    se.cookie = params.cookie.clone();
-    se.cache = Some(cache);
-    se.max_renewal = params.max_renewal;
-    if se.iat == 0 {
-        se.iat = timestamp();
-    }
-    // reset if expired
-    if se.is_expired() {
-        se.reset();
-    }
+    let se = Session {
+        cache: Some(cache),
+        secret: params.secret.clone(),
+        cookie: params.cookie.clone(),
+        ttl: params.ttl_seconds,
+        max_renewal: params.max_renewal,
+        ..Default::default()
+    };
     req.extensions_mut().insert(se);
     let res = next.run(req).await;
     Ok(res)
