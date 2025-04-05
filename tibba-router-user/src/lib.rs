@@ -14,7 +14,7 @@
 
 use axum::extract::State;
 use axum::http::StatusCode;
-use axum::middleware::{from_fn, from_fn_with_state};
+use axum::middleware::from_fn_with_state;
 use axum::routing::{delete, get, patch, post};
 use axum::{Json, Router};
 use axum_extra::extract::cookie::CookieJar;
@@ -22,8 +22,9 @@ use serde::{Deserialize, Serialize};
 use sqlx::MySqlPool;
 use tibba_cache::RedisCache;
 use tibba_error::{Error, new_error};
-use tibba_middleware::{Session, SessionResponse, UserSession, should_admin, validate_captcha};
+use tibba_middleware::validate_captcha;
 use tibba_model::{ROLE_SUPER_ADMIN, User, UserListParams, UserUpdateParams};
+use tibba_session::{AdminSession, Session, SessionResponse, UserSession};
 use tibba_util::{
     JsonParams, JsonResult, Query, is_development, is_test, now, sha256, timestamp, timestamp_hash,
     uuid,
@@ -252,6 +253,7 @@ struct ListResp {
 async fn list(
     State(pool): State<&'static MySqlPool>,
     Query(params): Query<ListParams>,
+    _session: AdminSession,
 ) -> Result<Json<ListResp>> {
     let users = User::list(
         pool,
@@ -295,10 +297,5 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
         .route("/register", post(register).with_state(params.pool))
         .route("/logout", delete(logout))
         .route("/profile", patch(update_profile).with_state(params.pool))
-        .route(
-            "/list",
-            get(list)
-                .with_state(params.pool)
-                .layer(from_fn(should_admin)),
-        )
+        .route("/list", get(list).with_state(params.pool))
 }

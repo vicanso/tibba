@@ -16,4 +16,4 @@ tibba-opendal = { path = "../tibba-opendal" }
 tibba-util = { path = "../tibba-util" }
 tibba-error = { path = "../tibba-error" }
 tibba-validator = { path = "../tibba-validator" }
-tibba-middleware = { path = "../tibba-middleware" }
+tibba-session = { path = "../tibba-session" }

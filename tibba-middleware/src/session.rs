@@ -12,336 +12,36 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::Error;
-use axum::Json;
-use axum::extract::FromRequestParts;
 use axum::extract::Request;
 use axum::extract::State;
-use axum::http::request::Parts;
 use axum::middleware::Next;
-use axum::response::{IntoResponse, Response};
-use axum_extra::extract::cookie::{Key, SignedCookieJar};
-use cookie::CookieBuilder;
-use derivative::Derivative;
+use axum::response::Response;
 use scopeguard::defer;
-use serde::{Deserialize, Serialize};
-use std::time::Duration;
 use tibba_cache::RedisCache;
-use tibba_util::{from_timestamp, timestamp, uuid};
+use tibba_session::{Session, SessionParams};
 use tracing::debug;
 
 type Result<T, E = tibba_error::Error> = std::result::Result<T, E>;
 
-static ROLE_ADMIN: &str = "admin";
-static ROLE_SUPER_ADMIN: &str = "su";
-
-#[derive(Serialize, Deserialize, Default, Clone, Derivative)]
-#[derivative(Debug)]
-pub struct Session {
-    #[serde(skip)]
-    #[derivative(Debug = "ignore")]
-    cache: Option<&'static RedisCache>,
-    #[serde(skip)]
-    secret: String,
-    cookie: String,
-    // ttl in seconds
-    ttl: i64,
-    // id
-    id: String,
-    // issued at
-    iat: i64,
-    // account
-    account: String,
-    // renewal count
-    renewal_count: u8,
-    // max renewal
-    max_renewal: u8,
-    // roles
-    roles: Vec<String>,
-    // groups
-    groups: Vec<String>,
-}
-
-impl Session {
-    fn get_key(id: &str) -> String {
-        format!("ss:{id}")
-    }
-    fn validate_login(&self) -> Result<()> {
-        if !self.is_login() {
-            return Err(Error::UserNotLogin.into());
-        }
-        Ok(())
-    }
-    pub fn is_login(&self) -> bool {
-        !self.account.is_empty()
-    }
-    pub fn can_renew(&self) -> bool {
-        self.renewal_count < self.max_renewal
-    }
-    pub fn with_account(mut self, account: &str) -> Self {
-        if self.id.is_empty() || self.account != account {
-            self.id = uuid();
-        }
-        self.account = account.to_string();
-        self.iat = timestamp();
-        self
-    }
-    pub fn with_roles(mut self, roles: Vec<String>) -> Self {
-        self.roles = roles;
-        self
-    }
-    pub fn with_groups(mut self, groups: Vec<String>) -> Self {
-        self.groups = groups;
-        self
-    }
-    pub fn refresh(&mut self) {
-        self.renewal_count += 1;
-        self.iat = timestamp();
-    }
-    pub fn get_account(&self) -> String {
-        self.account.clone()
-    }
-    pub fn get_expired_at(&self) -> String {
-        from_timestamp(self.iat + self.ttl, 0)
-    }
-    pub fn is_will_expired(&self) -> bool {
-        self.iat + self.ttl - timestamp() < 3600
-    }
-    pub fn get_issued_at(&self) -> String {
-        from_timestamp(self.iat, 0)
-    }
-    pub fn is_expired(&self) -> bool {
-        self.iat + self.ttl < timestamp()
-    }
-    pub fn reset(&mut self) {
-        self.id = "".to_string();
-        self.account = "".to_string();
-    }
-    pub async fn save(&self) -> Result<()> {
-        if self.id.is_empty() {
-            return Err(Error::SessionIdEmpty.into());
-        }
-        let Some(cache) = self.cache else {
-            return Err(Error::SessionCacheNotSet.into());
-        };
-        cache
-            .set_struct(
-                &Self::get_key(&self.id),
-                &self,
-                Some(Duration::from_secs(self.ttl as u64)),
-            )
-            .await?;
-        Ok(())
-    }
-}
-
-impl TryFrom<&Session> for SignedCookieJar {
-    type Error = tibba_error::Error;
-
-    fn try_from(se: &Session) -> Result<Self, Self::Error> {
-        let mut c = CookieBuilder::new(se.cookie.clone(), se.id.clone())
-            .path("/")
-            .http_only(true)
-            .max_age(time::Duration::seconds(se.ttl));
-
-        if se.id.is_empty() {
-            c = c.max_age(time::Duration::days(0));
-        }
-        let key = Key::try_from(se.secret.as_bytes()).map_err(|e| Error::Key { source: e })?;
-
-        let jar = SignedCookieJar::new(key);
-        Ok(jar.add(c))
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize, Default)]
-struct SessionResp {
-    account: String,
-    renewal_count: u8,
-}
-
-impl IntoResponse for Session {
-    fn into_response(self) -> Response {
-        let result: Result<SignedCookieJar, _> = (&self).try_into();
-        match result {
-            Ok(jar) => (
-                jar,
-                Json(SessionResp {
-                    account: self.account,
-                    renewal_count: self.renewal_count,
-                }),
-            )
-                .into_response(),
-            Err(err) => err.into_response(),
-        }
-    }
-}
-
-pub struct SessionResponse<T>(pub Session, pub T);
-
-impl<T> IntoResponse for SessionResponse<T>
-where
-    T: IntoResponse,
-{
-    fn into_response(self) -> Response {
-        let result: Result<SignedCookieJar, _> = (&self.0).try_into();
-        match result {
-            Ok(jar) => (jar, self.1).into_response(),
-            Err(err) => err.into_response(),
-        }
-    }
-}
-
-impl<S> FromRequestParts<S> for Session
-where
-    S: Send + Sync,
-{
-    type Rejection = tibba_error::Error;
-
-    async fn from_request_parts(
-        parts: &mut Parts,
-        _state: &S,
-    ) -> std::result::Result<Self, Self::Rejection> {
-        let se = parts
-            .extensions
-            .get::<Session>()
-            .ok_or::<Error>(Error::SessionNotFound)?;
-        let Some(cache) = se.cache else {
-            return Err(Error::SessionCacheNotSet.into());
-        };
-        // not fetch
-        if se.iat == 0 {
-            let key = Key::try_from(se.secret.as_bytes()).map_err(|e| Error::Key { source: e })?;
-            let jar = SignedCookieJar::from_headers(&parts.headers, key);
-            let Some(session_id) = jar.get(&se.cookie) else {
-                return Ok(Session {
-                    iat: timestamp(),
-                    ..se.clone()
-                });
-            };
-            if let Some(mut data) = cache
-                .get_struct::<Session>(&Session::get_key(session_id.value()))
-                .await?
-            {
-                data.secret = se.secret.clone();
-                data.cache = Some(cache);
-                parts.extensions.insert(data.clone());
-                return Ok(data);
-            }
-        }
-        Ok(Session {
-            iat: timestamp(),
-            ..se.clone()
-        })
-    }
-}
-
-pub struct UserSession(Session);
-
-impl From<UserSession> for Session {
-    fn from(se: UserSession) -> Self {
-        se.0
-    }
-}
-
-impl<S> FromRequestParts<S> for UserSession
-where
-    S: Send + Sync,
-{
-    type Rejection = tibba_error::Error;
-
-    async fn from_request_parts(
-        parts: &mut Parts,
-        _state: &S,
-    ) -> std::result::Result<Self, Self::Rejection> {
-        let se = Session::from_request_parts(parts, _state).await?;
-        se.validate_login()?;
-        Ok(UserSession(se.clone()))
-    }
-}
-
-impl std::ops::Deref for UserSession {
-    type Target = Session;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl std::ops::DerefMut for UserSession {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct SessionParams {
-    pub prefixes: Vec<String>,
-    pub secret: String,
-    pub cookie: String,
-    pub ttl_seconds: i64,
-    pub max_renewal: u8,
-}
-
-impl SessionParams {
-    pub fn new(prefixes: Vec<String>) -> Self {
-        Self {
-            prefixes,
-            secret: String::new(),
-            cookie: String::new(),
-            ttl_seconds: 2 * 24 * 3600,
-            max_renewal: 52,
-        }
-    }
-    pub fn with_secret(mut self, secret: String) -> Self {
-        self.secret = secret;
-        self
-    }
-    pub fn with_cookie(mut self, cookie: String) -> Self {
-        self.cookie = cookie;
-        self
-    }
-    pub fn with_ttl_seconds(mut self, ttl_seconds: i64) -> Self {
-        self.ttl_seconds = ttl_seconds;
-        self
-    }
-}
-
-pub async fn should_admin(se: UserSession, req: Request, next: Next) -> Result<Response> {
-    if se
-        .roles
-        .iter()
-        .any(|role| role == ROLE_ADMIN || role == ROLE_SUPER_ADMIN)
-    {
-        let res = next.run(req).await;
-        Ok(res)
-    } else {
-        Err(Error::UserNotAdmin.into())
-    }
-}
-
 pub async fn session(
-    State((cache, params)): State<(&'static RedisCache, &'static SessionParams)>,
+    State((cache, params, skip_prefixes)): State<(
+        &'static RedisCache,
+        &'static SessionParams,
+        Vec<String>,
+    )>,
     mut req: Request,
     next: Next,
 ) -> Result<Response> {
     let path = req.uri().path();
     // for better performance, skip session for other paths
-    if !params.prefixes.iter().any(|item| path.starts_with(item)) {
+    if skip_prefixes.iter().any(|item| path.starts_with(item)) {
         let res = next.run(req).await;
         return Ok(res);
     }
     debug!(category = "middleware", "--> session");
     defer!(debug!(category = "middleware", "<-- session"););
 
-    let se = Session {
-        cache: Some(cache),
-        secret: params.secret.clone(),
-        cookie: params.cookie.clone(),
-        ttl: params.ttl_seconds,
-        max_renewal: params.max_renewal,
-        ..Default::default()
-    };
+    let se = Session::new(cache, params.clone());
     req.extensions_mut().insert(se);
     let res = next.run(req).await;
     Ok(res)

@@ -19,6 +19,7 @@ tibba-router-file = { path = "../tibba-router-file" }
 tibba-sql = { path = "../tibba-sql" }
 tibba-opendal = { path = "../tibba-opendal" }
 tibba-scheduler = { path = "../tibba-scheduler" }
+tibba-session = { path = "../tibba-session" }
 sqlx = { workspace = true }
 time = { workspace = true }
 tokio = { workspace = true }

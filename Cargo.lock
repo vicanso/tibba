@@ -3149,6 +3149,7 @@ dependencies = [
  "tibba-router-file",
  "tibba-router-user",
  "tibba-scheduler",
+ "tibba-session",
  "tibba-sql",
  "tibba-state",
  "tibba-util",
@@ -3240,9 +3241,9 @@ dependencies = [
  "snafu",
  "tibba-cache",
  "tibba-error",
+ "tibba-session",
  "tibba-state",
  "tibba-util",
- "time",
  "tokio",
  "tracing",
  "urlencoding",
@@ -3326,8 +3327,8 @@ dependencies = [
  "axum",
  "serde",
  "tibba-error",
- "tibba-middleware",
  "tibba-opendal",
+ "tibba-session",
  "tibba-util",
  "tibba-validator",
  "validator",
@@ -3347,6 +3348,7 @@ dependencies = [
  "tibba-error",
  "tibba-middleware",
  "tibba-model",
+ "tibba-session",
  "tibba-sql",
  "tibba-state",
  "tibba-util",
@@ -3362,6 +3364,24 @@ dependencies = [
  "once_cell",
  "tibba-error",
  "tokio-cron-scheduler",
+ "tracing",
+]
+
+[[package]]
+name = "tibba-session"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "axum-extra",
+ "cookie",
+ "derivative",
+ "scopeguard",
+ "serde",
+ "snafu",
+ "tibba-cache",
+ "tibba-error",
+ "tibba-util",
+ "time",
  "tracing",
 ]
 

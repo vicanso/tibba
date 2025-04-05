@@ -1,0 +1,23 @@
+[package]
+name = "tibba-session"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "tibba_session"
+path = "src/lib.rs"
+
+
+[dependencies]
+snafu = { workspace = true }
+cookie = { workspace = true }
+axum = { workspace = true }
+axum-extra = { workspace = true }
+derivative = { workspace = true }
+scopeguard = { workspace = true }
+serde = { workspace = true }
+tracing = { workspace = true }
+time = { workspace = true }
+tibba-error = { path = "../tibba-error" }
+tibba-cache = { path = "../tibba-cache" }
+tibba-util = { path = "../tibba-util" }

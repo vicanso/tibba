@@ -19,7 +19,7 @@ use std::time::Duration;
 use tibba_config::Config;
 use tibba_error::{Error, new_error};
 use tibba_hook::register_before_task;
-use tibba_middleware::SessionParams;
+use tibba_session::SessionParams;
 use tracing::info;
 use validator::Validate;
 
@@ -100,17 +100,13 @@ pub fn get_session_params() -> &'static SessionParams {
     SESSION_PARAMS.get_or_init(|| {
         // session config is checked in init function
         let session_config = SESSION_CONFIG.get().unwrap();
-        let basic_config = must_get_basic_config();
 
-        let session_prefixes = ["/users/".to_string(), "/files/upload".to_string()]
-            .iter()
-            .map(|s| format!("{}{}", basic_config.prefix, s))
-            .collect();
-
-        SessionParams::new(session_prefixes)
-            .with_secret(session_config.secret.clone())
-            .with_ttl_seconds(session_config.ttl_seconds as i64)
-            .with_cookie(session_config.cookie.clone())
+        SessionParams {
+            secret: session_config.secret.clone(),
+            cookie: session_config.cookie.clone(),
+            ttl: session_config.ttl_seconds as i64,
+            max_renewal: session_config.max_renewal,
+        }
     })
 }
 

@@ -32,6 +32,7 @@ members = [
     "tibba-validator",
     "tibba-api",
     "tibba-scheduler",
+    "tibba-session",
 ]
 
 
