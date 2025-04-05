@@ -3,7 +3,8 @@ CREATE TABLE `files` (
     `filename` VARCHAR(255) NOT NULL COMMENT '文件名',
     `file_size` BIGINT NOT NULL COMMENT '文件大小',
     `content_type` VARCHAR(100) NOT NULL COMMENT '内容类型',
-    `bucket` VARCHAR(100) NOT NULL COMMENT '桶名',
+    `group` VARCHAR(100) NOT NULL COMMENT '分组',
+    `uploader` VARCHAR(100) NOT NULL COMMENT '上传者',
     
     -- 图片特有属性
     `image_width` INTEGER COMMENT '图片宽度',

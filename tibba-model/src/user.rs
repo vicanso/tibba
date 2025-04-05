@@ -34,22 +34,22 @@ pub static ROLE_SUPER_ADMIN: &str = "su";
 
 #[derive(FromRow)]
 struct UserSchema {
-    pub id: i64,
-    pub status: i8,
-    pub created: OffsetDateTime,
-    pub modified: OffsetDateTime,
-    pub account: String,
-    pub password: String,
-    pub roles: Option<Json<Vec<String>>>,
-    pub groups: Option<Json<Vec<String>>>,
-    pub remark: Option<String>,
-    pub email: Option<String>,
-    pub avatar: Option<String>,
+    id: u64,
+    status: i8,
+    created: OffsetDateTime,
+    modified: OffsetDateTime,
+    account: String,
+    password: String,
+    roles: Option<Json<Vec<String>>>,
+    groups: Option<Json<Vec<String>>>,
+    remark: Option<String>,
+    email: Option<String>,
+    avatar: Option<String>,
 }
 
 #[derive(Deserialize, Serialize, JsonSchema)]
 pub struct User {
-    pub id: i64,
+    pub id: u64,
     pub status: i8,
     pub created: String,
     pub modified: String,
@@ -81,11 +81,6 @@ impl From<UserSchema> for User {
         }
     }
 }
-impl User {
-    pub fn schema() -> Schema {
-        schema_for!(User)
-    }
-}
 
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct UserUpdateParams {
@@ -103,12 +98,15 @@ pub struct UserListParams {
 }
 
 impl User {
+    pub fn schema() -> Schema {
+        schema_for!(User)
+    }
     /// Create a new user with the given account and password
-    pub async fn insert(pool: &Pool<MySql>, account: &str, password: &str) -> Result<i64> {
+    pub async fn insert(pool: &Pool<MySql>, account: &str, password: &str) -> Result<u64> {
         // Get current time for created_at and updated_at
 
         // Insert user and return the last insert ID
-        let result = sqlx::query!(
+        let result = sqlx::query(
             r#"
             INSERT INTO users (
                 status, account, password
@@ -116,15 +114,15 @@ impl User {
                 ?, ?, ?
             )
             "#,
-            UserStatus::Enabled as i8,
-            account,
-            password
         )
+        .bind(UserStatus::Enabled as i8)
+        .bind(account)
+        .bind(password)
         .execute(pool)
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
 
-        Ok(result.last_insert_id() as i64)
+        Ok(result.last_insert_id())
     }
     pub async fn get_by_account(pool: &Pool<MySql>, account: &str) -> Result<Option<Self>> {
         let result = sqlx::query_as::<_, UserSchema>(r#"SELECT * FROM users WHERE account = ?"#)

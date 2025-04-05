@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use super::is_disabled;
-use super::{CODE_FILE_NAME, CODE_LISTEN_ADDR, CODE_SHA256, CODE_UUID};
+use super::{CODE_FILE_GROUP, CODE_FILE_NAME, CODE_LISTEN_ADDR, CODE_SHA256, CODE_UUID};
 use std::borrow::Cow;
 use std::net::ToSocketAddrs;
 use std::path::Path;
@@ -90,6 +90,25 @@ pub fn x_file_name(name: &str) -> Result<()> {
     if Path::new(name).extension().is_none() {
         return Err(ValidationError::new(CODE_FILE_NAME)
             .with_message(Cow::from("File name must have an extension")));
+    }
+    Ok(())
+}
+
+pub fn x_file_group(group: &str) -> Result<()> {
+    if is_disabled(CODE_FILE_GROUP) {
+        return Ok(());
+    }
+    if group.is_empty() {
+        return Err(ValidationError::new(CODE_FILE_GROUP)
+            .with_message(Cow::from("File group cannot be empty")));
+    }
+    if !group.is_ascii() {
+        return Err(ValidationError::new(CODE_FILE_GROUP)
+            .with_message(Cow::from("File group must be ASCII")));
+    }
+    if group.len() > 100 {
+        return Err(ValidationError::new(CODE_FILE_GROUP)
+            .with_message(Cow::from("File group must be less than 100 characters")));
     }
     Ok(())
 }

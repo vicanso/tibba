@@ -21,21 +21,30 @@ use axum::http::{HeaderName, HeaderValue};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use serde::Deserialize;
+use sqlx::MySqlPool;
 use std::collections::HashMap;
 use std::path::Path;
 use tibba_error::{Error, new_error};
+use tibba_model::{File, FileInsertParams};
 use tibba_opendal::Storage;
 use tibba_session::UserSession;
 use tibba_util::{JsonResult, Query, uuid};
-use tibba_validator::x_file_name;
+use tibba_validator::{x_file_group, x_file_name};
 use validator::Validate;
 
 type Result<T> = std::result::Result<T, Error>;
 
 const ERROR_CATEGORY: &str = "file_router";
 
+#[derive(Debug, Deserialize, Clone, Validate)]
+pub struct CreateFileParams {
+    #[validate(custom(function = "x_file_group"))]
+    pub group: String,
+}
+
 async fn create_file(
-    State(storage): State<&'static Storage>,
+    Query(create_file_params): Query<CreateFileParams>,
+    State((storage, pool)): State<(&'static Storage, &'static MySqlPool)>,
     session: UserSession,
     mut multipart: Multipart,
 ) -> JsonResult<HashMap<String, String>> {
@@ -46,7 +55,7 @@ async fn create_file(
         .map_err(|e| new_error(&e.to_string()).with_category(ERROR_CATEGORY))?
     {
         let name = field.name().unwrap_or_default().to_string();
-        let file_name = field.file_name().unwrap_or_default();
+        let file_name = field.file_name().unwrap_or_default().to_string();
         if name.is_empty() && file_name.is_empty() {
             continue;
         }
@@ -63,14 +72,33 @@ async fn create_file(
             .bytes()
             .await
             .map_err(|e| new_error(&e.to_string()).with_category(ERROR_CATEGORY))?;
-        let user_metadata = vec![
-            (
-                header::CACHE_CONTROL.to_string(),
-                "public, max-age=108000".to_string(),
-            ),
-            ("uploader".to_string(), session.get_account()),
-        ];
-        let _ = storage.write_with(&file, data, user_metadata).await?;
+        let content_type = mime_guess::from_path(&file_name).first_or_octet_stream();
+        let mut params = FileInsertParams {
+            group: create_file_params.group.clone(),
+            filename: file.clone(),
+            file_size: data.len() as i64,
+            content_type: content_type.to_string(),
+            uploader: session.get_account(),
+            ..Default::default()
+        };
+
+        if content_type.type_() == "image" {
+            let image = image::load_from_memory(&data)
+                .map_err(|e| new_error(&e.to_string()).with_category(ERROR_CATEGORY))?;
+            params.width = Some(image.width());
+            params.height = Some(image.height());
+        };
+
+        let _ = storage.write_with(&file, data.clone(), vec![]).await?;
+        let _ = File::insert(pool, params).await?;
+
+        // let user_metadata = vec![
+        //     (
+        //         header::CACHE_CONTROL.to_string(),
+        //         "public, max-age=108000".to_string(),
+        //     ),
+        //     ("uploader".to_string(), session.get_account()),
+        // ];
         files.insert(name.to_string(), file);
     }
     Ok(Json(files))
@@ -120,10 +148,14 @@ async fn get_file(
 
 pub struct FileRouterParams {
     pub storage: &'static Storage,
+    pub pool: &'static MySqlPool,
 }
 
 pub fn new_file_router(params: FileRouterParams) -> Router {
     Router::new()
-        .route("/upload", post(create_file).with_state(params.storage))
+        .route(
+            "/upload",
+            post(create_file).with_state((params.storage, params.pool)),
+        )
         .route("/preview", get(get_file).with_state(params.storage))
 }

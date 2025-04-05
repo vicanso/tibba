@@ -81,7 +81,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                     (
                         cache::get_redis_cache(),
                         config::get_session_params(),
-                        ["/users/".to_string(), "/files/upload".to_string()]
+                        ["/files/preview"]
                             .iter()
                             .map(|s| format!("{}{}", basic_config.prefix, s))
                             .collect(),

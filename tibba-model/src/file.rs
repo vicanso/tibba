@@ -1,0 +1,111 @@
+// Copyright 2025 Tree xie.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+use super::Error;
+use schemars::{JsonSchema, Schema, schema_for};
+use serde::{Deserialize, Serialize};
+use sqlx::FromRow;
+use sqlx::types::Json;
+use sqlx::{MySql, Pool};
+use time::{OffsetDateTime, UtcOffset};
+
+type Result<T> = std::result::Result<T, Error>;
+
+#[derive(FromRow)]
+struct FileSchema {
+    id: u64,
+    filename: String,
+    file_size: i64,
+    content_type: String,
+    bucket: String,
+    image_width: Option<u32>,
+    image_height: Option<u32>,
+    metadata: Option<Json<serde_json::Value>>,
+    created: OffsetDateTime,
+    modified: OffsetDateTime,
+}
+
+#[derive(Deserialize, Serialize, JsonSchema)]
+pub struct File {
+    pub id: u64,
+    pub filename: String,
+    pub file_size: i64,
+    pub content_type: String,
+    pub bucket: String,
+    pub image_width: Option<u32>,
+    pub image_height: Option<u32>,
+    pub metadata: Option<serde_json::Value>,
+    pub created: String,
+    pub modified: String,
+}
+
+impl From<FileSchema> for File {
+    fn from(file: FileSchema) -> Self {
+        let offset = UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC);
+        File {
+            id: file.id,
+            filename: file.filename,
+            file_size: file.file_size,
+            content_type: file.content_type,
+            bucket: file.bucket,
+            image_width: file.image_width,
+            image_height: file.image_height,
+            metadata: file.metadata.map(|m| m.0),
+            created: file.created.to_offset(offset).to_string(),
+            modified: file.modified.to_offset(offset).to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct FileInsertParams {
+    pub group: String,
+    pub filename: String,
+    pub file_size: i64,
+    pub content_type: String,
+    pub uploader: String,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub metadata: Option<serde_json::Value>,
+}
+
+impl File {
+    pub fn schema() -> Schema {
+        schema_for!(File)
+    }
+
+    pub async fn insert(pool: &Pool<MySql>, params: FileInsertParams) -> Result<u64> {
+        let id = sqlx::query(
+            r#"
+            INSERT INTO files (
+                `group`, filename, file_size, content_type,
+                image_width, image_height, metadata, uploader
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(params.group)
+        .bind(params.filename)
+        .bind(params.file_size)
+        .bind(params.content_type)
+        .bind(params.width)
+        .bind(params.height)
+        .bind(params.metadata)
+        .bind(params.uploader)
+        .execute(pool)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+
+        Ok(id.last_insert_id())
+    }
+}

@@ -47,6 +47,7 @@ pub fn new_router() -> Result<Router> {
     });
     let file_router = new_file_router(FileRouterParams {
         storage: get_opendal_storage(),
+        pool: get_db_pool(),
     });
     Ok(Router::new()
         .nest("/users", user_router)

@@ -169,7 +169,7 @@ struct RegisterParams {
 }
 #[derive(Serialize)]
 struct RegisterResp {
-    id: i64,
+    id: u64,
     account: String,
 }
 
