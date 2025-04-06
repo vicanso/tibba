@@ -21,6 +21,7 @@ use axum::Router;
 use tibba_error::Error;
 use tibba_router_common::{CommonRouterParams, new_common_router};
 use tibba_router_file::{FileRouterParams, new_file_router};
+use tibba_router_schema::new_schema_router;
 use tibba_router_user::{UserRouterParams, new_user_router};
 use tibba_util::{is_development, is_test};
 
@@ -49,8 +50,11 @@ pub fn new_router() -> Result<Router> {
         storage: get_opendal_storage(),
         pool: get_db_pool(),
     });
+    let schema_router = new_schema_router();
+
     Ok(Router::new()
         .nest("/users", user_router)
         .nest("/files", file_router)
+        .nest("/schemas", schema_router)
         .merge(common_router))
 }

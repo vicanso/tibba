@@ -13,7 +13,9 @@
 // limitations under the License.
 
 use super::is_disabled;
-use super::{CODE_FILE_GROUP, CODE_FILE_NAME, CODE_LISTEN_ADDR, CODE_SHA256, CODE_UUID};
+use super::{
+    CODE_FILE_GROUP, CODE_FILE_NAME, CODE_LISTEN_ADDR, CODE_SCHEMA_NAME, CODE_SHA256, CODE_UUID,
+};
 use std::borrow::Cow;
 use std::net::ToSocketAddrs;
 use std::path::Path;
@@ -109,6 +111,25 @@ pub fn x_file_group(group: &str) -> Result<()> {
     if group.len() > 100 {
         return Err(ValidationError::new(CODE_FILE_GROUP)
             .with_message(Cow::from("File group must be less than 100 characters")));
+    }
+    Ok(())
+}
+
+pub fn x_schema_name(name: &str) -> Result<()> {
+    if is_disabled(CODE_SCHEMA_NAME) {
+        return Ok(());
+    }
+    if name.is_empty() {
+        return Err(ValidationError::new(CODE_SCHEMA_NAME)
+            .with_message(Cow::from("Schema name cannot be empty")));
+    }
+    if !name.is_ascii() {
+        return Err(ValidationError::new(CODE_SCHEMA_NAME)
+            .with_message(Cow::from("Schema name must be ASCII")));
+    }
+    if name.len() > 50 {
+        return Err(ValidationError::new(CODE_SCHEMA_NAME)
+            .with_message(Cow::from("Schema name must be less than 50 characters")));
     }
     Ok(())
 }

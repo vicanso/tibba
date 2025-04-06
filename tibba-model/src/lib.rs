@@ -12,9 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use chrono::{DateTime, offset};
 use snafu::Snafu;
 use tibba_error::Error as BaseError;
 use tibba_error::new_error;
+use time::OffsetDateTime;
+
+fn format_datetime(datetime: OffsetDateTime) -> String {
+    if let Some(value) = DateTime::from_timestamp(datetime.unix_timestamp(), 0) {
+        value.with_timezone(&offset::Local).to_string()
+    } else {
+        "".to_string()
+    }
+}
 
 #[derive(Debug, Snafu)]
 pub enum Error {

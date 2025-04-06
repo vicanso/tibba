@@ -33,6 +33,7 @@ members = [
     "tibba-api",
     "tibba-scheduler",
     "tibba-session",
+    "tibba-router-schema",
 ]
 
 

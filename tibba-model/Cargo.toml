@@ -16,4 +16,5 @@ serde_json = { workspace = true }
 serde = { workspace = true }
 substring = { workspace = true }
 schemars = { workspace = true }
+chrono = { workspace = true }
 tibba-error = { path = "../tibba-error" }

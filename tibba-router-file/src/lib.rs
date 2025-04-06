@@ -16,8 +16,8 @@ use axum::Json;
 use axum::Router;
 use axum::extract::Multipart;
 use axum::extract::State;
+use axum::http::HeaderValue;
 use axum::http::header;
-use axum::http::{HeaderName, HeaderValue};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use serde::Deserialize;
@@ -37,9 +37,9 @@ type Result<T> = std::result::Result<T, Error>;
 const ERROR_CATEGORY: &str = "file_router";
 
 #[derive(Debug, Deserialize, Clone, Validate)]
-pub struct CreateFileParams {
+struct CreateFileParams {
     #[validate(custom(function = "x_file_group"))]
-    pub group: String,
+    group: String,
 }
 
 async fn create_file(
@@ -92,22 +92,15 @@ async fn create_file(
         let _ = storage.write_with(&file, data.clone(), vec![]).await?;
         let _ = File::insert(pool, params).await?;
 
-        // let user_metadata = vec![
-        //     (
-        //         header::CACHE_CONTROL.to_string(),
-        //         "public, max-age=108000".to_string(),
-        //     ),
-        //     ("uploader".to_string(), session.get_account()),
-        // ];
         files.insert(name.to_string(), file);
     }
     Ok(Json(files))
 }
 
 #[derive(Debug, Deserialize, Clone, Validate)]
-pub struct GetFileParams {
+struct GetFileParams {
     #[validate(custom(function = "x_file_name"))]
-    pub name: String,
+    name: String,
 }
 
 async fn get_file(
@@ -126,21 +119,6 @@ async fn get_file(
     let size = stat.content_length();
     if size > 0 {
         headers.insert(header::CONTENT_LENGTH, HeaderValue::from(size));
-    }
-    let ignore_headers = ["uploader".to_string()];
-
-    if let Some(user_metadata) = stat.user_metadata() {
-        for (key, value) in user_metadata {
-            if ignore_headers.contains(key) {
-                continue;
-            }
-            let Ok(key) = HeaderName::from_bytes(key.as_bytes()) else {
-                continue;
-            };
-            if let Ok(value) = HeaderValue::from_str(value) {
-                headers.insert(key, value);
-            }
-        }
     }
 
     Ok((headers, data.to_bytes()))

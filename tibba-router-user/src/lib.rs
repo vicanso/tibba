@@ -242,6 +242,7 @@ struct ListParams {
     page: u64,
     limit: u64,
     order_by: Option<String>,
+    keyword: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -261,6 +262,7 @@ async fn list(
             page: params.page,
             limit: params.limit,
             order_by: params.order_by,
+            keyword: params.keyword,
         },
     )
     .await?;

@@ -20,6 +20,7 @@ tibba-sql = { path = "../tibba-sql" }
 tibba-opendal = { path = "../tibba-opendal" }
 tibba-scheduler = { path = "../tibba-scheduler" }
 tibba-session = { path = "../tibba-session" }
+tibba-router-schema = { path = "../tibba-router-schema" }
 sqlx = { workspace = true }
 time = { workspace = true }
 tokio = { workspace = true }

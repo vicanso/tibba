@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::Error;
+use super::{Error, format_datetime};
 use schemars::{JsonSchema, Schema, schema_for};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use sqlx::types::Json;
 use sqlx::{MySql, Pool};
 use substring::Substring;
-use time::{OffsetDateTime, UtcOffset};
+use time::OffsetDateTime;
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -34,7 +34,7 @@ pub static ROLE_SUPER_ADMIN: &str = "su";
 
 #[derive(FromRow)]
 struct UserSchema {
-    id: u64,
+    id: i64,
     status: i8,
     created: OffsetDateTime,
     modified: OffsetDateTime,
@@ -65,12 +65,11 @@ pub struct User {
 
 impl From<UserSchema> for User {
     fn from(user: UserSchema) -> Self {
-        let offset = UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC);
         User {
-            id: user.id,
+            id: user.id as u64,
             status: user.status,
-            created: user.created.to_offset(offset).to_string(),
-            modified: user.modified.to_offset(offset).to_string(),
+            created: format_datetime(user.created),
+            modified: format_datetime(user.modified),
             account: user.account,
             password: user.password,
             roles: user.roles.map(|roles| roles.0),
@@ -95,6 +94,7 @@ pub struct UserListParams {
     pub page: u64,
     pub limit: u64,
     pub order_by: Option<String>,
+    pub keyword: Option<String>,
 }
 
 impl User {
@@ -166,6 +166,10 @@ impl User {
                 (order_by, "ASC")
             };
             sql.push_str(&format!(" ORDER BY {} {}", order_by, direction));
+        }
+
+        if let Some(keyword) = params.keyword {
+            sql.push_str(&format!(" WHERE account LIKE '%{}%'", keyword));
         }
 
         let offset = (params.page - 1) * limit;

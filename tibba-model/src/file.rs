@@ -12,19 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::Error;
+use super::{Error, format_datetime};
 use schemars::{JsonSchema, Schema, schema_for};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use sqlx::types::Json;
 use sqlx::{MySql, Pool};
-use time::{OffsetDateTime, UtcOffset};
+use time::OffsetDateTime;
 
 type Result<T> = std::result::Result<T, Error>;
 
 #[derive(FromRow)]
 struct FileSchema {
-    id: u64,
+    id: i64,
     filename: String,
     file_size: i64,
     content_type: String,
@@ -52,9 +52,8 @@ pub struct File {
 
 impl From<FileSchema> for File {
     fn from(file: FileSchema) -> Self {
-        let offset = UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC);
         File {
-            id: file.id,
+            id: file.id as u64,
             filename: file.filename,
             file_size: file.file_size,
             content_type: file.content_type,
@@ -62,8 +61,8 @@ impl From<FileSchema> for File {
             image_width: file.image_width,
             image_height: file.image_height,
             metadata: file.metadata.map(|m| m.0),
-            created: file.created.to_offset(offset).to_string(),
-            modified: file.modified.to_offset(offset).to_string(),
+            created: format_datetime(file.created),
+            modified: format_datetime(file.modified),
         }
     }
 }
