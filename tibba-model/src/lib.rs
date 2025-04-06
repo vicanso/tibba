@@ -13,7 +13,10 @@
 // limitations under the License.
 
 use chrono::{DateTime, offset};
+use serde::Deserialize;
+use snafu::ResultExt;
 use snafu::Snafu;
+use std::collections::HashMap;
 use tibba_error::Error as BaseError;
 use tibba_error::new_error;
 use time::OffsetDateTime;
@@ -30,6 +33,8 @@ fn format_datetime(datetime: OffsetDateTime) -> String {
 pub enum Error {
     #[snafu(display("{source}"))]
     Sqlx { source: sqlx::Error },
+    #[snafu(display("{source}"))]
+    Json { source: serde_json::Error },
 }
 
 impl From<Error> for BaseError {
@@ -43,6 +48,36 @@ impl From<Error> for BaseError {
                     .with_exception(true);
                 he.into()
             }
+            Error::Json { source } => {
+                let he = new_error(&source.to_string())
+                    .with_category(error_category)
+                    .with_sub_category("json")
+                    .with_exception(true);
+                he.into()
+            }
+        }
+    }
+}
+
+type Result<T> = std::result::Result<T, Error>;
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct ModelListParams {
+    pub page: u64,
+    pub limit: u64,
+    pub order_by: Option<String>,
+    pub keyword: Option<String>,
+    pub filters: Option<String>,
+}
+
+impl ModelListParams {
+    pub fn parse_filters(&self) -> Result<Option<HashMap<String, String>>> {
+        if let Some(filters) = &self.filters {
+            let filters: HashMap<String, String> =
+                serde_json::from_str(filters).context(JsonSnafu)?;
+            Ok(Some(filters))
+        } else {
+            Ok(None)
         }
     }
 }

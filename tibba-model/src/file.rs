@@ -12,12 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, format_datetime};
+use super::{Error, ModelListParams, format_datetime};
 use schemars::{JsonSchema, Schema, schema_for};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use sqlx::types::Json;
 use sqlx::{MySql, Pool};
+use substring::Substring;
 use time::OffsetDateTime;
 
 type Result<T> = std::result::Result<T, Error>;
@@ -28,9 +29,9 @@ struct FileSchema {
     filename: String,
     file_size: i64,
     content_type: String,
-    bucket: String,
-    image_width: Option<u32>,
-    image_height: Option<u32>,
+    group: String,
+    image_width: Option<i32>,
+    image_height: Option<i32>,
     metadata: Option<Json<serde_json::Value>>,
     created: OffsetDateTime,
     modified: OffsetDateTime,
@@ -42,7 +43,7 @@ pub struct File {
     pub filename: String,
     pub file_size: i64,
     pub content_type: String,
-    pub bucket: String,
+    pub group: String,
     pub image_width: Option<u32>,
     pub image_height: Option<u32>,
     pub metadata: Option<serde_json::Value>,
@@ -57,9 +58,9 @@ impl From<FileSchema> for File {
             filename: file.filename,
             file_size: file.file_size,
             content_type: file.content_type,
-            bucket: file.bucket,
-            image_width: file.image_width,
-            image_height: file.image_height,
+            group: file.group,
+            image_width: file.image_width.map(|w| w as u32),
+            image_height: file.image_height.map(|h| h as u32),
             metadata: file.metadata.map(|m| m.0),
             created: format_datetime(file.created),
             modified: format_datetime(file.modified),
@@ -106,5 +107,40 @@ impl File {
         .map_err(|e| Error::Sqlx { source: e })?;
 
         Ok(id.last_insert_id())
+    }
+
+    pub async fn list(pool: &Pool<MySql>, params: ModelListParams) -> Result<Vec<File>> {
+        let limit = params.limit.min(200);
+        let mut sql = String::from("SELECT * FROM files");
+
+        let mut where_conditions = vec![];
+
+        if let Some(keyword) = params.keyword {
+            where_conditions.push(format!("filename LIKE '%{}%'", keyword));
+        }
+
+        if !where_conditions.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&where_conditions.join(" AND "));
+        }
+
+        if let Some(order_by) = params.order_by {
+            let (order_by, direction) = if order_by.starts_with("-") {
+                (order_by.substring(1, order_by.len()).to_string(), "DESC")
+            } else {
+                (order_by, "ASC")
+            };
+            sql.push_str(&format!(" ORDER BY {} {}", order_by, direction));
+        }
+
+        let offset = (params.page - 1) * limit;
+        sql.push_str(&format!(" LIMIT {} OFFSET {}", limit, offset));
+
+        let files = sqlx::query_as::<_, FileSchema>(&sql)
+            .fetch_all(pool)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+
+        Ok(files.into_iter().map(|file| file.into()).collect())
     }
 }

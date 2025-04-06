@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, format_datetime};
+use super::{Error, ModelListParams, format_datetime};
 use schemars::{JsonSchema, Schema, schema_for};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
@@ -89,14 +89,6 @@ pub struct UserUpdateParams {
     pub groups: Option<Vec<String>>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct UserListParams {
-    pub page: u64,
-    pub limit: u64,
-    pub order_by: Option<String>,
-    pub keyword: Option<String>,
-}
-
 impl User {
     pub fn schema() -> Schema {
         schema_for!(User)
@@ -155,9 +147,32 @@ impl User {
 
         Ok(())
     }
-    pub async fn list(pool: &Pool<MySql>, params: UserListParams) -> Result<Vec<Self>> {
+    pub async fn list(pool: &Pool<MySql>, params: ModelListParams) -> Result<Vec<Self>> {
         let limit = params.limit.min(200);
         let mut sql = String::from("SELECT * FROM users");
+
+        let mut where_conditions = vec![];
+
+        if let Some(filters) = params.parse_filters()? {
+            if let Some(status) = filters.get("status") {
+                where_conditions.push(format!("status = {}", status));
+            }
+            if let Some(role) = filters.get("role") {
+                where_conditions.push(format!("JSON_CONTAINS(roles, JSON_ARRAY('{}'))", role));
+            }
+            if let Some(group) = filters.get("group") {
+                where_conditions.push(format!("JSON_CONTAINS(groups, JSON_ARRAY('{}'))", group));
+            }
+        }
+
+        if let Some(keyword) = params.keyword {
+            where_conditions.push(format!("account LIKE '%{}%'", keyword));
+        }
+
+        if !where_conditions.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&where_conditions.join(" AND "));
+        }
 
         if let Some(order_by) = params.order_by {
             let (order_by, direction) = if order_by.starts_with("-") {
@@ -166,10 +181,6 @@ impl User {
                 (order_by, "ASC")
             };
             sql.push_str(&format!(" ORDER BY {} {}", order_by, direction));
-        }
-
-        if let Some(keyword) = params.keyword {
-            sql.push_str(&format!(" WHERE account LIKE '%{}%'", keyword));
         }
 
         let offset = (params.page - 1) * limit;

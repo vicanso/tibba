@@ -3525,7 +3525,7 @@ dependencies = [
  "tibba-request",
  "tibba-router-common",
  "tibba-router-file",
- "tibba-router-schema",
+ "tibba-router-model",
  "tibba-router-user",
  "tibba-scheduler",
  "tibba-session",
@@ -3719,13 +3719,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "tibba-router-schema"
+name = "tibba-router-model"
 version = "0.1.0"
 dependencies = [
  "axum",
  "schemars",
  "serde",
+ "serde_json",
+ "sqlx",
+ "tibba-error",
  "tibba-model",
+ "tibba-session",
  "tibba-util",
  "tibba-validator",
  "validator",

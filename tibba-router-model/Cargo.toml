@@ -1,10 +1,10 @@
 [package]
-name = "tibba-router-schema"
+name = "tibba-router-model"
 version = "0.1.0"
 edition = "2024"
 
 [lib]
-name = "tibba_router_schema"
+name = "tibba_router_model"
 path = "src/lib.rs"
 
 [dependencies]
@@ -12,6 +12,10 @@ axum = { workspace = true }
 schemars = { workspace = true }
 serde = { workspace = true }
 validator = { workspace = true }
+sqlx = { workspace = true }
+serde_json = { workspace = true }
 tibba-model = { path = "../tibba-model" }
 tibba-util = { path = "../tibba-util" }
 tibba-validator = { path = "../tibba-validator" }
+tibba-session = { path = "../tibba-session" }
+tibba-error = { path = "../tibba-error" }

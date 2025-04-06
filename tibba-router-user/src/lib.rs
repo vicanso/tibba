@@ -23,11 +23,10 @@ use sqlx::MySqlPool;
 use tibba_cache::RedisCache;
 use tibba_error::{Error, new_error};
 use tibba_middleware::validate_captcha;
-use tibba_model::{ROLE_SUPER_ADMIN, User, UserListParams, UserUpdateParams};
-use tibba_session::{AdminSession, Session, SessionResponse, UserSession};
+use tibba_model::{ROLE_SUPER_ADMIN, User, UserUpdateParams};
+use tibba_session::{Session, SessionResponse, UserSession};
 use tibba_util::{
-    JsonParams, JsonResult, Query, is_development, is_test, now, sha256, timestamp, timestamp_hash,
-    uuid,
+    JsonParams, JsonResult, is_development, is_test, now, sha256, timestamp, timestamp_hash, uuid,
 };
 use tibba_util::{generate_device_id_cookie, get_device_id_from_cookie, validate_timestamp_hash};
 use tibba_validator::*;
@@ -237,41 +236,6 @@ async fn update_profile(
     Ok(StatusCode::NO_CONTENT)
 }
 
-#[derive(Deserialize, Validate)]
-struct ListParams {
-    page: u64,
-    limit: u64,
-    order_by: Option<String>,
-    keyword: Option<String>,
-}
-
-#[derive(Serialize)]
-struct ListResp {
-    count: u64,
-    users: Vec<User>,
-}
-
-async fn list(
-    State(pool): State<&'static MySqlPool>,
-    Query(params): Query<ListParams>,
-    _session: AdminSession,
-) -> Result<Json<ListResp>> {
-    let users = User::list(
-        pool,
-        UserListParams {
-            page: params.page,
-            limit: params.limit,
-            order_by: params.order_by,
-            keyword: params.keyword,
-        },
-    )
-    .await?;
-    Ok(Json(ListResp {
-        count: users.len() as u64,
-        users,
-    }))
-}
-
 pub struct UserRouterParams {
     pub secret: String,
     pub magic_code: String,
@@ -299,5 +263,4 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
         .route("/register", post(register).with_state(params.pool))
         .route("/logout", delete(logout))
         .route("/profile", patch(update_profile).with_state(params.pool))
-        .route("/list", get(list).with_state(params.pool))
 }
