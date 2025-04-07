@@ -147,10 +147,7 @@ impl User {
 
         Ok(())
     }
-    pub async fn list(pool: &Pool<MySql>, params: ModelListParams) -> Result<Vec<Self>> {
-        let limit = params.limit.min(200);
-        let mut sql = String::from("SELECT * FROM users");
-
+    fn condition_sql(params: &ModelListParams) -> Result<Option<String>> {
         let mut where_conditions = vec![];
 
         if let Some(filters) = params.parse_filters()? {
@@ -165,20 +162,41 @@ impl User {
             }
         }
 
-        if let Some(keyword) = params.keyword {
+        if let Some(keyword) = &params.keyword {
             where_conditions.push(format!("account LIKE '%{}%'", keyword));
         }
-
         if !where_conditions.is_empty() {
-            sql.push_str(" WHERE ");
-            sql.push_str(&where_conditions.join(" AND "));
+            let sql = format!(" WHERE {}", where_conditions.join(" AND "));
+            Ok(Some(sql))
+        } else {
+            Ok(None)
+        }
+    }
+    pub async fn count(pool: &Pool<MySql>, params: &ModelListParams) -> Result<u64> {
+        let mut sql = String::from("SELECT COUNT(*) FROM users");
+        if let Some(condition) = Self::condition_sql(params)? {
+            sql.push_str(&condition);
+        }
+        let count = sqlx::query_scalar::<_, i64>(&sql)
+            .fetch_one(pool)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+        Ok(count as u64)
+    }
+
+    pub async fn list(pool: &Pool<MySql>, params: &ModelListParams) -> Result<Vec<Self>> {
+        let limit = params.limit.min(200);
+        let mut sql = String::from("SELECT * FROM users");
+
+        if let Some(condition) = Self::condition_sql(params)? {
+            sql.push_str(&condition);
         }
 
-        if let Some(order_by) = params.order_by {
+        if let Some(order_by) = &params.order_by {
             let (order_by, direction) = if order_by.starts_with("-") {
                 (order_by.substring(1, order_by.len()).to_string(), "DESC")
             } else {
-                (order_by, "ASC")
+                (order_by.clone(), "ASC")
             };
             sql.push_str(&format!(" ORDER BY {} {}", order_by, direction));
         }

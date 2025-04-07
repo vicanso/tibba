@@ -17,9 +17,6 @@ tracing = { workspace = true }
 snafu = { workspace = true }
 scopeguard = { workspace = true }
 tokio = { workspace = true }
-serde = { workspace = true }
-cookie = { workspace = true }
-derivative = { workspace = true }
 tibba-state = { path = "../tibba-state" }
 tibba-error = { path = "../tibba-error" }
 tibba-util = { path = "../tibba-util" }

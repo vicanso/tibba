@@ -14,7 +14,6 @@ cookie = { workspace = true }
 axum = { workspace = true }
 axum-extra = { workspace = true }
 derivative = { workspace = true }
-scopeguard = { workspace = true }
 serde = { workspace = true }
 tracing = { workspace = true }
 time = { workspace = true }

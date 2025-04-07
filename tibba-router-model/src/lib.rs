@@ -55,39 +55,28 @@ async fn list_model(
     Query(params): Query<ListParams>,
     _session: AdminSession,
 ) -> JsonResult<Value> {
+    let query_params = ModelListParams {
+        page: params.page,
+        limit: params.limit,
+        order_by: params.order_by,
+        keyword: params.keyword,
+        filters: params.filters,
+    };
     let value = match params.model.as_str() {
         "user" => {
-            let users = User::list(
-                pool,
-                ModelListParams {
-                    page: params.page,
-                    limit: params.limit,
-                    order_by: params.order_by,
-                    keyword: params.keyword,
-                    filters: params.filters,
-                },
-            )
-            .await?;
+            let count = User::count(pool, &query_params).await?;
+            let users = User::list(pool, &query_params).await?;
             json!({
-            "count": users.len() as u64,
-                    "users": users,
+            "count": count,
+                    "items": users,
                 })
         }
         _ => {
-            let files = File::list(
-                pool,
-                ModelListParams {
-                    page: params.page,
-                    limit: params.limit,
-                    order_by: params.order_by,
-                    keyword: params.keyword,
-                    filters: params.filters,
-                },
-            )
-            .await?;
+            let count = File::count(pool, &query_params).await?;
+            let files = File::list(pool, &query_params).await?;
             json!({
-            "count": files.len() as u64,
-                    "files": files,
+            "count": count,
+                    "items": files,
                 })
         }
     };

@@ -18,4 +18,3 @@ tibba-model = { path = "../tibba-model" }
 tibba-util = { path = "../tibba-util" }
 tibba-validator = { path = "../tibba-validator" }
 tibba-session = { path = "../tibba-session" }
-tibba-error = { path = "../tibba-error" }

@@ -8,7 +8,6 @@ name = "tibba_request"
 path = "src/lib.rs"
 
 [dependencies]
-tokio = { workspace = true }
 reqwest = { workspace = true }
 async-trait = { workspace = true }
 bytes = { workspace = true }

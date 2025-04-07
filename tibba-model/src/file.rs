@@ -109,26 +109,43 @@ impl File {
         Ok(id.last_insert_id())
     }
 
-    pub async fn list(pool: &Pool<MySql>, params: ModelListParams) -> Result<Vec<File>> {
-        let limit = params.limit.min(200);
-        let mut sql = String::from("SELECT * FROM files");
-
+    fn condition_sql(params: &ModelListParams) -> Option<String> {
         let mut where_conditions = vec![];
 
-        if let Some(keyword) = params.keyword {
+        if let Some(keyword) = &params.keyword {
             where_conditions.push(format!("filename LIKE '%{}%'", keyword));
         }
 
         if !where_conditions.is_empty() {
-            sql.push_str(" WHERE ");
-            sql.push_str(&where_conditions.join(" AND "));
+            let sql = format!(" WHERE {}", where_conditions.join(" AND "));
+            Some(sql)
+        } else {
+            None
         }
+    }
+    pub async fn count(pool: &Pool<MySql>, params: &ModelListParams) -> Result<u64> {
+        let mut sql = String::from("SELECT COUNT(*) FROM files");
+        if let Some(condition) = Self::condition_sql(params) {
+            sql.push_str(&condition);
+        }
+        let count = sqlx::query_scalar::<_, i64>(&sql)
+            .fetch_one(pool)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+        Ok(count as u64)
+    }
 
-        if let Some(order_by) = params.order_by {
+    pub async fn list(pool: &Pool<MySql>, params: &ModelListParams) -> Result<Vec<File>> {
+        let limit = params.limit.min(200);
+        let mut sql = String::from("SELECT * FROM files");
+        if let Some(condition) = Self::condition_sql(params) {
+            sql.push_str(&condition);
+        }
+        if let Some(order_by) = &params.order_by {
             let (order_by, direction) = if order_by.starts_with("-") {
                 (order_by.substring(1, order_by.len()).to_string(), "DESC")
             } else {
-                (order_by, "ASC")
+                (order_by.clone(), "ASC")
             };
             sql.push_str(&format!(" ORDER BY {} {}", order_by, direction));
         }
