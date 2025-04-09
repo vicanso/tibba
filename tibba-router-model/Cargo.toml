@@ -9,7 +9,6 @@ path = "src/lib.rs"
 
 [dependencies]
 axum = { workspace = true }
-schemars = { workspace = true }
 serde = { workspace = true }
 validator = { workspace = true }
 sqlx = { workspace = true }

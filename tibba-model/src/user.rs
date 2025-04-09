@@ -12,8 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, ModelListParams, format_datetime};
-use schemars::{JsonSchema, Schema, schema_for};
+use super::{Error, ModelListParams, Schema, SchemaType, SchemaView, format_datetime};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use sqlx::types::Json;
@@ -47,7 +46,7 @@ struct UserSchema {
     avatar: Option<String>,
 }
 
-#[derive(Deserialize, Serialize, JsonSchema)]
+#[derive(Deserialize, Serialize)]
 pub struct User {
     pub id: u64,
     pub status: i8,
@@ -90,10 +89,18 @@ pub struct UserUpdateParams {
 }
 
 impl User {
-    pub fn schema() -> Schema {
-        schema_for!(User)
+    pub fn schema_view() -> SchemaView {
+        SchemaView {
+            schemas: vec![Schema {
+                name: "id".to_string(),
+                category: SchemaType::Number,
+                read_only: true,
+                required: true,
+                ..Default::default()
+            }],
+            conditions: vec![],
+        }
     }
-    /// Create a new user with the given account and password
     pub async fn insert(pool: &Pool<MySql>, account: &str, password: &str) -> Result<u64> {
         // Get current time for created_at and updated_at
 
@@ -172,7 +179,7 @@ impl User {
             Ok(None)
         }
     }
-    pub async fn count(pool: &Pool<MySql>, params: &ModelListParams) -> Result<u64> {
+    pub async fn count(pool: &Pool<MySql>, params: &ModelListParams) -> Result<i64> {
         let mut sql = String::from("SELECT COUNT(*) FROM users");
         if let Some(condition) = Self::condition_sql(params)? {
             sql.push_str(&condition);
@@ -181,7 +188,7 @@ impl User {
             .fetch_one(pool)
             .await
             .map_err(|e| Error::Sqlx { source: e })?;
-        Ok(count as u64)
+        Ok(count)
     }
 
     pub async fn list(pool: &Pool<MySql>, params: &ModelListParams) -> Result<Vec<Self>> {

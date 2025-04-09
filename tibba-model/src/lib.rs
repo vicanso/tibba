@@ -83,7 +83,9 @@ impl ModelListParams {
 }
 
 mod file;
+mod schema;
 mod user;
 
 pub use file::*;
+pub use schema::*;
 pub use user::*;

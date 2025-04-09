@@ -12,8 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, ModelListParams, format_datetime};
-use schemars::{JsonSchema, Schema, schema_for};
+use super::{
+    Error, ModelListParams, Schema, SchemaCondition, SchemaConditionType, SchemaOption,
+    SchemaOptionValue, SchemaType, SchemaView, format_datetime,
+};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use sqlx::types::Json;
@@ -37,7 +39,7 @@ struct FileSchema {
     modified: OffsetDateTime,
 }
 
-#[derive(Deserialize, Serialize, JsonSchema)]
+#[derive(Deserialize, Serialize)]
 pub struct File {
     pub id: u64,
     pub filename: String,
@@ -81,8 +83,85 @@ pub struct FileInsertParams {
 }
 
 impl File {
-    pub fn schema() -> Schema {
-        schema_for!(File)
+    pub fn schema_view() -> SchemaView {
+        let group_options = vec![SchemaOption {
+            label: "Tibba".to_string(),
+            value: SchemaOptionValue::String("tibba".to_string()),
+        }];
+        SchemaView {
+            schemas: vec![
+                Schema {
+                    name: "id".to_string(),
+                    category: SchemaType::Number,
+                    read_only: true,
+                    hidden: true,
+                    ..Default::default()
+                },
+                Schema {
+                    name: "filename".to_string(),
+                    category: SchemaType::String,
+                    read_only: true,
+                    required: true,
+                    fixed: true,
+                    ..Default::default()
+                },
+                Schema {
+                    name: "file_size".to_string(),
+                    category: SchemaType::Bytes,
+                    read_only: true,
+                    required: true,
+                    ..Default::default()
+                },
+                Schema {
+                    name: "content_type".to_string(),
+                    category: SchemaType::String,
+                    read_only: true,
+                    required: true,
+                    ..Default::default()
+                },
+                Schema {
+                    name: "group".to_string(),
+                    category: SchemaType::String,
+                    options: Some(group_options.clone()),
+                    ..Default::default()
+                },
+                Schema {
+                    name: "image_width".to_string(),
+                    category: SchemaType::Number,
+                    read_only: true,
+                    ..Default::default()
+                },
+                Schema {
+                    name: "image_height".to_string(),
+                    category: SchemaType::Number,
+                    read_only: true,
+                    ..Default::default()
+                },
+                Schema {
+                    name: "metadata".to_string(),
+                    category: SchemaType::Json,
+                    ..Default::default()
+                },
+                Schema {
+                    name: "created".to_string(),
+                    category: SchemaType::Date,
+                    read_only: true,
+                    hidden: true,
+                    ..Default::default()
+                },
+                Schema {
+                    name: "modified".to_string(),
+                    category: SchemaType::Date,
+                    read_only: true,
+                    ..Default::default()
+                },
+            ],
+            conditions: vec![SchemaCondition {
+                name: "group".to_string(),
+                category: SchemaConditionType::Select,
+                options: Some(group_options),
+            }],
+        }
     }
 
     pub async fn insert(pool: &Pool<MySql>, params: FileInsertParams) -> Result<u64> {
@@ -109,36 +188,42 @@ impl File {
         Ok(id.last_insert_id())
     }
 
-    fn condition_sql(params: &ModelListParams) -> Option<String> {
+    fn condition_sql(params: &ModelListParams) -> Result<Option<String>> {
         let mut where_conditions = vec![];
 
         if let Some(keyword) = &params.keyword {
             where_conditions.push(format!("filename LIKE '%{}%'", keyword));
         }
 
+        if let Some(filters) = params.parse_filters()? {
+            if let Some(group) = filters.get("group") {
+                where_conditions.push(format!("`group` = '{}'", group));
+            }
+        }
+
         if !where_conditions.is_empty() {
             let sql = format!(" WHERE {}", where_conditions.join(" AND "));
-            Some(sql)
+            Ok(Some(sql))
         } else {
-            None
+            Ok(None)
         }
     }
-    pub async fn count(pool: &Pool<MySql>, params: &ModelListParams) -> Result<u64> {
+    pub async fn count(pool: &Pool<MySql>, params: &ModelListParams) -> Result<i64> {
         let mut sql = String::from("SELECT COUNT(*) FROM files");
-        if let Some(condition) = Self::condition_sql(params) {
+        if let Some(condition) = Self::condition_sql(params)? {
             sql.push_str(&condition);
         }
         let count = sqlx::query_scalar::<_, i64>(&sql)
             .fetch_one(pool)
             .await
             .map_err(|e| Error::Sqlx { source: e })?;
-        Ok(count as u64)
+        Ok(count)
     }
 
     pub async fn list(pool: &Pool<MySql>, params: &ModelListParams) -> Result<Vec<File>> {
         let limit = params.limit.min(200);
         let mut sql = String::from("SELECT * FROM files");
-        if let Some(condition) = Self::condition_sql(params) {
+        if let Some(condition) = Self::condition_sql(params)? {
             sql.push_str(&condition);
         }
         if let Some(order_by) = &params.order_by {

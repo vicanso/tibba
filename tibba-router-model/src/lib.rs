@@ -16,11 +16,10 @@ use axum::Json;
 use axum::Router;
 use axum::extract::State;
 use axum::routing::get;
-use schemars::Schema;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::MySqlPool;
-use tibba_model::{File, ModelListParams, User};
+use tibba_model::{File, ModelListParams, SchemaView, User};
 use tibba_session::AdminSession;
 use tibba_util::{JsonResult, Query};
 use tibba_validator::x_schema_name;
@@ -32,12 +31,12 @@ struct GetSchemaParams {
     name: String,
 }
 
-async fn get_schema(Query(params): Query<GetSchemaParams>) -> JsonResult<Schema> {
-    let schema = match params.name.as_str() {
-        "user" => User::schema(),
-        _ => File::schema(),
+async fn get_schema(Query(params): Query<GetSchemaParams>) -> JsonResult<SchemaView> {
+    let view = match params.name.as_str() {
+        "user" => User::schema_view(),
+        _ => File::schema_view(),
     };
-    Ok(Json(schema))
+    Ok(Json(view))
 }
 
 #[derive(Deserialize, Validate)]
@@ -48,6 +47,7 @@ struct ListParams {
     order_by: Option<String>,
     keyword: Option<String>,
     filters: Option<String>,
+    count: bool,
 }
 
 async fn list_model(
@@ -64,7 +64,11 @@ async fn list_model(
     };
     let value = match params.model.as_str() {
         "user" => {
-            let count = User::count(pool, &query_params).await?;
+            let count = if params.count {
+                User::count(pool, &query_params).await?
+            } else {
+                -1
+            };
             let users = User::list(pool, &query_params).await?;
             json!({
             "count": count,
@@ -72,7 +76,11 @@ async fn list_model(
                 })
         }
         _ => {
-            let count = File::count(pool, &query_params).await?;
+            let count = if params.count {
+                File::count(pool, &query_params).await?
+            } else {
+                -1
+            };
             let files = File::list(pool, &query_params).await?;
             json!({
             "count": count,
@@ -89,6 +97,6 @@ pub struct ModelRouterParams {
 
 pub fn new_model_router(params: ModelRouterParams) -> Router {
     Router::new()
-        .route("/json", get(get_schema))
+        .route("/schema", get(get_schema))
         .route("/list", get(list_model).with_state(params.pool))
 }
