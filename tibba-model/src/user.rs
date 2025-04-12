@@ -91,14 +91,54 @@ pub struct UserUpdateParams {
 impl User {
     pub fn schema_view() -> SchemaView {
         SchemaView {
-            schemas: vec![Schema {
-                name: "id".to_string(),
-                category: SchemaType::Number,
-                read_only: true,
-                required: true,
-                ..Default::default()
-            }],
+            schemas: vec![
+                Schema {
+                    name: "id".to_string(),
+                    category: SchemaType::Number,
+                    read_only: true,
+                    required: true,
+                    hidden: true,
+                    ..Default::default()
+                },
+                Schema {
+                    name: "account".to_string(),
+                    category: SchemaType::String,
+                    read_only: true,
+                    required: true,
+                    ..Default::default()
+                },
+                Schema {
+                    name: "status".to_string(),
+                    category: SchemaType::Status,
+                    required: true,
+                    ..Default::default()
+                },
+                Schema {
+                    name: "roles".to_string(),
+                    category: SchemaType::Strings,
+                    ..Default::default()
+                },
+                Schema {
+                    name: "groups".to_string(),
+                    category: SchemaType::Strings,
+                    ..Default::default()
+                },
+                Schema {
+                    name: "created".to_string(),
+                    category: SchemaType::Date,
+                    read_only: true,
+                    hidden: true,
+                    ..Default::default()
+                },
+                Schema {
+                    name: "modified".to_string(),
+                    category: SchemaType::Date,
+                    read_only: true,
+                    ..Default::default()
+                },
+            ],
             conditions: vec![],
+            sort_fields: vec!["modified".to_string()],
         }
     }
     pub async fn insert(pool: &Pool<MySql>, account: &str, password: &str) -> Result<u64> {

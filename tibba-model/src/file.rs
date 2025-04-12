@@ -84,10 +84,16 @@ pub struct FileInsertParams {
 
 impl File {
     pub fn schema_view() -> SchemaView {
-        let group_options = vec![SchemaOption {
-            label: "Tibba".to_string(),
-            value: SchemaOptionValue::String("tibba".to_string()),
-        }];
+        let group_options = vec![
+            SchemaOption {
+                label: "Tibba".to_string(),
+                value: SchemaOptionValue::String("tibba".to_string()),
+            },
+            SchemaOption {
+                label: "Web".to_string(),
+                value: SchemaOptionValue::String("web".to_string()),
+            },
+        ];
         SchemaView {
             schemas: vec![
                 Schema {
@@ -161,6 +167,7 @@ impl File {
                 category: SchemaConditionType::Select,
                 options: Some(group_options),
             }],
+            sort_fields: vec!["modified".to_string(), "file_size".to_string()],
         }
     }
 

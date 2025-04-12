@@ -22,6 +22,7 @@ pub enum SchemaType {
     Number,
     Bytes,
     Boolean,
+    Status,
     Strings,
     Date,
     Json,
@@ -81,4 +82,5 @@ pub struct Schema {
 pub struct SchemaView {
     pub schemas: Vec<Schema>,
     pub conditions: Vec<SchemaCondition>,
+    pub sort_fields: Vec<String>,
 }
