@@ -1,5 +1,5 @@
 CREATE TABLE `files` (
-    `id` BIGINT NOT NULL AUTO_INCREMENT,
+    `id` BIGINT unsigned NOT NULL AUTO_INCREMENT COMMENT '主键ID',
     `filename` VARCHAR(255) NOT NULL COMMENT '文件名',
     `file_size` BIGINT NOT NULL COMMENT '文件大小',
     `content_type` VARCHAR(100) NOT NULL COMMENT '内容类型',
@@ -17,4 +17,4 @@ CREATE TABLE `files` (
     `modified` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`id`) COMMENT '主键',
     UNIQUE KEY `file_name` (`filename`)
-) ENGINE=InnoDB AUTO_INCREMENT=5 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT="文件表";

@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use super::{
-    Error, ModelListParams, Schema, SchemaCondition, SchemaConditionType, SchemaOption,
-    SchemaOptionValue, SchemaType, SchemaView, format_datetime,
+    Error, ModelListParams, Schema, SchemaOption, SchemaOptionValue, SchemaType, SchemaView,
+    format_datetime,
 };
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
@@ -27,7 +27,7 @@ type Result<T> = std::result::Result<T, Error>;
 
 #[derive(FromRow)]
 struct FileSchema {
-    id: i64,
+    id: u64,
     filename: String,
     file_size: i64,
     content_type: String,
@@ -56,7 +56,7 @@ pub struct File {
 impl From<FileSchema> for File {
     fn from(file: FileSchema) -> Self {
         File {
-            id: file.id as u64,
+            id: file.id,
             filename: file.filename,
             file_size: file.file_size,
             content_type: file.content_type,
@@ -116,6 +116,7 @@ impl File {
                     category: SchemaType::Bytes,
                     read_only: true,
                     required: true,
+                    sortable: true,
                     ..Default::default()
                 },
                 Schema {
@@ -129,6 +130,7 @@ impl File {
                     name: "group".to_string(),
                     category: SchemaType::String,
                     options: Some(group_options.clone()),
+                    filterable: true,
                     ..Default::default()
                 },
                 Schema {
@@ -159,15 +161,10 @@ impl File {
                     name: "modified".to_string(),
                     category: SchemaType::Date,
                     read_only: true,
+                    sortable: true,
                     ..Default::default()
                 },
             ],
-            conditions: vec![SchemaCondition {
-                name: "group".to_string(),
-                category: SchemaConditionType::Select,
-                options: Some(group_options),
-            }],
-            sort_fields: vec!["modified".to_string(), "file_size".to_string()],
         }
     }
 

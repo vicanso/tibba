@@ -76,11 +76,12 @@ pub struct Schema {
     pub fixed: bool,
     pub options: Option<Vec<SchemaOption>>,
     pub hidden: bool,
+    pub sortable: bool,
+    pub filterable: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct SchemaView {
     pub schemas: Vec<Schema>,
-    pub conditions: Vec<SchemaCondition>,
-    pub sort_fields: Vec<String>,
+    // pub conditions: Vec<SchemaCondition>,
 }

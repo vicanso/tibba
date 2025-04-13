@@ -1,0 +1,11 @@
+CREATE TABLE `configs` (
+  `id` BIGINT unsigned NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+  `type` VARCHAR(50) NOT NULL COMMENT '配置类型',
+  `name` VARCHAR(100) NOT NULL COMMENT '配置名称',
+  `data` JSON NOT NULL COMMENT '配置数据',
+  `description` VARCHAR(255) DEFAULT NULL COMMENT '配置描述',
+  `created` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `modified` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_type_name` (`type`,`name`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='系统配置表';

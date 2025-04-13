@@ -33,7 +33,7 @@ pub static ROLE_SUPER_ADMIN: &str = "su";
 
 #[derive(FromRow)]
 struct UserSchema {
-    id: i64,
+    id: u64,
     status: i8,
     created: OffsetDateTime,
     modified: OffsetDateTime,
@@ -65,7 +65,7 @@ pub struct User {
 impl From<UserSchema> for User {
     fn from(user: UserSchema) -> Self {
         User {
-            id: user.id as u64,
+            id: user.id,
             status: user.status,
             created: format_datetime(user.created),
             modified: format_datetime(user.modified),
@@ -134,11 +134,10 @@ impl User {
                     name: "modified".to_string(),
                     category: SchemaType::Date,
                     read_only: true,
+                    sortable: true,
                     ..Default::default()
                 },
             ],
-            conditions: vec![],
-            sort_fields: vec!["modified".to_string()],
         }
     }
     pub async fn insert(pool: &Pool<MySql>, account: &str, password: &str) -> Result<u64> {
