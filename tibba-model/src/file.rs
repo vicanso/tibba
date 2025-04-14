@@ -35,6 +35,7 @@ struct FileSchema {
     image_width: Option<i32>,
     image_height: Option<i32>,
     metadata: Option<Json<serde_json::Value>>,
+    uploader: String,
     created: OffsetDateTime,
     modified: OffsetDateTime,
 }
@@ -49,6 +50,7 @@ pub struct File {
     pub image_width: Option<u32>,
     pub image_height: Option<u32>,
     pub metadata: Option<serde_json::Value>,
+    pub uploader: String,
     pub created: String,
     pub modified: String,
 }
@@ -64,6 +66,7 @@ impl From<FileSchema> for File {
             image_width: file.image_width.map(|w| w as u32),
             image_height: file.image_height.map(|h| h as u32),
             metadata: file.metadata.map(|m| m.0),
+            uploader: file.uploader,
             created: format_datetime(file.created),
             modified: format_datetime(file.modified),
         }
@@ -117,6 +120,14 @@ impl File {
                     read_only: true,
                     required: true,
                     sortable: true,
+                    ..Default::default()
+                },
+                Schema {
+                    name: "uploader".to_string(),
+                    category: SchemaType::String,
+                    read_only: true,
+                    required: true,
+                    filterable: true,
                     ..Default::default()
                 },
                 Schema {
@@ -202,6 +213,9 @@ impl File {
         if let Some(filters) = params.parse_filters()? {
             if let Some(group) = filters.get("group") {
                 where_conditions.push(format!("`group` = '{}'", group));
+            }
+            if let Some(uploader) = filters.get("uploader") {
+                where_conditions.push(format!("uploader = '{}'", uploader));
             }
         }
 
