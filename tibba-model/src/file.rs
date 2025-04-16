@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use super::{
-    Error, ModelListParams, Schema, SchemaOption, SchemaOptionValue, SchemaType, SchemaView,
-    format_datetime,
+    Error, ModelListParams, ROLE_ADMIN, ROLE_SUPER_ADMIN, Schema, SchemaAllowEdit, SchemaOption,
+    SchemaOptionValue, SchemaType, SchemaView, format_datetime,
 };
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
@@ -109,6 +109,7 @@ impl File {
                 Schema {
                     name: "filename".to_string(),
                     category: SchemaType::String,
+                    identity: true,
                     read_only: true,
                     required: true,
                     fixed: true,
@@ -176,6 +177,11 @@ impl File {
                     ..Default::default()
                 },
             ],
+            allow_edit: SchemaAllowEdit {
+                owner: true,
+                groups: vec![],
+                roles: vec![ROLE_SUPER_ADMIN.to_string(), ROLE_ADMIN.to_string()],
+            },
         }
     }
 
@@ -225,6 +231,25 @@ impl File {
         } else {
             Ok(None)
         }
+    }
+
+    pub async fn get_by_id(pool: &Pool<MySql>, id: u64) -> Result<Option<Self>> {
+        let result = sqlx::query_as::<_, FileSchema>(r#"SELECT * FROM files WHERE id = ?"#)
+            .bind(id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+
+        Ok(result.map(|file| file.into()))
+    }
+    pub async fn delete_by_id(pool: &Pool<MySql>, id: u64) -> Result<()> {
+        // TODO change to soft delete
+        sqlx::query(r#"DELETE FROM files WHERE id = ?"#)
+            .bind(id)
+            .execute(pool)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+        Ok(())
     }
     pub async fn count(pool: &Pool<MySql>, params: &ModelListParams) -> Result<i64> {
         let mut sql = String::from("SELECT COUNT(*) FROM files");

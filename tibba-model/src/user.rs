@@ -12,7 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, ModelListParams, Schema, SchemaType, SchemaView, format_datetime};
+use super::{
+    Error, ModelListParams, Schema, SchemaAllowEdit, SchemaType, SchemaView, format_datetime,
+};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use sqlx::types::Json;
@@ -105,6 +107,7 @@ impl User {
                     category: SchemaType::String,
                     read_only: true,
                     required: true,
+                    identity: true,
                     ..Default::default()
                 },
                 Schema {
@@ -138,6 +141,11 @@ impl User {
                     ..Default::default()
                 },
             ],
+            allow_edit: SchemaAllowEdit {
+                owner: true,
+                groups: vec![],
+                roles: vec![ROLE_SUPER_ADMIN.to_string()],
+            },
         }
     }
     pub async fn insert(pool: &Pool<MySql>, account: &str, password: &str) -> Result<u64> {
@@ -161,6 +169,24 @@ impl User {
         .map_err(|e| Error::Sqlx { source: e })?;
 
         Ok(result.last_insert_id())
+    }
+    pub async fn get_by_id(pool: &Pool<MySql>, id: u64) -> Result<Option<Self>> {
+        let result = sqlx::query_as::<_, UserSchema>(r#"SELECT * FROM users WHERE id = ?"#)
+            .bind(id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+
+        Ok(result.map(|user| user.into()))
+    }
+    pub async fn delete_by_id(pool: &Pool<MySql>, id: u64) -> Result<()> {
+        // TODO change to soft delete
+        sqlx::query(r#"DELETE FROM users WHERE id = ?"#)
+            .bind(id)
+            .execute(pool)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+        Ok(())
     }
     pub async fn get_by_account(pool: &Pool<MySql>, account: &str) -> Result<Option<Self>> {
         let result = sqlx::query_as::<_, UserSchema>(r#"SELECT * FROM users WHERE account = ?"#)

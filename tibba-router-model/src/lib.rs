@@ -15,13 +15,16 @@
 use axum::Json;
 use axum::Router;
 use axum::extract::State;
+use axum::http::StatusCode;
+use axum::routing::delete;
 use axum::routing::get;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::MySqlPool;
+use std::time::Duration;
 use tibba_model::{File, ModelListParams, SchemaView, User};
 use tibba_session::AdminSession;
-use tibba_util::{JsonResult, Query};
+use tibba_util::{CacheJsonResult, JsonResult, Query};
 use tibba_validator::x_schema_name;
 use validator::Validate;
 
@@ -31,12 +34,12 @@ struct GetSchemaParams {
     name: String,
 }
 
-async fn get_schema(Query(params): Query<GetSchemaParams>) -> JsonResult<SchemaView> {
+async fn get_schema(Query(params): Query<GetSchemaParams>) -> CacheJsonResult<SchemaView> {
     let view = match params.name.as_str() {
         "user" => User::schema_view(),
         _ => File::schema_view(),
     };
-    Ok(Json(view))
+    Ok((Duration::from_secs(5 * 60), view).into())
 }
 
 #[derive(Deserialize, Validate)]
@@ -91,6 +94,52 @@ async fn list_model(
     Ok(Json(value))
 }
 
+#[derive(Deserialize, Validate)]
+struct GetModelParams {
+    model: String,
+    id: u64,
+}
+
+async fn get_detail(
+    State(pool): State<&'static MySqlPool>,
+    Query(params): Query<GetModelParams>,
+    _session: AdminSession,
+) -> JsonResult<Value> {
+    let data = match params.model.as_str() {
+        "user" => {
+            let user = User::get_by_id(pool, params.id).await?;
+            json!(user)
+        }
+        _ => {
+            let file = File::get_by_id(pool, params.id).await?;
+            json!(file)
+        }
+    };
+    Ok(Json(data))
+}
+
+#[derive(Deserialize, Validate)]
+struct DeleteModelParams {
+    model: String,
+    id: u64,
+}
+
+async fn delete_model(
+    State(pool): State<&'static MySqlPool>,
+    Query(params): Query<DeleteModelParams>,
+    _session: AdminSession,
+) -> Result<StatusCode, tibba_error::Error> {
+    match params.model.as_str() {
+        "user" => {
+            User::delete_by_id(pool, params.id).await?;
+        }
+        _ => {
+            File::delete_by_id(pool, params.id).await?;
+        }
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
 pub struct ModelRouterParams {
     pub pool: &'static MySqlPool,
 }
@@ -99,4 +148,6 @@ pub fn new_model_router(params: ModelRouterParams) -> Router {
     Router::new()
         .route("/schema", get(get_schema))
         .route("/list", get(list_model).with_state(params.pool))
+        .route("/detail", get(get_detail).with_state(params.pool))
+        .route("/delete", delete(delete_model).with_state(params.pool))
 }

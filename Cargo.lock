@@ -3657,6 +3657,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sqlx",
+ "tibba-error",
  "tibba-model",
  "tibba-session",
  "tibba-util",

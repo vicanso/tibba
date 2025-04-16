@@ -68,9 +68,17 @@ pub struct SchemaCondition {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct SchemaAllowEdit {
+    pub owner: bool,
+    pub groups: Vec<String>,
+    pub roles: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct Schema {
     pub name: String,
     pub category: SchemaType,
+    pub identity: bool,
     pub read_only: bool,
     pub required: bool,
     pub fixed: bool,
@@ -83,5 +91,5 @@ pub struct Schema {
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct SchemaView {
     pub schemas: Vec<Schema>,
-    // pub conditions: Vec<SchemaCondition>,
+    pub allow_edit: SchemaAllowEdit,
 }
