@@ -52,6 +52,16 @@ pub struct SchemaOption {
     pub value: SchemaOptionValue,
 }
 
+pub(crate) fn new_schema_options(values: &[&str]) -> Vec<SchemaOption> {
+    values
+        .iter()
+        .map(|v| SchemaOption {
+            label: v.to_string(),
+            value: SchemaOptionValue::String(v.to_string()),
+        })
+        .collect()
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum SchemaConditionType {

@@ -16,15 +16,14 @@ use axum::Json;
 use axum::Router;
 use axum::extract::State;
 use axum::http::StatusCode;
-use axum::routing::delete;
-use axum::routing::get;
+use axum::routing::{delete, get, patch};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::MySqlPool;
 use std::time::Duration;
 use tibba_model::{File, ModelListParams, SchemaView, User};
 use tibba_session::AdminSession;
-use tibba_util::{CacheJsonResult, JsonResult, Query};
+use tibba_util::{CacheJsonResult, JsonParams, JsonResult, QueryParams};
 use tibba_validator::x_schema_name;
 use validator::Validate;
 
@@ -34,7 +33,9 @@ struct GetSchemaParams {
     name: String,
 }
 
-async fn get_schema(Query(params): Query<GetSchemaParams>) -> CacheJsonResult<SchemaView> {
+async fn get_schema(
+    QueryParams(params): QueryParams<GetSchemaParams>,
+) -> CacheJsonResult<SchemaView> {
     let view = match params.name.as_str() {
         "user" => User::schema_view(),
         _ => File::schema_view(),
@@ -55,7 +56,7 @@ struct ListParams {
 
 async fn list_model(
     State(pool): State<&'static MySqlPool>,
-    Query(params): Query<ListParams>,
+    QueryParams(params): QueryParams<ListParams>,
     _session: AdminSession,
 ) -> JsonResult<Value> {
     let query_params = ModelListParams {
@@ -102,7 +103,7 @@ struct GetModelParams {
 
 async fn get_detail(
     State(pool): State<&'static MySqlPool>,
-    Query(params): Query<GetModelParams>,
+    QueryParams(params): QueryParams<GetModelParams>,
     _session: AdminSession,
 ) -> JsonResult<Value> {
     let data = match params.model.as_str() {
@@ -115,6 +116,9 @@ async fn get_detail(
             json!(file)
         }
     };
+    if data.is_null() {
+        return Err(tibba_error::new_error("The record is not found").into());
+    }
     Ok(Json(data))
 }
 
@@ -126,8 +130,8 @@ struct DeleteModelParams {
 
 async fn delete_model(
     State(pool): State<&'static MySqlPool>,
-    Query(params): Query<DeleteModelParams>,
     _session: AdminSession,
+    QueryParams(params): QueryParams<DeleteModelParams>,
 ) -> Result<StatusCode, tibba_error::Error> {
     match params.model.as_str() {
         "user" => {
@@ -135,6 +139,29 @@ async fn delete_model(
         }
         _ => {
             File::delete_by_id(pool, params.id).await?;
+        }
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize, Validate, Debug)]
+struct UpdateModelParams {
+    model: String,
+    id: u64,
+    data: Value,
+}
+
+async fn update_model(
+    State(pool): State<&'static MySqlPool>,
+    _session: AdminSession,
+    JsonParams(params): JsonParams<UpdateModelParams>,
+) -> Result<StatusCode, tibba_error::Error> {
+    match params.model.as_str() {
+        "user" => {
+            User::update_by_id(pool, params.id, params.data.into()).await?;
+        }
+        _ => {
+            File::update_by_id(pool, params.id, params.data.into()).await?;
         }
     }
     Ok(StatusCode::NO_CONTENT)
@@ -150,4 +177,5 @@ pub fn new_model_router(params: ModelRouterParams) -> Router {
         .route("/list", get(list_model).with_state(params.pool))
         .route("/detail", get(get_detail).with_state(params.pool))
         .route("/delete", delete(delete_model).with_state(params.pool))
+        .route("/update", patch(update_model).with_state(params.pool))
 }

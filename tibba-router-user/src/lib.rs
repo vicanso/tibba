@@ -178,9 +178,9 @@ async fn register(
 ) -> JsonResult<RegisterResp> {
     let id = User::insert(pool, &params.account, &params.password).await?;
     if id == 1 {
-        User::update(
+        User::update_by_id(
             pool,
-            &params.account,
+            id,
             UserUpdateParams {
                 roles: Some(vec![ROLE_SUPER_ADMIN.to_string()]),
                 ..Default::default()
@@ -214,10 +214,6 @@ struct UpdateProfileParams {
     email: Option<String>,
     #[validate(url)]
     avatar: Option<String>,
-    #[validate(custom(function = "x_user_roles"))]
-    roles: Option<Vec<String>>,
-    #[validate(custom(function = "x_user_groups"))]
-    groups: Option<Vec<String>>,
 }
 
 async fn update_profile(
@@ -229,10 +225,9 @@ async fn update_profile(
     let params = UserUpdateParams {
         email: params.email,
         avatar: params.avatar,
-        roles: params.roles,
-        groups: params.groups,
+        ..Default::default()
     };
-    User::update(pool, &account, params).await?;
+    User::update_by_account(pool, &account, params).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

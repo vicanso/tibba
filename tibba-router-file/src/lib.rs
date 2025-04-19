@@ -28,7 +28,7 @@ use tibba_error::{Error, new_error};
 use tibba_model::{File, FileInsertParams};
 use tibba_opendal::Storage;
 use tibba_session::UserSession;
-use tibba_util::{JsonResult, Query, uuid};
+use tibba_util::{JsonResult, QueryParams, uuid};
 use tibba_validator::{x_file_group, x_file_name};
 use validator::Validate;
 
@@ -43,7 +43,7 @@ struct CreateFileParams {
 }
 
 async fn create_file(
-    Query(create_file_params): Query<CreateFileParams>,
+    QueryParams(create_file_params): QueryParams<CreateFileParams>,
     State((storage, pool)): State<(&'static Storage, &'static MySqlPool)>,
     session: UserSession,
     mut multipart: Multipart,
@@ -105,7 +105,7 @@ struct GetFileParams {
 
 async fn get_file(
     State(storage): State<&'static Storage>,
-    Query(params): Query<GetFileParams>,
+    QueryParams(params): QueryParams<GetFileParams>,
 ) -> Result<impl IntoResponse> {
     let stat = storage.stat(&params.name).await?;
     let data = storage.read(&params.name).await?;

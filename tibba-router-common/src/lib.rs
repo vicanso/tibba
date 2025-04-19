@@ -26,7 +26,7 @@ use std::time::Duration;
 use tibba_cache::RedisCache;
 use tibba_error::{Error, new_error};
 use tibba_state::AppState;
-use tibba_util::{CacheJsonResult, Query, get_env, uuid};
+use tibba_util::{CacheJsonResult, QueryParams, get_env, uuid};
 use validator::Validate;
 type Result<T> = std::result::Result<T, Error>;
 
@@ -83,7 +83,7 @@ struct CaptchaInfo {
 
 async fn captcha(
     State(cache): State<&'static RedisCache>,
-    Query(params): Query<CaptchaParams>,
+    QueryParams(params): QueryParams<CaptchaParams>,
 ) -> Result<impl IntoResponse> {
     // captcha is not supported send
     let (text, data) = {

@@ -14,6 +14,7 @@
 
 use super::{
     Error, ModelListParams, Schema, SchemaAllowEdit, SchemaType, SchemaView, format_datetime,
+    new_schema_options,
 };
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
@@ -88,6 +89,41 @@ pub struct UserUpdateParams {
     pub avatar: Option<String>,
     pub roles: Option<Vec<String>>,
     pub groups: Option<Vec<String>>,
+    pub status: Option<i8>,
+}
+
+impl From<serde_json::Value> for UserUpdateParams {
+    fn from(value: serde_json::Value) -> Self {
+        UserUpdateParams {
+            email: value
+                .get("email")
+                .and_then(|v| v.as_str())
+                .map(String::from),
+            avatar: value
+                .get("avatar")
+                .and_then(|v| v.as_str())
+                .map(String::from),
+            roles: value.get("roles").and_then(|v| v.as_array()).map(|roles| {
+                roles
+                    .iter()
+                    .map(|v| v.as_str().unwrap_or_default().to_string())
+                    .collect()
+            }),
+            groups: value
+                .get("groups")
+                .and_then(|v| v.as_array())
+                .map(|groups| {
+                    groups
+                        .iter()
+                        .map(|v| v.as_str().unwrap_or_default().to_string())
+                        .collect()
+                }),
+            status: value
+                .get("status")
+                .and_then(|v| v.as_i64())
+                .map(|status| status as i8),
+        }
+    }
 }
 
 impl User {
@@ -119,11 +155,13 @@ impl User {
                 Schema {
                     name: "roles".to_string(),
                     category: SchemaType::Strings,
+                    options: Some(new_schema_options(&[ROLE_ADMIN, ROLE_SUPER_ADMIN])),
                     ..Default::default()
                 },
                 Schema {
                     name: "groups".to_string(),
                     category: SchemaType::Strings,
+                    options: Some(new_schema_options(&["it", "marketing"])),
                     ..Default::default()
                 },
                 Schema {
@@ -197,28 +235,52 @@ impl User {
 
         Ok(result.map(|user| user.into()))
     }
-    pub async fn update(pool: &Pool<MySql>, account: &str, params: UserUpdateParams) -> Result<()> {
+    pub async fn update_by_id(pool: &Pool<MySql>, id: u64, params: UserUpdateParams) -> Result<()> {
         let _ = sqlx::query(
             r#"
             UPDATE users SET 
                 email = COALESCE(?, email),
                 avatar = COALESCE(?, avatar),
                 roles = COALESCE(?, roles),
-                `groups` = COALESCE(?, `groups`)
-            WHERE account = ?
+                `groups` = COALESCE(?, `groups`),
+                status = COALESCE(?, status)
+            WHERE id = ?
             "#,
         )
         .bind(params.email.as_deref())
         .bind(params.avatar.as_deref())
         .bind(params.roles.map(Json))
         .bind(params.groups.map(Json))
-        .bind(account)
+        .bind(params.status)
+        .bind(id)
         .execute(pool)
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
 
         Ok(())
     }
+    pub async fn update_by_account(
+        pool: &Pool<MySql>,
+        account: &str,
+        params: UserUpdateParams,
+    ) -> Result<()> {
+        let _ = sqlx::query(
+            r#"
+            UPDATE users SET 
+                email = COALESCE(?, email),
+                avatar = COALESCE(?, avatar),
+            WHERE account = ?
+            "#,
+        )
+        .bind(params.email.as_deref())
+        .bind(params.avatar.as_deref())
+        .bind(account)
+        .execute(pool)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+        Ok(())
+    }
+
     fn condition_sql(params: &ModelListParams) -> Result<Option<String>> {
         let mut where_conditions = vec![];
 

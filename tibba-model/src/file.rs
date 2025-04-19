@@ -85,6 +85,19 @@ pub struct FileInsertParams {
     pub metadata: Option<serde_json::Value>,
 }
 
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct FileUpdateParams {
+    pub metadata: Option<serde_json::Value>,
+}
+
+impl From<serde_json::Value> for FileUpdateParams {
+    fn from(value: serde_json::Value) -> Self {
+        FileUpdateParams {
+            metadata: value.get("metadata").cloned(),
+        }
+    }
+}
+
 impl File {
     pub fn schema_view() -> SchemaView {
         let group_options = vec![
@@ -245,6 +258,15 @@ impl File {
     pub async fn delete_by_id(pool: &Pool<MySql>, id: u64) -> Result<()> {
         // TODO change to soft delete
         sqlx::query(r#"DELETE FROM files WHERE id = ?"#)
+            .bind(id)
+            .execute(pool)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+        Ok(())
+    }
+    pub async fn update_by_id(pool: &Pool<MySql>, id: u64, params: FileUpdateParams) -> Result<()> {
+        let _ = sqlx::query(r#"UPDATE files SET metadata = ? WHERE id = ?"#)
+            .bind(params.metadata)
             .bind(id)
             .execute(pool)
             .await

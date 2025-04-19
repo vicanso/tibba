@@ -73,9 +73,9 @@ fn json_content_type(headers: &HeaderMap) -> bool {
 }
 
 #[derive(Debug, Clone, Copy, Default)]
-pub struct Query<T>(pub T);
+pub struct QueryParams<T>(pub T);
 
-impl<T, S> FromRequestParts<S> for Query<T>
+impl<T, S> FromRequestParts<S> for QueryParams<T>
 where
     T: DeserializeOwned + Validate,
     S: Send + Sync,
@@ -87,6 +87,6 @@ where
         let params: T = serde_urlencoded::from_str(query)
             .map_err(|err| new_error(&err.to_string()).with_category("params:from_query"))?;
         params.validate()?;
-        Ok(Query(params))
+        Ok(QueryParams(params))
     }
 }
