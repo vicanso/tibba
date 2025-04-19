@@ -198,6 +198,30 @@ impl File {
         }
     }
 
+    fn condition_sql(params: &ModelListParams) -> Result<Option<String>> {
+        let mut where_conditions = vec!["deleted_at IS NULL".to_string()];
+
+        if let Some(keyword) = &params.keyword {
+            where_conditions.push(format!("filename LIKE '%{}%'", keyword));
+        }
+
+        if let Some(filters) = params.parse_filters()? {
+            if let Some(group) = filters.get("group") {
+                where_conditions.push(format!("`group` = '{}'", group));
+            }
+            if let Some(uploader) = filters.get("uploader") {
+                where_conditions.push(format!("uploader = '{}'", uploader));
+            }
+        }
+
+        if !where_conditions.is_empty() {
+            let sql = format!(" WHERE {}", where_conditions.join(" AND "));
+            Ok(Some(sql))
+        } else {
+            Ok(None)
+        }
+    }
+
     pub async fn insert(pool: &Pool<MySql>, params: FileInsertParams) -> Result<u64> {
         let id = sqlx::query(
             r#"
@@ -222,50 +246,31 @@ impl File {
         Ok(id.last_insert_id())
     }
 
-    fn condition_sql(params: &ModelListParams) -> Result<Option<String>> {
-        let mut where_conditions = vec![];
-
-        if let Some(keyword) = &params.keyword {
-            where_conditions.push(format!("filename LIKE '%{}%'", keyword));
-        }
-
-        if let Some(filters) = params.parse_filters()? {
-            if let Some(group) = filters.get("group") {
-                where_conditions.push(format!("`group` = '{}'", group));
-            }
-            if let Some(uploader) = filters.get("uploader") {
-                where_conditions.push(format!("uploader = '{}'", uploader));
-            }
-        }
-
-        if !where_conditions.is_empty() {
-            let sql = format!(" WHERE {}", where_conditions.join(" AND "));
-            Ok(Some(sql))
-        } else {
-            Ok(None)
-        }
-    }
-
     pub async fn get_by_id(pool: &Pool<MySql>, id: u64) -> Result<Option<Self>> {
-        let result = sqlx::query_as::<_, FileSchema>(r#"SELECT * FROM files WHERE id = ?"#)
-            .bind(id)
-            .fetch_optional(pool)
-            .await
-            .map_err(|e| Error::Sqlx { source: e })?;
+        let result = sqlx::query_as::<_, FileSchema>(
+            r#"SELECT * FROM files WHERE id = ? AND deleted_at IS NULL"#,
+        )
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
 
         Ok(result.map(|file| file.into()))
     }
+
     pub async fn delete_by_id(pool: &Pool<MySql>, id: u64) -> Result<()> {
-        // TODO change to soft delete
-        sqlx::query(r#"DELETE FROM files WHERE id = ?"#)
+        sqlx::query(
+            r#"UPDATE files SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL"#
+        )
             .bind(id)
             .execute(pool)
             .await
             .map_err(|e| Error::Sqlx { source: e })?;
         Ok(())
     }
+
     pub async fn update_by_id(pool: &Pool<MySql>, id: u64, params: FileUpdateParams) -> Result<()> {
-        let _ = sqlx::query(r#"UPDATE files SET metadata = ? WHERE id = ?"#)
+        let _ = sqlx::query(r#"UPDATE files SET metadata = ? WHERE id = ? AND deleted_at IS NULL"#)
             .bind(params.metadata)
             .bind(id)
             .execute(pool)
@@ -273,6 +278,7 @@ impl File {
             .map_err(|e| Error::Sqlx { source: e })?;
         Ok(())
     }
+
     pub async fn count(pool: &Pool<MySql>, params: &ModelListParams) -> Result<i64> {
         let mut sql = String::from("SELECT COUNT(*) FROM files");
         if let Some(condition) = Self::condition_sql(params)? {

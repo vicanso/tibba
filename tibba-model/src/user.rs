@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use super::{
-    Error, ModelListParams, Schema, SchemaAllowEdit, SchemaType, SchemaView, format_datetime,
-    new_schema_options,
+    Error, ModelListParams, Schema, SchemaAllowEdit, SchemaType, SchemaView, Status,
+    format_datetime, new_schema_options,
 };
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
@@ -24,12 +24,6 @@ use substring::Substring;
 use time::OffsetDateTime;
 
 type Result<T> = std::result::Result<T, Error>;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UserStatus {
-    Disabled = 0,
-    Enabled = 1,
-}
 
 pub static ROLE_ADMIN: &str = "admin";
 pub static ROLE_SUPER_ADMIN: &str = "su";
@@ -199,7 +193,7 @@ impl User {
             )
             "#,
         )
-        .bind(UserStatus::Enabled as i8)
+        .bind(Status::Enabled as i8)
         .bind(account)
         .bind(password)
         .execute(pool)
@@ -209,17 +203,20 @@ impl User {
         Ok(result.last_insert_id())
     }
     pub async fn get_by_id(pool: &Pool<MySql>, id: u64) -> Result<Option<Self>> {
-        let result = sqlx::query_as::<_, UserSchema>(r#"SELECT * FROM users WHERE id = ?"#)
-            .bind(id)
-            .fetch_optional(pool)
-            .await
-            .map_err(|e| Error::Sqlx { source: e })?;
+        let result = sqlx::query_as::<_, UserSchema>(
+            r#"SELECT * FROM users WHERE id = ? AND deleted_at IS NULL"#,
+        )
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
 
         Ok(result.map(|user| user.into()))
     }
     pub async fn delete_by_id(pool: &Pool<MySql>, id: u64) -> Result<()> {
-        // TODO change to soft delete
-        sqlx::query(r#"DELETE FROM users WHERE id = ?"#)
+        sqlx::query(
+            r#"UPDATE users SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL"#
+        )
             .bind(id)
             .execute(pool)
             .await
@@ -227,11 +224,13 @@ impl User {
         Ok(())
     }
     pub async fn get_by_account(pool: &Pool<MySql>, account: &str) -> Result<Option<Self>> {
-        let result = sqlx::query_as::<_, UserSchema>(r#"SELECT * FROM users WHERE account = ?"#)
-            .bind(account)
-            .fetch_optional(pool)
-            .await
-            .map_err(|e| Error::Sqlx { source: e })?;
+        let result = sqlx::query_as::<_, UserSchema>(
+            r#"SELECT * FROM users WHERE account = ? AND deleted_at IS NULL"#,
+        )
+        .bind(account)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
 
         Ok(result.map(|user| user.into()))
     }
@@ -244,7 +243,7 @@ impl User {
                 roles = COALESCE(?, roles),
                 `groups` = COALESCE(?, `groups`),
                 status = COALESCE(?, status)
-            WHERE id = ?
+            WHERE id = ? AND deleted_at IS NULL
             "#,
         )
         .bind(params.email.as_deref())
@@ -268,8 +267,8 @@ impl User {
             r#"
             UPDATE users SET 
                 email = COALESCE(?, email),
-                avatar = COALESCE(?, avatar),
-            WHERE account = ?
+                avatar = COALESCE(?, avatar)
+            WHERE account = ? AND deleted_at IS NULL
             "#,
         )
         .bind(params.email.as_deref())
@@ -282,7 +281,7 @@ impl User {
     }
 
     fn condition_sql(params: &ModelListParams) -> Result<Option<String>> {
-        let mut where_conditions = vec![];
+        let mut where_conditions = vec!["deleted_at IS NULL".to_string()];
 
         if let Some(filters) = params.parse_filters()? {
             if let Some(status) = filters.get("status") {

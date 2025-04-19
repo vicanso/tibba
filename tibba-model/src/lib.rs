@@ -82,10 +82,12 @@ impl ModelListParams {
     }
 }
 
+mod configuration;
 mod file;
 mod schema;
 mod user;
 
+pub use configuration::*;
 pub use file::*;
 pub use schema::*;
 pub use user::*;

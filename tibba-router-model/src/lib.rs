@@ -21,7 +21,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::MySqlPool;
 use std::time::Duration;
-use tibba_model::{File, ModelListParams, SchemaView, User};
+use tibba_model::{Configuration, File, ModelListParams, SchemaView, User};
 use tibba_session::AdminSession;
 use tibba_util::{CacheJsonResult, JsonParams, JsonResult, QueryParams};
 use tibba_validator::x_schema_name;
@@ -79,6 +79,18 @@ async fn list_model(
                     "items": users,
                 })
         }
+        "configuration" => {
+            let count = if params.count {
+                Configuration::count(pool, &query_params).await?
+            } else {
+                -1
+            };
+            let configurations = Configuration::list(pool, &query_params).await?;
+            json!({
+            "count": count,
+                    "items": configurations,
+                })
+        }
         _ => {
             let count = if params.count {
                 File::count(pool, &query_params).await?
@@ -111,6 +123,10 @@ async fn get_detail(
             let user = User::get_by_id(pool, params.id).await?;
             json!(user)
         }
+        "configuration" => {
+            let configuration = Configuration::get_by_id(pool, params.id).await?;
+            json!(configuration)
+        }
         _ => {
             let file = File::get_by_id(pool, params.id).await?;
             json!(file)
@@ -137,6 +153,9 @@ async fn delete_model(
         "user" => {
             User::delete_by_id(pool, params.id).await?;
         }
+        "configuration" => {
+            Configuration::delete_by_id(pool, params.id).await?;
+        }
         _ => {
             File::delete_by_id(pool, params.id).await?;
         }
@@ -159,6 +178,9 @@ async fn update_model(
     match params.model.as_str() {
         "user" => {
             User::update_by_id(pool, params.id, params.data.into()).await?;
+        }
+        "configuration" => {
+            Configuration::update_by_id(pool, params.id, params.data.into()).await?;
         }
         _ => {
             File::update_by_id(pool, params.id, params.data.into()).await?;

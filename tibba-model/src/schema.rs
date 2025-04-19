@@ -14,6 +14,12 @@
 
 use serde::{Deserialize, Serialize, Serializer};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Status {
+    Disabled = 0,
+    Enabled = 1,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum SchemaType {

@@ -15,6 +15,8 @@ CREATE TABLE `files` (
     
     `created` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `modified` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    `deleted_at` DATETIME DEFAULT NULL COMMENT '软删除时间',
     PRIMARY KEY (`id`) COMMENT '主键',
-    UNIQUE KEY `file_name` (`filename`)
+    UNIQUE KEY `file_name` (`filename`, `deleted_at`) COMMENT '文件名唯一索引（仅对未删除记录生效）',
+    KEY `idx_deleted_at` (`deleted_at`) COMMENT '软删除索引'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT="文件表";
