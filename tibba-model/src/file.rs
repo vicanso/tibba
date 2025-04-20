@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use super::{
-    Error, ModelListParams, ROLE_ADMIN, ROLE_SUPER_ADMIN, Schema, SchemaAllowEdit, SchemaOption,
-    SchemaOptionValue, SchemaType, SchemaView, format_datetime,
+    Error, ModelListParams, ROLE_ADMIN, ROLE_SUPER_ADMIN, Schema, SchemaAllowCreate,
+    SchemaAllowEdit, SchemaOption, SchemaOptionValue, SchemaType, SchemaView, format_datetime,
 };
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
@@ -194,6 +194,10 @@ impl File {
                 owner: true,
                 groups: vec![],
                 roles: vec![ROLE_SUPER_ADMIN.to_string(), ROLE_ADMIN.to_string()],
+            },
+            allow_create: SchemaAllowCreate {
+                roles: vec!["*".to_string()],
+                ..Default::default()
             },
         }
     }

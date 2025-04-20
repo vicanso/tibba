@@ -178,6 +178,7 @@ impl User {
                 groups: vec![],
                 roles: vec![ROLE_SUPER_ADMIN.to_string()],
             },
+            ..Default::default()
         }
     }
     pub async fn insert(pool: &Pool<MySql>, account: &str, password: &str) -> Result<u64> {

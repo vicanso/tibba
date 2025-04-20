@@ -91,21 +91,30 @@ pub struct SchemaAllowEdit {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct SchemaAllowCreate {
+    pub groups: Vec<String>,
+    pub roles: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct Schema {
     pub name: String,
     pub category: SchemaType,
     pub identity: bool,
     pub read_only: bool,
+    pub auto_create: bool,
     pub required: bool,
     pub fixed: bool,
     pub options: Option<Vec<SchemaOption>>,
     pub hidden: bool,
     pub sortable: bool,
     pub filterable: bool,
+    pub span: Option<u8>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct SchemaView {
     pub schemas: Vec<Schema>,
     pub allow_edit: SchemaAllowEdit,
+    pub allow_create: SchemaAllowCreate,
 }

@@ -16,7 +16,7 @@ use axum::Json;
 use axum::Router;
 use axum::extract::State;
 use axum::http::StatusCode;
-use axum::routing::{delete, get, patch};
+use axum::routing::{delete, get, patch, post};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::MySqlPool;
@@ -38,7 +38,9 @@ async fn get_schema(
 ) -> CacheJsonResult<SchemaView> {
     let view = match params.name.as_str() {
         "user" => User::schema_view(),
-        _ => File::schema_view(),
+        "configuration" => Configuration::schema_view(),
+        "file" => File::schema_view(),
+        _ => return Err(tibba_error::new_error("The schema is not found").into()),
     };
     Ok((Duration::from_secs(5 * 60), view).into())
 }
@@ -91,7 +93,7 @@ async fn list_model(
                     "items": configurations,
                 })
         }
-        _ => {
+        "file" => {
             let count = if params.count {
                 File::count(pool, &query_params).await?
             } else {
@@ -102,6 +104,9 @@ async fn list_model(
             "count": count,
                     "items": files,
                 })
+        }
+        _ => {
+            return Err(tibba_error::new_error("The model is not supported").into());
         }
     };
     Ok(Json(value))
@@ -127,9 +132,12 @@ async fn get_detail(
             let configuration = Configuration::get_by_id(pool, params.id).await?;
             json!(configuration)
         }
-        _ => {
+        "file" => {
             let file = File::get_by_id(pool, params.id).await?;
             json!(file)
+        }
+        _ => {
+            return Err(tibba_error::new_error("The model is not supported").into());
         }
     };
     if data.is_null() {
@@ -156,8 +164,11 @@ async fn delete_model(
         "configuration" => {
             Configuration::delete_by_id(pool, params.id).await?;
         }
-        _ => {
+        "file" => {
             File::delete_by_id(pool, params.id).await?;
+        }
+        _ => {
+            return Err(tibba_error::new_error("The model is not supported").into());
         }
     }
     Ok(StatusCode::NO_CONTENT)
@@ -182,11 +193,36 @@ async fn update_model(
         "configuration" => {
             Configuration::update_by_id(pool, params.id, params.data.into()).await?;
         }
-        _ => {
+        "file" => {
             File::update_by_id(pool, params.id, params.data.into()).await?;
+        }
+        _ => {
+            return Err(tibba_error::new_error("The model is not supported").into());
         }
     }
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize, Validate)]
+struct CreateModelParams {
+    model: String,
+    data: Value,
+}
+
+async fn create_model(
+    State(pool): State<&'static MySqlPool>,
+    _session: AdminSession,
+    JsonParams(params): JsonParams<CreateModelParams>,
+) -> JsonResult<Value> {
+    let id = match params.model.as_str() {
+        "configuration" => Configuration::insert(pool, params.data.into()).await?,
+        _ => {
+            return Err(tibba_error::new_error("The model is not supported").into());
+        }
+    };
+    Ok(Json(json!({
+        "id": id,
+    })))
 }
 
 pub struct ModelRouterParams {
@@ -200,4 +236,5 @@ pub fn new_model_router(params: ModelRouterParams) -> Router {
         .route("/detail", get(get_detail).with_state(params.pool))
         .route("/delete", delete(delete_model).with_state(params.pool))
         .route("/update", patch(update_model).with_state(params.pool))
+        .route("/create", post(create_model).with_state(params.pool))
 }

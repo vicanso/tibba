@@ -14,7 +14,8 @@
 
 use super::user::{ROLE_ADMIN, ROLE_SUPER_ADMIN};
 use super::{
-    Error, ModelListParams, Schema, SchemaAllowEdit, SchemaType, SchemaView, format_datetime,
+    Error, ModelListParams, Schema, SchemaAllowCreate, SchemaAllowEdit, SchemaType, SchemaView,
+    format_datetime,
 };
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
@@ -32,6 +33,8 @@ struct ConfigurationSchema {
     name: String,
     data: String,
     description: Option<String>,
+    effective_start_time: OffsetDateTime,
+    effective_end_time: OffsetDateTime,
     created: OffsetDateTime,
     modified: OffsetDateTime,
 }
@@ -44,6 +47,8 @@ pub struct Configuration {
     pub name: String,
     pub data: String,
     pub description: Option<String>,
+    pub effective_start_time: String,
+    pub effective_end_time: String,
     pub created: String,
     pub modified: String,
 }
@@ -57,6 +62,8 @@ impl From<ConfigurationSchema> for Configuration {
             name: schema.name,
             data: schema.data,
             description: schema.description,
+            effective_start_time: format_datetime(schema.effective_start_time),
+            effective_end_time: format_datetime(schema.effective_end_time),
             created: format_datetime(schema.created),
             modified: format_datetime(schema.modified),
         }
@@ -69,6 +76,44 @@ pub struct ConfigurationInsertParams {
     pub name: String,
     pub data: String,
     pub description: Option<String>,
+    pub effective_start_time: String,
+    pub effective_end_time: String,
+}
+
+impl From<serde_json::Value> for ConfigurationInsertParams {
+    fn from(value: serde_json::Value) -> Self {
+        ConfigurationInsertParams {
+            category: value
+                .get("category")
+                .and_then(|v| v.as_str())
+                .map(String::from)
+                .unwrap_or_default(),
+            name: value
+                .get("name")
+                .and_then(|v| v.as_str())
+                .map(String::from)
+                .unwrap_or_default(),
+            data: value
+                .get("data")
+                .and_then(|v| v.as_str())
+                .map(String::from)
+                .unwrap_or_default(),
+            description: value
+                .get("description")
+                .and_then(|v| v.as_str())
+                .map(String::from),
+            effective_start_time: value
+                .get("effective_start_time")
+                .and_then(|v| v.as_str())
+                .map(String::from)
+                .unwrap_or_default(),
+            effective_end_time: value
+                .get("effective_end_time")
+                .and_then(|v| v.as_str())
+                .map(String::from)
+                .unwrap_or_default(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -76,6 +121,8 @@ pub struct ConfigurationUpdateParams {
     pub data: Option<String>,
     pub description: Option<String>,
     pub status: Option<i8>,
+    pub effective_start_time: Option<String>,
+    pub effective_end_time: Option<String>,
 }
 
 impl From<serde_json::Value> for ConfigurationUpdateParams {
@@ -90,6 +137,14 @@ impl From<serde_json::Value> for ConfigurationUpdateParams {
                 .get("status")
                 .and_then(|v| v.as_i64())
                 .map(|status| status as i8),
+            effective_start_time: value
+                .get("effective_start_time")
+                .and_then(|v| v.as_str())
+                .map(String::from),
+            effective_end_time: value
+                .get("effective_end_time")
+                .and_then(|v| v.as_str())
+                .map(String::from),
         }
     }
 }
@@ -104,6 +159,7 @@ impl Configuration {
                     read_only: true,
                     required: true,
                     hidden: true,
+                    auto_create: true,
                     ..Default::default()
                 },
                 Schema {
@@ -123,8 +179,27 @@ impl Configuration {
                     ..Default::default()
                 },
                 Schema {
+                    name: "effective_start_time".to_string(),
+                    category: SchemaType::Date,
+                    required: true,
+                    ..Default::default()
+                },
+                Schema {
+                    name: "effective_end_time".to_string(),
+                    category: SchemaType::Date,
+                    required: true,
+                    ..Default::default()
+                },
+                Schema {
                     name: "data".to_string(),
-                    category: SchemaType::String,
+                    category: SchemaType::Json,
+                    span: Some(2),
+                    ..Default::default()
+                },
+                Schema {
+                    name: "status".to_string(),
+                    category: SchemaType::Status,
+                    required: true,
                     ..Default::default()
                 },
                 Schema {
@@ -137,6 +212,7 @@ impl Configuration {
                     category: SchemaType::Date,
                     read_only: true,
                     hidden: true,
+                    auto_create: true,
                     ..Default::default()
                 },
                 Schema {
@@ -144,6 +220,7 @@ impl Configuration {
                     category: SchemaType::Date,
                     read_only: true,
                     sortable: true,
+                    auto_create: true,
                     ..Default::default()
                 },
             ],
@@ -151,6 +228,10 @@ impl Configuration {
                 owner: true,
                 groups: vec![],
                 roles: vec![ROLE_SUPER_ADMIN.to_string(), ROLE_ADMIN.to_string()],
+            },
+            allow_create: SchemaAllowCreate {
+                roles: vec![ROLE_SUPER_ADMIN.to_string(), ROLE_ADMIN.to_string()],
+                ..Default::default()
             },
         }
     }
@@ -178,12 +259,14 @@ impl Configuration {
     pub async fn insert(pool: &Pool<MySql>, params: ConfigurationInsertParams) -> Result<u64> {
         let id = sqlx::query(
             r#"
-            INSERT INTO configurations (category, name, data, description) VALUES (?, ?, ?, ?)"#,
+            INSERT INTO configurations (category, name, data, description, effective_start_time, effective_end_time) VALUES (?, ?, ?, ?, ?, ?)"#,
         )
         .bind(params.category)
         .bind(params.name)
         .bind(params.data)
         .bind(params.description)
+        .bind(params.effective_start_time)
+        .bind(params.effective_end_time)
         .execute(pool)
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
@@ -221,11 +304,13 @@ impl Configuration {
         params: ConfigurationUpdateParams,
     ) -> Result<()> {
         let _ = sqlx::query(
-            r#"UPDATE configurations SET data = ?, description = ?, status = ? WHERE id = ? AND deleted_at IS NULL"#,
+            r#"UPDATE configurations SET data = COALESCE(?, data), description = COALESCE(?, description), status = COALESCE(?, status), effective_start_time = COALESCE(?, effective_start_time), effective_end_time = COALESCE(?, effective_end_time) WHERE id = ? AND deleted_at IS NULL"#,
         )
         .bind(params.data)
         .bind(params.description)
         .bind(params.status)
+        .bind(params.effective_start_time)
+        .bind(params.effective_end_time)
         .bind(id)
         .execute(pool)
         .await
