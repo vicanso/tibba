@@ -15,7 +15,7 @@
 use super::user::{ROLE_ADMIN, ROLE_SUPER_ADMIN};
 use super::{
     Error, ModelListParams, Schema, SchemaAllowCreate, SchemaAllowEdit, SchemaType, SchemaView,
-    format_datetime,
+    format_datetime, new_schema_options,
 };
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
@@ -76,6 +76,7 @@ pub struct ConfigurationInsertParams {
     pub name: String,
     pub data: String,
     pub description: Option<String>,
+    pub status: i8,
     pub effective_start_time: String,
     pub effective_end_time: String,
 }
@@ -111,6 +112,11 @@ impl From<serde_json::Value> for ConfigurationInsertParams {
                 .get("effective_end_time")
                 .and_then(|v| v.as_str())
                 .map(String::from)
+                .unwrap_or_default(),
+            status: value
+                .get("status")
+                .and_then(|v| v.as_i64())
+                .map(|status| status as i8)
                 .unwrap_or_default(),
         }
     }
@@ -168,6 +174,13 @@ impl Configuration {
                     required: true,
                     read_only: true,
                     filterable: true,
+                    options: Some(new_schema_options(&[
+                        "common",
+                        "file_headers",
+                        "app",
+                        "user",
+                        "system",
+                    ])),
                     ..Default::default()
                 },
                 Schema {
@@ -259,12 +272,13 @@ impl Configuration {
     pub async fn insert(pool: &Pool<MySql>, params: ConfigurationInsertParams) -> Result<u64> {
         let id = sqlx::query(
             r#"
-            INSERT INTO configurations (category, name, data, description, effective_start_time, effective_end_time) VALUES (?, ?, ?, ?, ?, ?)"#,
+            INSERT INTO configurations (category, name, data, description, status, effective_start_time, effective_end_time) VALUES (?, ?, ?, ?, ?, ?, ?)"#,
         )
         .bind(params.category)
         .bind(params.name)
         .bind(params.data)
         .bind(params.description)
+        .bind(params.status)
         .bind(params.effective_start_time)
         .bind(params.effective_end_time)
         .execute(pool)

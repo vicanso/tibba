@@ -12,6 +12,5 @@ CREATE TABLE `configurations` (
   `deleted_at` DATETIME DEFAULT NULL COMMENT '软删除时间',
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_category_name` (`category`,`name`, `deleted_at`) COMMENT '配置类型和名称唯一索引（仅对未删除记录生效）',
-  KEY `idx_deleted_at` (`deleted_at`) COMMENT '软删除索引',
-  KEY `idx_effective_time` (`effective_start_time`, `effective_end_time`) COMMENT '生效时间索引'
+  KEY `idx_effective_time` (`status`, `effective_start_time`, `effective_end_time`, `deleted_at`) COMMENT '状态和生效时间索引（包含软删除）'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='系统配置表';
