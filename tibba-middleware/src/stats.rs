@@ -17,7 +17,7 @@ use axum::extract::Request;
 use axum::extract::State;
 use axum::middleware::Next;
 use axum::response::Response;
-use axum_client_ip::InsecureClientIp;
+use axum_client_ip::ClientIp;
 use scopeguard::defer;
 use tibba_error::{Error, new_error};
 use tibba_state::{AppState, CTX};
@@ -44,7 +44,7 @@ type Result<T> = std::result::Result<T, Error>;
 /// * `next` - The next middleware in the chain
 pub async fn stats(
     State(state): State<&AppState>,
-    InsecureClientIp(ip): InsecureClientIp,
+    ClientIp(ip): ClientIp,
     req: Request,
     next: Next,
 ) -> Result<Response> {

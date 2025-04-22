@@ -31,6 +31,7 @@ once_cell = { workspace = true }
 tower = { workspace = true }
 ctor = "0.4.0"
 validator = { workspace = true }
+axum-client-ip = { workspace = true }
 
 [profile.release]
 codegen-units = 1

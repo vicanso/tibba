@@ -16,10 +16,12 @@ use super::{
     Error, ModelListParams, ROLE_ADMIN, ROLE_SUPER_ADMIN, Schema, SchemaAllowCreate,
     SchemaAllowEdit, SchemaOption, SchemaOptionValue, SchemaType, SchemaView, format_datetime,
 };
+use http::header::{HeaderMap, HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use sqlx::types::Json;
 use sqlx::{MySql, Pool};
+use std::str::FromStr;
 use substring::Substring;
 use time::OffsetDateTime;
 
@@ -72,7 +74,28 @@ impl From<FileSchema> for File {
         }
     }
 }
-
+impl File {
+    pub fn get_metadata(&self) -> Option<HeaderMap> {
+        let mut headers = HeaderMap::with_capacity(4);
+        let Some(metadata) = &self.metadata else {
+            return None;
+        };
+        let obj = metadata.as_object()?;
+        for (key, value) in obj.iter() {
+            let Some(value_str) = value.as_str() else {
+                continue;
+            };
+            let Ok(header_value) = HeaderValue::from_str(value_str) else {
+                continue;
+            };
+            let Ok(header_name) = HeaderName::from_str(key) else {
+                continue;
+            };
+            headers.insert(header_name, header_value);
+        }
+        Some(headers)
+    }
+}
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct FileInsertParams {
     pub group: String,
@@ -255,6 +278,18 @@ impl File {
             r#"SELECT * FROM files WHERE id = ? AND deleted_at IS NULL"#,
         )
         .bind(id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+
+        Ok(result.map(|file| file.into()))
+    }
+
+    pub async fn get_by_name(pool: &Pool<MySql>, name: &str) -> Result<Option<Self>> {
+        let result = sqlx::query_as::<_, FileSchema>(
+            r#"SELECT * FROM files WHERE filename = ? AND deleted_at IS NULL"#,
+        )
+        .bind(name)
         .fetch_optional(pool)
         .await
         .map_err(|e| Error::Sqlx { source: e })?;

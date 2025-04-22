@@ -17,6 +17,7 @@ use crate::state::get_app_state;
 use axum::Router;
 use axum::error_handling::HandleErrorLayer;
 use axum::middleware::from_fn_with_state;
+use axum_client_ip::ClientIpSource;
 use std::env;
 use std::net::SocketAddr;
 use std::str::FromStr;
@@ -75,6 +76,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             ServiceBuilder::new()
                 .layer(HandleErrorLayer::new(handle_error))
                 .timeout(basic_config.timeout)
+                // TODO 使用 RightmostXForwardedFor 代替 ConnectInfo
+                .layer(ClientIpSource::ConnectInfo.into_extension())
                 .layer(from_fn_with_state(get_app_state(), entry))
                 .layer(from_fn_with_state(get_app_state(), stats))
                 .layer(from_fn_with_state(

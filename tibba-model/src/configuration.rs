@@ -169,6 +169,15 @@ impl Configuration {
                     ..Default::default()
                 },
                 Schema {
+                    name: "name".to_string(),
+                    category: SchemaType::String,
+                    required: true,
+                    read_only: true,
+                    filterable: true,
+                    fixed: true,
+                    ..Default::default()
+                },
+                Schema {
                     name: "category".to_string(),
                     category: SchemaType::String,
                     required: true,
@@ -181,14 +190,6 @@ impl Configuration {
                         "user",
                         "system",
                     ])),
-                    ..Default::default()
-                },
-                Schema {
-                    name: "name".to_string(),
-                    category: SchemaType::String,
-                    required: true,
-                    read_only: true,
-                    filterable: true,
                     ..Default::default()
                 },
                 Schema {

@@ -104,9 +104,12 @@ struct GetFileParams {
 }
 
 async fn get_file(
-    State(storage): State<&'static Storage>,
+    State((storage, pool)): State<(&'static Storage, &'static MySqlPool)>,
     QueryParams(params): QueryParams<GetFileParams>,
 ) -> Result<impl IntoResponse> {
+    let file = File::get_by_name(pool, &params.name)
+        .await?
+        .ok_or(new_error("file not found").with_category(ERROR_CATEGORY))?;
     let stat = storage.stat(&params.name).await?;
     let data = storage.read(&params.name).await?;
 
@@ -120,6 +123,10 @@ async fn get_file(
     if size > 0 {
         headers.insert(header::CONTENT_LENGTH, HeaderValue::from(size));
     }
+    let Some(metadata) = file.get_metadata() else {
+        return Ok((headers, data.to_bytes()));
+    };
+    headers.extend(metadata);
 
     Ok((headers, data.to_bytes()))
 }
@@ -135,5 +142,8 @@ pub fn new_file_router(params: FileRouterParams) -> Router {
             "/upload",
             post(create_file).with_state((params.storage, params.pool)),
         )
-        .route("/preview", get(get_file).with_state(params.storage))
+        .route(
+            "/preview",
+            get(get_file).with_state((params.storage, params.pool)),
+        )
 }

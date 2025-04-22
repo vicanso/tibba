@@ -17,7 +17,7 @@ use axum::extract::State;
 use axum::middleware::Next;
 use axum::response::IntoResponse;
 use axum::response::Response;
-use axum_client_ip::InsecureClientIp;
+use axum_client_ip::ClientIp;
 use scopeguard::defer;
 use std::net::IpAddr;
 use std::time::Duration;
@@ -153,7 +153,7 @@ fn get_limit_params(req: &Request, ip: IpAddr, params: &LimitParams) -> (String,
 /// Middleware that limits requests only when errors occur
 /// Increments counter only for responses with status code >= 400
 pub async fn error_limiter(
-    InsecureClientIp(ip): InsecureClientIp,
+    ClientIp(ip): ClientIp,
     State(params): State<LimitParams>,
     State(cache): State<&'static RedisCache>,
     req: Request,
@@ -182,7 +182,7 @@ pub async fn error_limiter(
 /// Standard rate limiting middleware
 /// Increments counter for every request regardless of response status
 pub async fn limiter(
-    InsecureClientIp(ip): InsecureClientIp,
+    ClientIp(ip): ClientIp,
     State(params): State<LimitParams>,
     State(cache): State<&'static RedisCache>,
     req: Request,
