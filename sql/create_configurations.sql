@@ -3,7 +3,7 @@ CREATE TABLE `configurations` (
   `status` TINYINT NOT NULL DEFAULT '0' COMMENT '状态，0：禁用，1：启用',
   `category` VARCHAR(50) NOT NULL COMMENT '配置类型',
   `name` VARCHAR(100) NOT NULL COMMENT '配置名称',
-  `data` TEXT NOT NULL COMMENT '配置数据',
+  `data` JSON NOT NULL COMMENT '配置数据',
   `description` VARCHAR(255) DEFAULT NULL COMMENT '配置描述',
   `effective_start_time` DATETIME NOT NULL COMMENT '生效开始时间',
   `effective_end_time` DATETIME NOT NULL COMMENT '生效结束时间',

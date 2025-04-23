@@ -12,14 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::collections::HashMap;
+
 use super::user::{ROLE_ADMIN, ROLE_SUPER_ADMIN};
 use super::{
     Error, ModelListParams, Schema, SchemaAllowCreate, SchemaAllowEdit, SchemaType, SchemaView,
     format_datetime, new_schema_options,
 };
+use http::header::{HeaderMap, HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
+use sqlx::types::Json;
 use sqlx::{MySql, Pool};
+use std::str::FromStr;
 use substring::Substring;
 use time::OffsetDateTime;
 
@@ -31,7 +36,7 @@ struct ConfigurationSchema {
     status: i8,
     category: String,
     name: String,
-    data: String,
+    data: Json<serde_json::Value>,
     description: Option<String>,
     effective_start_time: OffsetDateTime,
     effective_end_time: OffsetDateTime,
@@ -45,7 +50,7 @@ pub struct Configuration {
     pub status: i8,
     pub category: String,
     pub name: String,
-    pub data: String,
+    pub data: HashMap<String, serde_json::Value>,
     pub description: Option<String>,
     pub effective_start_time: String,
     pub effective_end_time: String,
@@ -60,7 +65,7 @@ impl From<ConfigurationSchema> for Configuration {
             status: schema.status,
             category: schema.category,
             name: schema.name,
-            data: schema.data,
+            data: serde_json::from_value(schema.data.0).unwrap_or_default(),
             description: schema.description,
             effective_start_time: format_datetime(schema.effective_start_time),
             effective_end_time: format_datetime(schema.effective_end_time),
@@ -74,7 +79,7 @@ impl From<ConfigurationSchema> for Configuration {
 pub struct ConfigurationInsertParams {
     pub category: String,
     pub name: String,
-    pub data: String,
+    pub data: serde_json::Value,
     pub description: Option<String>,
     pub status: i8,
     pub effective_start_time: String,
@@ -96,9 +101,8 @@ impl From<serde_json::Value> for ConfigurationInsertParams {
                 .unwrap_or_default(),
             data: value
                 .get("data")
-                .and_then(|v| v.as_str())
-                .map(String::from)
-                .unwrap_or_default(),
+                .unwrap_or(&serde_json::Value::Null)
+                .clone(),
             description: value
                 .get("description")
                 .and_then(|v| v.as_str())
@@ -124,7 +128,7 @@ impl From<serde_json::Value> for ConfigurationInsertParams {
 
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct ConfigurationUpdateParams {
-    pub data: Option<String>,
+    pub data: Option<serde_json::Value>,
     pub description: Option<String>,
     pub status: Option<i8>,
     pub effective_start_time: Option<String>,
@@ -134,7 +138,7 @@ pub struct ConfigurationUpdateParams {
 impl From<serde_json::Value> for ConfigurationUpdateParams {
     fn from(value: serde_json::Value) -> Self {
         ConfigurationUpdateParams {
-            data: value.get("data").and_then(|v| v.as_str()).map(String::from),
+            data: value.get("data").cloned(),
             description: value
                 .get("description")
                 .and_then(|v| v.as_str())
@@ -208,6 +212,7 @@ impl Configuration {
                     name: "data".to_string(),
                     category: SchemaType::Json,
                     span: Some(2),
+                    required: true,
                     ..Default::default()
                 },
                 Schema {
@@ -345,6 +350,46 @@ impl Configuration {
             .map_err(|e| Error::Sqlx { source: e })?;
 
         Ok(count)
+    }
+
+    pub async fn get_file_headers(pool: &Pool<MySql>, name: &str) -> Result<Option<HeaderMap>> {
+        let now = OffsetDateTime::now_utc();
+        let configurations = sqlx::query_as::<_, ConfigurationSchema>(
+            r#"SELECT * FROM configurations 
+               WHERE category = 'file_headers' 
+               AND name = ? 
+               AND deleted_at IS NULL
+               AND effective_start_time <= ?
+               AND effective_end_time >= ?"#,
+        )
+        .bind(name)
+        .bind(now)
+        .bind(now)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+
+        let mut headers = HeaderMap::new();
+
+        for configuration in configurations {
+            let data = configuration.data;
+            let Some(data) = data.as_object() else {
+                continue;
+            };
+            for (key, value) in data.iter() {
+                let Some(value_str) = value.as_str() else {
+                    continue;
+                };
+                let Ok(header_value) = HeaderValue::from_str(value_str) else {
+                    continue;
+                };
+                let Ok(header_name) = HeaderName::from_str(key) else {
+                    continue;
+                };
+                headers.insert(header_name, header_value);
+            }
+        }
+        Ok(Some(headers))
     }
 
     pub async fn list(pool: &Pool<MySql>, params: &ModelListParams) -> Result<Vec<Self>> {

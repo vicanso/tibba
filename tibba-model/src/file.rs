@@ -76,11 +76,11 @@ impl From<FileSchema> for File {
 }
 impl File {
     pub fn get_metadata(&self) -> Option<HeaderMap> {
-        let mut headers = HeaderMap::with_capacity(4);
         let Some(metadata) = &self.metadata else {
             return None;
         };
         let obj = metadata.as_object()?;
+        let mut headers = HeaderMap::with_capacity(obj.len());
         for (key, value) in obj.iter() {
             let Some(value_str) = value.as_str() else {
                 continue;
@@ -196,6 +196,7 @@ impl File {
                 Schema {
                     name: "metadata".to_string(),
                     category: SchemaType::Json,
+                    span: Some(2),
                     ..Default::default()
                 },
                 Schema {

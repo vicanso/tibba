@@ -21,3 +21,4 @@ tibba-error = { path = "../tibba-error" }
 tibba-validator = { path = "../tibba-validator" }
 tibba-session = { path = "../tibba-session" }
 tibba-model = { path = "../tibba-model" }
+imageoptimize = "0.2.0"

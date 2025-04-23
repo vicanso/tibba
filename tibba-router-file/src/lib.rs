@@ -20,16 +20,17 @@ use axum::http::HeaderValue;
 use axum::http::header;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
+use imageoptimize::{Process, ProcessImage};
 use serde::Deserialize;
 use sqlx::MySqlPool;
 use std::collections::HashMap;
 use std::path::Path;
 use tibba_error::{Error, new_error};
-use tibba_model::{File, FileInsertParams};
+use tibba_model::{Configuration, File, FileInsertParams};
 use tibba_opendal::Storage;
 use tibba_session::UserSession;
 use tibba_util::{JsonResult, QueryParams, uuid};
-use tibba_validator::{x_file_group, x_file_name};
+use tibba_validator::{x_file_group, x_file_name, x_image_format, x_image_quality};
 use validator::Validate;
 
 type Result<T> = std::result::Result<T, Error>;
@@ -101,6 +102,11 @@ async fn create_file(
 struct GetFileParams {
     #[validate(custom(function = "x_file_name"))]
     name: String,
+    #[validate(custom(function = "x_image_format"))]
+    format: Option<String>,
+    #[validate(custom(function = "x_image_quality"))]
+    quality: Option<u8>,
+    optimize: Option<bool>,
 }
 
 async fn get_file(
@@ -110,23 +116,43 @@ async fn get_file(
     let file = File::get_by_name(pool, &params.name)
         .await?
         .ok_or(new_error("file not found").with_category(ERROR_CATEGORY))?;
-    let stat = storage.stat(&params.name).await?;
-    let data = storage.read(&params.name).await?;
-
-    let mut headers = header::HeaderMap::with_capacity(4);
-    if let Some(content_type) = stat.content_type() {
-        if let Ok(header_value) = HeaderValue::from_str(content_type) {
-            headers.insert(header::CONTENT_TYPE, header_value);
+    let mut data = storage.read(&params.name).await?;
+    let mut content_type = file.content_type.clone();
+    let ext = content_type.split("/").last().unwrap_or_default();
+    let format = params.format.unwrap_or(ext.to_string());
+    if params.optimize.unwrap_or(true) && content_type.starts_with("image") {
+        let image = ProcessImage::new(data.to_vec(), ext)
+            .map_err(|e| new_error(&e.to_string()).with_category(ERROR_CATEGORY))?;
+        let process =
+            imageoptimize::OptimProcess::new(format.as_str(), params.quality.unwrap_or(80), 3);
+        let image = process
+            .process(image)
+            .await
+            .map_err(|e| new_error(&e.to_string()).with_category(ERROR_CATEGORY))?;
+        data = image
+            .get_buffer()
+            .map_err(|e| new_error(&e.to_string()).with_category(ERROR_CATEGORY))?
+            .into();
+        if let Some(mime_type) = mime_guess::from_ext(format.as_str()).first() {
+            content_type = mime_type.to_string();
         }
     }
-    let size = stat.content_length();
+
+    let mut headers = header::HeaderMap::with_capacity(4);
+    if let Ok(header_value) = HeaderValue::from_str(&content_type) {
+        headers.insert(header::CONTENT_TYPE, header_value);
+    }
+    let size = data.len();
     if size > 0 {
         headers.insert(header::CONTENT_LENGTH, HeaderValue::from(size));
     }
-    let Some(metadata) = file.get_metadata() else {
+    if let Some(metadata) = file.get_metadata() {
+        headers.extend(metadata);
+    }
+    let Some(file_headers) = Configuration::get_file_headers(pool, &file.group).await? else {
         return Ok((headers, data.to_bytes()));
     };
-    headers.extend(metadata);
+    headers.extend(file_headers);
 
     Ok((headers, data.to_bytes()))
 }

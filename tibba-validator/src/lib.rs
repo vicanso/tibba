@@ -36,5 +36,7 @@ pub const CODE_SHA256: &str = "x-sha256";
 pub const CODE_FILE_NAME: &str = "x-file-name";
 pub const CODE_FILE_GROUP: &str = "x-file-group";
 pub const CODE_SCHEMA_NAME: &str = "x-schema-name";
+pub const CODE_IMAGE_FORMAT: &str = "x-image-format";
+pub const CODE_IMAGE_QUALITY: &str = "x-image-quality";
 pub use common::*;
 pub use user::*;

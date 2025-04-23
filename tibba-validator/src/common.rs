@@ -14,7 +14,8 @@
 
 use super::is_disabled;
 use super::{
-    CODE_FILE_GROUP, CODE_FILE_NAME, CODE_LISTEN_ADDR, CODE_SCHEMA_NAME, CODE_SHA256, CODE_UUID,
+    CODE_FILE_GROUP, CODE_FILE_NAME, CODE_IMAGE_FORMAT, CODE_IMAGE_QUALITY, CODE_LISTEN_ADDR,
+    CODE_SCHEMA_NAME, CODE_SHA256, CODE_UUID,
 };
 use std::borrow::Cow;
 use std::net::ToSocketAddrs;
@@ -111,6 +112,29 @@ pub fn x_file_group(group: &str) -> Result<()> {
     if group.len() > 100 {
         return Err(ValidationError::new(CODE_FILE_GROUP)
             .with_message(Cow::from("File group must be less than 100 characters")));
+    }
+    Ok(())
+}
+
+pub fn x_image_format(format: &str) -> Result<()> {
+    if is_disabled(CODE_IMAGE_FORMAT) {
+        return Ok(());
+    }
+    if !["avif", "webp", "png", "jpeg"].contains(&format) {
+        return Err(
+            ValidationError::new(CODE_IMAGE_FORMAT).with_message(Cow::from("Invalid image format"))
+        );
+    }
+    Ok(())
+}
+
+pub fn x_image_quality(quality: u8) -> Result<()> {
+    if is_disabled(CODE_IMAGE_QUALITY) {
+        return Ok(());
+    }
+    if !(50..=100).contains(&quality) {
+        return Err(ValidationError::new(CODE_IMAGE_QUALITY)
+            .with_message(Cow::from("Image quality must be between 50 and 100")));
     }
     Ok(())
 }
