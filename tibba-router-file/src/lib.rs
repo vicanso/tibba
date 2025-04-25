@@ -84,7 +84,10 @@ async fn create_file(
         };
 
         if content_type.type_() == "image" {
-            let image = image::load_from_memory(&data)
+            let format = image::guess_format(&data)
+                .map_err(|e| new_error(&e.to_string()).with_category(ERROR_CATEGORY))?;
+            params.content_type = format.to_mime_type().to_string();
+            let image = image::load_from_memory_with_format(&data, format)
                 .map_err(|e| new_error(&e.to_string()).with_category(ERROR_CATEGORY))?;
             params.width = Some(image.width());
             params.height = Some(image.height());
