@@ -189,7 +189,7 @@ impl Configuration {
                     filterable: true,
                     options: Some(new_schema_options(&[
                         "common",
-                        "file_headers",
+                        "response_headers",
                         "app",
                         "user",
                         "system",
@@ -352,11 +352,11 @@ impl Configuration {
         Ok(count)
     }
 
-    pub async fn get_file_headers(pool: &Pool<MySql>, name: &str) -> Result<Option<HeaderMap>> {
+    pub async fn get_response_headers(pool: &Pool<MySql>, name: &str) -> Result<Option<HeaderMap>> {
         let now = OffsetDateTime::now_utc();
         let configurations = sqlx::query_as::<_, ConfigurationSchema>(
             r#"SELECT * FROM configurations 
-               WHERE category = 'file_headers' 
+               WHERE category = 'response_headers' 
                AND name = ? 
                AND deleted_at IS NULL
                AND effective_start_time <= ?

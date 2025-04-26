@@ -20,7 +20,7 @@ use axum::http::HeaderValue;
 use axum::http::header;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
-use imageoptimize::{Process, ProcessImage};
+use imageoptimize::ProcessImage;
 use serde::Deserialize;
 use sqlx::MySqlPool;
 use std::collections::HashMap;
@@ -110,6 +110,8 @@ struct GetFileParams {
     #[validate(custom(function = "x_image_quality"))]
     quality: Option<u8>,
     optimize: Option<bool>,
+    width: Option<u32>,
+    height: Option<u32>,
 }
 
 async fn get_file(
@@ -123,15 +125,34 @@ async fn get_file(
     let mut content_type = file.content_type.clone();
     let ext = content_type.split("/").last().unwrap_or_default();
     let format = params.format.unwrap_or(ext.to_string());
+    let mut headers = header::HeaderMap::with_capacity(8);
     if params.optimize.unwrap_or(true) && content_type.starts_with("image") {
         let image = ProcessImage::new(data.to_vec(), ext)
             .map_err(|e| new_error(&e.to_string()).with_category(ERROR_CATEGORY))?;
-        let process =
-            imageoptimize::OptimProcess::new(format.as_str(), params.quality.unwrap_or(80), 3);
-        let image = process
-            .process(image)
+        let mut tasks = vec![];
+        if params.width.is_some() || params.height.is_some() {
+            tasks.push(vec![
+                "resize".to_string(),
+                params.width.unwrap_or(0).to_string(),
+                params.height.unwrap_or(0).to_string(),
+            ]);
+        }
+        tasks.push(vec![
+            "optim".to_string(),
+            format.clone(),
+            params.quality.unwrap_or(80).to_string(),
+            "3".to_string(),
+        ]);
+        tasks.push(vec!["diff".to_string()]);
+
+        let image = imageoptimize::run_with_image(image, tasks)
             .await
             .map_err(|e| new_error(&e.to_string()).with_category(ERROR_CATEGORY))?;
+
+        if let Ok(diff) = HeaderValue::from_str(&format!("{:.2}", image.diff)) {
+            headers.insert("X-Diff", diff);
+        }
+
         data = image
             .get_buffer()
             .map_err(|e| new_error(&e.to_string()).with_category(ERROR_CATEGORY))?
@@ -141,7 +162,6 @@ async fn get_file(
         }
     }
 
-    let mut headers = header::HeaderMap::with_capacity(4);
     if let Ok(header_value) = HeaderValue::from_str(&content_type) {
         headers.insert(header::CONTENT_TYPE, header_value);
     }
@@ -152,10 +172,11 @@ async fn get_file(
     if let Some(metadata) = file.get_metadata() {
         headers.extend(metadata);
     }
-    let Some(file_headers) = Configuration::get_file_headers(pool, &file.group).await? else {
+    let Some(response_headers) = Configuration::get_response_headers(pool, &file.group).await?
+    else {
         return Ok((headers, data.to_bytes()));
     };
-    headers.extend(file_headers);
+    headers.extend(response_headers);
 
     Ok((headers, data.to_bytes()))
 }
