@@ -16,9 +16,10 @@ use crate::config::must_get_config;
 use ctor::ctor;
 use once_cell::sync::OnceCell;
 use sqlx::MySqlPool;
+use std::sync::Arc;
 use tibba_error::new_error;
 use tibba_hook::register_before_task;
-use tibba_sql::new_mysql_pool;
+use tibba_sql::{PoolStat, new_mysql_pool};
 
 static DB_POOL: OnceCell<MySqlPool> = OnceCell::new();
 
@@ -35,7 +36,8 @@ fn init() {
         Box::new(|| {
             Box::pin(async {
                 let app_config = must_get_config();
-                let pool = new_mysql_pool(&app_config.sub_config("database"))
+                let stat = Arc::new(PoolStat::default());
+                let pool = new_mysql_pool(&app_config.sub_config("database"), Some(stat))
                     .await
                     .map_err(|e| new_error(&e.to_string()))?;
                 DB_POOL

@@ -107,6 +107,7 @@ pub struct Schema {
     pub fixed: bool,
     pub options: Option<Vec<SchemaOption>>,
     pub hidden: bool,
+    pub popover: bool,
     pub sortable: bool,
     pub filterable: bool,
     pub span: Option<u8>,

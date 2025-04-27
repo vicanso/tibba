@@ -15,6 +15,8 @@
 use snafu::Snafu;
 use sqlx::MySqlPool;
 use sqlx::pool::PoolOptions;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use tibba_config::Config;
 use tibba_error::Error as BaseError;
@@ -32,8 +34,9 @@ pub struct DatabaseConfig {
     #[validate(range(min = 0, max = 10))]
     pub min_connections: u32,
     pub connect_timeout: Duration,
-    pub acquire_timeout: Duration,
     pub idle_timeout: Duration,
+    pub max_lifetime: Duration,
+    pub test_before_acquire: bool,
 }
 
 // Creates a new DatabaseConfig instance from the configuration
@@ -44,8 +47,9 @@ fn new_database_config(config: &Config) -> Result<DatabaseConfig> {
     let mut max_connections = 10;
     let mut min_connections = 2;
     let mut connect_timeout = Duration::from_secs(3);
-    let mut acquire_timeout = Duration::from_secs(5);
     let mut idle_timeout = Duration::from_secs(60);
+    let mut max_lifetime = Duration::from_secs(6 * 60 * 60);
+    let mut test_before_acquire = true;
 
     if let Some(query) = info.query() {
         url = url.replace(&format!("?{query}"), "");
@@ -68,14 +72,19 @@ fn new_database_config(config: &Config) -> Result<DatabaseConfig> {
                         connect_timeout = value;
                     }
                 }
-                "acquire_timeout" => {
-                    if let Ok(value) = Config::parse_duration(&value) {
-                        acquire_timeout = value;
-                    }
-                }
                 "idle_timeout" => {
                     if let Ok(value) = Config::parse_duration(&value) {
                         idle_timeout = value;
+                    }
+                }
+                "max_lifetime" => {
+                    if let Ok(value) = Config::parse_duration(&value) {
+                        max_lifetime = value;
+                    }
+                }
+                "test_before_acquire" => {
+                    if let Ok(value) = value.parse::<bool>() {
+                        test_before_acquire = value;
                     }
                 }
                 _ => {}
@@ -88,8 +97,9 @@ fn new_database_config(config: &Config) -> Result<DatabaseConfig> {
         max_connections,
         min_connections,
         connect_timeout,
-        acquire_timeout,
         idle_timeout,
+        max_lifetime,
+        test_before_acquire,
     };
     database_config
         .validate()
@@ -127,11 +137,57 @@ impl From<Error> for BaseError {
     }
 }
 
+#[derive(Debug, Default)]
+pub struct PoolStat {
+    pub connected: AtomicUsize,
+    pub executions: AtomicUsize,
+}
+
 type Result<T> = std::result::Result<T, Error>;
 
-pub async fn new_mysql_pool(config: &Config) -> Result<MySqlPool> {
+pub async fn new_mysql_pool(
+    config: &Config,
+    pool_stat: Option<Arc<PoolStat>>,
+) -> Result<MySqlPool> {
     let database_config = new_database_config(config)?;
+    let after_connect_pool_stat = pool_stat.clone();
+    let before_acquire_pool_stat = pool_stat.clone();
     let pool = PoolOptions::new()
+        .after_connect(move |_conn, _meta| {
+            Box::pin({
+                let pool_stat = after_connect_pool_stat.clone();
+                async move {
+                    if let Some(pool_stat) = &pool_stat {
+                        pool_stat.connected.fetch_add(1, Ordering::Relaxed);
+                    }
+                    Ok(())
+                }
+            })
+        })
+        .before_acquire(move |_conn, _meta| {
+            Box::pin({
+                let pool_stat = before_acquire_pool_stat.clone();
+                async move {
+                    if let Some(pool_stat) = &pool_stat {
+                        pool_stat.executions.fetch_add(1, Ordering::Relaxed);
+                    }
+                    Ok(true)
+                }
+            })
+        })
+        .after_release(|_conn, meta| {
+            Box::pin(async move {
+                if meta.age.as_secs() < 6 * 60 * 60 {
+                    return Ok(true);
+                }
+                Ok(false)
+            })
+        })
+        .max_connections(database_config.max_connections)
+        .min_connections(database_config.min_connections)
+        .idle_timeout(database_config.idle_timeout)
+        .max_lifetime(database_config.max_lifetime)
+        .test_before_acquire(database_config.test_before_acquire)
         .connect(database_config.url.as_str())
         .await
         .map_err(|e| Error::Sqlx { source: e })?;

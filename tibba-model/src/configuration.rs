@@ -213,6 +213,7 @@ impl Configuration {
                     category: SchemaType::Json,
                     span: Some(2),
                     required: true,
+                    popover: true,
                     ..Default::default()
                 },
                 Schema {
