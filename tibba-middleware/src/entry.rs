@@ -37,7 +37,7 @@ use tracing::debug;
 /// - Proper cache control headers
 /// - Access to device identification
 /// - Request-scoped context
-pub async fn entry(jar: CookieJar, req: Request, next: Next) -> Response {
+pub async fn entry(jar: CookieJar, mut req: Request, next: Next) -> Response {
     // Log middleware entry
     debug!(category = "middleware", "--> entry");
     // Ensure exit logging happens even if processing panics
@@ -48,12 +48,12 @@ pub async fn entry(jar: CookieJar, req: Request, next: Next) -> Response {
     // Generate unique trace ID for request tracking
     let trace_id = uuid();
     // Create new context with device and trace information
-    let ctx = Context::new(&device_id, &trace_id);
+    let ctx = Arc::new(Context::new(&device_id, &trace_id));
+
+    req.extensions_mut().insert(ctx.clone());
 
     // Process request within context scope
-    let mut res = CTX
-        .scope(Arc::new(ctx), async { next.run(req).await })
-        .await;
+    let mut res = CTX.scope(ctx, async { next.run(req).await }).await;
 
     // Add response headers
     let headers = res.headers_mut();

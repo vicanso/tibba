@@ -197,6 +197,7 @@ impl File {
                     name: "metadata".to_string(),
                     category: SchemaType::Json,
                     span: Some(2),
+                    popover: true,
                     ..Default::default()
                 },
                 Schema {

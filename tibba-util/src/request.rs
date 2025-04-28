@@ -21,6 +21,35 @@ use serde::de::DeserializeOwned;
 use tibba_error::{Error, new_error};
 use validator::Validate;
 
+#[derive(Debug, Clone)]
+struct BodyBytes {
+    data: Bytes,
+}
+
+async fn get_body_bytes<S>(req: Request<Body>, state: &S) -> Result<Bytes, Error>
+where
+    S: Send + Sync,
+{
+    // split request
+    let (mut parts, body) = req.into_parts();
+
+    // check cache
+    if let Some(cached) = parts.extensions.get::<BodyBytes>() {
+        return Ok(cached.data.clone());
+    }
+
+    // create temp request
+    let temp_req = Request::from_parts(parts.clone(), body);
+    let body = Bytes::from_request(temp_req, state)
+        .await
+        .map_err(|err| new_error(&err.to_string()).with_category("params:read_body"))?;
+
+    // cache result
+    parts.extensions.insert(BodyBytes { data: body.clone() });
+
+    Ok(body)
+}
+
 pub struct JsonParams<T>(pub T);
 
 impl<T, S> FromRequest<S> for JsonParams<T>
@@ -32,10 +61,8 @@ where
 
     async fn from_request(req: Request<Body>, state: &S) -> Result<Self, Self::Rejection> {
         if json_content_type(req.headers()) {
-            let bytes = Bytes::from_request(req, state)
-                .await
-                .map_err(|err| new_error(&err.to_string()).with_category("params:read_body"))?;
-            let deserializer = &mut serde_json::Deserializer::from_slice(&bytes);
+            let body = get_body_bytes(req, state).await?;
+            let deserializer = &mut serde_json::Deserializer::from_slice(&body);
 
             let value: T = match serde_path_to_error::deserialize(deserializer) {
                 Ok(value) => value,
