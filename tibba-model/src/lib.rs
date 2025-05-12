@@ -84,10 +84,12 @@ impl ModelListParams {
 
 mod configuration;
 mod file;
+mod http_detector;
 mod schema;
 mod user;
 
 pub use configuration::*;
 pub use file::*;
+pub use http_detector::*;
 pub use schema::*;
 pub use user::*;

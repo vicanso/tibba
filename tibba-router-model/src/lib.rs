@@ -21,7 +21,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::MySqlPool;
 use std::time::Duration;
-use tibba_model::{Configuration, File, ModelListParams, SchemaView, User};
+use tibba_model::{Configuration, File, HttpDetector, ModelListParams, SchemaView, User};
 use tibba_session::AdminSession;
 use tibba_util::{CacheJsonResult, JsonParams, JsonResult, QueryParams};
 use tibba_validator::x_schema_name;
@@ -40,6 +40,7 @@ async fn get_schema(
         "user" => User::schema_view(),
         "configuration" => Configuration::schema_view(),
         "file" => File::schema_view(),
+        "http_detector" => HttpDetector::schema_view(),
         _ => return Err(tibba_error::new_error("The schema is not found").into()),
     };
     Ok((Duration::from_secs(5 * 60), view).into())
@@ -105,6 +106,18 @@ async fn list_model(
                     "items": files,
                 })
         }
+        "http_detector" => {
+            let count = if params.count {
+                HttpDetector::count(pool, &query_params).await?
+            } else {
+                -1
+            };
+            let detectors = HttpDetector::list(pool, &query_params).await?;
+            json!({
+            "count": count,
+                    "items": detectors,
+                })
+        }
         _ => {
             return Err(tibba_error::new_error("The model is not supported").into());
         }
@@ -136,6 +149,10 @@ async fn get_detail(
             let file = File::get_by_id(pool, params.id).await?;
             json!(file)
         }
+        "http_detector" => {
+            let detector = HttpDetector::get_by_id(pool, params.id).await?;
+            json!(detector)
+        }
         _ => {
             return Err(tibba_error::new_error("The model is not supported").into());
         }
@@ -166,6 +183,9 @@ async fn delete_model(
         }
         "file" => {
             File::delete_by_id(pool, params.id).await?;
+        }
+        "http_detector" => {
+            HttpDetector::delete_by_id(pool, params.id).await?;
         }
         _ => {
             return Err(tibba_error::new_error("The model is not supported").into());

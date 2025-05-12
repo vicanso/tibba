@@ -1,0 +1,19 @@
+CREATE TABLE `http_detectors` (
+  `id` BIGINT unsigned NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+  `status` TINYINT NOT NULL DEFAULT '0' COMMENT '状态，0：禁用，1：启用',
+  `name` VARCHAR(255) NOT NULL COMMENT '名称',
+  `created` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `modified` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  `deleted_at` DATETIME DEFAULT NULL COMMENT '软删除时间',
+  `url` TEXT NOT NULL COMMENT 'URL',
+  `method` VARCHAR(10) COMMENT 'HTTP方法',
+  `alpn_protocols` JSON COMMENT 'ALPN协议',
+  `resolves` JSON COMMENT 'DNS解析',
+  `headers` JSON COMMENT 'HTTP头',
+  `ip_version` INT COMMENT 'IP版本',
+  `skip_verify` BOOLEAN COMMENT '是否跳过证书验证',
+  `body` BLOB COMMENT '请求体',
+  PRIMARY KEY (`id`) COMMENT '主键',
+  KEY `idx_deleted_at` (`deleted_at`) COMMENT '软删除索引',
+  UNIQUE KEY `name` (`name`, `deleted_at`) COMMENT '名称唯一索引（仅对未删除记录生效）'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT="http_detectors表";

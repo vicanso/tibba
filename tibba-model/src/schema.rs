@@ -113,6 +113,48 @@ pub struct Schema {
     pub span: Option<u8>,
 }
 
+impl Schema {
+    pub fn new_id() -> Self {
+        Self {
+            name: "id".to_string(),
+            category: SchemaType::Number,
+            read_only: true,
+            required: true,
+            hidden: true,
+            auto_create: true,
+            ..Default::default()
+        }
+    }
+    pub fn new_status() -> Self {
+        Self {
+            name: "status".to_string(),
+            category: SchemaType::Status,
+            required: true,
+            ..Default::default()
+        }
+    }
+    pub fn new_created() -> Self {
+        Self {
+            name: "created".to_string(),
+            category: SchemaType::Date,
+            read_only: true,
+            hidden: true,
+            auto_create: true,
+            ..Default::default()
+        }
+    }
+    pub fn new_modified() -> Self {
+        Self {
+            name: "modified".to_string(),
+            category: SchemaType::Date,
+            read_only: true,
+            sortable: true,
+            auto_create: true,
+            ..Default::default()
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct SchemaView {
     pub schemas: Vec<Schema>,

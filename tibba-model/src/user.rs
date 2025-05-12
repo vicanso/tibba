@@ -124,14 +124,7 @@ impl User {
     pub fn schema_view() -> SchemaView {
         SchemaView {
             schemas: vec![
-                Schema {
-                    name: "id".to_string(),
-                    category: SchemaType::Number,
-                    read_only: true,
-                    required: true,
-                    hidden: true,
-                    ..Default::default()
-                },
+                Schema::new_id(),
                 Schema {
                     name: "account".to_string(),
                     category: SchemaType::String,
@@ -140,12 +133,7 @@ impl User {
                     identity: true,
                     ..Default::default()
                 },
-                Schema {
-                    name: "status".to_string(),
-                    category: SchemaType::Status,
-                    required: true,
-                    ..Default::default()
-                },
+                Schema::new_status(),
                 Schema {
                     name: "roles".to_string(),
                     category: SchemaType::Strings,
@@ -158,20 +146,8 @@ impl User {
                     options: Some(new_schema_options(&["it", "marketing"])),
                     ..Default::default()
                 },
-                Schema {
-                    name: "created".to_string(),
-                    category: SchemaType::Date,
-                    read_only: true,
-                    hidden: true,
-                    ..Default::default()
-                },
-                Schema {
-                    name: "modified".to_string(),
-                    category: SchemaType::Date,
-                    read_only: true,
-                    sortable: true,
-                    ..Default::default()
-                },
+                Schema::new_created(),
+                Schema::new_modified(),
             ],
             allow_edit: SchemaAllowEdit {
                 owner: true,

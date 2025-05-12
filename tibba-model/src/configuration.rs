@@ -12,8 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::HashMap;
-
 use super::user::{ROLE_ADMIN, ROLE_SUPER_ADMIN};
 use super::{
     Error, ModelListParams, Schema, SchemaAllowCreate, SchemaAllowEdit, SchemaType, SchemaView,
@@ -24,6 +22,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use sqlx::types::Json;
 use sqlx::{MySql, Pool};
+use std::collections::HashMap;
 use std::str::FromStr;
 use substring::Substring;
 use time::OffsetDateTime;
@@ -163,15 +162,7 @@ impl Configuration {
     pub fn schema_view() -> SchemaView {
         SchemaView {
             schemas: vec![
-                Schema {
-                    name: "id".to_string(),
-                    category: SchemaType::Number,
-                    read_only: true,
-                    required: true,
-                    hidden: true,
-                    auto_create: true,
-                    ..Default::default()
-                },
+                Schema::new_id(),
                 Schema {
                     name: "name".to_string(),
                     category: SchemaType::String,
@@ -216,33 +207,14 @@ impl Configuration {
                     popover: true,
                     ..Default::default()
                 },
-                Schema {
-                    name: "status".to_string(),
-                    category: SchemaType::Status,
-                    required: true,
-                    ..Default::default()
-                },
+                Schema::new_status(),
                 Schema {
                     name: "description".to_string(),
                     category: SchemaType::String,
                     ..Default::default()
                 },
-                Schema {
-                    name: "created".to_string(),
-                    category: SchemaType::Date,
-                    read_only: true,
-                    hidden: true,
-                    auto_create: true,
-                    ..Default::default()
-                },
-                Schema {
-                    name: "modified".to_string(),
-                    category: SchemaType::Date,
-                    read_only: true,
-                    sortable: true,
-                    auto_create: true,
-                    ..Default::default()
-                },
+                Schema::new_created(),
+                Schema::new_modified(),
             ],
             allow_edit: SchemaAllowEdit {
                 owner: true,
