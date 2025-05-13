@@ -21,7 +21,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::MySqlPool;
 use std::time::Duration;
-use tibba_model::{Configuration, File, HttpDetector, ModelListParams, SchemaView, User};
+use tibba_model::{Configuration, File, HttpDetector, Model, ModelListParams, SchemaView, User};
 use tibba_session::AdminSession;
 use tibba_util::{CacheJsonResult, JsonParams, JsonResult, QueryParams};
 use tibba_validator::x_schema_name;
@@ -208,10 +208,10 @@ async fn update_model(
 ) -> Result<StatusCode, tibba_error::Error> {
     match params.model.as_str() {
         "user" => {
-            User::update_by_id(pool, params.id, params.data.into()).await?;
+            User::update_by_id(pool, params.id, params.data).await?;
         }
         "configuration" => {
-            Configuration::update_by_id(pool, params.id, params.data.into()).await?;
+            Configuration::update_by_id(pool, params.id, params.data).await?;
         }
         "file" => {
             File::update_by_id(pool, params.id, params.data.into()).await?;
@@ -235,7 +235,7 @@ async fn create_model(
     JsonParams(params): JsonParams<CreateModelParams>,
 ) -> JsonResult<Value> {
     let id = match params.model.as_str() {
-        "configuration" => Configuration::insert(pool, params.data.into()).await?,
+        "configuration" => Configuration::insert(pool, params.data).await?,
         _ => {
             return Err(tibba_error::new_error("The model is not supported").into());
         }

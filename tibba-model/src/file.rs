@@ -209,7 +209,7 @@ impl File {
         }
     }
 
-    fn condition_sql(params: &ModelListParams) -> Result<Option<String>> {
+    fn condition_sql(params: &ModelListParams) -> Result<String> {
         let mut where_conditions = vec!["deleted_at IS NULL".to_string()];
 
         if let Some(keyword) = &params.keyword {
@@ -225,12 +225,7 @@ impl File {
             }
         }
 
-        if !where_conditions.is_empty() {
-            let sql = format!(" WHERE {}", where_conditions.join(" AND "));
-            Ok(Some(sql))
-        } else {
-            Ok(None)
-        }
+        Ok(format!(" WHERE {}", where_conditions.join(" AND ")))
     }
 
     pub async fn insert(pool: &Pool<MySql>, params: FileInsertParams) -> Result<u64> {
@@ -304,9 +299,7 @@ impl File {
 
     pub async fn count(pool: &Pool<MySql>, params: &ModelListParams) -> Result<i64> {
         let mut sql = String::from("SELECT COUNT(*) FROM files");
-        if let Some(condition) = Self::condition_sql(params)? {
-            sql.push_str(&condition);
-        }
+        sql.push_str(&Self::condition_sql(params)?);
         let count = sqlx::query_scalar::<_, i64>(&sql)
             .fetch_one(pool)
             .await
@@ -317,9 +310,7 @@ impl File {
     pub async fn list(pool: &Pool<MySql>, params: &ModelListParams) -> Result<Vec<File>> {
         let limit = params.limit.min(200);
         let mut sql = String::from("SELECT * FROM files");
-        if let Some(condition) = Self::condition_sql(params)? {
-            sql.push_str(&condition);
-        }
+        sql.push_str(&Self::condition_sql(params)?);
         if let Some(order_by) = &params.order_by {
             let (order_by, direction) = if order_by.starts_with("-") {
                 (order_by.substring(1, order_by.len()).to_string(), "DESC")

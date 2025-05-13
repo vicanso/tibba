@@ -12,11 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use super::Model;
 use super::user::{ROLE_ADMIN, ROLE_SUPER_ADMIN};
 use super::{
     Error, ModelListParams, Schema, SchemaAllowCreate, SchemaAllowEdit, SchemaType, SchemaView,
     format_datetime, new_schema_options,
 };
+use async_trait::async_trait;
 use http::header::{HeaderMap, HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
@@ -85,46 +87,6 @@ pub struct ConfigurationInsertParams {
     pub effective_end_time: String,
 }
 
-impl From<serde_json::Value> for ConfigurationInsertParams {
-    fn from(value: serde_json::Value) -> Self {
-        ConfigurationInsertParams {
-            category: value
-                .get("category")
-                .and_then(|v| v.as_str())
-                .map(String::from)
-                .unwrap_or_default(),
-            name: value
-                .get("name")
-                .and_then(|v| v.as_str())
-                .map(String::from)
-                .unwrap_or_default(),
-            data: value
-                .get("data")
-                .unwrap_or(&serde_json::Value::Null)
-                .clone(),
-            description: value
-                .get("description")
-                .and_then(|v| v.as_str())
-                .map(String::from),
-            effective_start_time: value
-                .get("effective_start_time")
-                .and_then(|v| v.as_str())
-                .map(String::from)
-                .unwrap_or_default(),
-            effective_end_time: value
-                .get("effective_end_time")
-                .and_then(|v| v.as_str())
-                .map(String::from)
-                .unwrap_or_default(),
-            status: value
-                .get("status")
-                .and_then(|v| v.as_i64())
-                .map(|status| status as i8)
-                .unwrap_or_default(),
-        }
-    }
-}
-
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct ConfigurationUpdateParams {
     pub data: Option<serde_json::Value>,
@@ -134,32 +96,10 @@ pub struct ConfigurationUpdateParams {
     pub effective_end_time: Option<String>,
 }
 
-impl From<serde_json::Value> for ConfigurationUpdateParams {
-    fn from(value: serde_json::Value) -> Self {
-        ConfigurationUpdateParams {
-            data: value.get("data").cloned(),
-            description: value
-                .get("description")
-                .and_then(|v| v.as_str())
-                .map(String::from),
-            status: value
-                .get("status")
-                .and_then(|v| v.as_i64())
-                .map(|status| status as i8),
-            effective_start_time: value
-                .get("effective_start_time")
-                .and_then(|v| v.as_str())
-                .map(String::from),
-            effective_end_time: value
-                .get("effective_end_time")
-                .and_then(|v| v.as_str())
-                .map(String::from),
-        }
-    }
-}
-
-impl Configuration {
-    pub fn schema_view() -> SchemaView {
+#[async_trait]
+impl Model for Configuration {
+    type Output = Self;
+    fn schema_view() -> SchemaView {
         SchemaView {
             schemas: vec![
                 Schema::new_id(),
@@ -228,27 +168,16 @@ impl Configuration {
         }
     }
 
-    fn condition_sql(params: &ModelListParams) -> Result<Option<String>> {
-        let mut where_conditions = vec!["deleted_at IS NULL".to_string()];
-
-        if let Some(keyword) = &params.keyword {
-            where_conditions.push(format!("name LIKE '%{}%'", keyword));
+    fn filter_condition_sql(filters: &HashMap<String, String>) -> Option<Vec<String>> {
+        let mut conditions = vec![];
+        if let Some(category) = filters.get("category") {
+            conditions.push(format!("category = '{}'", category));
         }
-
-        if let Some(filters) = params.parse_filters()? {
-            if let Some(category) = filters.get("category") {
-                where_conditions.push(format!("category = '{}'", category));
-            }
-        }
-
-        if !where_conditions.is_empty() {
-            let sql = format!(" WHERE {}", where_conditions.join(" AND "));
-            Ok(Some(sql))
-        } else {
-            Ok(None)
-        }
+        Some(conditions)
     }
-    pub async fn insert(pool: &Pool<MySql>, params: ConfigurationInsertParams) -> Result<u64> {
+    async fn insert(pool: &Pool<MySql>, data: serde_json::Value) -> Result<u64> {
+        let params: ConfigurationInsertParams =
+            serde_json::from_value(data).map_err(|e| Error::Json { source: e })?;
         let id = sqlx::query(
             r#"
             INSERT INTO configurations (category, name, data, description, status, effective_start_time, effective_end_time) VALUES (?, ?, ?, ?, ?, ?, ?)"#,
@@ -267,7 +196,7 @@ impl Configuration {
         Ok(id.last_insert_id())
     }
 
-    pub async fn get_by_id(pool: &Pool<MySql>, id: u64) -> Result<Option<Self>> {
+    async fn get_by_id(pool: &Pool<MySql>, id: u64) -> Result<Option<Self>> {
         let result = sqlx::query_as::<_, ConfigurationSchema>(
             r#"SELECT * FROM configurations WHERE id = ? AND deleted_at IS NULL"#,
         )
@@ -279,7 +208,7 @@ impl Configuration {
         Ok(result.map(|schema| schema.into()))
     }
 
-    pub async fn delete_by_id(pool: &Pool<MySql>, id: u64) -> Result<()> {
+    async fn delete_by_id(pool: &Pool<MySql>, id: u64) -> Result<()> {
         sqlx::query(
             r#"UPDATE configurations SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL"#,
         )
@@ -291,11 +220,9 @@ impl Configuration {
         Ok(())
     }
 
-    pub async fn update_by_id(
-        pool: &Pool<MySql>,
-        id: u64,
-        params: ConfigurationUpdateParams,
-    ) -> Result<()> {
+    async fn update_by_id(pool: &Pool<MySql>, id: u64, data: serde_json::Value) -> Result<()> {
+        let params: ConfigurationUpdateParams =
+            serde_json::from_value(data).map_err(|e| Error::Json { source: e })?;
         let _ = sqlx::query(
             r#"UPDATE configurations SET data = COALESCE(?, data), description = COALESCE(?, description), status = COALESCE(?, status), effective_start_time = COALESCE(?, effective_start_time), effective_end_time = COALESCE(?, effective_end_time) WHERE id = ? AND deleted_at IS NULL"#,
         )
@@ -312,11 +239,9 @@ impl Configuration {
         Ok(())
     }
 
-    pub async fn count(pool: &Pool<MySql>, params: &ModelListParams) -> Result<i64> {
+    async fn count(pool: &Pool<MySql>, params: &ModelListParams) -> Result<i64> {
         let mut sql = String::from("SELECT COUNT(*) FROM configurations");
-        if let Some(condition) = Self::condition_sql(params)? {
-            sql.push_str(&condition);
-        }
+        sql.push_str(&Self::condition_sql(params)?);
         let count = sqlx::query_scalar::<_, i64>(&sql)
             .fetch_one(pool)
             .await
@@ -325,6 +250,34 @@ impl Configuration {
         Ok(count)
     }
 
+    async fn list(pool: &Pool<MySql>, params: &ModelListParams) -> Result<Vec<Self>> {
+        let limit = params.limit.min(200);
+        let mut sql = String::from("SELECT * FROM configurations");
+        sql.push_str(&Self::condition_sql(params)?);
+        if let Some(order_by) = &params.order_by {
+            let (order_by, direction) = if order_by.starts_with("-") {
+                (order_by.substring(1, order_by.len()).to_string(), "DESC")
+            } else {
+                (order_by.clone(), "ASC")
+            };
+            sql.push_str(&format!(" ORDER BY {} {}", order_by, direction));
+        }
+        let offset = (params.page - 1) * limit;
+        sql.push_str(&format!(" LIMIT {} OFFSET {}", limit, offset));
+
+        let configurations = sqlx::query_as::<_, ConfigurationSchema>(&sql)
+            .fetch_all(pool)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+
+        Ok(configurations
+            .into_iter()
+            .map(|schema| schema.into())
+            .collect())
+    }
+}
+
+impl Configuration {
     pub async fn get_response_headers(pool: &Pool<MySql>, name: &str) -> Result<Option<HeaderMap>> {
         let now = OffsetDateTime::now_utc();
         let configurations = sqlx::query_as::<_, ConfigurationSchema>(
@@ -363,33 +316,5 @@ impl Configuration {
             }
         }
         Ok(Some(headers))
-    }
-
-    pub async fn list(pool: &Pool<MySql>, params: &ModelListParams) -> Result<Vec<Self>> {
-        let limit = params.limit.min(200);
-        let mut sql = String::from("SELECT * FROM configurations");
-        if let Some(condition) = Self::condition_sql(params)? {
-            sql.push_str(&condition);
-        }
-        if let Some(order_by) = &params.order_by {
-            let (order_by, direction) = if order_by.starts_with("-") {
-                (order_by.substring(1, order_by.len()).to_string(), "DESC")
-            } else {
-                (order_by.clone(), "ASC")
-            };
-            sql.push_str(&format!(" ORDER BY {} {}", order_by, direction));
-        }
-        let offset = (params.page - 1) * limit;
-        sql.push_str(&format!(" LIMIT {} OFFSET {}", limit, offset));
-
-        let configurations = sqlx::query_as::<_, ConfigurationSchema>(&sql)
-            .fetch_all(pool)
-            .await
-            .map_err(|e| Error::Sqlx { source: e })?;
-
-        Ok(configurations
-            .into_iter()
-            .map(|schema| schema.into())
-            .collect())
     }
 }

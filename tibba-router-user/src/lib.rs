@@ -19,11 +19,12 @@ use axum::routing::{delete, get, patch, post};
 use axum::{Json, Router};
 use axum_extra::extract::cookie::CookieJar;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use sqlx::MySqlPool;
 use tibba_cache::RedisCache;
 use tibba_error::{Error, new_error};
 use tibba_middleware::validate_captcha;
-use tibba_model::{ROLE_SUPER_ADMIN, User, UserUpdateParams};
+use tibba_model::{Model, ROLE_SUPER_ADMIN, User, UserUpdateParams};
 use tibba_session::{Session, SessionResponse, UserSession};
 use tibba_util::{
     JsonParams, JsonResult, is_development, is_test, now, sha256, timestamp, timestamp_hash, uuid,
@@ -176,15 +177,14 @@ async fn register(
     State(pool): State<&'static MySqlPool>,
     JsonParams(params): JsonParams<RegisterParams>,
 ) -> JsonResult<RegisterResp> {
-    let id = User::insert(pool, &params.account, &params.password).await?;
+    let id = User::register(pool, &params.account, &params.password).await?;
     if id == 1 {
         User::update_by_id(
             pool,
             id,
-            UserUpdateParams {
-                roles: Some(vec![ROLE_SUPER_ADMIN.to_string()]),
-                ..Default::default()
-            },
+            json!({
+                "roles": [ROLE_SUPER_ADMIN.to_string()],
+            }),
         )
         .await?;
     }

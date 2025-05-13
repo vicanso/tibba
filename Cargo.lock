@@ -3951,6 +3951,7 @@ dependencies = [
 name = "tibba-model"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "chrono",
  "http",
  "serde",
@@ -4060,6 +4061,7 @@ dependencies = [
  "axum",
  "axum-extra",
  "serde",
+ "serde_json",
  "sqlx",
  "tibba-cache",
  "tibba-error",
