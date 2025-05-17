@@ -177,17 +177,17 @@ impl Model for User {
         Ok(())
     }
     fn filter_condition_sql(filters: &HashMap<String, String>) -> Option<Vec<String>> {
-        let mut where_conditions = vec![];
+        let mut conditions = vec![];
         if let Some(status) = filters.get("status") {
-            where_conditions.push(format!("status = {}", status));
+            conditions.push(format!("status = {}", status));
         }
         if let Some(role) = filters.get("role") {
-            where_conditions.push(format!("JSON_CONTAINS(roles, JSON_ARRAY('{}'))", role));
+            conditions.push(format!("JSON_CONTAINS(roles, JSON_ARRAY('{}'))", role));
         }
         if let Some(group) = filters.get("group") {
-            where_conditions.push(format!("JSON_CONTAINS(groups, JSON_ARRAY('{}'))", group));
+            conditions.push(format!("JSON_CONTAINS(groups, JSON_ARRAY('{}'))", group));
         }
-        Some(where_conditions)
+        (!conditions.is_empty()).then_some(conditions)
     }
 
     async fn count(pool: &Pool<MySql>, params: &ModelListParams) -> Result<i64> {

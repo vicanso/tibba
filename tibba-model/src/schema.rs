@@ -111,6 +111,7 @@ pub struct Schema {
     pub sortable: bool,
     pub filterable: bool,
     pub span: Option<u8>,
+    pub default_value: Option<serde_json::Value>,
 }
 
 impl Schema {

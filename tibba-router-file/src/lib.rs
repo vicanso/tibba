@@ -89,8 +89,8 @@ async fn create_file(
             params.content_type = format.to_mime_type().to_string();
             let image = image::load_from_memory_with_format(&data, format)
                 .map_err(|e| new_error(&e.to_string()).with_category(ERROR_CATEGORY))?;
-            params.width = Some(image.width());
-            params.height = Some(image.height());
+            params.width = Some(image.width() as i32);
+            params.height = Some(image.height() as i32);
         };
 
         let _ = storage.write_with(&file, data.clone(), vec![]).await?;

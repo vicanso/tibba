@@ -216,6 +216,9 @@ async fn update_model(
         "file" => {
             File::update_by_id(pool, params.id, params.data.into()).await?;
         }
+        "http_detector" => {
+            HttpDetector::update_by_id(pool, params.id, params.data).await?;
+        }
         _ => {
             return Err(tibba_error::new_error("The model is not supported").into());
         }
@@ -236,6 +239,7 @@ async fn create_model(
 ) -> JsonResult<Value> {
     let id = match params.model.as_str() {
         "configuration" => Configuration::insert(pool, params.data).await?,
+        "http_detector" => HttpDetector::insert(pool, params.data).await?,
         _ => {
             return Err(tibba_error::new_error("The model is not supported").into());
         }

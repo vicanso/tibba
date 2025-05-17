@@ -38,7 +38,7 @@ struct ConfigurationSchema {
     category: String,
     name: String,
     data: Json<serde_json::Value>,
-    description: Option<String>,
+    description: String,
     effective_start_time: OffsetDateTime,
     effective_end_time: OffsetDateTime,
     created: OffsetDateTime,
@@ -52,7 +52,7 @@ pub struct Configuration {
     pub category: String,
     pub name: String,
     pub data: HashMap<String, serde_json::Value>,
-    pub description: Option<String>,
+    pub description: String,
     pub effective_start_time: String,
     pub effective_end_time: String,
     pub created: String,
@@ -173,7 +173,7 @@ impl Model for Configuration {
         if let Some(category) = filters.get("category") {
             conditions.push(format!("category = '{}'", category));
         }
-        Some(conditions)
+        (!conditions.is_empty()).then_some(conditions)
     }
     async fn insert(pool: &Pool<MySql>, data: serde_json::Value) -> Result<u64> {
         let params: ConfigurationInsertParams =

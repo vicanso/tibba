@@ -103,8 +103,8 @@ pub struct FileInsertParams {
     pub file_size: i64,
     pub content_type: String,
     pub uploader: String,
-    pub width: Option<u32>,
-    pub height: Option<u32>,
+    pub width: Option<i32>,
+    pub height: Option<i32>,
     pub metadata: Option<serde_json::Value>,
 }
 
@@ -241,9 +241,9 @@ impl File {
         .bind(params.filename)
         .bind(params.file_size)
         .bind(params.content_type)
-        .bind(params.width)
-        .bind(params.height)
-        .bind(params.metadata)
+        .bind(params.width.unwrap_or(-1))
+        .bind(params.height.unwrap_or(-1))
+        .bind(params.metadata.unwrap_or(serde_json::json!({})))
         .bind(params.uploader)
         .execute(pool)
         .await
