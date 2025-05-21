@@ -131,6 +131,7 @@ impl Schema {
             name: "status".to_string(),
             category: SchemaType::Status,
             required: true,
+            default_value: Some(serde_json::json!(Status::Enabled as i8)),
             ..Default::default()
         }
     }

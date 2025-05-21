@@ -41,6 +41,7 @@ struct HttpDetectorSchema {
     headers: Option<Json<HashMap<String, String>>>,
     ip_version: i32,
     skip_verify: bool,
+    dns_servers: Option<Json<Vec<String>>>,
     body: Option<Vec<u8>>,
 }
 
@@ -56,6 +57,7 @@ pub struct HttpDetector {
     pub alpn_protocols: Option<Vec<String>>,
     pub resolves: Option<Vec<String>>,
     pub headers: Option<HashMap<String, String>>,
+    pub dns_servers: Option<Vec<String>>,
     pub ip_version: i32,
     pub skip_verify: bool,
     pub body: Option<Vec<u8>>,
@@ -74,6 +76,7 @@ impl From<HttpDetectorSchema> for HttpDetector {
             alpn_protocols: schema.alpn_protocols.map(|protocols| protocols.0),
             resolves: schema.resolves.map(|resolves| resolves.0),
             headers: schema.headers.map(|headers| headers.0),
+            dns_servers: schema.dns_servers.map(|dns_servers| dns_servers.0),
             ip_version: schema.ip_version,
             skip_verify: schema.skip_verify,
             body: schema.body,
@@ -95,6 +98,20 @@ pub struct HttpDetectorInsertParams {
     pub body: Option<Vec<u8>>,
 }
 
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct HttpDetectorUpdateParams {
+    pub status: Option<i8>,
+    pub name: Option<String>,
+    pub url: Option<String>,
+    pub method: Option<String>,
+    pub alpn_protocols: Option<Vec<String>>,
+    pub resolves: Option<Vec<String>>,
+    pub headers: Option<HashMap<String, String>>,
+    pub ip_version: Option<i32>,
+    pub skip_verify: Option<bool>,
+    pub body: Option<Vec<u8>>,
+}
+
 #[async_trait]
 impl Model for HttpDetector {
     type Output = Self;
@@ -106,6 +123,7 @@ impl Model for HttpDetector {
                     name: "name".to_string(),
                     category: SchemaType::String,
                     required: true,
+                    fixed: true,
                     ..Default::default()
                 },
                 Schema {
@@ -150,10 +168,14 @@ impl Model for HttpDetector {
                     ..Default::default()
                 },
                 Schema {
+                    name: "dns_servers".to_string(),
+                    category: SchemaType::Strings,
+                    ..Default::default()
+                },
+                Schema {
                     name: "body".to_string(),
                     category: SchemaType::Json,
                     popover: true,
-                    span: Some(2),
                     ..Default::default()
                 },
                 Schema::new_status(),
@@ -191,9 +213,9 @@ impl Model for HttpDetector {
         .bind(params.name)
         .bind(params.url)
         .bind(params.method)
-        .bind(params.alpn_protocols.map(Json))
-        .bind(params.resolves.map(Json))
-        .bind(params.headers.map(Json))
+        .bind(params.alpn_protocols.map(Json).unwrap_or_default())
+        .bind(params.resolves.map(Json).unwrap_or_default())
+        .bind(params.headers.map(Json).unwrap_or_default())
         .bind(params.ip_version)
         .bind(params.skip_verify)
         .bind(params.body)
@@ -225,9 +247,30 @@ impl Model for HttpDetector {
 
         Ok(())
     }
-    // async fn update_by_id(pool: &Pool<MySql>, id: u64, params: serde_json::Value) -> Result<()> {
-    //     Ok(())
-    // }
+    async fn update_by_id(pool: &Pool<MySql>, id: u64, params: serde_json::Value) -> Result<()> {
+        let params: HttpDetectorUpdateParams =
+            serde_json::from_value(params).map_err(|e| Error::Json { source: e })?;
+
+        let _ = sqlx::query(
+            r#"UPDATE http_detectors SET status = COALESCE(?, status), name = COALESCE(?, name), url = COALESCE(?, url), method = COALESCE(?, method), alpn_protocols = COALESCE(?, alpn_protocols), resolves = COALESCE(?, resolves), headers = COALESCE(?, headers), ip_version = COALESCE(?, ip_version), skip_verify = COALESCE(?, skip_verify), body = COALESCE(?, body) WHERE id = ? AND deleted_at IS NULL"#,
+        )
+        .bind(params.status)
+        .bind(params.name)
+        .bind(params.url)
+        .bind(params.method)
+        .bind(params.alpn_protocols.map(Json).unwrap_or_default())
+        .bind(params.resolves.map(Json).unwrap_or_default())
+        .bind(params.headers.map(Json).unwrap_or_default())
+        .bind(params.ip_version)
+        .bind(params.skip_verify)
+        .bind(params.body)
+        .bind(id)
+        .execute(pool)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+
+        Ok(())
+    }
     async fn count(pool: &Pool<MySql>, params: &ModelListParams) -> Result<i64> {
         let mut sql = String::from("SELECT COUNT(*) FROM http_detectors");
         sql.push_str(&Self::condition_sql(params)?);

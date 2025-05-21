@@ -111,12 +111,16 @@ pub struct FileInsertParams {
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct FileUpdateParams {
     pub metadata: Option<serde_json::Value>,
+    pub group: Option<String>,
 }
 
 impl From<serde_json::Value> for FileUpdateParams {
     fn from(value: serde_json::Value) -> Self {
         FileUpdateParams {
             metadata: value.get("metadata").cloned(),
+            group: value
+                .get("group")
+                .and_then(|v| v.as_str().map(|s| s.to_string())),
         }
     }
 }
@@ -288,8 +292,11 @@ impl File {
     }
 
     pub async fn update_by_id(pool: &Pool<MySql>, id: u64, params: FileUpdateParams) -> Result<()> {
-        let _ = sqlx::query(r#"UPDATE files SET metadata = ? WHERE id = ? AND deleted_at IS NULL"#)
+        let _ = sqlx::query(
+            r#"UPDATE files SET metadata = COALESCE(?, metadata), `group` = COALESCE(?, `group`) WHERE id = ? AND deleted_at IS NULL"#,
+        )
             .bind(params.metadata)
+            .bind(params.group)
             .bind(id)
             .execute(pool)
             .await
