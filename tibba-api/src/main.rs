@@ -21,11 +21,13 @@ use axum_client_ip::ClientIpSource;
 use std::env;
 use std::net::SocketAddr;
 use std::str::FromStr;
+use std::time::Duration;
 use tibba_error::handle_error;
-use tibba_hook::run_before_tasks;
+use tibba_hook::{register_after_task, run_after_tasks, run_before_tasks};
 use tibba_middleware::{entry, processing_limit, session, stats};
 use tibba_scheduler::run_scheduler_jobs;
-use tibba_util::is_development;
+use tibba_util::{is_development, is_production};
+use tokio::signal;
 use tower::ServiceBuilder;
 use tracing::{Level, error, info};
 use tracing_subscriber::FmtSubscriber;
@@ -33,10 +35,39 @@ use tracing_subscriber::FmtSubscriber;
 mod cache;
 mod config;
 mod dal;
+mod httpstat;
 mod router;
 mod sql;
 mod state;
 
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        // TODO 后续有需要可在此设置ping的状态
+        signal::unix::signal(signal::unix::SignalKind::terminate())
+            .expect("failed to install signal handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
+    info!("signal received, starting graceful shutdown");
+    if let Err(e) = run_after_tasks().await {
+        error!(category = "run_after_tasks", message = e.to_string(),);
+    }
+}
 fn init_logger() {
     let mut level = Level::INFO;
     if let Ok(log_level) = env::var("RUST_LOG") {
@@ -64,7 +95,25 @@ fn init_logger() {
 }
 
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
+    register_after_task(
+        "stop_app",
+        u8::MAX,
+        Box::new(|| {
+            Box::pin(async {
+                if !is_production() {
+                    return Ok(());
+                }
+                // wait x seconds --> set flag --> wait y seconds
+                tokio::time::sleep(Duration::from_secs(5)).await;
+                get_app_state().stop();
+                tokio::time::sleep(Duration::from_secs(3)).await;
+                Ok(())
+            })
+        }),
+    );
+
     run_before_tasks().await?;
+    run_scheduler_jobs().await?;
 
     // config is validated in init function
     let basic_config = config::must_get_basic_config();
@@ -95,8 +144,6 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         );
     get_app_state().run();
 
-    run_scheduler_jobs().await?;
-
     info!("listening on http://{}/", basic_config.listen);
     let listener = tokio::net::TcpListener::bind(basic_config.listen.clone())
         .await
@@ -105,7 +152,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
-    // .with_graceful_shutdown(shutdown_signal())
+    .with_graceful_shutdown(shutdown_signal())
     .await
     .unwrap();
     Ok(())

@@ -15,9 +15,11 @@
 use dashmap::DashMap;
 use once_cell::sync::Lazy;
 use tibba_error::{Error, new_error};
-use tokio_cron_scheduler::{Job, JobScheduler};
+use tokio_cron_scheduler::JobScheduler;
 use tracing::info;
 type Result<T> = std::result::Result<T, Error>;
+
+pub use tokio_cron_scheduler::Job;
 
 pub struct JobTask {
     name: String,

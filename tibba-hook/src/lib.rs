@@ -23,7 +23,7 @@ type Result<T> = std::result::Result<T, Error>;
 
 // Type alias for a pinned, boxed Future that returns Result<()>
 // Used for async hook tasks
-type HookTask = Pin<Box<dyn Future<Output = Result<()>>>>;
+type HookTask = Pin<Box<dyn Future<Output = Result<()>> + Send>>;
 
 // Type alias for hook task functions
 // Functions that return a HookTask and can be safely shared between threads

@@ -112,6 +112,19 @@ pub struct HttpDetectorUpdateParams {
     pub body: Option<Vec<u8>>,
 }
 
+impl HttpDetector {
+    pub async fn list_enabled(pool: &Pool<MySql>) -> Result<Vec<Self>> {
+        let detectors = sqlx::query_as::<_, HttpDetectorSchema>(
+            r#"SELECT * FROM http_detectors WHERE deleted_at IS NULL AND status = 1"#,
+        )
+        .fetch_all(pool)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+
+        Ok(detectors.into_iter().map(|schema| schema.into()).collect())
+    }
+}
+
 #[async_trait]
 impl Model for HttpDetector {
     type Output = Self;

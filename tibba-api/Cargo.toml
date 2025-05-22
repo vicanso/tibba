@@ -21,7 +21,9 @@ tibba-opendal = { path = "../tibba-opendal" }
 tibba-scheduler = { path = "../tibba-scheduler" }
 tibba-session = { path = "../tibba-session" }
 tibba-router-model = { path = "../tibba-router-model" }
+tibba-model = { path = "../tibba-model" }
 sqlx = { workspace = true }
+http = { workspace = true }
 time = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
@@ -32,6 +34,7 @@ tower = { workspace = true }
 ctor = "0.4.0"
 validator = { workspace = true }
 axum-client-ip = { workspace = true }
+http-stat = "0.4.8"
 
 [profile.release]
 codegen-units = 1
