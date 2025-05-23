@@ -37,7 +37,7 @@ struct HttpStatSchema {
     content_transfer: i32,
     total: i32,
     addr: String,
-    status: i32,
+    status_code: u16,
     tls: String,
     alpn: String,
     subject: String,
@@ -48,6 +48,7 @@ struct HttpStatSchema {
     cert_domains: Json<Vec<String>>,
     body_size: i32,
     error: String,
+    status: u8,
     created: OffsetDateTime,
     modified: OffsetDateTime,
 }
@@ -66,7 +67,7 @@ pub struct HttpStat {
     pub content_transfer: i32,
     pub total: i32,
     pub addr: String,
-    pub status: i32,
+    pub status_code: u16,
     pub tls: String,
     pub alpn: String,
     pub subject: String,
@@ -77,6 +78,7 @@ pub struct HttpStat {
     pub cert_domains: Vec<String>,
     pub body_size: i32,
     pub error: String,
+    pub status: u8,
     pub created: String,
     pub modified: String,
 }
@@ -96,7 +98,7 @@ impl From<HttpStatSchema> for HttpStat {
             content_transfer: schema.content_transfer,
             total: schema.total,
             addr: schema.addr,
-            status: schema.status,
+            status_code: schema.status_code,
             tls: schema.tls,
             alpn: schema.alpn,
             subject: schema.subject,
@@ -107,6 +109,7 @@ impl From<HttpStatSchema> for HttpStat {
             cert_domains: schema.cert_domains.0,
             body_size: schema.body_size,
             error: schema.error,
+            status: schema.status,
             created: format_datetime(schema.created),
             modified: format_datetime(schema.modified),
         }
@@ -127,7 +130,7 @@ pub struct HttpStatInsertParams {
     pub content_transfer: Option<i32>,
     pub total: Option<i32>,
     pub addr: String,
-    pub status: Option<i32>,
+    pub status_code: Option<u16>,
     pub tls: Option<String>,
     pub alpn: Option<String>,
     pub subject: Option<String>,
@@ -138,12 +141,13 @@ pub struct HttpStatInsertParams {
     pub cert_domains: Option<String>,
     pub body_size: Option<i32>,
     pub error: Option<String>,
+    pub status: u8,
 }
 
 impl HttpStat {
     pub async fn add_stat(pool: &Pool<MySql>, params: HttpStatInsertParams) -> Result<u64> {
         let result = sqlx::query(
-            r#"INSERT INTO http_stats (target_id, target_name, url, dns_lookup, quic_connect, tcp_connect, tls_handshake, server_processing, content_transfer, total, addr, status, tls, alpn, subject, issuer, cert_not_before, cert_not_after, cert_cipher, cert_domains, body_size, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+            r#"INSERT INTO http_stats (target_id, target_name, url, dns_lookup, quic_connect, tcp_connect, tls_handshake, server_processing, content_transfer, total, addr, status_code, tls, alpn, subject, issuer, cert_not_before, cert_not_after, cert_cipher, cert_domains, body_size, error, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
         )
         .bind(params.target_id)
         .bind(params.target_name)
@@ -156,7 +160,7 @@ impl HttpStat {
         .bind(params.content_transfer.unwrap_or(-1))
         .bind(params.total.unwrap_or(-1))
         .bind(params.addr)
-        .bind(params.status.unwrap_or(0))
+        .bind(params.status_code.unwrap_or(0))
         .bind(params.tls.unwrap_or_default())
         .bind(params.alpn.unwrap_or_default())
         .bind(params.subject.unwrap_or_default())
@@ -167,6 +171,7 @@ impl HttpStat {
         .bind(params.cert_domains.unwrap_or_default())
         .bind(params.body_size.unwrap_or(-1))
         .bind(params.error.unwrap_or_default())
+        .bind(params.status)
         .execute(pool)
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
