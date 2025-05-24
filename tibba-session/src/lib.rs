@@ -49,7 +49,7 @@ impl From<Error> for BaseError {
                 .with_sub_category("session")
                 .with_status(500)
                 .with_exception(true),
-            Error::Key { source } => new_error(&source.to_string())
+            Error::Key { source } => new_error(source)
                 .with_category(error_category)
                 .with_sub_category("cookie")
                 .with_status(500)

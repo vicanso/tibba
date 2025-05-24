@@ -59,7 +59,7 @@ fn new_basic_config(config: &Config) -> Result<BasicConfig> {
     };
     basic_config
         .validate()
-        .map_err(|e| new_error(&e.to_string()).with_category("config"))?;
+        .map_err(|e| new_error(e).with_category("config"))?;
     Ok(basic_config)
 }
 
@@ -92,7 +92,7 @@ fn new_session_config(config: &Config) -> Result<SessionConfig> {
     };
     session_config
         .validate()
-        .map_err(|e| new_error(&e.to_string()).with_category("config"))?;
+        .map_err(|e| new_error(e).with_category("config"))?;
     Ok(session_config)
 }
 
@@ -120,14 +120,14 @@ fn new_config() -> Result<&'static Config> {
         let mut arr = vec![];
         for name in ["default.toml", &format!("{}.toml", tibba_util::get_env())] {
             let data = Configs::get(name)
-                .ok_or(new_error(&format!("{} not found", name)).with_category(category))?
+                .ok_or(new_error(format!("{} not found", name)).with_category(category))?
                 .data;
             info!(category, "load config from {}", name);
             arr.push(std::str::from_utf8(&data).unwrap_or_default().to_string());
         }
 
         tibba_config::new_config(arr.iter().map(|s| s.as_str()).collect(), Some("TIBBA_WEB"))
-            .map_err(|e| new_error(&e.to_string()).with_category(category).into())
+            .map_err(|e| new_error(e).with_category(category).into())
     })
 }
 

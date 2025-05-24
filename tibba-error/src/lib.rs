@@ -123,7 +123,7 @@ impl IntoResponse for Error {
 }
 
 // Creates a new Error with default status code 400 (Bad Request)
-pub fn new_error(message: &str) -> HttpError {
+pub fn new_error(message: impl ToString) -> HttpError {
     HttpError {
         message: message.to_string(),
         ..Default::default()

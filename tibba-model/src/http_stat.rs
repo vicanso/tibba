@@ -116,7 +116,7 @@ impl From<HttpStatSchema> for HttpStat {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Default)]
 
 pub struct HttpStatInsertParams {
     pub target_id: u64,

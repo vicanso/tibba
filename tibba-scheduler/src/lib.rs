@@ -41,19 +41,20 @@ pub fn register_job_task(name: &str, job: Job) {
 pub async fn run_scheduler_jobs() -> Result<JobScheduler> {
     let scheduler = JobScheduler::new()
         .await
-        .map_err(|e| new_error(&e.to_string()).with_category("scheduler"))?;
+        .map_err(|e| new_error(e).with_category("scheduler"))?;
     for job in JOB_TASKS.iter() {
         let value = job.value();
-        scheduler.add(value.job.clone()).await.map_err(|e| {
-            new_error(&e.to_string()).with_category(&format!("scheduler.{}", value.name))
-        })?;
+        scheduler
+            .add(value.job.clone())
+            .await
+            .map_err(|e| new_error(e).with_category(&format!("scheduler.{}", value.name)))?;
         info!(category = "scheduler", "add job: {}", value.name);
     }
     scheduler.shutdown_on_ctrl_c();
     scheduler
         .start()
         .await
-        .map_err(|e| new_error(&e.to_string()).with_category("scheduler"))?;
+        .map_err(|err| new_error(err).with_category("scheduler"))?;
 
     info!(category = "scheduler", "scheduler started");
 

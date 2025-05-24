@@ -53,7 +53,7 @@ async fn create_file(
     while let Some(field) = multipart
         .next_field()
         .await
-        .map_err(|e| new_error(&e.to_string()).with_category(ERROR_CATEGORY))?
+        .map_err(|e| new_error(e).with_category(ERROR_CATEGORY))?
     {
         let name = field.name().unwrap_or_default().to_string();
         let file_name = field.file_name().unwrap_or_default().to_string();
@@ -72,7 +72,7 @@ async fn create_file(
         let data = field
             .bytes()
             .await
-            .map_err(|e| new_error(&e.to_string()).with_category(ERROR_CATEGORY))?;
+            .map_err(|e| new_error(e).with_category(ERROR_CATEGORY))?;
         let content_type = mime_guess::from_path(&file_name).first_or_octet_stream();
         let mut params = FileInsertParams {
             group: create_file_params.group.clone(),
@@ -85,10 +85,10 @@ async fn create_file(
 
         if content_type.type_() == "image" {
             let format = image::guess_format(&data)
-                .map_err(|e| new_error(&e.to_string()).with_category(ERROR_CATEGORY))?;
+                .map_err(|e| new_error(e).with_category(ERROR_CATEGORY))?;
             params.content_type = format.to_mime_type().to_string();
             let image = image::load_from_memory_with_format(&data, format)
-                .map_err(|e| new_error(&e.to_string()).with_category(ERROR_CATEGORY))?;
+                .map_err(|e| new_error(e).with_category(ERROR_CATEGORY))?;
             params.width = Some(image.width() as i32);
             params.height = Some(image.height() as i32);
         };
@@ -128,7 +128,7 @@ async fn get_file(
     let mut headers = header::HeaderMap::with_capacity(8);
     if params.optimize.unwrap_or(true) && content_type.starts_with("image") {
         let image = ProcessImage::new(data.to_vec(), ext)
-            .map_err(|e| new_error(&e.to_string()).with_category(ERROR_CATEGORY))?;
+            .map_err(|e| new_error(e).with_category(ERROR_CATEGORY))?;
         let mut tasks = vec![];
         if params.width.is_some() || params.height.is_some() {
             tasks.push(vec![
@@ -147,7 +147,7 @@ async fn get_file(
 
         let image = imageoptimize::run_with_image(image, tasks)
             .await
-            .map_err(|e| new_error(&e.to_string()).with_category(ERROR_CATEGORY))?;
+            .map_err(|e| new_error(e).with_category(ERROR_CATEGORY))?;
 
         if let Ok(diff) = HeaderValue::from_str(&format!("{:.2}", image.diff)) {
             headers.insert("X-Diff", diff);
@@ -155,7 +155,7 @@ async fn get_file(
 
         data = image
             .get_buffer()
-            .map_err(|e| new_error(&e.to_string()).with_category(ERROR_CATEGORY))?
+            .map_err(|e| new_error(e).with_category(ERROR_CATEGORY))?
             .into();
         if let Some(mime_type) = mime_guess::from_ext(format.as_str()).first() {
             content_type = mime_type.to_string();

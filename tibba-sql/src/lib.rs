@@ -120,14 +120,14 @@ impl From<Error> for BaseError {
         let error_category = "sql";
         match source {
             Error::Sqlx { source } => {
-                let he = new_error(&source.to_string())
+                let he = new_error(source)
                     .with_category(error_category)
                     .with_sub_category("sqlx")
                     .with_exception(true);
                 he.into()
             }
             Error::Validate { source } => {
-                let he = new_error(&source.to_string())
+                let he = new_error(source)
                     .with_category(error_category)
                     .with_sub_category("validate")
                     .with_exception(true);

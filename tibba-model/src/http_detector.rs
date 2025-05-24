@@ -32,35 +32,37 @@ struct HttpDetectorSchema {
     id: u64,
     status: i8,
     name: String,
-    created: OffsetDateTime,
-    modified: OffsetDateTime,
+    interval: u16,
     url: String,
     method: String,
     alpn_protocols: Option<Json<Vec<String>>>,
     resolves: Option<Json<Vec<String>>>,
     headers: Option<Json<HashMap<String, String>>>,
-    ip_version: i32,
+    ip_version: u8,
     skip_verify: bool,
     dns_servers: Option<Json<Vec<String>>>,
     body: Option<Vec<u8>>,
+    created: OffsetDateTime,
+    modified: OffsetDateTime,
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct HttpDetector {
     pub id: u64,
     pub status: i8,
     pub name: String,
-    pub created: String,
-    pub modified: String,
+    pub interval: u16,
     pub url: String,
     pub method: String,
     pub alpn_protocols: Option<Vec<String>>,
     pub resolves: Option<Vec<String>>,
     pub headers: Option<HashMap<String, String>>,
     pub dns_servers: Option<Vec<String>>,
-    pub ip_version: i32,
+    pub ip_version: u8,
     pub skip_verify: bool,
     pub body: Option<Vec<u8>>,
+    pub created: String,
+    pub modified: String,
 }
 
 impl From<HttpDetectorSchema> for HttpDetector {
@@ -69,8 +71,7 @@ impl From<HttpDetectorSchema> for HttpDetector {
             id: schema.id,
             status: schema.status,
             name: schema.name,
-            created: format_datetime(schema.created),
-            modified: format_datetime(schema.modified),
+            interval: schema.interval,
             url: schema.url,
             method: schema.method,
             alpn_protocols: schema.alpn_protocols.map(|protocols| protocols.0),
@@ -80,6 +81,8 @@ impl From<HttpDetectorSchema> for HttpDetector {
             ip_version: schema.ip_version,
             skip_verify: schema.skip_verify,
             body: schema.body,
+            created: format_datetime(schema.created),
+            modified: format_datetime(schema.modified),
         }
     }
 }
@@ -96,6 +99,7 @@ pub struct HttpDetectorInsertParams {
     pub ip_version: i32,
     pub skip_verify: bool,
     pub body: Option<Vec<u8>>,
+    pub interval: u16,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -110,6 +114,7 @@ pub struct HttpDetectorUpdateParams {
     pub ip_version: Option<i32>,
     pub skip_verify: Option<bool>,
     pub body: Option<Vec<u8>>,
+    pub interval: Option<u16>,
 }
 
 impl HttpDetector {
@@ -140,7 +145,14 @@ impl Model for HttpDetector {
                     ..Default::default()
                 },
                 Schema {
+                    name: "interval".to_string(),
+                    category: SchemaType::Number,
+                    default_value: Some(serde_json::json!(1)),
+                    ..Default::default()
+                },
+                Schema {
                     name: "url".to_string(),
+                    span: Some(2),
                     category: SchemaType::String,
                     required: true,
                     ..Default::default()
@@ -220,7 +232,7 @@ impl Model for HttpDetector {
         let params: HttpDetectorInsertParams =
             serde_json::from_value(params).map_err(|e| Error::Json { source: e })?;
         let result = sqlx::query(
-            r#"INSERT INTO http_detectors (status, name, url, method, alpn_protocols, resolves, headers, ip_version, skip_verify, body) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+            r#"INSERT INTO http_detectors (status, name, url, method, alpn_protocols, resolves, headers, ip_version, skip_verify, body, interval) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
         )
         .bind(params.status)
         .bind(params.name)
@@ -232,6 +244,7 @@ impl Model for HttpDetector {
         .bind(params.ip_version)
         .bind(params.skip_verify)
         .bind(params.body)
+        .bind(params.interval)
         .execute(pool)
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
@@ -265,7 +278,7 @@ impl Model for HttpDetector {
             serde_json::from_value(params).map_err(|e| Error::Json { source: e })?;
 
         let _ = sqlx::query(
-            r#"UPDATE http_detectors SET status = COALESCE(?, status), name = COALESCE(?, name), url = COALESCE(?, url), method = COALESCE(?, method), alpn_protocols = COALESCE(?, alpn_protocols), resolves = COALESCE(?, resolves), headers = COALESCE(?, headers), ip_version = COALESCE(?, ip_version), skip_verify = COALESCE(?, skip_verify), body = COALESCE(?, body) WHERE id = ? AND deleted_at IS NULL"#,
+            r#"UPDATE http_detectors SET status = COALESCE(?, status), name = COALESCE(?, name), url = COALESCE(?, url), method = COALESCE(?, method), alpn_protocols = COALESCE(?, alpn_protocols), resolves = COALESCE(?, resolves), headers = COALESCE(?, headers), ip_version = COALESCE(?, ip_version), skip_verify = COALESCE(?, skip_verify), body = COALESCE(?, body), `interval` = COALESCE(?, `interval`) WHERE id = ? AND deleted_at IS NULL"#,
         )
         .bind(params.status)
         .bind(params.name)
@@ -277,6 +290,7 @@ impl Model for HttpDetector {
         .bind(params.ip_version)
         .bind(params.skip_verify)
         .bind(params.body)
+        .bind(params.interval)
         .bind(id)
         .execute(pool)
         .await

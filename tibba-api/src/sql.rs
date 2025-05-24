@@ -39,7 +39,7 @@ fn init() {
                 let stat = Arc::new(PoolStat::default());
                 let pool = new_mysql_pool(&app_config.sub_config("database"), Some(stat))
                     .await
-                    .map_err(|e| new_error(&e.to_string()))?;
+                    .map_err(new_error)?;
                 DB_POOL
                     .set(pool)
                     .map_err(|_| new_error("set db pool fail"))?;

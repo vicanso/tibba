@@ -41,15 +41,15 @@ impl From<Error> for BaseError {
     fn from(val: Error) -> Self {
         let error_category = "config";
         match val {
-            Error::Url { category, source } => new_error(&source.to_string())
+            Error::Url { category, source } => new_error(source)
                 .with_category(error_category)
                 .with_sub_category(&category)
                 .with_exception(true),
-            Error::Config { category, source } => new_error(&source.to_string())
+            Error::Config { category, source } => new_error(source)
                 .with_category(error_category)
                 .with_sub_category(&category)
                 .with_exception(true),
-            Error::ParseDuration { category, source } => new_error(&source.to_string())
+            Error::ParseDuration { category, source } => new_error(source)
                 .with_category(error_category)
                 .with_sub_category(&category)
                 .with_exception(true),

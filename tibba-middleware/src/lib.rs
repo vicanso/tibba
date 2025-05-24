@@ -30,7 +30,7 @@ impl From<Error> for BaseError {
             Error::Common { message, category } => new_error(&message)
                 .with_category(error_category)
                 .with_sub_category(&category),
-            Error::TooManyRequests { limit, current } => new_error(&format!(
+            Error::TooManyRequests { limit, current } => new_error(format!(
                 "Too many requests, limit: {limit}, current: {current}"
             ))
             .with_category(error_category)

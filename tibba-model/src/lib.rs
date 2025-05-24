@@ -46,21 +46,21 @@ impl From<Error> for BaseError {
         let error_category = "model";
         match source {
             Error::Sqlx { source } => {
-                let he = new_error(&source.to_string())
+                let he = new_error(source)
                     .with_category(error_category)
                     .with_sub_category("sqlx")
                     .with_exception(true);
                 he.into()
             }
             Error::Json { source } => {
-                let he = new_error(&source.to_string())
+                let he = new_error(source)
                     .with_category(error_category)
                     .with_sub_category("json")
                     .with_exception(true);
                 he.into()
             }
             Error::NotSupported { name } => {
-                let he = new_error(&format!("Not supported function: {}", name))
+                let he = new_error(format!("Not supported function: {}", name))
                     .with_category(error_category)
                     .with_sub_category("not_supported")
                     .with_exception(true);

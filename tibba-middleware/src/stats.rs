@@ -76,7 +76,7 @@ pub async fn stats(
         let (parts, body) = res.into_parts();
         let data = read_http_body(body)
             .await
-            .map_err(|e| new_error(&e.to_string()).with_status(500))?;
+            .map_err(|e| new_error(e).with_status(500))?;
         // Extract error message from response body
         message = Some(json_get(&data, "message"));
         // Reconstruct response

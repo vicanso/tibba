@@ -134,34 +134,34 @@ impl From<Error> for BaseError {
     fn from(val: Error) -> Self {
         let error_category = "cache";
         match val {
-            Error::Common { category, message } => new_error(&message)
+            Error::Common { category, message } => new_error(message)
                 .with_category(error_category)
                 .with_sub_category(&category),
-            Error::SingleBuild { source } => new_error(&source.to_string())
+            Error::SingleBuild { source } => new_error(source)
                 .with_category(error_category)
                 .with_sub_category("single_build")
                 .with_status(500)
                 .with_exception(true),
-            Error::ClusterBuild { source } => new_error(&source.to_string())
+            Error::ClusterBuild { source } => new_error(source)
                 .with_category(error_category)
                 .with_sub_category("cluster_build")
                 .with_status(500)
                 .with_exception(true),
-            Error::Redis { category, source } => new_error(&source.to_string())
+            Error::Redis { category, source } => new_error(source)
                 .with_category(error_category)
                 .with_sub_category(&category)
                 .with_status(500)
                 .with_exception(true),
-            Error::Compression { source } => new_error(&source.to_string())
+            Error::Compression { source } => new_error(source)
                 .with_category(error_category)
                 .with_sub_category("compression")
                 .with_exception(true),
-            Error::Url { category, source } => new_error(&source.to_string())
+            Error::Url { category, source } => new_error(source)
                 .with_category(error_category)
                 .with_sub_category(&category)
                 .with_status(500)
                 .with_exception(true),
-            Error::Validate { category, source } => new_error(&source.to_string())
+            Error::Validate { category, source } => new_error(source)
                 .with_category(error_category)
                 .with_sub_category(&category),
         }

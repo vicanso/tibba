@@ -55,21 +55,21 @@ impl From<Error> for BaseError {
         let error_category = "open_dal";
         match source {
             Error::OpenDal { source } => {
-                let he = new_error(&source.to_string())
+                let he = new_error(source)
                     .with_category(error_category)
                     .with_sub_category("opendal")
                     .with_exception(true);
                 he.into()
             }
             Error::ParseUrl { source } => {
-                let he = new_error(&source.to_string())
+                let he = new_error(source)
                     .with_category(error_category)
                     .with_sub_category("parse_url")
                     .with_exception(true);
                 he.into()
             }
             Error::Validate { source } => {
-                let he = new_error(&source.to_string())
+                let he = new_error(source)
                     .with_category(error_category)
                     .with_sub_category("validate")
                     .with_exception(true);
