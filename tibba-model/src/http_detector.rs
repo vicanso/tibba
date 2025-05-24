@@ -209,8 +209,8 @@ impl Model for HttpDetector {
             ],
             allow_edit: SchemaAllowEdit {
                 owner: true,
-                groups: vec![],
                 roles: vec!["*".to_string()],
+                ..Default::default()
             },
             allow_create: SchemaAllowCreate {
                 roles: vec!["*".to_string()],

@@ -123,8 +123,8 @@ impl Model for User {
             ],
             allow_edit: SchemaAllowEdit {
                 owner: true,
-                groups: vec![],
                 roles: vec![ROLE_SUPER_ADMIN.to_string()],
+                ..Default::default()
             },
             ..Default::default()
         }

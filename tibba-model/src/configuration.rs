@@ -158,8 +158,8 @@ impl Model for Configuration {
             ],
             allow_edit: SchemaAllowEdit {
                 owner: true,
-                groups: vec![],
                 roles: vec![ROLE_SUPER_ADMIN.to_string(), ROLE_ADMIN.to_string()],
+                ..Default::default()
             },
             allow_create: SchemaAllowCreate {
                 roles: vec![ROLE_SUPER_ADMIN.to_string(), ROLE_ADMIN.to_string()],

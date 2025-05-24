@@ -29,12 +29,12 @@ type Result<T> = std::result::Result<T, Error>;
 
 async fn do_request(pool: &MySqlPool, detector: &HttpDetector, params: HttpRequest) -> Result<()> {
     let stat = request(params).await;
-    let mut status = 0;
+    let mut result = 0;
     if stat.error.is_some()
         || stat.status.is_none()
         || stat.status.unwrap_or_default().as_u16() >= 400
     {
-        status = 1;
+        result = 1;
     }
     let insert_params = HttpStatInsertParams {
         target_id: detector.id,
@@ -59,7 +59,7 @@ async fn do_request(pool: &MySqlPool, detector: &HttpDetector, params: HttpReque
         cert_domains: stat.cert_domains.map(|d| d.join(",")),
         body_size: stat.body_size.map(|d| d as i32),
         error: stat.error,
-        status,
+        result,
     };
     HttpStat::add_stat(pool, insert_params).await?;
     Ok(())
@@ -73,7 +73,7 @@ async fn run_http_detector(pool: &MySqlPool, detector: HttpDetector) -> Result<(
                 target_id: detector.id,
                 target_name: detector.name.clone(),
                 url: detector.url.clone(),
-                status: 1,
+                result: 1,
                 error: Some("url parse error".to_string()),
                 ..Default::default()
             },

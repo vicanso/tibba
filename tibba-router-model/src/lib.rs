@@ -21,7 +21,9 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::MySqlPool;
 use std::time::Duration;
-use tibba_model::{Configuration, File, HttpDetector, Model, ModelListParams, SchemaView, User};
+use tibba_model::{
+    Configuration, File, HttpDetector, HttpStat, Model, ModelListParams, SchemaView, User,
+};
 use tibba_session::AdminSession;
 use tibba_util::{CacheJsonResult, JsonParams, JsonResult, QueryParams};
 use tibba_validator::x_schema_name;
@@ -41,6 +43,7 @@ async fn get_schema(
         "configuration" => Configuration::schema_view(),
         "file" => File::schema_view(),
         "http_detector" => HttpDetector::schema_view(),
+        "http_stat" => HttpStat::schema_view(),
         _ => return Err(tibba_error::new_error("The schema is not found").into()),
     };
     Ok((Duration::from_secs(5 * 60), view).into())
@@ -116,6 +119,18 @@ async fn list_model(
             json!({
             "count": count,
                     "items": detectors,
+                })
+        }
+        "http_stat" => {
+            let count = if params.count {
+                HttpStat::count(pool, &query_params).await?
+            } else {
+                -1
+            };
+            let stats = HttpStat::list(pool, &query_params).await?;
+            json!({
+            "count": count,
+                    "items": stats,
                 })
         }
         _ => {

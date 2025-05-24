@@ -12,12 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, Model, ModelListParams, SchemaView, format_datetime};
+use super::{
+    Error, Model, ModelListParams, Schema, SchemaAllowCreate, SchemaAllowEdit, SchemaType,
+    SchemaView, format_datetime,
+};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
-use sqlx::types::Json;
 use sqlx::{MySql, Pool};
+use std::collections::HashMap;
 use substring::Substring;
 use time::OffsetDateTime;
 
@@ -42,13 +45,13 @@ struct HttpStatSchema {
     alpn: String,
     subject: String,
     issuer: String,
-    cert_not_before: OffsetDateTime,
-    cert_not_after: OffsetDateTime,
+    cert_not_before: String,
+    cert_not_after: String,
     cert_cipher: String,
-    cert_domains: Json<Vec<String>>,
+    cert_domains: String,
     body_size: i32,
     error: String,
-    status: u8,
+    result: u8,
     created: OffsetDateTime,
     modified: OffsetDateTime,
 }
@@ -78,7 +81,7 @@ pub struct HttpStat {
     pub cert_domains: Vec<String>,
     pub body_size: i32,
     pub error: String,
-    pub status: u8,
+    pub result: u8,
     pub created: String,
     pub modified: String,
 }
@@ -103,13 +106,17 @@ impl From<HttpStatSchema> for HttpStat {
             alpn: schema.alpn,
             subject: schema.subject,
             issuer: schema.issuer,
-            cert_not_before: format_datetime(schema.cert_not_before),
-            cert_not_after: format_datetime(schema.cert_not_after),
+            cert_not_before: schema.cert_not_before,
+            cert_not_after: schema.cert_not_after,
             cert_cipher: schema.cert_cipher,
-            cert_domains: schema.cert_domains.0,
+            cert_domains: schema
+                .cert_domains
+                .split(',')
+                .map(|s| s.to_string())
+                .collect(),
             body_size: schema.body_size,
             error: schema.error,
-            status: schema.status,
+            result: schema.result,
             created: format_datetime(schema.created),
             modified: format_datetime(schema.modified),
         }
@@ -141,13 +148,13 @@ pub struct HttpStatInsertParams {
     pub cert_domains: Option<String>,
     pub body_size: Option<i32>,
     pub error: Option<String>,
-    pub status: u8,
+    pub result: u8,
 }
 
 impl HttpStat {
     pub async fn add_stat(pool: &Pool<MySql>, params: HttpStatInsertParams) -> Result<u64> {
         let result = sqlx::query(
-            r#"INSERT INTO http_stats (target_id, target_name, url, dns_lookup, quic_connect, tcp_connect, tls_handshake, server_processing, content_transfer, total, addr, status_code, tls, alpn, subject, issuer, cert_not_before, cert_not_after, cert_cipher, cert_domains, body_size, error, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+            r#"INSERT INTO http_stats (target_id, target_name, url, dns_lookup, quic_connect, tcp_connect, tls_handshake, server_processing, content_transfer, total, addr, status_code, tls, alpn, subject, issuer, cert_not_before, cert_not_after, cert_cipher, cert_domains, body_size, error, result) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
         )
         .bind(params.target_id)
         .bind(params.target_name)
@@ -171,7 +178,7 @@ impl HttpStat {
         .bind(params.cert_domains.unwrap_or_default())
         .bind(params.body_size.unwrap_or(-1))
         .bind(params.error.unwrap_or_default())
-        .bind(params.status)
+        .bind(params.result)
         .execute(pool)
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
@@ -183,10 +190,144 @@ impl HttpStat {
 #[async_trait]
 impl Model for HttpStat {
     type Output = Self;
+    fn keyword() -> String {
+        "target_name".to_string()
+    }
     fn schema_view() -> SchemaView {
         SchemaView {
-            ..Default::default()
+            schemas: vec![
+                Schema {
+                    name: "target_name".to_string(),
+                    category: SchemaType::String,
+                    fixed: true,
+                    ..Default::default()
+                },
+                Schema {
+                    name: "url".to_string(),
+                    category: SchemaType::String,
+                    ..Default::default()
+                },
+                Schema {
+                    name: "dns_lookup".to_string(),
+                    category: SchemaType::Number,
+                    ..Default::default()
+                },
+                Schema {
+                    name: "quic_connect".to_string(),
+                    category: SchemaType::Number,
+                    ..Default::default()
+                },
+                Schema {
+                    name: "tcp_connect".to_string(),
+                    category: SchemaType::Number,
+                    ..Default::default()
+                },
+                Schema {
+                    name: "tls_handshake".to_string(),
+                    category: SchemaType::Number,
+                    ..Default::default()
+                },
+                Schema {
+                    name: "server_processing".to_string(),
+                    category: SchemaType::Number,
+                    ..Default::default()
+                },
+                Schema {
+                    name: "content_transfer".to_string(),
+                    category: SchemaType::Number,
+                    ..Default::default()
+                },
+                Schema {
+                    name: "total".to_string(),
+                    category: SchemaType::Number,
+                    ..Default::default()
+                },
+                Schema {
+                    name: "addr".to_string(),
+                    category: SchemaType::String,
+                    ..Default::default()
+                },
+                Schema {
+                    name: "status_code".to_string(),
+                    category: SchemaType::Number,
+                    ..Default::default()
+                },
+                Schema {
+                    name: "tls".to_string(),
+                    category: SchemaType::String,
+                    ..Default::default()
+                },
+                Schema {
+                    name: "alpn".to_string(),
+                    category: SchemaType::String,
+                    ..Default::default()
+                },
+                Schema {
+                    name: "subject".to_string(),
+                    category: SchemaType::String,
+                    ..Default::default()
+                },
+                Schema {
+                    name: "issuer".to_string(),
+                    category: SchemaType::String,
+                    ..Default::default()
+                },
+                Schema {
+                    name: "cert_not_before".to_string(),
+                    category: SchemaType::String,
+                    ..Default::default()
+                },
+                Schema {
+                    name: "cert_not_after".to_string(),
+                    category: SchemaType::String,
+                    ..Default::default()
+                },
+                Schema {
+                    name: "cert_cipher".to_string(),
+                    category: SchemaType::String,
+                    ..Default::default()
+                },
+                Schema {
+                    name: "cert_domains".to_string(),
+                    category: SchemaType::Strings,
+                    ..Default::default()
+                },
+                Schema {
+                    name: "body_size".to_string(),
+                    category: SchemaType::Number,
+                    ..Default::default()
+                },
+                Schema {
+                    name: "error".to_string(),
+                    category: SchemaType::String,
+                    ..Default::default()
+                },
+                Schema {
+                    name: "result".to_string(),
+                    category: SchemaType::Result,
+                    filterable: true,
+                    ..Default::default()
+                },
+                Schema::new_created(),
+                Schema::new_modified(),
+            ],
+            allow_edit: SchemaAllowEdit {
+                disabled: true,
+                ..Default::default()
+            },
+            allow_create: SchemaAllowCreate {
+                disabled: true,
+                ..Default::default()
+            },
         }
+    }
+
+    fn filter_condition_sql(filters: &HashMap<String, String>) -> Option<Vec<String>> {
+        let mut conditions = vec![];
+        if let Some(result) = filters.get("result") {
+            conditions.push(format!("result = '{}'", result));
+        }
+        (!conditions.is_empty()).then_some(conditions)
     }
 
     async fn list(pool: &Pool<MySql>, params: &ModelListParams) -> Result<Vec<Self>> {
@@ -210,5 +351,14 @@ impl Model for HttpStat {
             .map_err(|e| Error::Sqlx { source: e })?;
 
         Ok(detectors.into_iter().map(|schema| schema.into()).collect())
+    }
+    async fn count(pool: &Pool<MySql>, params: &ModelListParams) -> Result<i64> {
+        let mut sql = String::from("SELECT COUNT(*) FROM http_stats");
+        sql.push_str(&Self::condition_sql(params)?);
+        let count = sqlx::query_scalar::<_, i64>(&sql)
+            .fetch_one(pool)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+        Ok(count)
     }
 }

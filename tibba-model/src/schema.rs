@@ -29,6 +29,7 @@ pub enum SchemaType {
     Bytes,
     Boolean,
     Status,
+    Result,
     Strings,
     Date,
     Json,
@@ -88,12 +89,14 @@ pub struct SchemaAllowEdit {
     pub owner: bool,
     pub groups: Vec<String>,
     pub roles: Vec<String>,
+    pub disabled: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct SchemaAllowCreate {
     pub groups: Vec<String>,
     pub roles: Vec<String>,
+    pub disabled: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
