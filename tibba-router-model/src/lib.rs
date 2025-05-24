@@ -36,14 +36,15 @@ struct GetSchemaParams {
 }
 
 async fn get_schema(
+    State(pool): State<&'static MySqlPool>,
     QueryParams(params): QueryParams<GetSchemaParams>,
 ) -> CacheJsonResult<SchemaView> {
     let view = match params.name.as_str() {
-        "user" => User::schema_view(),
-        "configuration" => Configuration::schema_view(),
-        "file" => File::schema_view(),
-        "http_detector" => HttpDetector::schema_view(),
-        "http_stat" => HttpStat::schema_view(),
+        "user" => User::schema_view(pool).await,
+        "configuration" => Configuration::schema_view(pool).await,
+        "file" => File::schema_view(pool).await,
+        "http_detector" => HttpDetector::schema_view(pool).await,
+        "http_stat" => HttpStat::schema_view(pool).await,
         _ => return Err(tibba_error::new_error("The schema is not found").into()),
     };
     Ok((Duration::from_secs(5 * 60), view).into())
@@ -270,7 +271,7 @@ pub struct ModelRouterParams {
 
 pub fn new_model_router(params: ModelRouterParams) -> Router {
     Router::new()
-        .route("/schema", get(get_schema))
+        .route("/schema", get(get_schema).with_state(params.pool))
         .route("/list", get(list_model).with_state(params.pool))
         .route("/detail", get(get_detail).with_state(params.pool))
         .route("/delete", delete(delete_model).with_state(params.pool))

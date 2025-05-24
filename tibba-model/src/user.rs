@@ -93,7 +93,7 @@ impl Model for User {
     fn keyword() -> String {
         "account".to_string()
     }
-    fn schema_view() -> SchemaView {
+    async fn schema_view(_pool: &Pool<MySql>) -> SchemaView {
         SchemaView {
             schemas: vec![
                 Schema::new_id(),

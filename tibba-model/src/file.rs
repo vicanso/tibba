@@ -126,7 +126,7 @@ impl From<serde_json::Value> for FileUpdateParams {
 }
 
 impl File {
-    pub fn schema_view() -> SchemaView {
+    pub async fn schema_view(_pool: &Pool<MySql>) -> SchemaView {
         let group_options = vec![
             SchemaOption {
                 label: "Tibba".to_string(),

@@ -133,7 +133,7 @@ impl HttpDetector {
 #[async_trait]
 impl Model for HttpDetector {
     type Output = Self;
-    fn schema_view() -> SchemaView {
+    async fn schema_view(_pool: &Pool<MySql>) -> SchemaView {
         SchemaView {
             schemas: vec![
                 Schema::new_id(),

@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use super::{
-    Error, Model, ModelListParams, ResultValue, Schema, SchemaAllowCreate, SchemaAllowEdit,
-    SchemaOption, SchemaOptionValue, SchemaType, SchemaView, format_datetime,
+    Error, HttpDetector, Model, ModelListParams, ResultValue, Schema, SchemaAllowCreate,
+    SchemaAllowEdit, SchemaOption, SchemaOptionValue, SchemaType, SchemaView, format_datetime,
 };
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -193,11 +193,29 @@ impl Model for HttpStat {
     fn keyword() -> String {
         "target_name".to_string()
     }
-    fn schema_view() -> SchemaView {
+    async fn schema_view(_pool: &Pool<MySql>) -> SchemaView {
+        let mut detector_options = vec![];
+        if let Ok(detectors) = HttpDetector::list_enabled(_pool).await {
+            for detector in detectors {
+                detector_options.push(SchemaOption {
+                    label: detector.name,
+                    value: SchemaOptionValue::String(detector.id.to_string()),
+                });
+            }
+        }
         SchemaView {
             schemas: vec![
                 Schema {
+                    name: "target_id".to_string(),
+                    category: SchemaType::String,
+                    hidden: true,
+                    filterable: !detector_options.is_empty(),
+                    options: Some(detector_options),
+                    ..Default::default()
+                },
+                Schema {
                     name: "target_name".to_string(),
+                    label: Some("name".to_string()),
                     category: SchemaType::String,
                     fixed: true,
                     ..Default::default()
@@ -340,6 +358,9 @@ impl Model for HttpStat {
         let mut conditions = vec![];
         if let Some(result) = filters.get("result") {
             conditions.push(format!("result = '{}'", result));
+        }
+        if let Some(target_id) = filters.get("target_id") {
+            conditions.push(format!("target_id = '{}'", target_id));
         }
         (!conditions.is_empty()).then_some(conditions)
     }

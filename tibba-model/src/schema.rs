@@ -108,6 +108,7 @@ pub struct SchemaAllowCreate {
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct Schema {
     pub name: String,
+    pub label: Option<String>,
     pub category: SchemaType,
     pub identity: bool,
     pub read_only: bool,

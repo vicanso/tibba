@@ -75,7 +75,7 @@ type Result<T> = std::result::Result<T, Error>;
 #[async_trait]
 pub trait Model {
     type Output;
-    fn schema_view() -> SchemaView;
+    async fn schema_view(_pool: &Pool<MySql>) -> SchemaView;
     fn keyword() -> String {
         "name".to_string()
     }
