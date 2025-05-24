@@ -20,6 +20,12 @@ pub enum Status {
     Enabled = 1,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResultValue {
+    Success = 0,
+    Failed = 1,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum SchemaType {

@@ -20,7 +20,7 @@ use sqlx::MySqlPool;
 use std::net::IpAddr;
 use tibba_error::{Error, new_error};
 use tibba_hook::register_before_task;
-use tibba_model::{HttpDetector, HttpStat, HttpStatInsertParams};
+use tibba_model::{HttpDetector, HttpStat, HttpStatInsertParams, ResultValue};
 use tibba_scheduler::{Job, register_job_task};
 use time::OffsetDateTime;
 use tracing::{error, info};
@@ -29,12 +29,12 @@ type Result<T> = std::result::Result<T, Error>;
 
 async fn do_request(pool: &MySqlPool, detector: &HttpDetector, params: HttpRequest) -> Result<()> {
     let stat = request(params).await;
-    let mut result = 0;
+    let mut result = ResultValue::Success;
     if stat.error.is_some()
         || stat.status.is_none()
         || stat.status.unwrap_or_default().as_u16() >= 400
     {
-        result = 1;
+        result = ResultValue::Failed;
     }
     let insert_params = HttpStatInsertParams {
         target_id: detector.id,
@@ -59,7 +59,7 @@ async fn do_request(pool: &MySqlPool, detector: &HttpDetector, params: HttpReque
         cert_domains: stat.cert_domains.map(|d| d.join(",")),
         body_size: stat.body_size.map(|d| d as i32),
         error: stat.error,
-        result,
+        result: result as u8,
     };
     HttpStat::add_stat(pool, insert_params).await?;
     Ok(())
@@ -73,7 +73,7 @@ async fn run_http_detector(pool: &MySqlPool, detector: HttpDetector) -> Result<(
                 target_id: detector.id,
                 target_name: detector.name.clone(),
                 url: detector.url.clone(),
-                result: 1,
+                result: ResultValue::Failed as u8,
                 error: Some("url parse error".to_string()),
                 ..Default::default()
             },

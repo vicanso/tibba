@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use super::{
-    Error, Model, ModelListParams, Schema, SchemaAllowCreate, SchemaAllowEdit, SchemaType,
-    SchemaView, format_datetime,
+    Error, Model, ModelListParams, ResultValue, Schema, SchemaAllowCreate, SchemaAllowEdit,
+    SchemaOption, SchemaOptionValue, SchemaType, SchemaView, format_datetime,
 };
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -306,6 +306,20 @@ impl Model for HttpStat {
                     name: "result".to_string(),
                     category: SchemaType::Result,
                     filterable: true,
+                    options: Some(vec![
+                        SchemaOption {
+                            label: "Success".to_string(),
+                            value: SchemaOptionValue::String(
+                                (ResultValue::Success as u8).to_string(),
+                            ),
+                        },
+                        SchemaOption {
+                            label: "Failed".to_string(),
+                            value: SchemaOptionValue::String(
+                                (ResultValue::Failed as u8).to_string(),
+                            ),
+                        },
+                    ]),
                     ..Default::default()
                 },
                 Schema::new_created(),
