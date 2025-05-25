@@ -9,6 +9,4 @@ dev:
 
 
 release:
-	date > assets/build_date
-	git rev-parse --short HEAD > assets/commit
-	cargo build --release
+	cargo build --release -p tibba-api 
