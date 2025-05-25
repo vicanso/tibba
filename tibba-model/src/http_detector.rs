@@ -42,6 +42,7 @@ struct HttpDetectorSchema {
     skip_verify: bool,
     dns_servers: Option<Json<Vec<String>>>,
     body: Option<Vec<u8>>,
+    created_by: u64,
     created: OffsetDateTime,
     modified: OffsetDateTime,
 }
@@ -61,6 +62,7 @@ pub struct HttpDetector {
     pub ip_version: u8,
     pub skip_verify: bool,
     pub body: Option<Vec<u8>>,
+    pub created_by: u64,
     pub created: String,
     pub modified: String,
 }
@@ -81,6 +83,7 @@ impl From<HttpDetectorSchema> for HttpDetector {
             ip_version: schema.ip_version,
             skip_verify: schema.skip_verify,
             body: schema.body,
+            created_by: schema.created_by,
             created: format_datetime(schema.created),
             modified: format_datetime(schema.modified),
         }
@@ -100,6 +103,7 @@ pub struct HttpDetectorInsertParams {
     pub skip_verify: bool,
     pub body: Option<Vec<u8>>,
     pub interval: u16,
+    pub created_by: u64,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -232,7 +236,7 @@ impl Model for HttpDetector {
         let params: HttpDetectorInsertParams =
             serde_json::from_value(params).map_err(|e| Error::Json { source: e })?;
         let result = sqlx::query(
-            r#"INSERT INTO http_detectors (status, name, url, method, alpn_protocols, resolves, headers, ip_version, skip_verify, body, interval) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+            r#"INSERT INTO http_detectors (status, name, url, method, alpn_protocols, resolves, headers, ip_version, skip_verify, body, `interval`, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
         )
         .bind(params.status)
         .bind(params.name)
@@ -245,6 +249,7 @@ impl Model for HttpDetector {
         .bind(params.skip_verify)
         .bind(params.body)
         .bind(params.interval)
+        .bind(params.created_by)
         .execute(pool)
         .await
         .map_err(|e| Error::Sqlx { source: e })?;

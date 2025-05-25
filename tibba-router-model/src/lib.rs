@@ -250,12 +250,17 @@ struct CreateModelParams {
 
 async fn create_model(
     State(pool): State<&'static MySqlPool>,
-    _session: AdminSession,
+    session: AdminSession,
     JsonParams(params): JsonParams<CreateModelParams>,
 ) -> JsonResult<Value> {
+    let mut data = params.data;
+    if let Some(obj) = data.as_object_mut() {
+        obj.insert("created_by".to_string(), session.get_user_id().into());
+    }
+
     let id = match params.model.as_str() {
-        "configuration" => Configuration::insert(pool, params.data).await?,
-        "http_detector" => HttpDetector::insert(pool, params.data).await?,
+        "configuration" => Configuration::insert(pool, data).await?,
+        "http_detector" => HttpDetector::insert(pool, data).await?,
         _ => {
             return Err(tibba_error::new_error("The model is not supported").into());
         }

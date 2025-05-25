@@ -47,6 +47,7 @@ pub struct Session {
     cache: Option<&'static RedisCache>,
     #[serde(skip)]
     params: SessionParams,
+    user_id: u64,
     // id
     id: String,
     // issued at
@@ -84,11 +85,12 @@ impl Session {
     pub fn can_renew(&self) -> bool {
         self.renewal_count < self.params.max_renewal
     }
-    pub fn with_account(mut self, account: &str) -> Self {
+    pub fn with_account(mut self, account: &str, user_id: u64) -> Self {
         if self.id.is_empty() || self.account != account {
             self.id = uuid();
         }
         self.account = account.to_string();
+        self.user_id = user_id;
         self.iat = timestamp();
         self
     }
@@ -106,6 +108,9 @@ impl Session {
     }
     pub fn get_account(&self) -> String {
         self.account.clone()
+    }
+    pub fn get_user_id(&self) -> u64 {
+        self.user_id
     }
     pub fn get_expired_at(&self) -> String {
         from_timestamp(self.iat + self.params.ttl, 0)

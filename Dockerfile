@@ -3,7 +3,7 @@ FROM rust:1.86.0 AS builder
 COPY . /tibba
 
 RUN apt update \
-    && apt install -y cmake libclang-dev wget gnupg ca-certificates lsb-release protobuf-compiler --no-install-recommends
+    && apt install -y cmake ca-certificates --no-install-recommends
 RUN rustup target list --installed
 RUN cd /tibba \
     && make release \

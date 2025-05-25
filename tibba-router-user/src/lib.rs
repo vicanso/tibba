@@ -110,7 +110,7 @@ async fn login(
     let roles = user.roles.clone().unwrap_or_default();
 
     let session = session
-        .with_account(&account)
+        .with_account(&account, user.id)
         .with_groups(groups)
         .with_roles(roles);
     session.save().await?;
