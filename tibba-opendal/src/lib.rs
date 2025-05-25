@@ -43,7 +43,7 @@ fn new_opendal_config(config: &Config) -> Result<OpenDalConfig> {
 #[derive(Debug, Snafu)]
 pub enum Error {
     #[snafu(display("open dal {source}"))]
-    OpenDal { source: opendal::Error },
+    OpenDal { source: Box<opendal::Error> },
     #[snafu(display("parse url {source}"))]
     ParseUrl { source: url::ParseError },
     #[snafu(display("validate {source}"))]
@@ -130,7 +130,9 @@ fn new_s3_dal(url: &str) -> Result<Storage> {
     }
 
     let dal = opendal::Operator::new(builder)
-        .map_err(|e| Error::OpenDal { source: e })?
+        .map_err(|e| Error::OpenDal {
+            source: Box::new(e),
+        })?
         .layer(MimeGuessLayer::default())
         .finish();
     Ok(Storage::new(dal))
@@ -142,7 +144,9 @@ fn new_mysql_dal(url: &str) -> Result<Storage> {
         .table("objects");
 
     let dal = Operator::new(builder)
-        .map_err(|e| Error::OpenDal { source: e })?
+        .map_err(|e| Error::OpenDal {
+            source: Box::new(e),
+        })?
         .layer(MimeGuessLayer::default())
         .finish();
     Ok(Storage::new(dal))

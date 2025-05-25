@@ -26,11 +26,9 @@ impl Storage {
         Self { dal }
     }
     pub async fn write(&self, path: &str, bs: impl Into<Buffer>) -> Result<Metadata> {
-        let metadata = self
-            .dal
-            .write(path, bs)
-            .await
-            .map_err(|e| Error::OpenDal { source: e })?;
+        let metadata = self.dal.write(path, bs).await.map_err(|e| Error::OpenDal {
+            source: Box::new(e),
+        })?;
         Ok(metadata)
     }
     pub async fn write_with(
@@ -44,31 +42,27 @@ impl Storage {
             .writer_with(path)
             .user_metadata(user_metadata)
             .await
-            .map_err(|e| Error::OpenDal { source: e })?;
-        writer
-            .write(bs.into())
-            .await
-            .map_err(|e| Error::OpenDal { source: e })?;
-        let metadata = writer
-            .close()
-            .await
-            .map_err(|e| Error::OpenDal { source: e })?;
+            .map_err(|e| Error::OpenDal {
+                source: Box::new(e),
+            })?;
+        writer.write(bs.into()).await.map_err(|e| Error::OpenDal {
+            source: Box::new(e),
+        })?;
+        let metadata = writer.close().await.map_err(|e| Error::OpenDal {
+            source: Box::new(e),
+        })?;
         Ok(metadata)
     }
     pub async fn read(&self, path: &str) -> Result<Buffer> {
-        let bs = self
-            .dal
-            .read(path)
-            .await
-            .map_err(|e| Error::OpenDal { source: e })?;
+        let bs = self.dal.read(path).await.map_err(|e| Error::OpenDal {
+            source: Box::new(e),
+        })?;
         Ok(bs)
     }
     pub async fn stat(&self, path: &str) -> Result<Metadata> {
-        let metadata = self
-            .dal
-            .stat(path)
-            .await
-            .map_err(|e| Error::OpenDal { source: e })?;
+        let metadata = self.dal.stat(path).await.map_err(|e| Error::OpenDal {
+            source: Box::new(e),
+        })?;
         Ok(metadata)
     }
     pub fn info(&self) -> OperatorInfo {
