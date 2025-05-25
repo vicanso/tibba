@@ -1,4 +1,4 @@
-FROM rust:1.84.0 AS builder
+FROM rust:1.86.0 AS builder
 
 COPY . /tibba
 
