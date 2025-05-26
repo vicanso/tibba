@@ -292,12 +292,12 @@ impl Model for HttpStat {
                 },
                 Schema {
                     name: "cert_not_before".to_string(),
-                    category: SchemaType::String,
+                    category: SchemaType::Date,
                     ..Default::default()
                 },
                 Schema {
                     name: "cert_not_after".to_string(),
-                    category: SchemaType::String,
+                    category: SchemaType::Date,
                     ..Default::default()
                 },
                 Schema {
@@ -312,7 +312,7 @@ impl Model for HttpStat {
                 },
                 Schema {
                     name: "body_size".to_string(),
-                    category: SchemaType::Number,
+                    category: SchemaType::ByteSize,
                     ..Default::default()
                 },
                 Schema {
@@ -341,7 +341,7 @@ impl Model for HttpStat {
                     ..Default::default()
                 },
                 Schema::new_created(),
-                Schema::new_modified(),
+                Schema::new_filterable_modified(),
             ],
             allow_edit: SchemaAllowEdit {
                 disabled: true,

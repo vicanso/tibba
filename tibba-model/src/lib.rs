@@ -92,6 +92,17 @@ pub trait Model {
         if let Some(filters) = &params.filters {
             let filters: HashMap<String, String> =
                 serde_json::from_str(filters).context(JsonSnafu)?;
+            if let Some(modified) = filters.get("modified") {
+                if let Some((start, end)) = modified.split_once(',') {
+                    if let Ok(start) = DateTime::parse_from_rfc3339(start) {
+                        where_conditions.push(format!("modified >= '{}'", start));
+                    }
+                    if let Ok(end) = DateTime::parse_from_rfc3339(end) {
+                        where_conditions.push(format!("modified <= '{}'", end));
+                    }
+                }
+            }
+
             if let Some(conditions) = Self::filter_condition_sql(&filters) {
                 where_conditions.extend(conditions);
             }

@@ -27,7 +27,7 @@ pub enum ResultValue {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum SchemaType {
     #[default]
     String,
@@ -38,6 +38,7 @@ pub enum SchemaType {
     Result,
     Strings,
     Date,
+    ByteSize,
     Json,
 }
 
@@ -164,6 +165,11 @@ impl Schema {
             auto_create: true,
             ..Default::default()
         }
+    }
+    pub fn new_filterable_modified() -> Self {
+        let mut modified = Self::new_modified();
+        modified.filterable = true;
+        modified
     }
 }
 
