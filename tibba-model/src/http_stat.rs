@@ -56,7 +56,7 @@ struct HttpStatSchema {
     modified: OffsetDateTime,
 }
 
-#[derive(Default, Deserialize, Serialize)]
+#[derive(Default, Deserialize, Serialize, Debug)]
 pub struct HttpStat {
     pub id: u64,
     pub target_id: u64,
@@ -185,6 +185,20 @@ impl HttpStat {
 
         Ok(result.last_insert_id())
     }
+    pub async fn list_by_modified(
+        pool: &Pool<MySql>,
+        modified_range: (&str, &str),
+    ) -> Result<Vec<Self>> {
+        let detectors = sqlx::query_as::<_, HttpStatSchema>(
+            r#"SELECT * FROM http_stats WHERE modified >= ? AND modified <= ?"#,
+        )
+        .bind(modified_range.0)
+        .bind(modified_range.1)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+        Ok(detectors.into_iter().map(|schema| schema.into()).collect())
+    }
 }
 
 #[async_trait]
@@ -223,6 +237,26 @@ impl Model for HttpStat {
                 Schema {
                     name: "url".to_string(),
                     category: SchemaType::String,
+                    ..Default::default()
+                },
+                Schema {
+                    name: "result".to_string(),
+                    category: SchemaType::Result,
+                    filterable: true,
+                    options: Some(vec![
+                        SchemaOption {
+                            label: "Success".to_string(),
+                            value: SchemaOptionValue::String(
+                                (ResultValue::Success as u8).to_string(),
+                            ),
+                        },
+                        SchemaOption {
+                            label: "Failed".to_string(),
+                            value: SchemaOptionValue::String(
+                                (ResultValue::Failed as u8).to_string(),
+                            ),
+                        },
+                    ]),
                     ..Default::default()
                 },
                 Schema {
@@ -318,26 +352,6 @@ impl Model for HttpStat {
                 Schema {
                     name: "error".to_string(),
                     category: SchemaType::String,
-                    ..Default::default()
-                },
-                Schema {
-                    name: "result".to_string(),
-                    category: SchemaType::Result,
-                    filterable: true,
-                    options: Some(vec![
-                        SchemaOption {
-                            label: "Success".to_string(),
-                            value: SchemaOptionValue::String(
-                                (ResultValue::Success as u8).to_string(),
-                            ),
-                        },
-                        SchemaOption {
-                            label: "Failed".to_string(),
-                            value: SchemaOptionValue::String(
-                                (ResultValue::Failed as u8).to_string(),
-                            ),
-                        },
-                    ]),
                     ..Default::default()
                 },
                 Schema::new_created(),

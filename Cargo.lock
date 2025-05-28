@@ -1206,6 +1206,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "english-to-cron"
+version = "0.1.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e26fb7377cbec9a94f60428e6e6afbe10c699a14639b4d3d4b67b25c0bbe0806"
+dependencies = [
+ "regex",
+]
+
+[[package]]
 name = "enum-as-inner"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1766,9 +1775,9 @@ dependencies = [
 
 [[package]]
 name = "http-stat"
-version = "0.4.8"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "44129b18216c531b136cef983592b8eb259b2e2c1862854e74a120f60e065976"
+checksum = "3b7b516972e1eedfd1420a92692aa965d2a0a56e638ec5464f97795a9dbbb5a3"
 dependencies = [
  "brotli-decompressor",
  "bytes",
@@ -4497,11 +4506,14 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "axum-client-ip",
+ "chrono",
  "ctor",
  "http",
  "http-stat",
  "once_cell",
+ "reqwest",
  "rust-embed",
+ "serde",
  "sqlx",
  "tibba-cache",
  "tibba-config",
@@ -4921,6 +4933,7 @@ checksum = "6a5597b569b4712cf78aa0c9ae29742461b7bda1e49c2a5fdad1d79bf022f8f0"
 dependencies = [
  "chrono",
  "croner",
+ "english-to-cron",
  "num-derive",
  "num-traits",
  "tokio",
