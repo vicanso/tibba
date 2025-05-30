@@ -29,4 +29,4 @@ CREATE TABLE `http_stats` (
   PRIMARY KEY (`id`) COMMENT '主键',
   KEY `idx_deleted_at` (`deleted_at`) COMMENT '软删除索引',
   KEY `idx_target_id_result` (`target_id`, `result`) COMMENT '目标ID和结果索引'
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT="http_stats表";
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT="http_stats表";

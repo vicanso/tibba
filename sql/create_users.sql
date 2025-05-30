@@ -14,5 +14,5 @@ CREATE TABLE `users` (
   PRIMARY KEY (`id`) COMMENT '主键',
   UNIQUE KEY `user_account` (`account`, `deleted_at`) COMMENT '用户账号唯一索引（仅对未删除记录生效）',
   KEY `idx_deleted_at` (`deleted_at`) COMMENT '软删除索引'
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT="用户表";
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT="用户表";
 

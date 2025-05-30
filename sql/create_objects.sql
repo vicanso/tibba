@@ -9,4 +9,4 @@ CREATE TABLE `objects` (
     UNIQUE KEY `idx_key` (`key`(768)),
     KEY `idx_modified` (`modified`),
     KEY `idx_created` (`created`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT="对象表";
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT="对象表";
