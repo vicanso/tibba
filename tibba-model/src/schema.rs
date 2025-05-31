@@ -124,6 +124,7 @@ pub struct Schema {
     pub span: Option<u8>,
     pub default_value: Option<serde_json::Value>,
     pub hidden_values: Vec<String>,
+    pub max_width: Option<u16>,
 }
 
 impl Schema {

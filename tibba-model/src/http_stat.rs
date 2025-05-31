@@ -237,6 +237,7 @@ impl Model for HttpStat {
                 Schema {
                     name: "url".to_string(),
                     category: SchemaType::String,
+                    max_width: Some(200),
                     ..Default::default()
                 },
                 Schema {
