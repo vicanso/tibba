@@ -262,36 +262,43 @@ impl Model for HttpStat {
                 Schema {
                     name: "dns_lookup".to_string(),
                     category: SchemaType::Number,
+                    hidden_values: vec!["-1".to_string()],
                     ..Default::default()
                 },
                 Schema {
                     name: "quic_connect".to_string(),
                     category: SchemaType::Number,
+                    hidden_values: vec!["-1".to_string()],
                     ..Default::default()
                 },
                 Schema {
                     name: "tcp_connect".to_string(),
                     category: SchemaType::Number,
+                    hidden_values: vec!["-1".to_string()],
                     ..Default::default()
                 },
                 Schema {
                     name: "tls_handshake".to_string(),
                     category: SchemaType::Number,
+                    hidden_values: vec!["-1".to_string()],
                     ..Default::default()
                 },
                 Schema {
                     name: "server_processing".to_string(),
                     category: SchemaType::Number,
+                    hidden_values: vec!["-1".to_string()],
                     ..Default::default()
                 },
                 Schema {
                     name: "content_transfer".to_string(),
                     category: SchemaType::Number,
+                    hidden_values: vec!["-1".to_string()],
                     ..Default::default()
                 },
                 Schema {
                     name: "total".to_string(),
                     category: SchemaType::Number,
+                    hidden_values: vec!["-1".to_string()],
                     ..Default::default()
                 },
                 Schema {
@@ -302,6 +309,7 @@ impl Model for HttpStat {
                 Schema {
                     name: "status_code".to_string(),
                     category: SchemaType::Number,
+                    hidden_values: vec!["0".to_string()],
                     ..Default::default()
                 },
                 Schema {

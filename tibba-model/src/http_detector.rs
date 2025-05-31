@@ -182,12 +182,14 @@ impl Model for HttpDetector {
                 Schema {
                     name: "headers".to_string(),
                     category: SchemaType::Json,
+                    hidden_values: vec!["{}".to_string(), "[]".to_string()],
                     ..Default::default()
                 },
                 Schema {
                     name: "ip_version".to_string(),
                     category: SchemaType::Number,
                     default_value: Some(serde_json::json!(0)),
+                    hidden_values: vec!["0".to_string()],
                     ..Default::default()
                 },
                 Schema {
