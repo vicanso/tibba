@@ -7,7 +7,7 @@ uri = "redis://127.0.0.1"
 secret = "y0nEeTWOF0Ud8XNoTfYacGC6MrKgxIUnJV1kv0PBh83IeKmyHtuJ5uqGa7hcfBSu"
 
 [database]
-url = "mysql://vicanso:A123123@localhost:3306/tibba"
+uri = "mysql://vicanso:A123123@localhost:3306/tibba"
 
 [opendal]
 url = "http://n150:9000?bucket=tibba-web&region=default&access_key_id=bpAx0XyPVwvcpiqI6btK&secret_access_key=R45iLopZQmAbl4bvuErQxS9yRhwVux5aQv1beCX9"

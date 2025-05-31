@@ -4557,6 +4557,7 @@ dependencies = [
  "tibba-error",
  "tibba-util",
  "tokio",
+ "tracing",
  "url",
  "validator",
 ]
@@ -4786,6 +4787,7 @@ dependencies = [
  "sqlx",
  "tibba-config",
  "tibba-error",
+ "tracing",
  "url",
  "validator",
 ]

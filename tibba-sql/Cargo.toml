@@ -12,5 +12,6 @@ sqlx = { workspace = true }
 snafu = { workspace = true }
 validator = { workspace = true }
 url = { workspace = true }
+tracing = { workspace = true }
 tibba-config = { path = "../tibba-config" }
 tibba-error = { path = "../tibba-error" }

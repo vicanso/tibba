@@ -21,6 +21,7 @@ use std::time::Duration;
 use tibba_config::Config;
 use tibba_error::Error as BaseError;
 use tibba_error::new_error;
+use tracing::info;
 use url::Url;
 use validator::Validate;
 
@@ -37,13 +38,21 @@ pub struct DatabaseConfig {
     pub idle_timeout: Duration,
     pub max_lifetime: Duration,
     pub test_before_acquire: bool,
+    pub password: Option<String>,
 }
 
 // Creates a new DatabaseConfig instance from the configuration
 fn new_database_config(config: &Config) -> Result<DatabaseConfig> {
-    let origin_url = config.get_from_env_first("url", None);
+    let origin_url = config.get_from_env_first("uri", None);
+    if origin_url.is_empty() {
+        return Err(Error::Common {
+            category: "config".to_string(),
+            message: "uri is empty".to_string(),
+        });
+    }
     let mut url = origin_url.clone();
     let info = Url::parse(&url).unwrap();
+
     let mut max_connections = 10;
     let mut min_connections = 2;
     let mut connect_timeout = Duration::from_secs(3);
@@ -100,6 +109,7 @@ fn new_database_config(config: &Config) -> Result<DatabaseConfig> {
         idle_timeout,
         max_lifetime,
         test_before_acquire,
+        password: info.password().map(|v| v.to_string()),
     };
     database_config
         .validate()
@@ -113,6 +123,8 @@ pub enum Error {
     Sqlx { source: sqlx::Error },
     #[snafu(display("validate error: {source}"))]
     Validate { source: validator::ValidationErrors },
+    #[snafu(display("category: {category}, error: {message}"))]
+    Common { category: String, message: String },
 }
 
 impl From<Error> for BaseError {
@@ -133,6 +145,12 @@ impl From<Error> for BaseError {
                     .with_exception(true);
                 he.into()
             }
+            Error::Common { category, message } => {
+                let he = new_error(message)
+                    .with_category(category.as_str())
+                    .with_exception(true);
+                he.into()
+            }
         }
     }
 }
@@ -150,6 +168,9 @@ pub async fn new_mysql_pool(
     pool_stat: Option<Arc<PoolStat>>,
 ) -> Result<MySqlPool> {
     let database_config = new_database_config(config)?;
+    let password = database_config.password.clone().unwrap_or_default();
+    let url = database_config.url.replace(&password, "***");
+    info!(url, "connect to database");
     let after_connect_pool_stat = pool_stat.clone();
     let before_acquire_pool_stat = pool_stat.clone();
     let pool = PoolOptions::new()

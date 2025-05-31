@@ -17,6 +17,7 @@ use async_trait::async_trait;
 use redis::aio::ConnectionLike;
 use redis::{Cmd, Pipeline, RedisFuture, Value};
 use tibba_config::Config;
+use tracing::info;
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -117,6 +118,20 @@ impl ConnectionLike for RedisConnection {
 /// * Configures pool size and various timeouts from the provided config
 pub fn new_redis_pool(config: &Config) -> Result<RedisPool> {
     let redis_config = new_redis_config(config)?;
+
+    let password = redis_config.password.clone().unwrap_or_default();
+    let nodes: Vec<_> = redis_config
+        .nodes
+        .clone()
+        .iter()
+        .map(|v| {
+            if password.is_empty() {
+                return v.to_string();
+            }
+            v.replace(&password, "***")
+        })
+        .collect();
+
     let pool = if redis_config.nodes.len() <= 1 {
         // Single node configuration
         let p = deadpool_redis::Pool::builder(
@@ -158,5 +173,6 @@ pub fn new_redis_pool(config: &Config) -> Result<RedisPool> {
             .map_err(|e| Error::ClusterBuild { source: e })?;
         RedisPool::Cluster(pool)
     };
+    info!(nodes = nodes.join(","), "connect to redis");
     Ok(pool)
 }

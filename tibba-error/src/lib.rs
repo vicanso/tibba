@@ -28,7 +28,7 @@ use validator::ValidationErrors;
 // Uses Snafu for error handling boilerplate generation
 #[derive(Debug, Snafu)]
 pub enum Error {
-    #[snafu(display("http error: {error}"))]
+    #[snafu(display("{error}"))]
     Http { error: HttpError },
 }
 

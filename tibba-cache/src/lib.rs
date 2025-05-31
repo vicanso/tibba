@@ -67,12 +67,20 @@ pub struct RedisConfig {
     pub wait_timeout: Duration,
     // recycle timeout
     pub recycle_timeout: Duration,
+    // password
+    pub password: Option<String>,
 }
 
 // Creates a new RedisConfig instance from the configuration
 // Parses Redis URI and extracts connection parameters
 fn new_redis_config(config: &Config) -> Result<RedisConfig> {
     let uri = config.get_from_env_first("uri", None);
+    if uri.is_empty() {
+        return Err(Error::Common {
+            category: "redis".to_string(),
+            message: "uri is empty".to_string(),
+        });
+    }
     let start = if let Some(index) = uri.find('@') {
         index + 1
     } else {
@@ -97,6 +105,7 @@ fn new_redis_config(config: &Config) -> Result<RedisConfig> {
         connection_timeout: Duration::from_secs(3),
         wait_timeout: Duration::from_secs(3),
         recycle_timeout: Duration::from_secs(60),
+        password: info.password().map(|v| v.to_string()),
     };
     for (key, value) in info.query_pairs() {
         match key.to_string().as_str() {
