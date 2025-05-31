@@ -67,12 +67,14 @@ async fn run_task(tasks: &DashMap<String, (u8, HookTaskFuture)>) -> Result<()> {
     }
     names.sort_by_key(|k| k.1);
 
+    let category = "run_task";
     // Execute tasks in priority order
     for (name, _) in names {
-        info!(category = "hook", name, "start to run task");
+        info!(category, name, "start to run task");
         if let Some(item) = tasks.get(&name) {
             item.1().await?;
         }
+        info!(category, name, "run task success");
     }
 
     Ok(())
