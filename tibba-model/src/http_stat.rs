@@ -261,6 +261,27 @@ impl Model for HttpStat {
                     ..Default::default()
                 },
                 Schema {
+                    name: "total".to_string(),
+                    category: SchemaType::Number,
+                    hidden_values: vec!["-1".to_string()],
+                    filterable: true,
+                    options: Some(vec![
+                        SchemaOption {
+                            label: ">= 1s".to_string(),
+                            value: SchemaOptionValue::String("1000".to_string()),
+                        },
+                        SchemaOption {
+                            label: ">= 2s".to_string(),
+                            value: SchemaOptionValue::String("2000".to_string()),
+                        },
+                        SchemaOption {
+                            label: ">= 3s".to_string(),
+                            value: SchemaOptionValue::String("3000".to_string()),
+                        },
+                    ]),
+                    ..Default::default()
+                },
+                Schema {
                     name: "dns_lookup".to_string(),
                     category: SchemaType::Number,
                     hidden_values: vec!["-1".to_string()],
@@ -292,12 +313,6 @@ impl Model for HttpStat {
                 },
                 Schema {
                     name: "content_transfer".to_string(),
-                    category: SchemaType::Number,
-                    hidden_values: vec!["-1".to_string()],
-                    ..Default::default()
-                },
-                Schema {
-                    name: "total".to_string(),
                     category: SchemaType::Number,
                     hidden_values: vec!["-1".to_string()],
                     ..Default::default()
@@ -384,6 +399,9 @@ impl Model for HttpStat {
         }
         if let Some(target_id) = filters.get("target_id") {
             conditions.push(format!("target_id = '{}'", target_id));
+        }
+        if let Some(total) = filters.get("total") {
+            conditions.push(format!("total >= {}", total));
         }
         (!conditions.is_empty()).then_some(conditions)
     }
