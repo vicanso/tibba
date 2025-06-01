@@ -2,7 +2,7 @@
 set -e
 
 if [ "${1:0:1}" = '-' ]; then
-    set -- tibba-api "$@"
+    set -- tibba "$@"
 fi
 
 exec "$@"

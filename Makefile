@@ -5,8 +5,8 @@ fmt:
 	cargo fmt
 
 dev:
-	bacon run -- -p tibba-api
+	bacon run
 
 
 release:
-	cargo build --release -p tibba-api 
+	cargo build --release 

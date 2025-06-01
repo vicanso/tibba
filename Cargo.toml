@@ -4,7 +4,40 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-
+axum = { workspace = true }
+tibba-config = { path = "./tibba-config" }
+tibba-error = { path = "./tibba-error" }
+tibba-hook = { path = "./tibba-hook" }
+tibba-util = { path = "./tibba-util" }
+tibba-state = { path = "./tibba-state" }
+tibba-middleware = { path = "./tibba-middleware" }
+tibba-request = { path = "./tibba-request" }
+tibba-cache = { path = "./tibba-cache" }
+tibba-router-common = { path = "./tibba-router-common" }
+tibba-router-user = { path = "./tibba-router-user" }
+tibba-router-file = { path = "./tibba-router-file" }
+tibba-sql = { path = "./tibba-sql" }
+tibba-opendal = { path = "./tibba-opendal" }
+tibba-scheduler = { path = "./tibba-scheduler" }
+tibba-session = { path = "./tibba-session" }
+tibba-router-model = { path = "./tibba-router-model" }
+tibba-model = { path = "./tibba-model" }
+sqlx = { workspace = true }
+http = { workspace = true }
+time = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { version = "0.3.19", features = ["local-time"] }
+rust-embed = { workspace = true }
+once_cell = { workspace = true }
+tower = { workspace = true }
+ctor = "0.4.0"
+validator = { workspace = true }
+axum-client-ip = { workspace = true }
+http-stat = "0.5.0"
+chrono = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
 
 [profile.release]
 codegen-units = 1
@@ -30,7 +63,6 @@ members = [
     "tibba-state",
     "tibba-util",
     "tibba-validator",
-    "tibba-api",
     "tibba-scheduler",
     "tibba-session",
     "tibba-router-model",

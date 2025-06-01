@@ -15,10 +15,10 @@ RUN cd /tibba \
 FROM ubuntu:24.04
 
 COPY --from=builder /etc/ssl /etc/ssl
-COPY --from=builder /tibba/target/release/tibba-api /usr/local/bin/tibba-api
+COPY --from=builder /tibba/target/release/tibba /usr/local/bin/tibba
 COPY --from=builder /tibba/entrypoint.sh /entrypoint.sh
 COPY --from=builder /usr/local/bin/httpstat /usr/local/bin/httpstat
 
-CMD ["tibba-api"]
+CMD ["tibba"]
 
 ENTRYPOINT ["/entrypoint.sh"]
