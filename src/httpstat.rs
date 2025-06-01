@@ -54,7 +54,7 @@ async fn do_request(pool: &MySqlPool, detector: &HttpDetector, params: HttpReque
         addr: stat.addr.unwrap_or_default(),
         status_code: stat.status.map(|s| s.as_u16()),
         tls: stat.tls,
-        alpn: stat.alpn,
+        alpn: Some(stat.alpn.unwrap_or(http_stat::ALPN_HTTP1.to_string())),
         subject: stat.subject,
         issuer: stat.issuer,
         cert_not_before: stat.cert_not_before,
