@@ -16,7 +16,7 @@ use super::Model;
 use super::user::{ROLE_ADMIN, ROLE_SUPER_ADMIN};
 use super::{
     Error, ModelListParams, Schema, SchemaAllowCreate, SchemaAllowEdit, SchemaType, SchemaView,
-    format_datetime, new_schema_options,
+    Status, format_datetime, new_schema_options,
 };
 use async_trait::async_trait;
 use http::header::{HeaderMap, HeaderName, HeaderValue};
@@ -96,6 +96,12 @@ pub struct ConfigurationUpdateParams {
     pub effective_end_time: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct AlarmConfig {
+    pub category: String,
+    pub url: String,
+}
+
 #[async_trait]
 impl Model for Configuration {
     type Output = Self;
@@ -120,10 +126,11 @@ impl Model for Configuration {
                     filterable: true,
                     options: Some(new_schema_options(&[
                         "common",
-                        "response_headers",
                         "app",
                         "user",
                         "system",
+                        "alarm",
+                        "response_headers",
                     ])),
                     ..Default::default()
                 },
@@ -283,11 +290,13 @@ impl Configuration {
         let configurations = sqlx::query_as::<_, ConfigurationSchema>(
             r#"SELECT * FROM configurations 
                WHERE category = 'response_headers' 
+               AND status = ?
                AND name = ? 
                AND deleted_at IS NULL
                AND effective_start_time <= ?
                AND effective_end_time >= ?"#,
         )
+        .bind(Status::Enabled as i8)
         .bind(name)
         .bind(now)
         .bind(now)
@@ -316,5 +325,35 @@ impl Configuration {
             }
         }
         Ok(Some(headers))
+    }
+    pub async fn get_alarm_config(pool: &Pool<MySql>, name: &str) -> Result<Option<AlarmConfig>> {
+        let now = OffsetDateTime::now_utc();
+        let configuration = sqlx::query_as::<_, ConfigurationSchema>(
+            r#"SELECT * FROM configurations 
+               WHERE category = 'alarm' 
+               AND status = ?
+               AND name = ? 
+               AND deleted_at IS NULL
+               AND effective_start_time <= ?
+               AND effective_end_time >= ?"#,
+        )
+        .bind(Status::Enabled as i8)
+        .bind(name)
+        .bind(now)
+        .bind(now)
+        .fetch_one(pool)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+
+        let data = configuration.data;
+        let Some(data) = data.as_object() else {
+            return Ok(None);
+        };
+        let category = data
+            .get("category")
+            .map(|v| v.to_string())
+            .unwrap_or_default();
+        let url = data.get("url").map(|v| v.to_string()).unwrap_or_default();
+        Ok(Some(AlarmConfig { category, url }))
     }
 }

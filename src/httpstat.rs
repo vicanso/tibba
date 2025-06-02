@@ -25,7 +25,9 @@ use std::env;
 use std::{net::IpAddr, time::Duration};
 use tibba_error::{Error, new_error};
 use tibba_hook::register_before_task;
-use tibba_model::{HttpDetector, HttpStat, HttpStatInsertParams, ResultValue};
+use tibba_model::{
+    AlarmConfig, Configuration, HttpDetector, HttpStat, HttpStatInsertParams, ResultValue,
+};
 use tibba_scheduler::{Job, register_job_task};
 use time::OffsetDateTime;
 use tracing::{error, info};
@@ -241,10 +243,21 @@ async fn run_stat_alarm() -> Result<(i32, i32)> {
     if !locked {
         return Ok((0, -1));
     }
-    let robot_url = env::var("WECOM_ROBOT").unwrap_or_default();
-    if robot_url.is_empty() {
+    let pool = get_db_pool();
+    let alarm_config =
+        if let Ok(Some(alarm_config)) = Configuration::get_alarm_config(pool, "httpstat").await {
+            alarm_config
+        } else {
+            let robot_url = env::var("WECOM_ROBOT").unwrap_or_default();
+            AlarmConfig {
+                category: "httpstat".to_string(),
+                url: robot_url.to_string(),
+            }
+        };
+    if alarm_config.url.is_empty() {
         return Ok((0, -1));
     }
+
     let key = "http_alarm_cache";
     let mut alarm_cache = StatAlarmCache {
         last_check_time: chrono::Utc::now().timestamp() - 5 * 60,
@@ -317,7 +330,7 @@ async fn run_stat_alarm() -> Result<(i32, i32)> {
     let failed = failed_targets.len() as i32;
     if !content.is_empty() {
         match reqwest::Client::new()
-            .post(&robot_url)
+            .post(&alarm_config.url)
             .timeout(Duration::from_secs(10))
             .json(&WeComMarkDownMessage {
                 msgtype: "markdown".to_string(),
