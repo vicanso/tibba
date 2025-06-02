@@ -40,6 +40,7 @@ pub enum SchemaType {
     Date,
     ByteSize,
     Json,
+    Code,
 }
 
 #[derive(Debug, Clone, Deserialize)]

@@ -14,6 +14,7 @@
 
 use super::sql::get_db_pool;
 use crate::cache::get_redis_cache;
+use chrono::DateTime;
 use ctor::ctor;
 use http::{HeaderMap, HeaderName, HeaderValue};
 use http_stat::{HttpRequest, request};
@@ -31,15 +32,78 @@ use tracing::{error, info};
 
 type Result<T> = std::result::Result<T, Error>;
 
+#[derive(Serialize, Deserialize, Debug)]
+struct JsResponse {
+    status: u16,
+    body: String,
+    headers: HashMap<String, String>,
+}
+
+fn run_js_detect(resp: JsResponse, detect_script: &str) -> Result<()> {
+    if detect_script.is_empty() {
+        return Ok(());
+    }
+    let ctx = quick_js::Context::new().map_err(new_error)?;
+    let content = serde_json::to_string(&resp).map_err(new_error)?;
+    let mut script = r#"
+(function(response) {
+    try {
+        response.body = JSON.parse(response.body);
+    } finally {
+    }
+    __script__ 
+})(__response__);
+"#
+    .to_string();
+    script = script.replace("__response__", &content);
+    script = script.replace("__script__", detect_script);
+    ctx.eval(&script).map_err(new_error)?;
+    Ok(())
+}
+
 async fn do_request(pool: &MySqlPool, detector: &HttpDetector, params: HttpRequest) -> Result<()> {
     let stat = request(params).await;
     let mut result = ResultValue::Success;
-    if stat.error.is_some()
-        || stat.status.is_none()
-        || stat.status.unwrap_or_default().as_u16() >= 400
-    {
+    let mut err = stat.error;
+
+    if err.is_some() || stat.status.is_none() || stat.status.unwrap_or_default().as_u16() >= 400 {
         result = ResultValue::Failed;
+        if err.is_none() {
+            err = Some(format!(
+                "http status code is >= 400, status: {}",
+                stat.status.unwrap_or_default().as_u16()
+            ));
+        }
     }
+    if let Some(cert_not_after) = &stat.cert_not_after {
+        if let Ok(cert_not_after) = DateTime::parse_from_str(cert_not_after, "%Y-%m-%d %H:%M:%S %z")
+        {
+            // 提前7天设置为失败
+            if cert_not_after.timestamp() < chrono::Utc::now().timestamp() - 7 * 24 * 3600 {
+                err = Some("certificate will expired in 7 days".to_string());
+                result = ResultValue::Failed;
+            }
+        }
+    }
+    if result == ResultValue::Success && detector.script.is_some() {
+        if let Err(e) = run_js_detect(
+            JsResponse {
+                status: stat.status.unwrap_or_default().as_u16(),
+                body: String::from_utf8(stat.body.unwrap_or_default().to_vec()).unwrap_or_default(),
+                headers: stat
+                    .headers
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|(k, v)| (k.to_string(), v.to_str().unwrap().to_string()))
+                    .collect(),
+            },
+            &detector.script.clone().unwrap_or_default(),
+        ) {
+            result = ResultValue::Failed;
+            err = Some(e.to_string());
+        }
+    }
+
     let insert_params = HttpStatInsertParams {
         target_id: detector.id,
         target_name: detector.name.clone(),
@@ -62,7 +126,7 @@ async fn do_request(pool: &MySqlPool, detector: &HttpDetector, params: HttpReque
         cert_cipher: stat.cert_cipher,
         cert_domains: stat.cert_domains.map(|d| d.join(",")),
         body_size: stat.body_size.map(|d| d as i32),
-        error: stat.error,
+        error: err,
         result: result as u8,
     };
     HttpStat::add_stat(pool, insert_params).await?;
