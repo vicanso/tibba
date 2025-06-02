@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 /// Extracts multiple string values from JSON data by keys
 ///
@@ -91,4 +91,12 @@ pub fn json_get_strings(data: &[u8], keys: &[&str]) -> Vec<String> {
 /// ```
 pub fn json_get(data: &[u8], key: &str) -> String {
     json_get_strings(data, &[key])[0].clone()
+}
+
+pub fn get_map_string(data: &Map<String, Value>, key: &str) -> String {
+    if let Some(value) = data.get(key) {
+        value.as_str().map_or(value.to_string(), |s| s.to_string())
+    } else {
+        "".to_string()
+    }
 }

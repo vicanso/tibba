@@ -27,6 +27,7 @@ use sqlx::{MySql, Pool};
 use std::collections::HashMap;
 use std::str::FromStr;
 use substring::Substring;
+use tibba_util::get_map_string;
 use time::OffsetDateTime;
 
 type Result<T> = std::result::Result<T, Error>;
@@ -349,18 +350,8 @@ impl Configuration {
         let Some(data) = data.as_object() else {
             return Ok(None);
         };
-        let category = data
-            .get("category")
-            .map(|v| v.as_str())
-            .unwrap_or_default()
-            .unwrap_or_default()
-            .to_string();
-        let url = data
-            .get("url")
-            .map(|v| v.as_str())
-            .unwrap_or_default()
-            .unwrap_or_default()
-            .to_string();
+        let category = get_map_string(data, "category");
+        let url = get_map_string(data, "url");
         Ok(Some(AlarmConfig { category, url }))
     }
 }

@@ -19,3 +19,4 @@ chrono = { workspace = true }
 http = { workspace = true }
 async-trait = { workspace = true }
 tibba-error = { path = "../tibba-error" }
+tibba-util = { path = "../tibba-util" }

@@ -4665,6 +4665,7 @@ dependencies = [
  "sqlx",
  "substring",
  "tibba-error",
+ "tibba-util",
  "time",
 ]
 
