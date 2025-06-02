@@ -302,9 +302,12 @@ async fn run_stat_alarm() -> Result<(i32, i32)> {
         }
 
         let status = if stat.result == ResultValue::Success as u8 {
-            r#"<font color="info">成功</font>"#
+            r#"<font color="info">恢复正常</font>"#.to_string()
         } else {
-            r#"<font color="warning">失败</font>"#
+            format!(
+                r#"<font color="warning">失败</font> 出错原因：{}"#,
+                &stat.error
+            )
         };
         let msg = format!(">{}: {}", stat.target_name, status);
         if !content.contains(&msg) {
