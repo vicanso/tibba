@@ -351,9 +351,16 @@ impl Configuration {
         };
         let category = data
             .get("category")
-            .map(|v| v.to_string())
-            .unwrap_or_default();
-        let url = data.get("url").map(|v| v.to_string()).unwrap_or_default();
+            .map(|v| v.as_str())
+            .unwrap_or_default()
+            .unwrap_or_default()
+            .to_string();
+        let url = data
+            .get("url")
+            .map(|v| v.as_str())
+            .unwrap_or_default()
+            .unwrap_or_default()
+            .to_string();
         Ok(Some(AlarmConfig { category, url }))
     }
 }
