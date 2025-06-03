@@ -43,6 +43,7 @@ struct HttpDetectorSchema {
     dns_servers: Option<Json<Vec<String>>>,
     body: Option<Vec<u8>>,
     script: Option<String>,
+    alarm_url: String,
     created_by: u64,
     created: OffsetDateTime,
     modified: OffsetDateTime,
@@ -64,6 +65,7 @@ pub struct HttpDetector {
     pub skip_verify: bool,
     pub body: Option<Vec<u8>>,
     pub script: Option<String>,
+    pub alarm_url: String,
     pub created_by: u64,
     pub created: String,
     pub modified: String,
@@ -86,6 +88,7 @@ impl From<HttpDetectorSchema> for HttpDetector {
             skip_verify: schema.skip_verify,
             body: schema.body,
             script: schema.script,
+            alarm_url: schema.alarm_url,
             created_by: schema.created_by,
             created: format_datetime(schema.created),
             modified: format_datetime(schema.modified),
@@ -106,6 +109,7 @@ pub struct HttpDetectorInsertParams {
     pub skip_verify: bool,
     pub body: Option<Vec<u8>>,
     pub script: Option<String>,
+    pub alarm_url: String,
     pub interval: u16,
     pub created_by: u64,
 }
@@ -121,6 +125,7 @@ pub struct HttpDetectorUpdateParams {
     pub headers: Option<HashMap<String, String>>,
     pub ip_version: Option<i32>,
     pub skip_verify: Option<bool>,
+    pub alarm_url: Option<String>,
     pub body: Option<Vec<u8>>,
     pub interval: Option<u16>,
     pub script: Option<String>,
@@ -221,6 +226,12 @@ impl Model for HttpDetector {
                     popover: true,
                     ..Default::default()
                 },
+                Schema {
+                    name: "alarm_url".to_string(),
+                    category: SchemaType::String,
+                    span: Some(2),
+                    ..Default::default()
+                },
                 Schema::new_status(),
                 Schema::new_created(),
                 Schema::new_modified(),
@@ -250,7 +261,7 @@ impl Model for HttpDetector {
         let params: HttpDetectorInsertParams =
             serde_json::from_value(params).map_err(|e| Error::Json { source: e })?;
         let result = sqlx::query(
-            r#"INSERT INTO http_detectors (status, name, url, method, alpn_protocols, resolves, headers, ip_version, skip_verify, body, `interval`, script, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+            r#"INSERT INTO http_detectors (status, name, url, method, alpn_protocols, resolves, headers, ip_version, skip_verify, body, `interval`, script, alarm_url, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
         )
         .bind(params.status)
         .bind(params.name)
@@ -263,6 +274,7 @@ impl Model for HttpDetector {
         .bind(params.skip_verify)
         .bind(params.body)
         .bind(params.interval)
+        .bind(params.alarm_url)
         .bind(params.script)
         .bind(params.created_by)
         .execute(pool)
@@ -298,7 +310,7 @@ impl Model for HttpDetector {
             serde_json::from_value(params).map_err(|e| Error::Json { source: e })?;
 
         let _ = sqlx::query(
-            r#"UPDATE http_detectors SET status = COALESCE(?, status), name = COALESCE(?, name), url = COALESCE(?, url), method = COALESCE(?, method), alpn_protocols = COALESCE(?, alpn_protocols), resolves = COALESCE(?, resolves), headers = COALESCE(?, headers), ip_version = COALESCE(?, ip_version), skip_verify = COALESCE(?, skip_verify), body = COALESCE(?, body), `interval` = COALESCE(?, `interval`), script = COALESCE(?, script) WHERE id = ? AND deleted_at IS NULL"#,
+            r#"UPDATE http_detectors SET status = COALESCE(?, status), name = COALESCE(?, name), url = COALESCE(?, url), method = COALESCE(?, method), alpn_protocols = COALESCE(?, alpn_protocols), resolves = COALESCE(?, resolves), headers = COALESCE(?, headers), ip_version = COALESCE(?, ip_version), skip_verify = COALESCE(?, skip_verify), body = COALESCE(?, body), `interval` = COALESCE(?, `interval`), script = COALESCE(?, script), alarm_url = COALESCE(?, alarm_url) WHERE id = ? AND deleted_at IS NULL"#,
         )
         .bind(params.status)
         .bind(params.name)
@@ -312,6 +324,7 @@ impl Model for HttpDetector {
         .bind(params.body)
         .bind(params.interval)
         .bind(params.script)
+        .bind(params.alarm_url)
         .bind(id)
         .execute(pool)
         .await

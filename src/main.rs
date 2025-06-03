@@ -117,31 +117,34 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // config is validated in init function
     let basic_config = config::must_get_basic_config();
+    let app = if basic_config.prefix.is_empty() {
+        new_router()?
+    } else {
+        Router::new().nest(&basic_config.prefix, new_router()?)
+    };
 
-    let app = Router::new()
-        .nest(&basic_config.prefix, new_router()?)
-        .layer(
-            // service build layer execute by add order
-            ServiceBuilder::new()
-                .layer(HandleErrorLayer::new(handle_error))
-                .timeout(basic_config.timeout)
-                // TODO 使用 RightmostXForwardedFor 代替 ConnectInfo
-                .layer(ClientIpSource::ConnectInfo.into_extension())
-                .layer(from_fn_with_state(get_app_state(), entry))
-                .layer(from_fn_with_state(get_app_state(), stats))
-                .layer(from_fn_with_state(
-                    (
-                        cache::get_redis_cache(),
-                        config::get_session_params(),
-                        ["/files/preview"]
-                            .iter()
-                            .map(|s| format!("{}{}", basic_config.prefix, s))
-                            .collect(),
-                    ),
-                    session,
-                ))
-                .layer(from_fn_with_state(get_app_state(), processing_limit)),
-        );
+    let app = app.layer(
+        // service build layer execute by add order
+        ServiceBuilder::new()
+            .layer(HandleErrorLayer::new(handle_error))
+            .timeout(basic_config.timeout)
+            // TODO 使用 RightmostXForwardedFor 代替 ConnectInfo
+            .layer(ClientIpSource::ConnectInfo.into_extension())
+            .layer(from_fn_with_state(get_app_state(), entry))
+            .layer(from_fn_with_state(get_app_state(), stats))
+            .layer(from_fn_with_state(
+                (
+                    cache::get_redis_cache(),
+                    config::get_session_params(),
+                    ["/files/preview"]
+                        .iter()
+                        .map(|s| format!("{}{}", basic_config.prefix, s))
+                        .collect(),
+                ),
+                session,
+            ))
+            .layer(from_fn_with_state(get_app_state(), processing_limit)),
+    );
     get_app_state().run();
 
     info!("listening on http://{}/", basic_config.listen);

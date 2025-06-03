@@ -26,7 +26,7 @@ use std::{net::IpAddr, time::Duration};
 use tibba_error::{Error, new_error};
 use tibba_hook::register_before_task;
 use tibba_model::{
-    AlarmConfig, Configuration, HttpDetector, HttpStat, HttpStatInsertParams, ResultValue,
+    AlarmConfig, Configuration, HttpDetector, HttpStat, HttpStatInsertParams, Model, ResultValue,
 };
 use tibba_scheduler::{Job, register_job_task};
 use time::OffsetDateTime;
@@ -235,6 +235,57 @@ struct StatAlarmCache {
     failed_targets: Vec<u64>,
 }
 
+#[derive(Default, Debug)]
+struct StatAlarmParam {
+    message: String,
+    alarm_config: Option<AlarmConfig>,
+}
+
+async fn send_alarms(alarm_params: Vec<StatAlarmParam>, alarm_config: AlarmConfig) -> Result<()> {
+    // 先发送指定了url的告警
+    let send_markdown = async |content: String, url: String| -> Result<()> {
+        match reqwest::Client::new()
+            .post(&url)
+            .timeout(Duration::from_secs(10))
+            .json(&WeComMarkDownMessage {
+                msgtype: "markdown".to_string(),
+                markdown: WeComMarkDown { content },
+            })
+            .send()
+            .await
+        {
+            Ok(res) => {
+                if res.status().is_success() {
+                    Ok(())
+                } else {
+                    Err(new_error(format!(
+                        "send alarm message failed, status: {}",
+                        res.status()
+                    )))
+                }
+            }
+            Err(e) => Err(new_error(e.to_string())),
+        }?;
+        Ok(())
+    };
+    let mut contents = vec![];
+    for param in alarm_params {
+        if let Some(alarm_config) = param.alarm_config {
+            if let Err(e) = send_markdown(param.message, alarm_config.url).await {
+                error!(category = "http_stat_alarm", error = ?e, "send alarm message failed");
+            }
+            continue;
+        }
+        contents.push(param.message);
+    }
+    if !contents.is_empty() && !alarm_config.url.is_empty() {
+        if let Err(e) = send_markdown(contents.join("\n"), alarm_config.url).await {
+            error!(category = "http_stat_alarm", error = ?e, "send alarm message failed");
+        }
+    }
+    Ok(())
+}
+
 async fn run_stat_alarm() -> Result<(i32, i32)> {
     let task = "http_alarm_task";
     let locked = get_redis_cache()
@@ -254,9 +305,6 @@ async fn run_stat_alarm() -> Result<(i32, i32)> {
                 url: robot_url.to_string(),
             }
         };
-    if alarm_config.url.is_empty() {
-        return Ok((0, -1));
-    }
 
     let key = "http_alarm_cache";
     let mut alarm_cache = StatAlarmCache {
@@ -279,7 +327,6 @@ async fn run_stat_alarm() -> Result<(i32, i32)> {
         .to_rfc3339();
     let stats = HttpStat::list_by_modified(pool, (&last_check_time, &now_check_time)).await?;
 
-    let mut content = vec![];
     let mut failed_targets = vec![];
 
     // 因为相同的target id有可能会有多个http stat
@@ -299,6 +346,8 @@ async fn run_stat_alarm() -> Result<(i32, i32)> {
 
     let count = stat_map.len() as i32;
 
+    let mut content = vec![];
+    let mut alarm_params = vec![];
     for (target_id, stat) in stat_map.iter() {
         let is_failed = stat.result == ResultValue::Failed as u8;
         if is_failed && !failed_targets.contains(target_id) {
@@ -323,35 +372,30 @@ async fn run_stat_alarm() -> Result<(i32, i32)> {
             )
         };
         let msg = format!(">{}: {}", stat.target_name, status);
+
         if !content.contains(&msg) {
-            content.push(msg);
+            content.push(msg.clone());
+            if let Ok(Some(detector)) = HttpDetector::get_by_id(pool, *target_id).await {
+                if !detector.alarm_url.is_empty() {
+                    alarm_params.push(StatAlarmParam {
+                        message: msg,
+                        alarm_config: Some(AlarmConfig {
+                            category: "httpstat".to_string(),
+                            url: detector.alarm_url,
+                        }),
+                    });
+                    continue;
+                }
+            }
+            alarm_params.push(StatAlarmParam {
+                message: msg,
+                ..Default::default()
+            });
         }
     }
     let failed = failed_targets.len() as i32;
-    if !content.is_empty() {
-        match reqwest::Client::new()
-            .post(&alarm_config.url)
-            .timeout(Duration::from_secs(10))
-            .json(&WeComMarkDownMessage {
-                msgtype: "markdown".to_string(),
-                markdown: WeComMarkDown {
-                    content: content.join("\n"),
-                },
-            })
-            .send()
-            .await
-        {
-            Ok(res) => {
-                if res.status().is_success() {
-                    info!(category = task, "send alarm message success");
-                } else {
-                    error!(category = task, status = ?res.status(), "send alarm message failed");
-                }
-            }
-            Err(e) => {
-                error!(category = task, error = ?e, "send alarm message failed");
-            }
-        }
+    if !alarm_params.is_empty() {
+        send_alarms(alarm_params, alarm_config).await?;
     }
 
     if let Err(e) = get_redis_cache()
