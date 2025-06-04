@@ -39,6 +39,7 @@ chrono = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+humantime = { workspace = true }
 quick-js = "0.4.1"
 
 [profile.release]

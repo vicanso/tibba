@@ -425,6 +425,13 @@ fn init() {
                 let job = Job::new_async("every 60 seconds", |_, _| {
                     let category = "http_detector";
                     Box::pin(async move {
+                        if let Ok(delay) = humantime::parse_duration(
+                            std::env::var("HTTP_DETECTOR_TASK_DELAY")
+                                .unwrap_or_default()
+                                .as_str(),
+                        ) {
+                            tokio::time::sleep(delay).await;
+                        }
                         match run_detector_stat().await {
                             Err(e) => {
                                 error!(
