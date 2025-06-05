@@ -14,6 +14,7 @@ CREATE TABLE `http_detectors` (
   `body` BLOB COMMENT '请求体',
   `script` TEXT COMMENT '脚本',
   `alarm_url` VARCHAR(1024) NOT NULL DEFAULT '' COMMENT '告警URL',
+  `random_querystring` BOOLEAN NOT NULL DEFAULT FALSE COMMENT '是否添加随机查询字符串',
   `created` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   `created_by` BIGINT unsigned NOT NULL COMMENT '创建人',
   `modified` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',

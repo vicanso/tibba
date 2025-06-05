@@ -44,6 +44,7 @@ struct HttpDetectorSchema {
     body: Option<Vec<u8>>,
     script: Option<String>,
     alarm_url: String,
+    random_querystring: bool,
     created_by: u64,
     created: OffsetDateTime,
     modified: OffsetDateTime,
@@ -66,6 +67,7 @@ pub struct HttpDetector {
     pub body: Option<Vec<u8>>,
     pub script: Option<String>,
     pub alarm_url: String,
+    pub random_querystring: bool,
     pub created_by: u64,
     pub created: String,
     pub modified: String,
@@ -89,6 +91,7 @@ impl From<HttpDetectorSchema> for HttpDetector {
             body: schema.body,
             script: schema.script,
             alarm_url: schema.alarm_url,
+            random_querystring: schema.random_querystring,
             created_by: schema.created_by,
             created: format_datetime(schema.created),
             modified: format_datetime(schema.modified),
@@ -109,8 +112,9 @@ pub struct HttpDetectorInsertParams {
     pub skip_verify: bool,
     pub body: Option<Vec<u8>>,
     pub script: Option<String>,
-    pub alarm_url: String,
+    pub alarm_url: Option<String>,
     pub interval: u16,
+    pub random_querystring: bool,
     pub created_by: u64,
 }
 
@@ -129,6 +133,7 @@ pub struct HttpDetectorUpdateParams {
     pub body: Option<Vec<u8>>,
     pub interval: Option<u16>,
     pub script: Option<String>,
+    pub random_querystring: Option<bool>,
 }
 
 impl HttpDetector {
@@ -203,7 +208,18 @@ impl Model for HttpDetector {
                     ..Default::default()
                 },
                 Schema {
+                    name: "alarm_url".to_string(),
+                    category: SchemaType::String,
+                    ..Default::default()
+                },
+                Schema {
                     name: "skip_verify".to_string(),
+                    category: SchemaType::Boolean,
+                    default_value: Some(serde_json::json!(false)),
+                    ..Default::default()
+                },
+                Schema {
+                    name: "random_querystring".to_string(),
                     category: SchemaType::Boolean,
                     default_value: Some(serde_json::json!(false)),
                     ..Default::default()
@@ -224,12 +240,6 @@ impl Model for HttpDetector {
                     category: SchemaType::Code,
                     span: Some(2),
                     popover: true,
-                    ..Default::default()
-                },
-                Schema {
-                    name: "alarm_url".to_string(),
-                    category: SchemaType::String,
-                    span: Some(2),
                     ..Default::default()
                 },
                 Schema::new_status(),
@@ -261,7 +271,7 @@ impl Model for HttpDetector {
         let params: HttpDetectorInsertParams =
             serde_json::from_value(params).map_err(|e| Error::Json { source: e })?;
         let result = sqlx::query(
-            r#"INSERT INTO http_detectors (status, name, url, method, alpn_protocols, resolves, headers, ip_version, skip_verify, body, `interval`, script, alarm_url, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+            r#"INSERT INTO http_detectors (status, name, url, method, alpn_protocols, resolves, headers, ip_version, skip_verify, body, `interval`, script, alarm_url, random_querystring, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
         )
         .bind(params.status)
         .bind(params.name)
@@ -274,8 +284,9 @@ impl Model for HttpDetector {
         .bind(params.skip_verify)
         .bind(params.body)
         .bind(params.interval)
-        .bind(params.alarm_url)
         .bind(params.script)
+        .bind(params.alarm_url.unwrap_or_default())
+        .bind(params.random_querystring)
         .bind(params.created_by)
         .execute(pool)
         .await
@@ -310,7 +321,7 @@ impl Model for HttpDetector {
             serde_json::from_value(params).map_err(|e| Error::Json { source: e })?;
 
         let _ = sqlx::query(
-            r#"UPDATE http_detectors SET status = COALESCE(?, status), name = COALESCE(?, name), url = COALESCE(?, url), method = COALESCE(?, method), alpn_protocols = COALESCE(?, alpn_protocols), resolves = COALESCE(?, resolves), headers = COALESCE(?, headers), ip_version = COALESCE(?, ip_version), skip_verify = COALESCE(?, skip_verify), body = COALESCE(?, body), `interval` = COALESCE(?, `interval`), script = COALESCE(?, script), alarm_url = COALESCE(?, alarm_url) WHERE id = ? AND deleted_at IS NULL"#,
+            r#"UPDATE http_detectors SET status = COALESCE(?, status), name = COALESCE(?, name), url = COALESCE(?, url), method = COALESCE(?, method), alpn_protocols = COALESCE(?, alpn_protocols), resolves = COALESCE(?, resolves), headers = COALESCE(?, headers), ip_version = COALESCE(?, ip_version), skip_verify = COALESCE(?, skip_verify), body = COALESCE(?, body), `interval` = COALESCE(?, `interval`), script = COALESCE(?, script), alarm_url = COALESCE(?, alarm_url), random_querystring = COALESCE(?, random_querystring) WHERE id = ? AND deleted_at IS NULL"#,
         )
         .bind(params.status)
         .bind(params.name)
@@ -325,6 +336,7 @@ impl Model for HttpDetector {
         .bind(params.interval)
         .bind(params.script)
         .bind(params.alarm_url)
+        .bind(params.random_querystring)
         .bind(id)
         .execute(pool)
         .await

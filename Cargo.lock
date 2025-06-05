@@ -4536,6 +4536,7 @@ dependencies = [
  "http",
  "http-stat",
  "humantime",
+ "nanoid",
  "once_cell",
  "quick-js",
  "reqwest",

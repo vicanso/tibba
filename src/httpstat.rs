@@ -135,7 +135,16 @@ async fn do_request(pool: &MySqlPool, detector: &HttpDetector, params: HttpReque
     Ok(())
 }
 
-async fn run_http_detector(pool: &MySqlPool, detector: HttpDetector) -> Result<()> {
+async fn run_http_detector(pool: &MySqlPool, mut detector: HttpDetector) -> Result<()> {
+    if detector.random_querystring {
+        let url = &detector.url;
+        let id = nanoid::nanoid!();
+        if url.contains('?') {
+            detector.url = format!("{}&{}", url, id);
+        } else {
+            detector.url = format!("{}?{}", url, id);
+        }
+    }
     let Ok(mut params) = HttpRequest::try_from(detector.url.as_str()) else {
         HttpStat::add_stat(
             pool,
