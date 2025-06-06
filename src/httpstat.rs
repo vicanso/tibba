@@ -238,10 +238,17 @@ async fn run_detector_stat() -> Result<(i32, i32)> {
     Ok((success, count))
 }
 
+#[derive(Serialize, Deserialize, Default, Clone)]
+struct FailedTarget {
+    target_id: u64,
+    alarm_time: i64,
+    alarm_count: i32,
+}
+
 #[derive(Serialize, Deserialize)]
 struct StatAlarmCache {
     last_check_time: i64,
-    failed_targets: Vec<u64>,
+    failed_targets: Vec<FailedTarget>,
 }
 
 #[derive(Default, Debug)]
@@ -315,7 +322,7 @@ async fn run_stat_alarm() -> Result<(i32, i32)> {
             }
         };
 
-    let key = "http_alarm_cache";
+    let key = "http_alarm_targets_cache";
     let mut alarm_cache = StatAlarmCache {
         last_check_time: chrono::Utc::now().timestamp() - 5 * 60,
         failed_targets: vec![],
@@ -336,8 +343,6 @@ async fn run_stat_alarm() -> Result<(i32, i32)> {
         .to_rfc3339();
     let stats = HttpStat::list_by_modified(pool, (&last_check_time, &now_check_time)).await?;
 
-    let mut failed_targets = vec![];
-
     // 因为相同的target id有可能会有多个http stat
     // 因此需要target id去重，若有失败的优先使用
     let mut stat_map: HashMap<u64, HttpStat> = HashMap::new();
@@ -357,19 +362,46 @@ async fn run_stat_alarm() -> Result<(i32, i32)> {
 
     let mut content = vec![];
     let mut alarm_params = vec![];
+    let mut failed_targets = vec![];
     for (target_id, stat) in stat_map.iter() {
         let is_failed = stat.result == ResultValue::Failed as u8;
-        if is_failed && !failed_targets.contains(target_id) {
-            failed_targets.push(*target_id);
+        if is_failed {
+            if let Some(fail_target) = alarm_cache
+                .failed_targets
+                .iter()
+                .find(|t| t.target_id == *target_id)
+            {
+                failed_targets.push(fail_target.clone());
+            } else {
+                failed_targets.push(FailedTarget {
+                    target_id: *target_id,
+                    ..Default::default()
+                });
+            }
         }
-        // 如果成功，而且非失败列表，则跳过
-        if !is_failed && !alarm_cache.failed_targets.contains(target_id) {
+        // 如果成功，而且原有失败列表中没有，则跳过
+        if !is_failed
+            && !alarm_cache
+                .failed_targets
+                .iter()
+                .any(|t| t.target_id == *target_id)
+        {
             continue;
         }
 
-        // 如果失败，而且在失败记录，则不需要重复发送
-        if is_failed && alarm_cache.failed_targets.contains(target_id) {
-            continue;
+        // 如果失败，而且失败记录发送时间在1小时内，则跳过
+        if is_failed {
+            if let Some(fail_target) = failed_targets
+                .iter_mut()
+                .find(|t| t.target_id == *target_id)
+            {
+                if fail_target.alarm_time > now - fail_target.alarm_count as i64 * 3600 {
+                    continue;
+                }
+                // 如果不是，则记录时间，并增加计数
+                fail_target.alarm_time = now;
+                fail_target.alarm_count += 1;
+            }
         }
 
         let status = if stat.result == ResultValue::Success as u8 {
@@ -470,7 +502,7 @@ fn init() {
         Box::new(|| {
             Box::pin(async {
                 // 每5分钟
-                let job = Job::new_async("every 5 minutes", |_, _| {
+                let job = Job::new_async("every 2 minutes", |_, _| {
                     let category = "http_stat_alarm";
                     Box::pin(async move {
                         match run_stat_alarm().await {
