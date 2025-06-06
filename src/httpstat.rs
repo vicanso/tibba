@@ -22,6 +22,8 @@ use serde::{Deserialize, Serialize};
 use sqlx::MySqlPool;
 use std::collections::HashMap;
 use std::env;
+use std::sync::Arc;
+use std::sync::atomic::AtomicI32;
 use std::{net::IpAddr, time::Duration};
 use tibba_error::{Error, new_error};
 use tibba_hook::register_before_task;
@@ -30,6 +32,8 @@ use tibba_model::{
 };
 use tibba_scheduler::{Job, register_job_task};
 use time::OffsetDateTime;
+use tokio::sync::Semaphore;
+use tokio::time::timeout;
 use tracing::{error, info};
 
 type Result<T> = std::result::Result<T, Error>;
@@ -64,7 +68,12 @@ fn run_js_detect(resp: JsResponse, detect_script: &str) -> Result<()> {
 }
 
 async fn do_request(pool: &MySqlPool, detector: &HttpDetector, params: HttpRequest) -> Result<()> {
-    let stat = request(params).await;
+    let stat = timeout(Duration::from_secs(60), request(params))
+        .await
+        .unwrap_or_else(|e| http_stat::HttpStat {
+            error: Some(e.to_string()),
+            ..Default::default()
+        });
     let mut result = ResultValue::Success;
     let mut err = stat.error;
 
@@ -220,8 +229,13 @@ async fn run_detector_stat() -> Result<(i32, i32)> {
     let pool = get_db_pool();
     let detectors = HttpDetector::list_enabled(pool).await?;
     let mut count = 0;
-    let mut success = 0;
+    let success = Arc::new(AtomicI32::new(0));
     let minutes = OffsetDateTime::now_utc().unix_timestamp() / 60;
+
+    // 最大并行任务数
+    let max_concurrent = 3;
+    let semaphore = Arc::new(Semaphore::new(max_concurrent));
+    let mut handles = vec![];
 
     for detector in detectors {
         let interval = detector.interval.max(1);
@@ -229,13 +243,23 @@ async fn run_detector_stat() -> Result<(i32, i32)> {
             continue;
         }
         count += 1;
-        if let Err(e) = run_http_detector(pool, detector).await {
-            error!(category = "http_detector", error = ?e, "run http detector failed");
-        } else {
-            success += 1;
-        }
+        let permit = Arc::clone(&semaphore);
+        let success = success.clone();
+        let handle = tokio::spawn(async move {
+            //  获取许可
+            let Ok(_permit) = permit.acquire().await else {
+                return;
+            };
+            if let Err(e) = run_http_detector(pool, detector).await {
+                error!(category = "http_detector", error = ?e, "run http detector failed");
+            } else {
+                success.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+            // 任务结束自动释放许可
+        });
+        handles.push(handle);
     }
-    Ok((success, count))
+    Ok((success.load(std::sync::atomic::Ordering::Relaxed), count))
 }
 
 #[derive(Serialize, Deserialize, Default, Clone)]
