@@ -38,6 +38,9 @@ jobs:
           echo
       - name: Checkout
         uses: actions/checkout@v4
+      - name: Set git commit id
+        run: |
+          git rev-parse --short HEAD > configs/commit_id.txt
       - name: Docker meta
         id: meta
         uses: docker/metadata-action@v4

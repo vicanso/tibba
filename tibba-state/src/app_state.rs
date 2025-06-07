@@ -30,6 +30,8 @@ pub struct AppState {
     processing: AtomicI32,
     // Application start timestamp
     started_at: SystemTime,
+    // Application commit id
+    commit_id: String,
 }
 
 // Application status constants
@@ -38,18 +40,24 @@ const APP_STATUS_RUNNING: i8 = 1; // Application is running
 
 impl AppState {
     /// Creates a new AppState instance with specified processing limit
-    pub fn new(processing_limit: i32) -> Self {
+    pub fn new(processing_limit: i32, commit_id: String) -> Self {
         Self {
             processing_limit,
             status: AtomicI8::new(APP_STATUS_STOP),
             processing: AtomicI32::new(0),
             started_at: SystemTime::now(),
+            commit_id,
         }
     }
 
     /// Returns the configured processing limit
     pub fn get_processing_limit(&self) -> i32 {
         self.processing_limit
+    }
+
+    /// Returns the application commit id
+    pub fn get_commit_id(&self) -> &str {
+        &self.commit_id
     }
 
     /// Atomically increments the processing counter

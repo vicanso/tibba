@@ -28,6 +28,10 @@ static CONFIGS: OnceCell<Config> = OnceCell::new();
 
 static SESSION_PARAMS: OnceCell<SessionParams> = OnceCell::new();
 
+#[derive(RustEmbed)]
+#[folder = "configs/"]
+struct Configs;
+
 // BasicConfig struct defines the basic application settings
 // with validation rules for each field
 #[derive(Debug, Clone, Default, Validate)]
@@ -43,6 +47,8 @@ pub struct BasicConfig {
     pub secret: String,
     // prefix
     pub prefix: String,
+    // commit id
+    pub commit_id: String,
 }
 
 static BASIC_CONFIG: OnceCell<BasicConfig> = OnceCell::new();
@@ -50,12 +56,21 @@ static BASIC_CONFIG: OnceCell<BasicConfig> = OnceCell::new();
 /// Create a new basic config, if the config is invalid, it will panic
 fn new_basic_config(config: &Config) -> Result<BasicConfig> {
     let timeout = config.get_duration_from_env_first("timeout", Some(Duration::from_secs(60)));
+    let commit_id = if let Some(data) = Configs::get("commit_id.txt") {
+        std::str::from_utf8(&data.data)
+            .unwrap_or_default()
+            .trim()
+            .to_string()
+    } else {
+        "--".to_string()
+    };
     let basic_config = BasicConfig {
         listen: config.get_from_env_first("listen", None),
         processing_limit: config.get_int_from_env_first("processing_limit", Some(5000)),
         timeout,
         secret: config.get_from_env_first("secret", None),
         prefix: config.get_from_env_first("prefix", None),
+        commit_id,
     };
     basic_config
         .validate()
@@ -109,10 +124,6 @@ pub fn get_session_params() -> &'static SessionParams {
         }
     })
 }
-
-#[derive(RustEmbed)]
-#[folder = "configs/"]
-struct Configs;
 
 fn new_config() -> Result<&'static Config> {
     CONFIGS.get_or_try_init(|| {

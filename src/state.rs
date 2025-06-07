@@ -21,6 +21,9 @@ static STATE: OnceCell<AppState> = OnceCell::new();
 pub fn get_app_state() -> &'static AppState {
     STATE.get_or_init(|| {
         let basic_config = must_get_basic_config();
-        AppState::new(basic_config.processing_limit)
+        AppState::new(
+            basic_config.processing_limit,
+            basic_config.commit_id.clone(),
+        )
     })
 }

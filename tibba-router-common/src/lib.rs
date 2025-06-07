@@ -48,6 +48,7 @@ struct ApplicationInfo {
     env: String,
     os: String,
     arch: String,
+    commit_id: String,
 }
 
 async fn get_application_info(
@@ -66,6 +67,7 @@ async fn get_application_info(
         env: get_env(),
         arch: arch.to_string(),
         os,
+        commit_id: state.get_commit_id().to_string(),
     };
     Ok((Duration::from_secs(60), info).into())
 }
@@ -120,6 +122,7 @@ pub struct CommonRouterParams {
     pub state: &'static AppState,
     pub cache: &'static RedisCache,
     pub secret: String,
+    pub commit_id: String,
 }
 
 pub fn new_common_router(params: CommonRouterParams) -> Router {

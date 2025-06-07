@@ -34,6 +34,7 @@ pub fn new_router() -> Result<Router> {
         state: get_app_state(),
         secret: basic_config.secret.clone(),
         cache,
+        commit_id: basic_config.commit_id.clone(),
     });
     let mut magic_code = "".to_string();
     // only for test

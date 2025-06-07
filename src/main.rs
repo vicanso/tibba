@@ -129,6 +129,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         .and(NotForContentType::GRPC)
         .and(NotForContentType::IMAGES)
         .and(NotForContentType::SSE);
+    let state = get_app_state();
     let app = app.layer(
         // service build layer execute by add order
         ServiceBuilder::new()
@@ -137,8 +138,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             .timeout(basic_config.timeout)
             // TODO 使用 RightmostXForwardedFor 代替 ConnectInfo
             .layer(ClientIpSource::ConnectInfo.into_extension())
-            .layer(from_fn_with_state(get_app_state(), entry))
-            .layer(from_fn_with_state(get_app_state(), stats))
+            .layer(from_fn_with_state(state, entry))
+            .layer(from_fn_with_state(state, stats))
             .layer(from_fn_with_state(
                 (
                     cache::get_redis_cache(),
@@ -150,9 +151,9 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 ),
                 session,
             ))
-            .layer(from_fn_with_state(get_app_state(), processing_limit)),
+            .layer(from_fn_with_state(state, processing_limit)),
     );
-    get_app_state().run();
+    state.run();
 
     info!("listening on http://{}/", basic_config.listen);
     let listener = tokio::net::TcpListener::bind(basic_config.listen.clone())
