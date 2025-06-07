@@ -147,7 +147,7 @@ async fn do_request(pool: &MySqlPool, detector: &HttpDetector, params: HttpReque
 async fn run_http_detector(pool: &MySqlPool, mut detector: HttpDetector) -> Result<()> {
     if detector.random_querystring {
         let url = &detector.url;
-        let id = nanoid::nanoid!();
+        let id = nanoid::nanoid!(8);
         if url.contains('?') {
             detector.url = format!("{}&{}", url, id);
         } else {
@@ -419,7 +419,8 @@ async fn run_stat_alarm() -> Result<(i32, i32)> {
                 .iter_mut()
                 .find(|t| t.target_id == *target_id)
             {
-                if fail_target.alarm_time > now - fail_target.alarm_count as i64 * 3600 {
+                let offset = fail_target.alarm_count.min(24) as i64 * 3600;
+                if fail_target.alarm_time > now - offset {
                     continue;
                 }
                 // 如果不是，则记录时间，并增加计数

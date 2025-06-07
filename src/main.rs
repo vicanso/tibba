@@ -29,6 +29,8 @@ use tibba_scheduler::run_scheduler_jobs;
 use tibba_util::{is_development, is_production};
 use tokio::signal;
 use tower::ServiceBuilder;
+use tower_http::compression::CompressionLayer;
+use tower_http::compression::predicate::{NotForContentType, Predicate, SizeAbove};
 use tracing::{Level, error, info};
 use tracing_subscriber::FmtSubscriber;
 
@@ -123,10 +125,15 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         Router::new().nest(&basic_config.prefix, new_router()?)
     };
 
+    let predicate = SizeAbove::new(1024)
+        .and(NotForContentType::GRPC)
+        .and(NotForContentType::IMAGES)
+        .and(NotForContentType::SSE);
     let app = app.layer(
         // service build layer execute by add order
         ServiceBuilder::new()
             .layer(HandleErrorLayer::new(handle_error))
+            .layer(CompressionLayer::new().compress_when(predicate))
             .timeout(basic_config.timeout)
             // TODO 使用 RightmostXForwardedFor 代替 ConnectInfo
             .layer(ClientIpSource::ConnectInfo.into_extension())
