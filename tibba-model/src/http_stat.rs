@@ -318,6 +318,19 @@ impl Model for HttpStat {
                     ..Default::default()
                 },
                 Schema {
+                    name: "timing".to_string(),
+                    category: SchemaType::HoverCard,
+                    combinations: Some(vec![
+                        "dns_lookup".to_string(),
+                        "quic_connect".to_string(),
+                        "tcp_connect".to_string(),
+                        "tls_handshake".to_string(),
+                        "server_processing".to_string(),
+                        "content_transfer".to_string(),
+                    ]),
+                    ..Default::default()
+                },
+                Schema {
                     name: "addr".to_string(),
                     category: SchemaType::String,
                     ..Default::default()

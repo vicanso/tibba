@@ -41,6 +41,7 @@ pub enum SchemaType {
     ByteSize,
     Json,
     Code,
+    HoverCard,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -126,6 +127,7 @@ pub struct Schema {
     pub default_value: Option<serde_json::Value>,
     pub hidden_values: Vec<String>,
     pub max_width: Option<u16>,
+    pub combinations: Option<Vec<String>>,
 }
 
 impl Schema {
