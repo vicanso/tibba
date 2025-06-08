@@ -49,6 +49,7 @@ struct ApplicationInfo {
     os: String,
     arch: String,
     commit_id: String,
+    hostname: String,
 }
 
 async fn get_application_info(
@@ -68,6 +69,10 @@ async fn get_application_info(
         arch: arch.to_string(),
         os,
         commit_id: state.get_commit_id().to_string(),
+        hostname: hostname::get()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string(),
     };
     Ok((Duration::from_secs(60), info).into())
 }

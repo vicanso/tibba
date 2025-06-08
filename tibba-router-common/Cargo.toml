@@ -9,6 +9,7 @@ name = "tibba_router_common"
 path = "src/lib.rs"
 
 [dependencies]
+hostname = "0.4.1"
 axum = { workspace = true }
 serde = { workspace = true }
 os_info = { workspace = true }
