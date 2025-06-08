@@ -62,9 +62,14 @@ async fn get_application_info(
     if cfg!(any(target_arch = "arm", target_arch = "aarch64")) {
         arch = "arm64"
     }
+    let uptime_str = humantime::format_duration(uptime).to_string();
+    let mut uptime_values = uptime_str.split(" ").collect::<Vec<_>>();
+    if uptime_values.len() > 2 {
+        uptime_values.truncate(2);
+    }
 
     let info = ApplicationInfo {
-        uptime: humantime::format_duration(uptime).to_string(),
+        uptime: uptime_values.join(" "),
         env: get_env(),
         arch: arch.to_string(),
         os,
