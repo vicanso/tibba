@@ -16,6 +16,7 @@ use super::sql::get_db_pool;
 use crate::cache::get_redis_cache;
 use chrono::DateTime;
 use ctor::ctor;
+use http::Uri;
 use http::{HeaderMap, HeaderName, HeaderValue};
 use http_stat::{HttpRequest, request};
 use serde::{Deserialize, Serialize};
@@ -67,7 +68,24 @@ fn run_js_detect(resp: JsResponse, detect_script: &str) -> Result<()> {
     Ok(())
 }
 
-async fn do_request(pool: &MySqlPool, detector: &HttpDetector, params: HttpRequest) -> Result<()> {
+async fn do_request(
+    pool: &MySqlPool,
+    detector: &HttpDetector,
+    mut params: HttpRequest,
+) -> Result<()> {
+    if detector.random_querystring {
+        let id = nanoid::nanoid!(8);
+        let uri = params.uri.to_string();
+        let uri = if uri.contains('?') {
+            format!("{}&{}", uri, id)
+        } else {
+            format!("{}?{}", uri, id)
+        };
+        if let Ok(uri) = Uri::try_from(uri) {
+            params.uri = uri;
+        }
+    }
+    let url = params.uri.to_string();
     let stat = timeout(Duration::from_secs(60), request(params))
         .await
         .unwrap_or_else(|e| http_stat::HttpStat {
@@ -118,7 +136,7 @@ async fn do_request(pool: &MySqlPool, detector: &HttpDetector, params: HttpReque
     let insert_params = HttpStatInsertParams {
         target_id: detector.id,
         target_name: detector.name.clone(),
-        url: detector.url.clone(),
+        url,
         dns_lookup: stat.dns_lookup.map(|d| d.as_millis() as i32),
         quic_connect: stat.quic_connect.map(|d| d.as_millis() as i32),
         tcp_connect: stat.tcp_connect.map(|d| d.as_millis() as i32),
@@ -144,16 +162,7 @@ async fn do_request(pool: &MySqlPool, detector: &HttpDetector, params: HttpReque
     Ok(())
 }
 
-async fn run_http_detector(pool: &MySqlPool, mut detector: HttpDetector) -> Result<()> {
-    if detector.random_querystring {
-        let url = &detector.url;
-        let id = nanoid::nanoid!(8);
-        if url.contains('?') {
-            detector.url = format!("{}&{}", url, id);
-        } else {
-            detector.url = format!("{}?{}", url, id);
-        }
-    }
+async fn run_http_detector(pool: &MySqlPool, detector: HttpDetector) -> Result<()> {
     let Ok(mut params) = HttpRequest::try_from(detector.url.as_str()) else {
         HttpStat::add_stat(
             pool,
