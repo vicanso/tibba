@@ -419,7 +419,7 @@ async fn run_stat_alarm() -> Result<(i32, i32)> {
                 .iter_mut()
                 .find(|t| t.target_id == *target_id)
             {
-                let offset = fail_target.alarm_count.min(24) as i64 * 3600;
+                let offset = fail_target.alarm_count.min(12) as i64 * 2 * 3600;
                 if fail_target.alarm_time > now - offset {
                     continue;
                 }
