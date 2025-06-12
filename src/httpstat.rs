@@ -422,12 +422,18 @@ async fn run_stat_alarm() -> Result<(i32, i32)> {
             continue;
         }
 
+        let mut status_changed = true;
+
         // 如果失败，而且失败记录发送时间在1小时内，则跳过
         if is_failed {
             if let Some(fail_target) = failed_targets
                 .iter_mut()
                 .find(|t| t.target_id == *target_id)
             {
+                // 如果状态失败，而且在失败记录中存在，则状态未改变
+                if fail_target.alarm_count > 0 {
+                    status_changed = false;
+                }
                 let offset = fail_target.alarm_count.min(12) as i64 * 2 * 3600;
                 if fail_target.alarm_time > now - offset {
                     continue;
@@ -451,6 +457,10 @@ async fn run_stat_alarm() -> Result<(i32, i32)> {
         if !content.contains(&msg) {
             content.push(msg.clone());
             if let Ok(Some(detector)) = HttpDetector::get_by_id(pool, *target_id).await {
+                // 如果仅在状态变更时推送告警，而且状态未改变，则跳过
+                if detector.alarm_on_change && !status_changed {
+                    continue;
+                }
                 if !detector.alarm_url.is_empty() {
                     alarm_params.push(StatAlarmParam {
                         message: msg,
