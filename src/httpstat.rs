@@ -444,6 +444,10 @@ async fn run_stat_alarm() -> Result<(i32, i32)> {
             }
         }
 
+        let Ok(Some(detector)) = HttpDetector::get_by_id(pool, *target_id).await else {
+            continue;
+        };
+
         let status = if stat.result == ResultValue::Success as u8 {
             r#"<font color="info">恢复正常</font>"#.to_string()
         } else {
@@ -452,25 +456,50 @@ async fn run_stat_alarm() -> Result<(i32, i32)> {
                 &stat.error
             )
         };
-        let msg = format!(">{}: {}", stat.target_name, status);
+        let mut msg = format!(">{}: {}", stat.target_name, status);
 
         if !content.contains(&msg) {
+            if detector.verbose {
+                let mut descriptions = vec![];
+                if !stat.addr.is_empty() {
+                    descriptions.push(format!("地址: {}", stat.addr));
+                }
+                if stat.dns_lookup > 0 {
+                    descriptions.push(format!("DNS解析时间: {}ms", stat.dns_lookup));
+                }
+                if stat.quic_connect > 0 {
+                    descriptions.push(format!("QUIC连接时间: {}ms", stat.quic_connect));
+                }
+                if stat.tcp_connect > 0 {
+                    descriptions.push(format!("TCP连接时间: {}ms", stat.tcp_connect));
+                }
+                if stat.tls_handshake > 0 {
+                    descriptions.push(format!("TLS握手时间: {}ms", stat.tls_handshake));
+                }
+                if stat.server_processing > 0 {
+                    descriptions.push(format!("服务器处理时间: {}ms", stat.server_processing));
+                }
+                if stat.content_transfer > 0 {
+                    descriptions.push(format!("内容传输时间: {}ms", stat.content_transfer));
+                }
+                if !descriptions.is_empty() {
+                    msg.push_str(&format!("\n\n{}", descriptions.join("\n")));
+                }
+            }
             content.push(msg.clone());
-            if let Ok(Some(detector)) = HttpDetector::get_by_id(pool, *target_id).await {
-                // 如果仅在状态变更时推送告警，而且状态未改变，则跳过
-                if detector.alarm_on_change && !status_changed {
-                    continue;
-                }
-                if !detector.alarm_url.is_empty() {
-                    alarm_params.push(StatAlarmParam {
-                        message: msg,
-                        alarm_config: Some(AlarmConfig {
-                            category: "httpstat".to_string(),
-                            url: detector.alarm_url,
-                        }),
-                    });
-                    continue;
-                }
+            // 如果仅在状态变更时推送告警，而且状态未改变，则跳过
+            if detector.alarm_on_change && !status_changed {
+                continue;
+            }
+            if !detector.alarm_url.is_empty() {
+                alarm_params.push(StatAlarmParam {
+                    message: msg,
+                    alarm_config: Some(AlarmConfig {
+                        category: "httpstat".to_string(),
+                        url: detector.alarm_url,
+                    }),
+                });
+                continue;
             }
             alarm_params.push(StatAlarmParam {
                 message: msg,
