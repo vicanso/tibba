@@ -286,6 +286,7 @@ struct StatAlarmCache {
 
 #[derive(Default, Debug)]
 struct StatAlarmParam {
+    service: String,
     message: String,
     alarm_config: Option<AlarmConfig>,
 }
@@ -317,11 +318,18 @@ async fn send_alarms(alarm_params: Vec<StatAlarmParam>, alarm_config: AlarmConfi
         }?;
         Ok(())
     };
+    let category = "http_stat_alarm";
     let mut contents = vec![];
     for param in alarm_params {
         if let Some(alarm_config) = param.alarm_config {
             if let Err(e) = send_markdown(param.message, alarm_config.url).await {
-                error!(category = "http_stat_alarm", error = ?e, "send alarm message failed");
+                error!(category, service = param.service, error = ?e, "send alarm message failed");
+            } else {
+                info!(
+                    category,
+                    service = param.service,
+                    "send alarm message success"
+                );
             }
             continue;
         }
@@ -329,7 +337,9 @@ async fn send_alarms(alarm_params: Vec<StatAlarmParam>, alarm_config: AlarmConfi
     }
     if !contents.is_empty() && !alarm_config.url.is_empty() {
         if let Err(e) = send_markdown(contents.join("\n"), alarm_config.url).await {
-            error!(category = "http_stat_alarm", error = ?e, "send alarm message failed");
+            error!(category, error = ?e, "send alarm message failed");
+        } else {
+            info!(category, "send alarm message success");
         }
     }
     Ok(())
@@ -493,6 +503,7 @@ async fn run_stat_alarm() -> Result<(i32, i32)> {
             }
             if !detector.alarm_url.is_empty() {
                 alarm_params.push(StatAlarmParam {
+                    service: detector.name.clone(),
                     message: msg,
                     alarm_config: Some(AlarmConfig {
                         category: "httpstat".to_string(),
@@ -502,6 +513,7 @@ async fn run_stat_alarm() -> Result<(i32, i32)> {
                 continue;
             }
             alarm_params.push(StatAlarmParam {
+                service: detector.name.clone(),
                 message: msg,
                 ..Default::default()
             });

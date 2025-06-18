@@ -1822,9 +1822,9 @@ dependencies = [
 
 [[package]]
 name = "http-stat"
-version = "0.5.4"
+version = "0.5.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "57e64450daa615d83a3fcdac9a6439d89b6aa8bd7eb2538363c100663921630d"
+checksum = "151f48d699b582b627caad7b82ae47ecc1908c91719ac693daa5be123110ba08"
 dependencies = [
  "brotli-decompressor",
  "bytes",
