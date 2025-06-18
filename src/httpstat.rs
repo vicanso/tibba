@@ -291,8 +291,9 @@ struct StatAlarmParam {
     alarm_config: Option<AlarmConfig>,
 }
 
-async fn send_alarms(alarm_params: Vec<StatAlarmParam>, alarm_config: AlarmConfig) -> Result<()> {
+async fn send_alarms(alarm_params: Vec<StatAlarmParam>, alarm_config: AlarmConfig) -> u32 {
     // 先发送指定了url的告警
+    let mut success = 0;
     let send_markdown = async |content: String, url: String| -> Result<()> {
         match reqwest::Client::new()
             .post(&url)
@@ -325,6 +326,7 @@ async fn send_alarms(alarm_params: Vec<StatAlarmParam>, alarm_config: AlarmConfi
             if let Err(e) = send_markdown(param.message, alarm_config.url).await {
                 error!(category, service = param.service, error = ?e, "send alarm message failed");
             } else {
+                success += 1;
                 info!(
                     category,
                     service = param.service,
@@ -339,10 +341,11 @@ async fn send_alarms(alarm_params: Vec<StatAlarmParam>, alarm_config: AlarmConfi
         if let Err(e) = send_markdown(contents.join("\n"), alarm_config.url).await {
             error!(category, error = ?e, "send alarm message failed");
         } else {
+            success += 1;
             info!(category, "send alarm message success");
         }
     }
-    Ok(())
+    success
 }
 
 async fn run_stat_alarm() -> Result<(i32, i32)> {
@@ -521,7 +524,8 @@ async fn run_stat_alarm() -> Result<(i32, i32)> {
     }
     let failed = failed_targets.len() as i32;
     if !alarm_params.is_empty() {
-        send_alarms(alarm_params, alarm_config).await?;
+        let success = send_alarms(alarm_params, alarm_config).await;
+        info!(category = task, success, "send alarm message done");
     }
 
     if let Err(e) = get_redis_cache()
