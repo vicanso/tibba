@@ -16,6 +16,7 @@ use super::sql::get_db_pool;
 use crate::cache::get_redis_cache;
 use chrono::DateTime;
 use ctor::ctor;
+use futures::future::join_all;
 use http::Uri;
 use http::{HeaderMap, HeaderName, HeaderValue};
 use http_stat::{HttpRequest, request};
@@ -24,7 +25,7 @@ use sqlx::MySqlPool;
 use std::collections::HashMap;
 use std::env;
 use std::sync::Arc;
-use std::sync::atomic::AtomicI32;
+use std::sync::atomic::{AtomicI32, Ordering};
 use std::{net::IpAddr, time::Duration};
 use tibba_error::{Error, new_error};
 use tibba_hook::register_before_task;
@@ -262,13 +263,20 @@ async fn run_detector_stat() -> Result<(i32, i32)> {
             if let Err(e) = run_http_detector(pool, detector).await {
                 error!(category = "http_detector", error = ?e, "run http detector failed");
             } else {
-                success.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                success.fetch_add(1, Ordering::Relaxed);
             }
             // 任务结束自动释放许可
         });
         handles.push(handle);
     }
-    Ok((success.load(std::sync::atomic::Ordering::Relaxed), count))
+    let results = join_all(handles).await;
+    for result in results {
+        if let Err(e) = result {
+            error!(category = "http_detector", error = ?e, "join all handles failed");
+        }
+    }
+
+    Ok((success.load(Ordering::Relaxed), count))
 }
 
 #[derive(Serialize, Deserialize, Default, Clone)]
@@ -351,7 +359,7 @@ async fn send_alarms(alarm_params: Vec<StatAlarmParam>, alarm_config: AlarmConfi
 async fn run_stat_alarm() -> Result<(i32, i32)> {
     let task = "http_alarm_task";
     let locked = get_redis_cache()
-        .lock(task, Some(Duration::from_secs(90)))
+        .lock(task, Some(Duration::from_secs(120)))
         .await?;
     if !locked {
         return Ok((0, -1));
@@ -552,7 +560,7 @@ fn init() {
         Box::new(|| {
             Box::pin(async {
                 // 每分钟
-                let job = Job::new_async("every 60 seconds", |_, _| {
+                let job = Job::new_async("0 * * * * *", |_, _| {
                     let category = "http_detector";
                     Box::pin(async move {
                         if let Ok(delay) = humantime::parse_duration(
@@ -591,7 +599,7 @@ fn init() {
         Box::new(|| {
             Box::pin(async {
                 // 每5分钟
-                let job = Job::new_async("every 2 minutes", |_, _| {
+                let job = Job::new_async("30 */5 * * * *", |_, _| {
                     let category = "http_stat_alarm";
                     Box::pin(async move {
                         match run_stat_alarm().await {
