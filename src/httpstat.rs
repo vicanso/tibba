@@ -226,7 +226,7 @@ struct WeComMarkDown {
 #[derive(Serialize)]
 struct WeComMarkDownMessage {
     msgtype: String,
-    markdown: WeComMarkDown,
+    markdown_v2: WeComMarkDown,
 }
 
 async fn run_detector_stat() -> Result<(i32, i32)> {
@@ -294,9 +294,50 @@ struct StatAlarmCache {
 
 #[derive(Default, Debug)]
 struct StatAlarmParam {
-    service: String,
-    message: String,
+    stat: HttpStat,
+    verbose: bool,
     alarm_config: Option<AlarmConfig>,
+}
+
+impl StatAlarmParam {
+    fn to_wecom_markdown(&self) -> String {
+        let mut arr = vec![];
+        let state = &self.stat;
+        let is_failed = state.result == ResultValue::Failed as u8;
+        if is_failed {
+            arr.push(format!("# {}：检测失败", state.target_name));
+            arr.push(format!("*出错原因: {}*", state.error));
+        } else {
+            arr.push(format!("# {}：恢复正常", state.target_name));
+        }
+        if self.verbose && is_failed {
+            if !state.addr.is_empty() {
+                arr.push(format!("- 地址: {}", state.addr));
+            }
+            if state.dns_lookup > 0 {
+                arr.push(format!("- DNS解析时间: {}ms", state.dns_lookup));
+            }
+            if state.quic_connect > 0 {
+                arr.push(format!("- QUIC连接时间: {}ms", state.quic_connect));
+            }
+            if state.tcp_connect > 0 {
+                arr.push(format!("- TCP连接时间: {}ms", state.tcp_connect));
+            }
+            if state.tls_handshake > 0 {
+                arr.push(format!("- TLS握手时间: {}ms", state.tls_handshake));
+            }
+            if state.server_processing > 0 {
+                arr.push(format!("- 服务器处理时间: {}ms", state.server_processing));
+            }
+            if state.content_transfer > 0 {
+                arr.push(format!("- 内容传输时间: {}ms", state.content_transfer));
+            }
+            if state.total > 0 {
+                arr.push(format!("- 总耗时: {}ms", state.total));
+            }
+        }
+        arr.join("\n")
+    }
 }
 
 async fn send_alarms(alarm_params: Vec<StatAlarmParam>, alarm_config: AlarmConfig) -> u32 {
@@ -307,8 +348,8 @@ async fn send_alarms(alarm_params: Vec<StatAlarmParam>, alarm_config: AlarmConfi
             .post(&url)
             .timeout(Duration::from_secs(10))
             .json(&WeComMarkDownMessage {
-                msgtype: "markdown".to_string(),
-                markdown: WeComMarkDown { content },
+                msgtype: "markdown_v2".to_string(),
+                markdown_v2: WeComMarkDown { content },
             })
             .send()
             .await
@@ -329,21 +370,22 @@ async fn send_alarms(alarm_params: Vec<StatAlarmParam>, alarm_config: AlarmConfi
     };
     let category = "http_stat_alarm";
     let mut contents = vec![];
-    for param in alarm_params {
-        if let Some(alarm_config) = param.alarm_config {
-            if let Err(e) = send_markdown(param.message, alarm_config.url).await {
-                error!(category, service = param.service, error = ?e, "send alarm message failed");
+    for param in alarm_params.iter() {
+        if let Some(alarm_config) = &param.alarm_config {
+            if let Err(e) = send_markdown(param.to_wecom_markdown(), alarm_config.url.clone()).await
+            {
+                error!(category, error = ?e, "send alarm message failed");
             } else {
                 success += 1;
                 info!(
                     category,
-                    service = param.service,
+                    service = param.stat.target_name,
                     "send alarm message success"
                 );
             }
             continue;
         }
-        contents.push(param.message);
+        contents.push(param.to_wecom_markdown());
     }
     if !contents.is_empty() && !alarm_config.url.is_empty() {
         if let Err(e) = send_markdown(contents.join("\n"), alarm_config.url).await {
@@ -414,7 +456,7 @@ async fn run_stat_alarm() -> Result<(i32, i32)> {
 
     let count = stat_map.len() as i32;
 
-    let mut content = vec![];
+    let mut trigger_targets = vec![];
     let mut alarm_params = vec![];
     let mut failed_targets = vec![];
     for (target_id, stat) in stat_map.iter() {
@@ -468,67 +510,31 @@ async fn run_stat_alarm() -> Result<(i32, i32)> {
         let Ok(Some(detector)) = HttpDetector::get_by_id(pool, *target_id).await else {
             continue;
         };
-
-        let status = if stat.result == ResultValue::Success as u8 {
-            r#"<font color="info">恢复正常</font>"#.to_string()
-        } else {
-            format!(
-                r#"<font color="warning">失败</font> 出错原因：{}"#,
-                &stat.error
-            )
-        };
-        let mut msg = format!(">{}: {}", stat.target_name, status);
-
-        if !content.contains(&msg) {
-            if detector.verbose {
-                let mut descriptions = vec![];
-                if !stat.addr.is_empty() {
-                    descriptions.push(format!("地址: {}", stat.addr));
-                }
-                if stat.dns_lookup > 0 {
-                    descriptions.push(format!("DNS解析时间: {}ms", stat.dns_lookup));
-                }
-                if stat.quic_connect > 0 {
-                    descriptions.push(format!("QUIC连接时间: {}ms", stat.quic_connect));
-                }
-                if stat.tcp_connect > 0 {
-                    descriptions.push(format!("TCP连接时间: {}ms", stat.tcp_connect));
-                }
-                if stat.tls_handshake > 0 {
-                    descriptions.push(format!("TLS握手时间: {}ms", stat.tls_handshake));
-                }
-                if stat.server_processing > 0 {
-                    descriptions.push(format!("服务器处理时间: {}ms", stat.server_processing));
-                }
-                if stat.content_transfer > 0 {
-                    descriptions.push(format!("内容传输时间: {}ms", stat.content_transfer));
-                }
-                if !descriptions.is_empty() {
-                    msg.push_str(&format!("\n\n{}", descriptions.join("\n")));
-                }
-            }
-            content.push(msg.clone());
-            // 如果仅在状态变更时推送告警，而且状态未改变，则跳过
-            if detector.alarm_on_change && !status_changed {
-                continue;
-            }
-            if !detector.alarm_url.is_empty() {
-                alarm_params.push(StatAlarmParam {
-                    service: detector.name.clone(),
-                    message: msg,
-                    alarm_config: Some(AlarmConfig {
-                        category: "httpstat".to_string(),
-                        url: detector.alarm_url,
-                    }),
-                });
-                continue;
-            }
-            alarm_params.push(StatAlarmParam {
-                service: detector.name.clone(),
-                message: msg,
-                ..Default::default()
-            });
+        if trigger_targets.contains(&*target_id) {
+            continue;
         }
+        trigger_targets.push(*target_id);
+
+        // 如果仅在状态变更时推送告警，而且状态未改变，则跳过
+        if detector.alarm_on_change && !status_changed {
+            continue;
+        }
+        if !detector.alarm_url.is_empty() {
+            alarm_params.push(StatAlarmParam {
+                stat: stat.clone(),
+                verbose: detector.verbose,
+                alarm_config: Some(AlarmConfig {
+                    category: "httpstat".to_string(),
+                    url: detector.alarm_url,
+                }),
+            });
+            continue;
+        }
+        alarm_params.push(StatAlarmParam {
+            stat: stat.clone(),
+            verbose: detector.verbose,
+            ..Default::default()
+        });
     }
     let failed = failed_targets.len() as i32;
     if !alarm_params.is_empty() {
@@ -602,6 +608,13 @@ fn init() {
                 let job = Job::new_async("30 */5 * * * *", |_, _| {
                     let category = "http_stat_alarm";
                     Box::pin(async move {
+                        if let Ok(delay) = humantime::parse_duration(
+                            std::env::var("HTTP_DETECTOR_TASK_DELAY")
+                                .unwrap_or_default()
+                                .as_str(),
+                        ) {
+                            tokio::time::sleep(delay).await;
+                        }
                         match run_stat_alarm().await {
                             Err(e) => {
                                 error!(

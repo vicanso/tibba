@@ -56,7 +56,7 @@ struct HttpStatSchema {
     modified: OffsetDateTime,
 }
 
-#[derive(Default, Deserialize, Serialize, Debug)]
+#[derive(Default, Deserialize, Serialize, Debug, Clone)]
 pub struct HttpStat {
     pub id: u64,
     pub target_id: u64,
