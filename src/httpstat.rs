@@ -47,23 +47,45 @@ struct JsResponse {
     headers: HashMap<String, String>,
 }
 
-fn run_js_detect(resp: JsResponse, detect_script: &str) -> Result<()> {
+#[derive(Serialize, Deserialize, Debug)]
+struct JsStat {
+    dns_lookup: Option<u32>,
+    quic_connect: Option<u32>,
+    tcp_connect: Option<u32>,
+    tls_handshake: Option<u32>,
+    server_processing: Option<u32>,
+    content_transfer: Option<u32>,
+    total: Option<u32>,
+    addr: Option<String>,
+    tls: Option<String>,
+    alpn: Option<String>,
+    subject: Option<String>,
+    issuer: Option<String>,
+    cert_not_before: Option<String>,
+    cert_not_after: Option<String>,
+    cert_cipher: Option<String>,
+    cert_domains: Option<Vec<String>>,
+}
+
+fn run_js_detect(resp: JsResponse, stat: JsStat, detect_script: &str) -> Result<()> {
     if detect_script.is_empty() {
         return Ok(());
     }
     let ctx = quick_js::Context::new().map_err(new_error)?;
     let content = serde_json::to_string(&resp).map_err(new_error)?;
+    let stat = serde_json::to_string(&stat).map_err(new_error)?;
     let mut script = r#"
-(function(response) {
+(function(response, stat) {
     try {
         response.body = JSON.parse(response.body);
-    } finally {
+    } catch (err) {
     }
     __script__ 
-})(__response__);
+})(__response__, __stat__);
 "#
     .to_string();
     script = script.replace("__response__", &content);
+    script = script.replace("__stat__", &stat);
     script = script.replace("__script__", detect_script);
     ctx.eval(&script).map_err(new_error)?;
     Ok(())
@@ -87,22 +109,32 @@ async fn do_request(
         }
     }
     let url = params.uri.to_string();
-    let stat = timeout(Duration::from_secs(60), request(params))
-        .await
-        .unwrap_or_else(|e| http_stat::HttpStat {
-            error: Some(e.to_string()),
-            ..Default::default()
-        });
+    let count = detector.retries + 1;
+    let mut stat = http_stat::HttpStat::default();
+    for _ in 0..count {
+        stat = timeout(Duration::from_secs(60), request(params.clone()))
+            .await
+            .unwrap_or_else(|e| http_stat::HttpStat {
+                error: Some(e.to_string()),
+                ..Default::default()
+            });
+        if stat.is_success() {
+            break;
+        }
+    }
+
     let mut result = ResultValue::Success;
     let mut err = stat.error;
 
     if err.is_some() || stat.status.is_none() || stat.status.unwrap_or_default().as_u16() >= 400 {
         result = ResultValue::Failed;
         if err.is_none() {
-            err = Some(format!(
-                "http status code is >= 400, status: {}",
-                stat.status.unwrap_or_default().as_u16()
-            ));
+            let status = if let Some(status) = stat.status {
+                status.as_u16()
+            } else {
+                0
+            };
+            err = Some(format!("http status code is >= 400, status: {status}",));
         }
     }
     if let Some(cert_not_after) = &stat.cert_not_after {
@@ -126,6 +158,24 @@ async fn do_request(
                     .iter()
                     .map(|(k, v)| (k.to_string(), v.to_str().unwrap().to_string()))
                     .collect(),
+            },
+            JsStat {
+                dns_lookup: stat.dns_lookup.map(|d| d.as_millis() as u32),
+                quic_connect: stat.quic_connect.map(|d| d.as_millis() as u32),
+                tcp_connect: stat.tcp_connect.map(|d| d.as_millis() as u32),
+                tls_handshake: stat.tls_handshake.map(|d| d.as_millis() as u32),
+                server_processing: stat.server_processing.map(|d| d.as_millis() as u32),
+                content_transfer: stat.content_transfer.map(|d| d.as_millis() as u32),
+                total: stat.total.map(|d| d.as_millis() as u32),
+                addr: stat.addr.clone(),
+                tls: stat.tls.clone(),
+                alpn: stat.alpn.clone(),
+                subject: stat.subject.clone(),
+                issuer: stat.issuer.clone(),
+                cert_not_before: stat.cert_not_before.clone(),
+                cert_not_after: stat.cert_not_after.clone(),
+                cert_cipher: stat.cert_cipher.clone(),
+                cert_domains: stat.cert_domains.clone(),
             },
             &detector.script.clone().unwrap_or_default(),
         ) {
