@@ -169,6 +169,10 @@ async fn get_detail(
             let detector = HttpDetector::get_by_id(pool, params.id).await?;
             json!(detector)
         }
+        "http_stat" => {
+            let stat = HttpStat::get_by_id(pool, params.id).await?;
+            json!(stat)
+        }
         _ => {
             return Err(tibba_error::new_error("The model is not supported").into());
         }

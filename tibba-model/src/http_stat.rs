@@ -450,4 +450,12 @@ impl Model for HttpStat {
             .map_err(|e| Error::Sqlx { source: e })?;
         Ok(count)
     }
+    async fn get_by_id(pool: &Pool<MySql>, id: u64) -> Result<Option<Self>> {
+        let stat = sqlx::query_as::<_, HttpStatSchema>(r#"SELECT * FROM http_stats WHERE id = ?"#)
+            .bind(id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| Error::Sqlx { source: e })?;
+        Ok(stat.map(|schema| schema.into()))
+    }
 }

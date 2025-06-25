@@ -48,6 +48,7 @@ struct HttpDetectorSchema {
     alarm_on_change: bool,
     retries: u8,
     failure_threshold: u8,
+    regions: Json<Vec<String>>,
     verbose: bool,
     created_by: u64,
     created: OffsetDateTime,
@@ -75,6 +76,7 @@ pub struct HttpDetector {
     pub alarm_on_change: bool,
     pub retries: u8,
     pub failure_threshold: u8,
+    pub regions: Vec<String>,
     pub verbose: bool,
     pub created_by: u64,
     pub created: String,
@@ -103,6 +105,7 @@ impl From<HttpDetectorSchema> for HttpDetector {
             alarm_on_change: schema.alarm_on_change,
             retries: schema.retries,
             failure_threshold: schema.failure_threshold,
+            regions: schema.regions.0,
             verbose: schema.verbose,
             created_by: schema.created_by,
             created: format_datetime(schema.created),
@@ -130,6 +133,7 @@ pub struct HttpDetectorInsertParams {
     pub alarm_on_change: bool,
     pub retries: u8,
     pub failure_threshold: u8,
+    pub regions: Vec<String>,
     pub verbose: bool,
     pub created_by: u64,
 }
@@ -153,6 +157,7 @@ pub struct HttpDetectorUpdateParams {
     pub alarm_on_change: Option<bool>,
     pub retries: Option<u8>,
     pub failure_threshold: Option<u8>,
+    pub regions: Option<Vec<String>>,
     pub verbose: Option<bool>,
 }
 
@@ -270,6 +275,11 @@ impl Model for HttpDetector {
                     ..Default::default()
                 },
                 Schema {
+                    name: "regions".to_string(),
+                    category: SchemaType::Strings,
+                    ..Default::default()
+                },
+                Schema {
                     name: "dns_servers".to_string(),
                     category: SchemaType::Strings,
                     ..Default::default()
@@ -316,7 +326,7 @@ impl Model for HttpDetector {
         let params: HttpDetectorInsertParams =
             serde_json::from_value(params).map_err(|e| Error::Json { source: e })?;
         let result = sqlx::query(
-            r#"INSERT INTO http_detectors (status, name, url, method, alpn_protocols, resolves, headers, ip_version, skip_verify, body, `interval`, script, alarm_url, random_querystring, alarm_on_change, retries, failure_threshold, verbose, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+            r#"INSERT INTO http_detectors (status, name, url, method, alpn_protocols, resolves, headers, ip_version, skip_verify, body, `interval`, script, alarm_url, random_querystring, alarm_on_change, retries, failure_threshold, verbose, regions, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
         )
         .bind(params.status)
         .bind(params.name)
@@ -336,6 +346,7 @@ impl Model for HttpDetector {
         .bind(params.retries)
         .bind(params.failure_threshold)
         .bind(params.verbose)
+        .bind(Json(params.regions))
         .bind(params.created_by)
         .execute(pool)
         .await
@@ -370,7 +381,7 @@ impl Model for HttpDetector {
             serde_json::from_value(params).map_err(|e| Error::Json { source: e })?;
 
         let _ = sqlx::query(
-            r#"UPDATE http_detectors SET status = COALESCE(?, status), name = COALESCE(?, name), url = COALESCE(?, url), method = COALESCE(?, method), alpn_protocols = COALESCE(?, alpn_protocols), resolves = COALESCE(?, resolves), headers = COALESCE(?, headers), ip_version = COALESCE(?, ip_version), skip_verify = COALESCE(?, skip_verify), body = COALESCE(?, body), `interval` = COALESCE(?, `interval`), script = COALESCE(?, script), alarm_url = COALESCE(?, alarm_url), random_querystring = COALESCE(?, random_querystring), alarm_on_change = COALESCE(?, alarm_on_change), retries = COALESCE(?, retries), failure_threshold = COALESCE(?, failure_threshold), verbose = COALESCE(?, verbose) WHERE id = ? AND deleted_at IS NULL"#,
+            r#"UPDATE http_detectors SET status = COALESCE(?, status), name = COALESCE(?, name), url = COALESCE(?, url), method = COALESCE(?, method), alpn_protocols = COALESCE(?, alpn_protocols), resolves = COALESCE(?, resolves), headers = COALESCE(?, headers), ip_version = COALESCE(?, ip_version), skip_verify = COALESCE(?, skip_verify), body = COALESCE(?, body), `interval` = COALESCE(?, `interval`), script = COALESCE(?, script), alarm_url = COALESCE(?, alarm_url), random_querystring = COALESCE(?, random_querystring), alarm_on_change = COALESCE(?, alarm_on_change), retries = COALESCE(?, retries), failure_threshold = COALESCE(?, failure_threshold), verbose = COALESCE(?, verbose), regions = COALESCE(?, regions) WHERE id = ? AND deleted_at IS NULL"#,
         )
         .bind(params.status)
         .bind(params.name)
@@ -390,6 +401,7 @@ impl Model for HttpDetector {
         .bind(params.retries)
         .bind(params.failure_threshold)
         .bind(params.verbose)
+        .bind(Json(params.regions))
         .bind(id)
         .execute(pool)
         .await
