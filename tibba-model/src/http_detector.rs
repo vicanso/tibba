@@ -401,7 +401,7 @@ impl Model for HttpDetector {
         .bind(params.retries)
         .bind(params.failure_threshold)
         .bind(params.verbose)
-        .bind(Json(params.regions))
+        .bind(params.regions.map(Json))
         .bind(id)
         .execute(pool)
         .await
