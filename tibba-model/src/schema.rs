@@ -42,6 +42,7 @@ pub enum SchemaType {
     Json,
     Code,
     HoverCard,
+    Placeholder,
 }
 
 #[derive(Debug, Clone, Deserialize)]

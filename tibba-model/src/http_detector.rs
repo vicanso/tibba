@@ -297,8 +297,12 @@ impl Model for HttpDetector {
                 Schema {
                     name: "regions".to_string(),
                     category: SchemaType::Strings,
-                    span: Some(2),
                     options: Some(new_schema_options(&[REGION_ANY, REGION_TX, REGION_GZ])),
+                    ..Default::default()
+                },
+                Schema {
+                    name: "placeholder".to_string(),
+                    category: SchemaType::Placeholder,
                     ..Default::default()
                 },
                 Schema {
