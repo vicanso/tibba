@@ -136,8 +136,6 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             .layer(HandleErrorLayer::new(handle_error))
             .layer(CompressionLayer::new().compress_when(predicate))
             .timeout(basic_config.timeout)
-            // TODO 使用 RightmostXForwardedFor 代替 ConnectInfo
-            .layer(ClientIpSource::ConnectInfo.into_extension())
             .layer(from_fn_with_state(state, entry))
             .layer(from_fn_with_state(state, stats))
             .layer(from_fn_with_state(
@@ -151,7 +149,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 ),
                 session,
             ))
-            .layer(from_fn_with_state(state, processing_limit)),
+            .layer(from_fn_with_state(state, processing_limit))
+            .layer(ClientIpSource::RightmostXForwardedFor.into_extension()),
     );
     state.run();
 
