@@ -30,7 +30,8 @@ use std::{net::IpAddr, time::Duration};
 use tibba_error::{Error, new_error};
 use tibba_hook::register_before_task;
 use tibba_model::{
-    AlarmConfig, Configuration, HttpDetector, HttpStat, HttpStatInsertParams, Model, ResultValue,
+    AlarmConfig, Configuration, HttpDetector, HttpStat, HttpStatInsertParams, Model, REGION_ANY,
+    ResultValue,
 };
 use tibba_scheduler::{Job, register_job_task};
 use time::OffsetDateTime;
@@ -279,16 +280,10 @@ struct WeComMarkDownMessage {
     markdown_v2: WeComMarkDown,
 }
 
-async fn run_detector_stat() -> Result<(i32, i32)> {
-    let locked = get_redis_cache()
-        .lock("http_detector_task", Some(Duration::from_secs(30)))
-        .await?;
-    if !locked {
-        return Ok((0, -1));
-    }
+async fn run_detector_stat() -> Result<(i32, i32, i32)> {
     let pool = get_db_pool();
-    let detectors = HttpDetector::list_enabled(pool).await?;
-    let mut count = 0;
+    let detectors = HttpDetector::list_enabled_by_region(pool, None).await?;
+    let count = Arc::new(AtomicI32::new(0));
     let success = Arc::new(AtomicI32::new(0));
     let minutes = OffsetDateTime::now_utc().unix_timestamp() / 60;
 
@@ -296,22 +291,44 @@ async fn run_detector_stat() -> Result<(i32, i32)> {
     let max_concurrent = 3;
     let semaphore = Arc::new(Semaphore::new(max_concurrent));
     let mut handles = vec![];
+    let category = "http_detector";
+    let mut all_task_count = 0;
 
     for detector in detectors {
         let interval = detector.interval.max(1);
         if minutes % (interval as i64) != 0 {
             continue;
         }
-        count += 1;
+        all_task_count += 1;
         let permit = Arc::clone(&semaphore);
         let success = success.clone();
+        let count = count.clone();
         let handle = tokio::spawn(async move {
             //  获取许可
             let Ok(_permit) = permit.acquire().await else {
                 return;
             };
+            let mut lock_key = format!("http_detector_task_{}", detector.id);
+            if !detector.regions.is_empty() && !detector.regions.contains(&REGION_ANY.to_string()) {
+                lock_key += format!("_{}", detector.regions.join(",")).as_str();
+            }
+            let locked = match get_redis_cache()
+                .lock(&lock_key, Some(Duration::from_secs(30)))
+                .await
+            {
+                Ok(locked) => locked,
+                Err(e) => {
+                    error!(category, lock_key, error = ?e, "lock failed");
+                    return;
+                }
+            };
+            if !locked {
+                return;
+            }
+            count.fetch_add(1, Ordering::Relaxed);
+
             if let Err(e) = run_http_detector(pool, detector).await {
-                error!(category = "http_detector", error = ?e, "run http detector failed");
+                error!(category, error = ?e, "run http detector failed");
             } else {
                 success.fetch_add(1, Ordering::Relaxed);
             }
@@ -322,11 +339,15 @@ async fn run_detector_stat() -> Result<(i32, i32)> {
     let results = join_all(handles).await;
     for result in results {
         if let Err(e) = result {
-            error!(category = "http_detector", error = ?e, "join all handles failed");
+            error!(category, error = ?e, "join all handles failed");
         }
     }
 
-    Ok((success.load(Ordering::Relaxed), count))
+    Ok((
+        success.load(Ordering::Relaxed),
+        count.load(Ordering::Relaxed),
+        all_task_count,
+    ))
 }
 
 #[derive(Serialize, Deserialize, Default, Clone)]
@@ -634,9 +655,12 @@ fn init() {
                                     "run http detector failed"
                                 );
                             }
-                            Ok((success, count)) => {
+                            Ok((success, count, all_task_count)) => {
                                 if count >= 0 {
-                                    info!(category, count, success, "run http detector success");
+                                    info!(
+                                        category,
+                                        success, count, all_task_count, "run http detector success"
+                                    );
                                 }
                             }
                         };

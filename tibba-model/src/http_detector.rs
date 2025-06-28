@@ -27,6 +27,10 @@ use time::OffsetDateTime;
 
 type Result<T> = std::result::Result<T, Error>;
 
+pub const REGION_ANY: &str = "any";
+pub const REGION_TX: &str = "tx";
+pub const REGION_GZ: &str = "gz";
+
 #[derive(FromRow)]
 struct HttpDetectorSchema {
     id: u64,
@@ -172,6 +176,22 @@ impl HttpDetector {
 
         Ok(detectors.into_iter().map(|schema| schema.into()).collect())
     }
+    pub async fn list_enabled_by_region(
+        pool: &Pool<MySql>,
+        region: Option<&str>,
+    ) -> Result<Vec<Self>> {
+        let region = region.unwrap_or(REGION_ANY);
+        let detectors = sqlx::query_as::<_, HttpDetectorSchema>(
+            r#"SELECT * FROM http_detectors WHERE deleted_at IS NULL AND status = 1 AND (JSON_LENGTH(regions) = 0 OR JSON_CONTAINS(regions, ?) OR JSON_CONTAINS(regions, ?))"#,
+        )
+        .bind(serde_json::json!(region))
+        .bind(serde_json::json!(REGION_ANY))
+        .fetch_all(pool)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+
+        Ok(detectors.into_iter().map(|schema| schema.into()).collect())
+    }
 }
 
 #[async_trait]
@@ -277,6 +297,8 @@ impl Model for HttpDetector {
                 Schema {
                     name: "regions".to_string(),
                     category: SchemaType::Strings,
+                    span: Some(2),
+                    options: Some(new_schema_options(&[REGION_ANY, REGION_TX, REGION_GZ])),
                     ..Default::default()
                 },
                 Schema {
