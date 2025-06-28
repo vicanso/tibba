@@ -281,8 +281,9 @@ struct WeComMarkDownMessage {
 }
 
 async fn run_detector_stat() -> Result<(i32, i32, i32)> {
+    let region = env::var("HTTP_DETECTOR_REGION").ok();
     let pool = get_db_pool();
-    let detectors = HttpDetector::list_enabled_by_region(pool, None).await?;
+    let detectors = HttpDetector::list_enabled_by_region(pool, region).await?;
     let count = Arc::new(AtomicI32::new(0));
     let success = Arc::new(AtomicI32::new(0));
     let minutes = OffsetDateTime::now_utc().unix_timestamp() / 60;
@@ -581,7 +582,7 @@ async fn run_stat_alarm() -> Result<(i32, i32)> {
         let Ok(Some(detector)) = HttpDetector::get_by_id(pool, *target_id).await else {
             continue;
         };
-        if trigger_targets.contains(&*target_id) {
+        if trigger_targets.contains(target_id) {
             continue;
         }
         trigger_targets.push(*target_id);
