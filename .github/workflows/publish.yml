@@ -38,11 +38,6 @@ jobs:
           echo
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Set git commit id
-        run: |
-          cat configs/commit_id.txt
-          git rev-parse --short HEAD > configs/commit_id.txt
-          cat configs/commit_id.txt
       - name: Docker meta
         id: meta
         uses: docker/metadata-action@v4
@@ -69,6 +64,8 @@ jobs:
         with:
           platforms: linux/amd64, linux/arm64
           # platforms: linux/amd64
+          build-args: |
+            GIT_COMMIT_ID=${{ github.sha }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
       - name: Image digest

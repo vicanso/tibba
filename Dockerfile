@@ -1,6 +1,12 @@
 FROM rust:1.86.0 AS builder
 
+# Accept GIT_COMMIT_ID as build argument
+ARG GIT_COMMIT_ID
+
 COPY . /tibba
+
+# Write the GIT_COMMIT_ID to configs/commit_id.txt
+RUN echo "$GIT_COMMIT_ID" > /tibba/configs/commit_id.txt
 
 RUN apt update \
     && apt install -y cmake ca-certificates nasm curl --no-install-recommends
