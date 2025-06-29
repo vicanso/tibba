@@ -9,17 +9,20 @@ RUN curl -L https://github.com/vicanso/http-stat-rs/releases/latest/download/htt
 RUN mv httpstat /usr/local/bin/
 
 RUN cd /tibba \
-    && cat configs/commit_id.txt \
-    && make release \
-    && ls -lh target/release
+    && cat configs/commit_id.txt 
 
-FROM ubuntu:24.04
+# RUN cd /tibba \
+#     && cat configs/commit_id.txt \
+#     && make release \
+#     && ls -lh target/release
 
-COPY --from=builder /etc/ssl /etc/ssl
-COPY --from=builder /tibba/target/release/tibba /usr/local/bin/tibba
-COPY --from=builder /tibba/entrypoint.sh /entrypoint.sh
-COPY --from=builder /usr/local/bin/httpstat /usr/local/bin/httpstat
+# FROM ubuntu:24.04
 
-CMD ["tibba"]
+# COPY --from=builder /etc/ssl /etc/ssl
+# COPY --from=builder /tibba/target/release/tibba /usr/local/bin/tibba
+# COPY --from=builder /tibba/entrypoint.sh /entrypoint.sh
+# COPY --from=builder /usr/local/bin/httpstat /usr/local/bin/httpstat
 
-ENTRYPOINT ["/entrypoint.sh"]
+# CMD ["tibba"]
+
+# ENTRYPOINT ["/entrypoint.sh"]
