@@ -71,8 +71,6 @@ jobs:
           # platforms: linux/amd64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
-          build-args: |
-            BUILD_ARGS=${{ steps.build_args.outputs.BUILD_ARGS }}
       - name: Image digest
         run: |
           echo ${{ steps.docker_build.outputs.digest }}

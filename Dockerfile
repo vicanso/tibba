@@ -9,6 +9,7 @@ RUN curl -L https://github.com/vicanso/http-stat-rs/releases/latest/download/htt
 RUN mv httpstat /usr/local/bin/
 
 RUN cd /tibba \
+    && cat configs/commit_id.txt \
     && make release \
     && ls -lh target/release
 

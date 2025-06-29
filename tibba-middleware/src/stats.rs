@@ -17,7 +17,7 @@ use axum::extract::Request;
 use axum::extract::State;
 use axum::middleware::Next;
 use axum::response::Response;
-use axum_client_ip::ClientIp;
+// use axum_client_ip::ClientIp;
 use scopeguard::defer;
 use tibba_error::{Error, new_error};
 use tibba_state::{AppState, CTX};
@@ -44,7 +44,7 @@ type Result<T> = std::result::Result<T, Error>;
 /// * `next` - The next middleware in the chain
 pub async fn stats(
     State(state): State<&AppState>,
-    ClientIp(ip): ClientIp,
+    // ClientIp(ip): ClientIp,
     req: Request,
     next: Next,
 ) -> Result<Response> {
@@ -86,9 +86,11 @@ pub async fn stats(
     // Log comprehensive request/response information
     info!(
         category = "access",
-        device_id = ctx.device_id,           // Device identification
-        trace_id = ctx.trace_id,             // Request trace ID
-        ip = ip.to_string(),                 // Client IP
+        device_id = ctx.device_id, // Device identification
+        trace_id = ctx.trace_id,   // Request trace ID
+        // TODO: 使用 ClientIp 获取客户真实ip
+        ip = "127.0.0.1",
+        // ip = ip.to_string(),                 // Client IP
         processing = state.get_processing(), // Current processing count
         x_forwarded_for,                     // Forwarded IP chain
         referrer,                            // Request referrer
