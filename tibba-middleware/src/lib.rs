@@ -12,7 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use axum::extract::{ConnectInfo, FromRequestParts};
+use axum::http::request::Parts;
 use snafu::Snafu;
+use std::net::{IpAddr, SocketAddr};
 use tibba_error::{Error as BaseError, new_error};
 
 #[derive(Debug, Snafu)]
@@ -38,6 +41,45 @@ impl From<Error> for BaseError {
             .with_status(429),
         }
         .into()
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ClientIp(pub IpAddr);
+
+impl<S> FromRequestParts<S> for ClientIp
+where
+    S: Sync,
+{
+    type Rejection = tibba_error::Error;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        _state: &S,
+    ) -> std::result::Result<Self, Self::Rejection> {
+        if let Some(x_forwarded_for) = parts.headers.get("X-Forwarded-For") {
+            if let Some(ip) = x_forwarded_for
+                .to_str()
+                .unwrap_or_default()
+                .split(',')
+                .next()
+            {
+                if let Ok(ip) = ip.parse::<IpAddr>() {
+                    return Ok(ClientIp(ip));
+                }
+            }
+        }
+        if let Some(x_real_ip) = parts.headers.get("X-Real-Ip") {
+            if let Ok(ip) = x_real_ip.to_str().unwrap().parse::<IpAddr>() {
+                return Ok(ClientIp(ip));
+            }
+        }
+        let ip = parts
+            .extensions
+            .get::<ConnectInfo<SocketAddr>>()
+            .map(|ConnectInfo(addr)| addr.ip())
+            .ok_or_else(|| tibba_error::new_error("no connect info"))?;
+        Ok(ClientIp(ip))
     }
 }
 

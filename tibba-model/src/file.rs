@@ -217,15 +217,15 @@ impl File {
         let mut where_conditions = vec!["deleted_at IS NULL".to_string()];
 
         if let Some(keyword) = &params.keyword {
-            where_conditions.push(format!("filename LIKE '%{}%'", keyword));
+            where_conditions.push(format!("filename LIKE '%{keyword}%'"));
         }
 
         if let Some(filters) = params.parse_filters()? {
             if let Some(group) = filters.get("group") {
-                where_conditions.push(format!("`group` = '{}'", group));
+                where_conditions.push(format!("`group` = '{group}'"));
             }
             if let Some(uploader) = filters.get("uploader") {
-                where_conditions.push(format!("uploader = '{}'", uploader));
+                where_conditions.push(format!("uploader = '{uploader}'"));
             }
         }
 
@@ -324,11 +324,11 @@ impl File {
             } else {
                 (order_by.clone(), "ASC")
             };
-            sql.push_str(&format!(" ORDER BY {} {}", order_by, direction));
+            sql.push_str(&format!(" ORDER BY {order_by} {direction}"));
         }
 
         let offset = (params.page - 1) * limit;
-        sql.push_str(&format!(" LIMIT {} OFFSET {}", limit, offset));
+        sql.push_str(&format!(" LIMIT {limit} OFFSET {offset}"));
 
         let files = sqlx::query_as::<_, FileSchema>(&sql)
             .fetch_all(pool)

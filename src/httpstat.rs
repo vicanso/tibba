@@ -101,9 +101,9 @@ async fn do_request(
         let id = nanoid::nanoid!(8);
         let uri = params.uri.to_string();
         let uri = if uri.contains('?') {
-            format!("{}&{}", uri, id)
+            format!("{uri}&{id}")
         } else {
-            format!("{}?{}", uri, id)
+            format!("{uri}?{id}")
         };
         if let Ok(uri) = Uri::try_from(uri) {
             params.uri = uri;

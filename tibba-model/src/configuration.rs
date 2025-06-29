@@ -179,7 +179,7 @@ impl Model for Configuration {
     fn filter_condition_sql(filters: &HashMap<String, String>) -> Option<Vec<String>> {
         let mut conditions = vec![];
         if let Some(category) = filters.get("category") {
-            conditions.push(format!("category = '{}'", category));
+            conditions.push(format!("category = '{category}'"));
         }
         (!conditions.is_empty()).then_some(conditions)
     }
@@ -268,10 +268,10 @@ impl Model for Configuration {
             } else {
                 (order_by.clone(), "ASC")
             };
-            sql.push_str(&format!(" ORDER BY {} {}", order_by, direction));
+            sql.push_str(&format!(" ORDER BY {order_by} {direction}"));
         }
         let offset = (params.page - 1) * limit;
-        sql.push_str(&format!(" LIMIT {} OFFSET {}", limit, offset));
+        sql.push_str(&format!(" LIMIT {limit} OFFSET {offset}"));
 
         let configurations = sqlx::query_as::<_, ConfigurationSchema>(&sql)
             .fetch_all(pool)

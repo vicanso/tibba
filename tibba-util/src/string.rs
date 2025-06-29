@@ -81,11 +81,11 @@ pub fn nanoid(size: usize) -> String {
 /// ```
 pub fn float_to_fixed(value: f64, precision: usize) -> String {
     match precision {
-        0 => format!("{:.0}", value),
-        1 => format!("{:.1}", value),
-        2 => format!("{:.2}", value),
-        3 => format!("{:.3}", value),
-        _ => format!("{:.4}", value), // Default to 4 decimal places
+        0 => format!("{value:.0}"),
+        1 => format!("{value:.1}"),
+        2 => format!("{value:.2}"),
+        3 => format!("{value:.3}"),
+        _ => format!("{value:.4}"), // Default to 4 decimal places
     }
 }
 

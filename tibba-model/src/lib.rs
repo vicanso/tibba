@@ -60,7 +60,7 @@ impl From<Error> for BaseError {
                 he.into()
             }
             Error::NotSupported { name } => {
-                let he = new_error(format!("Not supported function: {}", name))
+                let he = new_error(format!("Not supported function: {name}"))
                     .with_category(error_category)
                     .with_sub_category("not_supported")
                     .with_exception(true);
@@ -95,10 +95,10 @@ pub trait Model {
             if let Some(modified) = filters.get("modified") {
                 if let Some((start, end)) = modified.split_once(',') {
                     if let Ok(start) = DateTime::parse_from_rfc3339(start) {
-                        where_conditions.push(format!("modified >= '{}'", start));
+                        where_conditions.push(format!("modified >= '{start}'"));
                     }
                     if let Ok(end) = DateTime::parse_from_rfc3339(end) {
-                        where_conditions.push(format!("modified <= '{}'", end));
+                        where_conditions.push(format!("modified <= '{end}'"));
                     }
                 }
             }

@@ -179,13 +179,13 @@ impl Model for User {
     fn filter_condition_sql(filters: &HashMap<String, String>) -> Option<Vec<String>> {
         let mut conditions = vec![];
         if let Some(status) = filters.get("status") {
-            conditions.push(format!("status = {}", status));
+            conditions.push(format!("status = {status}"));
         }
         if let Some(role) = filters.get("role") {
-            conditions.push(format!("JSON_CONTAINS(roles, JSON_ARRAY('{}'))", role));
+            conditions.push(format!("JSON_CONTAINS(roles, JSON_ARRAY('{role}'))"));
         }
         if let Some(group) = filters.get("group") {
-            conditions.push(format!("JSON_CONTAINS(groups, JSON_ARRAY('{}'))", group));
+            conditions.push(format!("JSON_CONTAINS(groups, JSON_ARRAY('{group}'))"));
         }
         (!conditions.is_empty()).then_some(conditions)
     }
@@ -212,11 +212,11 @@ impl Model for User {
             } else {
                 (order_by.clone(), "ASC")
             };
-            sql.push_str(&format!(" ORDER BY {} {}", order_by, direction));
+            sql.push_str(&format!(" ORDER BY {order_by} {direction}"));
         }
 
         let offset = (params.page - 1) * limit;
-        sql.push_str(&format!(" LIMIT {} OFFSET {}", limit, offset));
+        sql.push_str(&format!(" LIMIT {limit} OFFSET {offset}"));
 
         let result = sqlx::query_as::<_, UserSchema>(&sql)
             .fetch_all(pool)

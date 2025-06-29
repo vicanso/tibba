@@ -343,7 +343,7 @@ impl Model for HttpDetector {
         let mut conditions = vec![];
 
         if let Some(status) = filters.get("status") {
-            conditions.push(format!("status = '{}'", status));
+            conditions.push(format!("status = '{status}'"));
         }
 
         (!conditions.is_empty()).then_some(conditions)
@@ -456,10 +456,10 @@ impl Model for HttpDetector {
             } else {
                 (order_by.clone(), "ASC")
             };
-            sql.push_str(&format!(" ORDER BY {} {}", order_by, direction));
+            sql.push_str(&format!(" ORDER BY {order_by} {direction}"));
         }
         let offset = (params.page - 1) * limit;
-        sql.push_str(&format!(" LIMIT {} OFFSET {}", limit, offset));
+        sql.push_str(&format!(" LIMIT {limit} OFFSET {offset}"));
 
         let detectors = sqlx::query_as::<_, HttpDetectorSchema>(&sql)
             .fetch_all(pool)

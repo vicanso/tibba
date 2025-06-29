@@ -408,13 +408,13 @@ impl Model for HttpStat {
     fn filter_condition_sql(filters: &HashMap<String, String>) -> Option<Vec<String>> {
         let mut conditions = vec![];
         if let Some(result) = filters.get("result") {
-            conditions.push(format!("result = '{}'", result));
+            conditions.push(format!("result = '{result}'"));
         }
         if let Some(target_id) = filters.get("target_id") {
-            conditions.push(format!("target_id = '{}'", target_id));
+            conditions.push(format!("target_id = '{target_id}'"));
         }
         if let Some(total) = filters.get("total") {
-            conditions.push(format!("total >= {}", total));
+            conditions.push(format!("total >= {total}"));
         }
         (!conditions.is_empty()).then_some(conditions)
     }
@@ -429,10 +429,10 @@ impl Model for HttpStat {
             } else {
                 (order_by.clone(), "ASC")
             };
-            sql.push_str(&format!(" ORDER BY {} {}", order_by, direction));
+            sql.push_str(&format!(" ORDER BY {order_by} {direction}"));
         }
         let offset = (params.page - 1) * limit;
-        sql.push_str(&format!(" LIMIT {} OFFSET {}", limit, offset));
+        sql.push_str(&format!(" LIMIT {limit} OFFSET {offset}"));
 
         let detectors = sqlx::query_as::<_, HttpStatSchema>(&sql)
             .fetch_all(pool)
