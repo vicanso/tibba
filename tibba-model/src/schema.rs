@@ -177,6 +177,15 @@ impl Schema {
         modified.filterable = true;
         modified
     }
+    pub fn new_remark() -> Self {
+        Self {
+            name: "remark".to_string(),
+            category: SchemaType::String,
+            read_only: true,
+            popover: true,
+            ..Default::default()
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]

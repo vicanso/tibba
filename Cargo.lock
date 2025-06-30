@@ -1801,9 +1801,9 @@ dependencies = [
 
 [[package]]
 name = "http-stat"
-version = "0.5.7"
+version = "0.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4327d951d5e85629bcf556db7a60b52c281da2fb9fc2a3a5b46c47853b3985b0"
+checksum = "3aee7e72712d973073795cf04dab3bc317844fcef80243fdb8b08a678007b87f"
 dependencies = [
  "brotli-decompressor",
  "bytes",
@@ -4605,6 +4605,7 @@ dependencies = [
  "chrono",
  "ctor",
  "futures",
+ "hostname",
  "http",
  "http-stat",
  "humantime",

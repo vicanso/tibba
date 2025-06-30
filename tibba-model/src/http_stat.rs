@@ -52,6 +52,7 @@ struct HttpStatSchema {
     body_size: i32,
     error: String,
     result: u8,
+    remark: String,
     created: OffsetDateTime,
     modified: OffsetDateTime,
 }
@@ -82,6 +83,7 @@ pub struct HttpStat {
     pub body_size: i32,
     pub error: String,
     pub result: u8,
+    pub remark: String,
     pub created: String,
     pub modified: String,
 }
@@ -117,6 +119,7 @@ impl From<HttpStatSchema> for HttpStat {
             body_size: schema.body_size,
             error: schema.error,
             result: schema.result,
+            remark: schema.remark,
             created: format_datetime(schema.created),
             modified: format_datetime(schema.modified),
         }
@@ -149,12 +152,13 @@ pub struct HttpStatInsertParams {
     pub body_size: Option<i32>,
     pub error: Option<String>,
     pub result: u8,
+    pub remark: String,
 }
 
 impl HttpStat {
     pub async fn add_stat(pool: &Pool<MySql>, params: HttpStatInsertParams) -> Result<u64> {
         let result = sqlx::query(
-            r#"INSERT INTO http_stats (target_id, target_name, url, dns_lookup, quic_connect, tcp_connect, tls_handshake, server_processing, content_transfer, total, addr, status_code, tls, alpn, subject, issuer, cert_not_before, cert_not_after, cert_cipher, cert_domains, body_size, error, result) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+            r#"INSERT INTO http_stats (target_id, target_name, url, dns_lookup, quic_connect, tcp_connect, tls_handshake, server_processing, content_transfer, total, addr, status_code, tls, alpn, subject, issuer, cert_not_before, cert_not_after, cert_cipher, cert_domains, body_size, error, result, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
         )
         .bind(params.target_id)
         .bind(params.target_name)
@@ -179,6 +183,7 @@ impl HttpStat {
         .bind(params.body_size.unwrap_or(-1))
         .bind(params.error.unwrap_or_default())
         .bind(params.result)
+        .bind(params.remark)
         .execute(pool)
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
@@ -391,6 +396,7 @@ impl Model for HttpStat {
                     category: SchemaType::String,
                     ..Default::default()
                 },
+                Schema::new_remark(),
                 Schema::new_created(),
                 Schema::new_filterable_modified(),
             ],

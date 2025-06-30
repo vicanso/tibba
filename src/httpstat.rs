@@ -20,6 +20,7 @@ use futures::future::join_all;
 use http::Uri;
 use http::{HeaderMap, HeaderName, HeaderValue};
 use http_stat::{HttpRequest, request};
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use sqlx::MySqlPool;
 use std::collections::HashMap;
@@ -40,6 +41,14 @@ use tokio::time::timeout;
 use tracing::{error, info};
 
 type Result<T> = std::result::Result<T, Error>;
+
+static REGION: Lazy<Option<String>> = Lazy::new(|| env::var("HTTP_DETECTOR_REGION").ok());
+static HOSTNAME: Lazy<String> = Lazy::new(|| {
+    hostname::get()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string()
+});
 
 #[derive(Serialize, Deserialize, Debug)]
 struct JsResponse {
@@ -112,7 +121,9 @@ async fn do_request(
     let url = params.uri.to_string();
     let count = detector.retries + 1;
     let mut stat = http_stat::HttpStat::default();
-    for _ in 0..count {
+    let mut retries = 0;
+    for index in 0..count {
+        retries = index;
         stat = timeout(Duration::from_secs(60), request(params.clone()))
             .await
             .unwrap_or_else(|e| http_stat::HttpStat {
@@ -184,6 +195,14 @@ async fn do_request(
             err = Some(e.to_string());
         }
     }
+    let remarks = vec![
+        format!("retries: {retries}"),
+        format!(
+            "region: {}",
+            REGION.as_ref().unwrap_or(&"unknown".to_string())
+        ),
+        format!("hostname: {}", HOSTNAME.as_str()),
+    ];
 
     let insert_params = HttpStatInsertParams {
         target_id: detector.id,
@@ -209,6 +228,7 @@ async fn do_request(
         body_size: stat.body_size.map(|d| d as i32),
         error: err,
         result: result as u8,
+        remark: remarks.join(";"),
     };
     HttpStat::add_stat(pool, insert_params).await?;
     Ok(())
@@ -231,7 +251,15 @@ async fn run_http_detector(pool: &MySqlPool, detector: HttpDetector) -> Result<(
         return Ok(());
     };
     params.method = Some(detector.method.clone());
-    params.alpn_protocols = detector.alpn_protocols.clone().unwrap_or_default();
+    params.alpn_protocols = vec![
+        http_stat::ALPN_HTTP2.to_string(),
+        http_stat::ALPN_HTTP1.to_string(),
+    ];
+    if let Some(alpn_protocols) = &detector.alpn_protocols
+        && !alpn_protocols.is_empty()
+    {
+        params.alpn_protocols = alpn_protocols.clone();
+    }
     if let Some(headers) = &detector.headers {
         let mut header_map = HeaderMap::new();
         for (key, value) in headers {
@@ -281,9 +309,8 @@ struct WeComMarkDownMessage {
 }
 
 async fn run_detector_stat() -> Result<(i32, i32, i32)> {
-    let region = env::var("HTTP_DETECTOR_REGION").ok();
     let pool = get_db_pool();
-    let detectors = HttpDetector::list_enabled_by_region(pool, region).await?;
+    let detectors = HttpDetector::list_enabled_by_region(pool, REGION.clone()).await?;
     let count = Arc::new(AtomicI32::new(0));
     let success = Arc::new(AtomicI32::new(0));
     let minutes = OffsetDateTime::now_utc().unix_timestamp() / 60;
