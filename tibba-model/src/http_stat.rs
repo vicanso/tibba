@@ -190,15 +190,15 @@ impl HttpStat {
 
         Ok(result.last_insert_id())
     }
-    pub async fn list_by_modified(
+    pub async fn list_by_created(
         pool: &Pool<MySql>,
-        modified_range: (&str, &str),
+        created_range: (&str, &str),
     ) -> Result<Vec<Self>> {
         let detectors = sqlx::query_as::<_, HttpStatSchema>(
-            r#"SELECT * FROM http_stats WHERE modified >= ? AND modified <= ?"#,
+            r#"SELECT * FROM http_stats WHERE created >= ? AND created <= ?"#,
         )
-        .bind(modified_range.0)
-        .bind(modified_range.1)
+        .bind(created_range.0)
+        .bind(created_range.1)
         .fetch_all(pool)
         .await
         .map_err(|e| Error::Sqlx { source: e })?;

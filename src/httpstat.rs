@@ -536,7 +536,7 @@ async fn run_stat_alarm() -> Result<(i32, i32)> {
     let now_check_time = chrono::DateTime::from_timestamp(now, 0)
         .ok_or(new_error("parse time error"))?
         .to_rfc3339();
-    let stats = HttpStat::list_by_modified(pool, (&last_check_time, &now_check_time)).await?;
+    let stats = HttpStat::list_by_created(pool, (&last_check_time, &now_check_time)).await?;
 
     // 因为相同的target id有可能会有多个http stat
     // 因此需要target id去重，若有失败的优先使用
