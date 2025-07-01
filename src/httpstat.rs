@@ -310,64 +310,81 @@ struct WeComMarkDownMessage {
 
 async fn run_detector_stat() -> Result<(i32, i32, i32)> {
     let pool = get_db_pool();
-    let detectors = HttpDetector::list_enabled_by_region(pool, REGION.clone()).await?;
     let count = Arc::new(AtomicI32::new(0));
     let success = Arc::new(AtomicI32::new(0));
     let minutes = OffsetDateTime::now_utc().unix_timestamp() / 60;
 
-    // 最大并行任务数
-    let max_concurrent = 3;
-    let semaphore = Arc::new(Semaphore::new(max_concurrent));
-    let mut handles = vec![];
     let category = "http_detector";
     let mut all_task_count = 0;
 
-    for detector in detectors {
-        let interval = detector.interval.max(1);
-        if minutes % (interval as i64) != 0 {
-            continue;
+    let limit = 100;
+    let mut offset = 0;
+
+    loop {
+        // 最大并行任务数
+        let max_concurrent = 3;
+        let semaphore = Arc::new(Semaphore::new(max_concurrent));
+
+        let mut handles = vec![];
+        let detectors =
+            HttpDetector::list_enabled_by_region(pool, REGION.clone(), limit, offset).await?;
+        if detectors.is_empty() {
+            break;
         }
-        all_task_count += 1;
-        let permit = Arc::clone(&semaphore);
-        let success = success.clone();
-        let count = count.clone();
-        let handle = tokio::spawn(async move {
-            //  获取许可
-            let Ok(_permit) = permit.acquire().await else {
-                return;
-            };
-            let mut lock_key = format!("http_detector_task_{}", detector.id);
-            if !detector.regions.is_empty() && !detector.regions.contains(&REGION_ANY.to_string()) {
-                lock_key += format!("_{}", detector.regions.join(",")).as_str();
+        let done = detectors.len() < limit as usize;
+        offset += limit;
+        for detector in detectors {
+            let interval = detector.interval.max(1);
+            if minutes % (interval as i64) != 0 {
+                continue;
             }
-            let locked = match get_redis_cache()
-                .lock(&lock_key, Some(Duration::from_secs(30)))
-                .await
-            {
-                Ok(locked) => locked,
-                Err(e) => {
-                    error!(category, lock_key, error = ?e, "lock failed");
+            all_task_count += 1;
+            let permit = Arc::clone(&semaphore);
+            let success = success.clone();
+            let count = count.clone();
+            let handle = tokio::spawn(async move {
+                //  获取许可
+                let Ok(_permit) = permit.acquire().await else {
+                    return;
+                };
+                let mut lock_key = format!("http_detector_task_{}", detector.id);
+                if !detector.regions.is_empty()
+                    && !detector.regions.contains(&REGION_ANY.to_string())
+                {
+                    lock_key += format!("_{}", detector.regions.join(",")).as_str();
+                }
+                let locked = match get_redis_cache()
+                    .lock(&lock_key, Some(Duration::from_secs(30)))
+                    .await
+                {
+                    Ok(locked) => locked,
+                    Err(e) => {
+                        error!(category, lock_key, error = ?e, "lock failed");
+                        return;
+                    }
+                };
+                if !locked {
                     return;
                 }
-            };
-            if !locked {
-                return;
-            }
-            count.fetch_add(1, Ordering::Relaxed);
+                count.fetch_add(1, Ordering::Relaxed);
 
-            if let Err(e) = run_http_detector(pool, detector).await {
-                error!(category, error = ?e, "run http detector failed");
-            } else {
-                success.fetch_add(1, Ordering::Relaxed);
+                if let Err(e) = run_http_detector(pool, detector).await {
+                    error!(category, error = ?e, "run http detector failed");
+                } else {
+                    success.fetch_add(1, Ordering::Relaxed);
+                }
+                // 任务结束自动释放许可
+            });
+            handles.push(handle);
+        }
+        let results = join_all(handles).await;
+        for result in results {
+            if let Err(e) = result {
+                error!(category, error = ?e, "join all handles failed");
             }
-            // 任务结束自动释放许可
-        });
-        handles.push(handle);
-    }
-    let results = join_all(handles).await;
-    for result in results {
-        if let Err(e) = result {
-            error!(category, error = ?e, "join all handles failed");
+        }
+        if done {
+            break;
         }
     }
 

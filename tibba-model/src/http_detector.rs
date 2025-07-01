@@ -179,13 +179,17 @@ impl HttpDetector {
     pub async fn list_enabled_by_region(
         pool: &Pool<MySql>,
         region: Option<String>,
+        limit: u64,
+        offset: u64,
     ) -> Result<Vec<Self>> {
         let region = region.unwrap_or(REGION_ANY.to_string());
         let detectors = sqlx::query_as::<_, HttpDetectorSchema>(
-            r#"SELECT * FROM http_detectors WHERE deleted_at IS NULL AND status = 1 AND (JSON_LENGTH(regions) = 0 OR JSON_CONTAINS(regions, ?) OR JSON_CONTAINS(regions, ?))"#,
+            r#"SELECT * FROM http_detectors WHERE deleted_at IS NULL AND status = 1 AND (JSON_LENGTH(regions) = 0 OR JSON_CONTAINS(regions, ?) OR JSON_CONTAINS(regions, ?)) ORDER BY id ASC LIMIT ? OFFSET ?"#,
         )
         .bind(serde_json::json!(region))
         .bind(serde_json::json!(REGION_ANY.to_string()))
+        .bind(limit)
+        .bind(offset)
         .fetch_all(pool)
         .await
         .map_err(|e| Error::Sqlx { source: e })?;
