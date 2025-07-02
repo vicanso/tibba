@@ -41,7 +41,7 @@ pub enum SchemaType {
     ByteSize,
     Json,
     Code,
-    HoverCard,
+    PopoverCard,
     Placeholder,
 }
 

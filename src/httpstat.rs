@@ -196,12 +196,12 @@ async fn do_request(
         }
     }
     let remarks = vec![
-        format!("retries: {retries}"),
+        format!("retries:{retries}"),
         format!(
-            "region: {}",
+            "region:{}",
             REGION.as_ref().unwrap_or(&"unknown".to_string())
         ),
-        format!("hostname: {}", HOSTNAME.as_str()),
+        format!("hostname:{}", HOSTNAME.as_str()),
     ];
 
     let insert_params = HttpStatInsertParams {
@@ -228,7 +228,7 @@ async fn do_request(
         body_size: stat.body_size.map(|d| d as i32),
         error: err,
         result: result as u8,
-        remark: remarks.join(";"),
+        remark: remarks.join("; "),
     };
     HttpStat::add_stat(pool, insert_params).await?;
     Ok(())

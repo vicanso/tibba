@@ -324,7 +324,7 @@ impl Model for HttpStat {
                 },
                 Schema {
                     name: "timing".to_string(),
-                    category: SchemaType::HoverCard,
+                    category: SchemaType::PopoverCard,
                     combinations: Some(vec![
                         "dns_lookup".to_string(),
                         "quic_connect".to_string(),
