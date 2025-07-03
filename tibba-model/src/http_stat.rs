@@ -332,6 +332,7 @@ impl Model for HttpStat {
                         "tls_handshake".to_string(),
                         "server_processing".to_string(),
                         "content_transfer".to_string(),
+                        "total".to_string(),
                     ]),
                     ..Default::default()
                 },

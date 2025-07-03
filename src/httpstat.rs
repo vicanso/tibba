@@ -195,7 +195,7 @@ async fn do_request(
             err = Some(e.to_string());
         }
     }
-    let remarks = vec![
+    let remarks = [
         format!("retries:{retries}"),
         format!(
             "region:{}",
@@ -418,38 +418,41 @@ struct StatAlarmParam {
 impl StatAlarmParam {
     fn to_wecom_markdown(&self) -> String {
         let mut arr = vec![];
-        let state = &self.stat;
-        let is_failed = state.result == ResultValue::Failed as u8;
+        let stat = &self.stat;
+        let is_failed = stat.result == ResultValue::Failed as u8;
         if is_failed {
-            arr.push(format!("# {}：检测失败", state.target_name));
-            arr.push(format!("*出错原因: {}*", state.error));
+            arr.push(format!("# {}：检测失败", stat.target_name));
+            arr.push(format!("*出错原因: {}*", stat.error));
         } else {
-            arr.push(format!("# {}：恢复正常", state.target_name));
+            arr.push(format!("# {}：恢复正常", stat.target_name));
         }
         if self.verbose && is_failed {
-            if !state.addr.is_empty() {
-                arr.push(format!("- 地址: {}", state.addr));
+            if !stat.addr.is_empty() {
+                arr.push(format!("- 地址: {}", stat.addr));
             }
-            if state.dns_lookup > 0 {
-                arr.push(format!("- DNS解析时间: {}ms", state.dns_lookup));
+            if stat.dns_lookup > 0 {
+                arr.push(format!("- DNS解析时间: {}ms", stat.dns_lookup));
             }
-            if state.quic_connect > 0 {
-                arr.push(format!("- QUIC连接时间: {}ms", state.quic_connect));
+            if stat.quic_connect > 0 {
+                arr.push(format!("- QUIC连接时间: {}ms", stat.quic_connect));
             }
-            if state.tcp_connect > 0 {
-                arr.push(format!("- TCP连接时间: {}ms", state.tcp_connect));
+            if stat.tcp_connect > 0 {
+                arr.push(format!("- TCP连接时间: {}ms", stat.tcp_connect));
             }
-            if state.tls_handshake > 0 {
-                arr.push(format!("- TLS握手时间: {}ms", state.tls_handshake));
+            if stat.tls_handshake > 0 {
+                arr.push(format!("- TLS握手时间: {}ms", stat.tls_handshake));
             }
-            if state.server_processing > 0 {
-                arr.push(format!("- 服务器处理时间: {}ms", state.server_processing));
+            if stat.server_processing > 0 {
+                arr.push(format!("- 服务器处理时间: {}ms", stat.server_processing));
             }
-            if state.content_transfer > 0 {
-                arr.push(format!("- 内容传输时间: {}ms", state.content_transfer));
+            if stat.content_transfer > 0 {
+                arr.push(format!("- 内容传输时间: {}ms", stat.content_transfer));
             }
-            if state.total > 0 {
-                arr.push(format!("- 总耗时: {}ms", state.total));
+            if stat.total > 0 {
+                arr.push(format!("- 总耗时: {}ms", stat.total));
+            }
+            if !stat.remark.is_empty() {
+                arr.push(format!("- 备注: {}", stat.remark));
             }
         }
         arr.join("\n")
