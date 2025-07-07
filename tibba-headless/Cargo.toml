@@ -1,0 +1,14 @@
+[package]
+name = "tibba-headless"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "tibba_headless"
+path = "src/lib.rs"
+
+[dependencies]
+headless_chrome = "1.0.17"
+snafu = { workspace = true }
+dashmap = { workspace = true }
+tokio = { workspace = true }

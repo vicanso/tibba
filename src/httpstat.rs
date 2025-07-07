@@ -77,7 +77,7 @@ struct JsStat {
     cert_domains: Option<Vec<String>>,
 }
 
-fn run_js_detect(resp: JsResponse, stat: JsStat, detect_script: &str) -> Result<()> {
+fn run_js_detect(resp: &JsResponse, stat: &JsStat, detect_script: &str) -> Result<()> {
     if detect_script.is_empty() {
         return Ok(());
     }
@@ -160,37 +160,35 @@ async fn do_request(
         }
     }
     if result == ResultValue::Success && detector.script.is_some() {
-        if let Err(e) = run_js_detect(
-            JsResponse {
-                status: stat.status.unwrap_or_default().as_u16(),
-                body: String::from_utf8(stat.body.unwrap_or_default().to_vec()).unwrap_or_default(),
-                headers: stat
-                    .headers
-                    .unwrap_or_default()
-                    .iter()
-                    .map(|(k, v)| (k.to_string(), v.to_str().unwrap().to_string()))
-                    .collect(),
-            },
-            JsStat {
-                dns_lookup: stat.dns_lookup.map(|d| d.as_millis() as u32),
-                quic_connect: stat.quic_connect.map(|d| d.as_millis() as u32),
-                tcp_connect: stat.tcp_connect.map(|d| d.as_millis() as u32),
-                tls_handshake: stat.tls_handshake.map(|d| d.as_millis() as u32),
-                server_processing: stat.server_processing.map(|d| d.as_millis() as u32),
-                content_transfer: stat.content_transfer.map(|d| d.as_millis() as u32),
-                total: stat.total.map(|d| d.as_millis() as u32),
-                addr: stat.addr.clone(),
-                tls: stat.tls.clone(),
-                alpn: stat.alpn.clone(),
-                subject: stat.subject.clone(),
-                issuer: stat.issuer.clone(),
-                cert_not_before: stat.cert_not_before.clone(),
-                cert_not_after: stat.cert_not_after.clone(),
-                cert_cipher: stat.cert_cipher.clone(),
-                cert_domains: stat.cert_domains.clone(),
-            },
-            &detector.script.clone().unwrap_or_default(),
-        ) {
+        let resp = JsResponse {
+            status: stat.status.unwrap_or_default().as_u16(),
+            body: String::from_utf8(stat.body.unwrap_or_default().to_vec()).unwrap_or_default(),
+            headers: stat
+                .headers
+                .unwrap_or_default()
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_str().unwrap().to_string()))
+                .collect(),
+        };
+        let stat = JsStat {
+            dns_lookup: stat.dns_lookup.map(|d| d.as_millis() as u32),
+            quic_connect: stat.quic_connect.map(|d| d.as_millis() as u32),
+            tcp_connect: stat.tcp_connect.map(|d| d.as_millis() as u32),
+            tls_handshake: stat.tls_handshake.map(|d| d.as_millis() as u32),
+            server_processing: stat.server_processing.map(|d| d.as_millis() as u32),
+            content_transfer: stat.content_transfer.map(|d| d.as_millis() as u32),
+            total: stat.total.map(|d| d.as_millis() as u32),
+            addr: stat.addr.clone(),
+            tls: stat.tls.clone(),
+            alpn: stat.alpn.clone(),
+            subject: stat.subject.clone(),
+            issuer: stat.issuer.clone(),
+            cert_not_before: stat.cert_not_before.clone(),
+            cert_not_after: stat.cert_not_after.clone(),
+            cert_cipher: stat.cert_cipher.clone(),
+            cert_domains: stat.cert_domains.clone(),
+        };
+        if let Err(e) = run_js_detect(&resp, &stat, &detector.script.clone().unwrap_or_default()) {
             result = ResultValue::Failed;
             err = Some(e.to_string());
         }
