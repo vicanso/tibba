@@ -12,3 +12,7 @@ headless_chrome = "1.0.17"
 snafu = { workspace = true }
 dashmap = { workspace = true }
 tokio = { workspace = true }
+mime = { workspace = true }
+scopeguard = { workspace = true }
+image = { workspace = true }
+palette = "0.7.6"

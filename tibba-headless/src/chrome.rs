@@ -20,11 +20,72 @@ use headless_chrome::protocol::cdp::Target::CreateTarget;
 use headless_chrome::protocol::cdp::types::Event;
 use headless_chrome::protocol::cdp::{Network, Page};
 use headless_chrome::util::Wait;
+use mime::Mime;
+use palette::{IntoColor, Luv, Srgb};
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 type Result<T> = std::result::Result<T, Error>;
+
+/// 将LUV颜色转换为256个级别，按照人眼视觉区分度划分
+///
+/// 基于CIELUV颜色空间的感知均匀特性，将L、u、v分量映射到256个级别：
+/// - L分量（亮度）：分配128个级别，因为人眼对亮度变化最敏感
+/// - u分量（色度）：分配64个级别
+/// - v分量（色度）：分配64个级别
+///
+/// 这种分配方式考虑了人眼的视觉特性：
+/// - 人眼对亮度变化比色度变化更敏感
+/// - 在低亮度区域，人眼对色度变化更敏感
+/// - 在高亮度区域，人眼对亮度变化更敏感
+fn luv_to_byte(luv: &Luv) -> u8 {
+    // 获取L、u、v分量
+    let l = luv.l;
+    let u = luv.u;
+    let v = luv.v;
+
+    // 处理无效值
+    if l.is_nan() || u.is_nan() || v.is_nan() {
+        return 0;
+    }
+
+    // 限制L值范围到0-100
+    let l_clamped = l.max(0.0).min(100.0);
+
+    // 限制u、v值到合理范围（通常-100到100）
+    let u_clamped = u.max(-100.0).min(100.0);
+    let v_clamped = v.max(-100.0).min(100.0);
+
+    // 使用感知均匀的映射方式
+    // 亮度分量：使用非线性映射，在低亮度区域分配更多级别
+    let l_normalized = if l_clamped < 50.0 {
+        // 低亮度区域：使用平方根映射，分配更多级别
+        (l_clamped / 50.0).powf(0.5) * 0.6
+    } else {
+        // 高亮度区域：使用线性映射
+        0.6 + (l_clamped - 50.0) / 50.0 * 0.4
+    };
+
+    // 色度分量：使用感知均匀的映射
+    let u_normalized = (u_clamped + 100.0) / 200.0;
+    let v_normalized = (v_clamped + 100.0) / 200.0;
+
+    // 组合三个分量到256个级别
+    // 使用加权组合，亮度权重更高
+    let l_weight = 0.6; // 亮度权重60%
+    let u_weight = 0.2; // u色度权重20%
+    let v_weight = 0.2; // v色度权重20%
+
+    let combined_value =
+        l_normalized * l_weight + u_normalized * u_weight + v_normalized * v_weight;
+
+    // 转换为0-255范围
+    let result = (combined_value * 255.0) as u8;
+
+    result
+}
 
 #[derive(Debug, Clone, Default)]
 pub struct WebPageParams {
@@ -38,24 +99,40 @@ pub struct WebPageParams {
 }
 
 #[derive(Debug, Clone, Default)]
+pub struct WebPageStat {
+    pub total_size: u64,
+    pub application_size: u64,
+    pub image_size: u64,
+    pub fcp_time: u32,
+    pub dcl_time: u32,
+    pub load_time: u32,
+    pub exceptions: Vec<String>,
+    pub resources: Vec<WebPageResource>,
+}
+
+#[derive(Debug, Clone, Default)]
 pub struct WebPageResource {
-    pub content_size: f64,
+    pub content_size: u64,
     pub request_id: String,
     pub status: u32,
     pub url: String,
     pub timing: Option<ResourceTiming>,
     pub mime_type: String,
+    pub connection_reused: bool,
 }
 
-pub async fn run_webpage_stat(params: &WebPageParams) -> Result<()> {
-    let browser = Browser::connect_with_timeout(
-        params.cdp.clone(),
-        params.timeout.unwrap_or(Duration::from_secs(120)),
-    )
-    .map_err(|e| Error::HeadlessChrome {
-        message: e.to_string(),
-    })?;
+#[derive(Debug, Clone, Default)]
+pub struct WebPageLifecycle {
+    pub init_time: f64,
+    pub fcp_time: f64,
+    pub dcl_time: f64,
+    pub load_time: f64,
+}
 
+pub async fn run_web_page_stat_with_browser(
+    browser: Browser,
+    params: &WebPageParams,
+) -> Result<()> {
     let tab = browser
         .new_tab_with_options(CreateTarget {
             url: "about:blank".to_string(),
@@ -70,6 +147,7 @@ pub async fn run_webpage_stat(params: &WebPageParams) -> Result<()> {
         .map_err(|e| Error::HeadlessChrome {
             message: e.to_string(),
         })?;
+    scopeguard::defer!(let _ = tab.close_with_unload(););
     tab.call_method(Page::SetDeviceMetricsOverride {
         width: params.width,
         height: params.height,
@@ -102,22 +180,48 @@ pub async fn run_webpage_stat(params: &WebPageParams) -> Result<()> {
     .map_err(|e| Error::HeadlessChrome {
         message: e.to_string(),
     })?;
-    let webpage_resources = Arc::new(DashMap::<String, WebPageResource>::new());
-    let new_webpage_resources = webpage_resources.clone();
+    let web_page_resources = Arc::new(DashMap::<String, WebPageResource>::new());
+    let web_page_resources_clone = web_page_resources.clone();
+    let exceptions = Arc::new(Mutex::new(Vec::new()));
+    let exceptions_clone = exceptions.clone();
     let loaded = Arc::new(AtomicBool::new(false));
     let loaded_clone = loaded.clone();
+    let lifecycle = Arc::new(Mutex::new(WebPageLifecycle::default()));
+    let lifecycle_clone = lifecycle.clone();
+
     let listener = Arc::new(move |event: &Event| {
-        // println!("event: {:?}", event);
         if let Event::PageLifecycleEvent(lifecycle) = event {
-            if lifecycle.params.name == "load" {
-                loaded_clone.store(true, Ordering::SeqCst);
+            let params = &lifecycle.params;
+            match params.name.as_str() {
+                "init" => {
+                    if let Ok(mut lifecycle) = lifecycle_clone.lock() {
+                        lifecycle.init_time = params.timestamp;
+                    }
+                }
+                "load" => {
+                    if let Ok(mut lifecycle) = lifecycle_clone.lock() {
+                        lifecycle.load_time = params.timestamp;
+                    }
+                    loaded_clone.store(true, Ordering::SeqCst);
+                }
+                "firstContentfulPaint" => {
+                    if let Ok(mut lifecycle) = lifecycle_clone.lock() {
+                        lifecycle.fcp_time = params.timestamp;
+                    }
+                }
+                "DOMContentLoaded" => {
+                    if let Ok(mut lifecycle) = lifecycle_clone.lock() {
+                        lifecycle.dcl_time = params.timestamp;
+                    }
+                }
+                _ => {}
             }
             return;
         }
         if let Event::NetworkResponseReceived(response) = event {
             let key = response.params.request_id.clone();
             let timing = response.params.response.timing.clone();
-            new_webpage_resources.insert(
+            web_page_resources_clone.insert(
                 key.clone(),
                 WebPageResource {
                     request_id: key,
@@ -125,6 +229,7 @@ pub async fn run_webpage_stat(params: &WebPageParams) -> Result<()> {
                     url: response.params.response.url.clone(),
                     timing,
                     mime_type: response.params.response.mime_type.clone(),
+                    connection_reused: response.params.response.connection_reused,
                     ..Default::default()
                 },
             );
@@ -132,13 +237,25 @@ pub async fn run_webpage_stat(params: &WebPageParams) -> Result<()> {
         }
         if let Event::NetworkLoadingFinished(response) = event {
             let key = response.params.request_id.clone();
-            if let Some(mut stat) = new_webpage_resources.get_mut(&key) {
-                stat.content_size = response.params.encoded_data_length;
+            if let Some(mut stat) = web_page_resources_clone.get_mut(&key) {
+                stat.content_size = response.params.encoded_data_length as u64;
             }
             return;
         }
         if let Event::RuntimeExceptionThrown(exception) = event {
-            println!("exception: {:?}", exception);
+            let details = &exception.params.exception_details;
+            let mut description = "".to_string();
+            if let Some(exception) = &details.exception {
+                description = exception.description.clone().unwrap_or_default();
+            }
+            let message = format!(
+                "text: {}, line:{}, column:{}, description:{}",
+                details.text, details.line_number, details.column_number, description
+            );
+            if let Ok(mut exceptions) = exceptions_clone.lock() {
+                exceptions.push(message);
+            }
+            return;
         }
     });
     tab.add_event_listener(listener)
@@ -166,10 +283,98 @@ pub async fn run_webpage_stat(params: &WebPageParams) -> Result<()> {
             .map_err(|e| Error::HeadlessChrome {
                 message: e.to_string(),
             })?;
-        tokio::time::sleep(Duration::from_secs(2)).await;
+        tokio::time::sleep(Duration::from_secs(3)).await;
     }
 
-    let _ = tab.close_with_unload();
+    let mut stat = WebPageStat {
+        ..Default::default()
+    };
+
+    if let Ok(exceptions) = exceptions.lock() {
+        stat.exceptions = exceptions.clone();
+    }
+    stat.resources = web_page_resources
+        .iter()
+        .map(|item| item.value().clone())
+        .collect();
+    for item in stat.resources.iter() {
+        stat.total_size += item.content_size;
+        if let Ok(mime) = item.mime_type.parse::<Mime>() {
+            match mime.type_().as_str() {
+                "text" | "application" => {
+                    stat.application_size += item.content_size;
+                }
+                "image" => {
+                    stat.image_size += item.content_size;
+                }
+                _ => {}
+            }
+        }
+    }
+    if let Ok(lifecycle) = lifecycle.lock() {
+        if lifecycle.init_time > 0.0 && lifecycle.fcp_time > 0.0 {
+            stat.fcp_time = (1000.0 * (lifecycle.fcp_time - lifecycle.init_time)) as u32;
+        }
+        if lifecycle.init_time > 0.0 && lifecycle.dcl_time > 0.0 {
+            stat.dcl_time = (1000.0 * (lifecycle.dcl_time - lifecycle.init_time)) as u32;
+        }
+        if lifecycle.init_time > 0.0 && lifecycle.load_time > 0.0 {
+            stat.load_time = (1000.0 * (lifecycle.load_time - lifecycle.init_time)) as u32;
+        }
+    }
+
+    println!("stat total_size: {}", stat.total_size);
+    println!("stat application_size: {}", stat.application_size);
+    println!("stat image_size: {}", stat.image_size);
+    println!("stat fcp_time: {}", stat.fcp_time);
+    println!("stat dcl_time: {}", stat.dcl_time);
+    println!("stat load_time: {}", stat.load_time);
+    if let Ok(jpeg_data) = tab.capture_screenshot(
+        Page::CaptureScreenshotFormatOption::Jpeg,
+        Some(90),
+        Some(Page::Viewport {
+            x: 0.0,
+            y: 0.0,
+            width: params.width as f64,
+            height: params.height as f64,
+            scale: 1.0,
+        }),
+        true,
+    ) {
+        if let Ok(img) = image::load_from_memory_with_format(&jpeg_data, image::ImageFormat::Jpeg) {
+            if let Some(img) = img.as_rgb8() {
+                let luv_list = img
+                    .pixels()
+                    .map(|pixel| {
+                        let rgb = Srgb::new(pixel[0], pixel[1], pixel[2]);
+                        let luv: Luv = rgb.into_linear().into_color();
+                        luv
+                    })
+                    .collect::<Vec<_>>();
+                let mut color_count: [u64; 256] = [0; 256];
+                for luv in luv_list.iter() {
+                    let value = luv_to_byte(luv);
+                    color_count[value as usize] += 1;
+                }
+                let count = luv_list.len() as u64;
+                let color_percents = color_count
+                    .iter()
+                    .map(|&item| {
+                        let value = item * 100 / count;
+                        value as u8
+                    })
+                    .collect::<Vec<_>>();
+                println!("{:?}", color_percents);
+                // println!("luv:{:?}", luv_list[0]);
+                // image.as_rgb16();
+                // println!("image width: {}", image.width());
+                // println!("image height: {}", image.height());
+                // println!("{}", jpeg_data.len());
+            }
+        }
+        std::fs::write("./test.jpeg", jpeg_data).unwrap();
+    }
+    // let _ = tab.close_with_unload();
 
     // println!("webpage_stats: {webpage_stats:?}");
 
@@ -186,4 +391,15 @@ pub async fn run_webpage_stat(params: &WebPageParams) -> Result<()> {
     //     true,
     // )?;
     Ok(())
+}
+
+pub async fn run_web_page_stat(params: &WebPageParams) -> Result<()> {
+    let browser = Browser::connect_with_timeout(
+        params.cdp.clone(),
+        params.timeout.unwrap_or(Duration::from_secs(120)),
+    )
+    .map_err(|e| Error::HeadlessChrome {
+        message: e.to_string(),
+    })?;
+    return run_web_page_stat_with_browser(browser, params).await;
 }

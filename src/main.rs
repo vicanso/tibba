@@ -116,6 +116,16 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     run_before_tasks().await?;
     run_scheduler_jobs().await?;
 
+    let result = tibba_headless::run_web_page_stat(&tibba_headless::WebPageParams {
+        url: "https://www.baidu.com".to_string(),
+        cdp: "ws://localhost:5501?token=47BdibG7I7".to_string(),
+        width: 390,
+        height: 844,
+        ..Default::default()
+    })
+    .await;
+    println!("result: {result:?}");
+
     // config is validated in init function
     let basic_config = config::must_get_basic_config();
     let app = if basic_config.prefix.is_empty() {
