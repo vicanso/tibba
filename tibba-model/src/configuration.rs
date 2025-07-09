@@ -20,6 +20,7 @@ use super::{
 };
 use async_trait::async_trait;
 use http::header::{HeaderMap, HeaderName, HeaderValue};
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use sqlx::types::Json;
@@ -27,7 +28,6 @@ use sqlx::{MySql, Pool};
 use std::collections::HashMap;
 use std::str::FromStr;
 use substring::Substring;
-use tibba_util::get_map_string;
 use time::OffsetDateTime;
 
 type Result<T> = std::result::Result<T, Error>;
@@ -327,17 +327,21 @@ impl Configuration {
         }
         Ok(Some(headers))
     }
-    pub async fn get_alarm_config(pool: &Pool<MySql>, name: &str) -> Result<Option<AlarmConfig>> {
+    pub async fn get_config<T>(pool: &Pool<MySql>, category: &str, name: &str) -> Result<T>
+    where
+        T: DeserializeOwned,
+    {
         let now = OffsetDateTime::now_utc();
         let configuration = sqlx::query_as::<_, ConfigurationSchema>(
             r#"SELECT * FROM configurations 
-               WHERE category = 'alarm' 
+               WHERE category = ? 
                AND status = ?
                AND name = ? 
                AND deleted_at IS NULL
                AND effective_start_time <= ?
                AND effective_end_time >= ?"#,
         )
+        .bind(category)
         .bind(Status::Enabled as i8)
         .bind(name)
         .bind(now)
@@ -348,10 +352,10 @@ impl Configuration {
 
         let data = configuration.data;
         let Some(data) = data.as_object() else {
-            return Ok(None);
+            return Err(Error::NotFound);
         };
-        let category = get_map_string(data, "category");
-        let url = get_map_string(data, "url");
-        Ok(Some(AlarmConfig { category, url }))
+        let data: T = serde_json::from_value(serde_json::Value::Object(data.clone()))
+            .map_err(|e| Error::Json { source: e })?;
+        Ok(data)
     }
 }

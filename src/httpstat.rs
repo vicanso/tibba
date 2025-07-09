@@ -525,7 +525,7 @@ async fn run_stat_alarm() -> Result<(i32, i32)> {
     }
     let pool = get_db_pool();
     let alarm_config =
-        if let Ok(Some(alarm_config)) = Configuration::get_alarm_config(pool, "httpstat").await {
+        if let Ok(alarm_config) = Configuration::get_config(pool, "alarm", "httpstat").await {
             alarm_config
         } else {
             let robot_url = env::var("WECOM_ROBOT").unwrap_or_default();

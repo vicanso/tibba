@@ -39,6 +39,8 @@ pub enum Error {
     Json { source: serde_json::Error },
     #[snafu(display("Not supported function: {}", name))]
     NotSupported { name: String },
+    #[snafu(display("Not found"))]
+    NotFound,
 }
 
 impl From<Error> for BaseError {
@@ -63,6 +65,13 @@ impl From<Error> for BaseError {
                 let he = new_error(format!("Not supported function: {name}"))
                     .with_category(error_category)
                     .with_sub_category("not_supported")
+                    .with_exception(true);
+                he.into()
+            }
+            Error::NotFound => {
+                let he = new_error("Not found")
+                    .with_category(error_category)
+                    .with_sub_category("not_found")
                     .with_exception(true);
                 he.into()
             }

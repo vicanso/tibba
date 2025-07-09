@@ -15,13 +15,14 @@
 use super::Error;
 use dashmap::DashMap;
 use headless_chrome::Browser;
+use headless_chrome::Tab;
 use headless_chrome::protocol::cdp::Network::ResourceTiming;
 use headless_chrome::protocol::cdp::Target::CreateTarget;
 use headless_chrome::protocol::cdp::types::Event;
 use headless_chrome::protocol::cdp::{Network, Page};
 use headless_chrome::util::Wait;
-use mime::Mime;
 use palette::{IntoColor, Luv, Srgb};
+use scopeguard::defer;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -52,11 +53,11 @@ fn luv_to_byte(luv: &Luv) -> u8 {
     }
 
     // 限制L值范围到0-100
-    let l_clamped = l.max(0.0).min(100.0);
+    let l_clamped = l.clamp(0.0, 100.0);
 
     // 限制u、v值到合理范围（通常-100到100）
-    let u_clamped = u.max(-100.0).min(100.0);
-    let v_clamped = v.max(-100.0).min(100.0);
+    let u_clamped = u.clamp(-100.0, 100.0);
+    let v_clamped = v.clamp(-100.0, 100.0);
 
     // 使用感知均匀的映射方式
     // 亮度分量：使用非线性映射，在低亮度区域分配更多级别
@@ -82,32 +83,34 @@ fn luv_to_byte(luv: &Luv) -> u8 {
         l_normalized * l_weight + u_normalized * u_weight + v_normalized * v_weight;
 
     // 转换为0-255范围
-    let result = (combined_value * 255.0) as u8;
-
-    result
+    (combined_value * 255.0) as u8
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct WebPageParams {
     pub url: String,
-    pub cdp: String,
     pub width: u32,
     pub height: u32,
+    pub user_agent: Option<String>,
+    pub accept_language: Option<String>,
+    pub platform: Option<String>,
     pub wait_for_element: Option<String>,
     pub device_scale_factor: Option<f64>,
     pub timeout: Option<Duration>,
+    pub capture_screenshot: bool,
+    pub capture_element: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct WebPageStat {
     pub total_size: u64,
-    pub application_size: u64,
-    pub image_size: u64,
     pub fcp_time: u32,
     pub dcl_time: u32,
     pub load_time: u32,
     pub exceptions: Vec<String>,
     pub resources: Vec<WebPageResource>,
+    pub image_data: Option<Vec<u8>>,
+    pub color_percents: Option<Vec<Vec<u8>>>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -129,10 +132,81 @@ pub struct WebPageLifecycle {
     pub load_time: f64,
 }
 
+fn analyze_web_page_screenshot(
+    tab: Arc<Tab>,
+    params: &WebPageParams,
+) -> Result<(Vec<u8>, Vec<Vec<u8>>)> {
+    let image_data = if let Some(capture_element) = &params.capture_element {
+        tab.wait_for_element(capture_element)
+            .map_err(|e| Error::HeadlessChrome {
+                message: e.to_string(),
+            })?
+            .capture_screenshot(Page::CaptureScreenshotFormatOption::Png)
+            .map_err(|e| Error::HeadlessChrome {
+                message: e.to_string(),
+            })?
+    } else {
+        tab.capture_screenshot(
+            Page::CaptureScreenshotFormatOption::Png,
+            Some(90),
+            Some(Page::Viewport {
+                x: 0.0,
+                y: 0.0,
+                width: params.width as f64,
+                height: params.height as f64,
+                scale: 1.0,
+            }),
+            true,
+        )
+        .map_err(|e| Error::HeadlessChrome {
+            message: e.to_string(),
+        })?
+    };
+
+    let img =
+        image::load_from_memory_with_format(&image_data, image::ImageFormat::Png).map_err(|e| {
+            Error::HeadlessChrome {
+                message: e.to_string(),
+            }
+        })?;
+    let mut color_percents = vec![];
+    if let Some(img) = img.as_rgba8() {
+        let luv_list = img
+            .pixels()
+            .map(|pixel| {
+                let rgb = Srgb::new(pixel[0], pixel[1], pixel[2]);
+                let luv: Luv = rgb.into_linear().into_color();
+                luv
+            })
+            .collect::<Vec<_>>();
+        let mut color_count: [u64; 256] = [0; 256];
+        for luv in luv_list.iter() {
+            let value = luv_to_byte(luv);
+            color_count[value as usize] += 1;
+        }
+        let count = luv_list.len() as f64;
+        for (index, item) in color_count.iter().enumerate() {
+            let value = (*item as f64) * 100.0 / count;
+            if value < 0.5 {
+                continue;
+            }
+            let value = value.ceil() as u8;
+            color_percents.push((index, value));
+        }
+    }
+    Ok((
+        image_data,
+        color_percents
+            .iter()
+            .map(|item| vec![item.0 as u8, item.1])
+            .collect(),
+    ))
+}
+
 pub async fn run_web_page_stat_with_browser(
     browser: Browser,
     params: &WebPageParams,
-) -> Result<()> {
+) -> Result<WebPageStat> {
     let tab = browser
         .new_tab_with_options(CreateTarget {
             url: "about:blank".to_string(),
@@ -147,7 +221,17 @@ pub async fn run_web_page_stat_with_browser(
         .map_err(|e| Error::HeadlessChrome {
             message: e.to_string(),
         })?;
-    scopeguard::defer!(let _ = tab.close_with_unload(););
+    defer!(let _ = tab.close_with_unload(););
+    if let Some(user_agent) = &params.user_agent {
+        tab.set_user_agent(
+            user_agent,
+            params.accept_language.as_deref(),
+            params.platform.as_deref(),
+        )
+        .map_err(|e| Error::HeadlessChrome {
+            message: e.to_string(),
+        })?;
+    }
     tab.call_method(Page::SetDeviceMetricsOverride {
         width: params.width,
         height: params.height,
@@ -195,7 +279,9 @@ pub async fn run_web_page_stat_with_browser(
             match params.name.as_str() {
                 "init" => {
                     if let Ok(mut lifecycle) = lifecycle_clone.lock() {
-                        lifecycle.init_time = params.timestamp;
+                        if lifecycle.init_time == 0.0 {
+                            lifecycle.init_time = params.timestamp;
+                        }
                     }
                 }
                 "load" => {
@@ -206,12 +292,16 @@ pub async fn run_web_page_stat_with_browser(
                 }
                 "firstContentfulPaint" => {
                     if let Ok(mut lifecycle) = lifecycle_clone.lock() {
-                        lifecycle.fcp_time = params.timestamp;
+                        if lifecycle.fcp_time == 0.0 {
+                            lifecycle.fcp_time = params.timestamp;
+                        }
                     }
                 }
                 "DOMContentLoaded" => {
                     if let Ok(mut lifecycle) = lifecycle_clone.lock() {
-                        lifecycle.dcl_time = params.timestamp;
+                        if lifecycle.dcl_time == 0.0 {
+                            lifecycle.dcl_time = params.timestamp;
+                        }
                     }
                 }
                 _ => {}
@@ -255,7 +345,6 @@ pub async fn run_web_page_stat_with_browser(
             if let Ok(mut exceptions) = exceptions_clone.lock() {
                 exceptions.push(message);
             }
-            return;
         }
     });
     tab.add_event_listener(listener)
@@ -299,17 +388,6 @@ pub async fn run_web_page_stat_with_browser(
         .collect();
     for item in stat.resources.iter() {
         stat.total_size += item.content_size;
-        if let Ok(mime) = item.mime_type.parse::<Mime>() {
-            match mime.type_().as_str() {
-                "text" | "application" => {
-                    stat.application_size += item.content_size;
-                }
-                "image" => {
-                    stat.image_size += item.content_size;
-                }
-                _ => {}
-            }
-        }
     }
     if let Ok(lifecycle) = lifecycle.lock() {
         if lifecycle.init_time > 0.0 && lifecycle.fcp_time > 0.0 {
@@ -323,83 +401,21 @@ pub async fn run_web_page_stat_with_browser(
         }
     }
 
-    println!("stat total_size: {}", stat.total_size);
-    println!("stat application_size: {}", stat.application_size);
-    println!("stat image_size: {}", stat.image_size);
-    println!("stat fcp_time: {}", stat.fcp_time);
-    println!("stat dcl_time: {}", stat.dcl_time);
-    println!("stat load_time: {}", stat.load_time);
-    if let Ok(jpeg_data) = tab.capture_screenshot(
-        Page::CaptureScreenshotFormatOption::Jpeg,
-        Some(90),
-        Some(Page::Viewport {
-            x: 0.0,
-            y: 0.0,
-            width: params.width as f64,
-            height: params.height as f64,
-            scale: 1.0,
-        }),
-        true,
-    ) {
-        if let Ok(img) = image::load_from_memory_with_format(&jpeg_data, image::ImageFormat::Jpeg) {
-            if let Some(img) = img.as_rgb8() {
-                let luv_list = img
-                    .pixels()
-                    .map(|pixel| {
-                        let rgb = Srgb::new(pixel[0], pixel[1], pixel[2]);
-                        let luv: Luv = rgb.into_linear().into_color();
-                        luv
-                    })
-                    .collect::<Vec<_>>();
-                let mut color_count: [u64; 256] = [0; 256];
-                for luv in luv_list.iter() {
-                    let value = luv_to_byte(luv);
-                    color_count[value as usize] += 1;
-                }
-                let count = luv_list.len() as u64;
-                let color_percents = color_count
-                    .iter()
-                    .map(|&item| {
-                        let value = item * 100 / count;
-                        value as u8
-                    })
-                    .collect::<Vec<_>>();
-                println!("{:?}", color_percents);
-                // println!("luv:{:?}", luv_list[0]);
-                // image.as_rgb16();
-                // println!("image width: {}", image.width());
-                // println!("image height: {}", image.height());
-                // println!("{}", jpeg_data.len());
-            }
+    if params.capture_screenshot {
+        if let Ok((image_data, color_percents)) = analyze_web_page_screenshot(tab.clone(), params) {
+            stat.image_data = Some(image_data);
+            stat.color_percents = Some(color_percents);
         }
-        std::fs::write("./test.jpeg", jpeg_data).unwrap();
     }
-    // let _ = tab.close_with_unload();
 
-    // println!("webpage_stats: {webpage_stats:?}");
-
-    // let jpeg_data = tab.capture_screenshot(
-    //     Page::CaptureScreenshotFormatOption::Jpeg,
-    //     None,
-    //     Some(Page::Viewport {
-    //         x: 0.0,
-    //         y: 0.0,
-    //         width: 390.0,
-    //         height: 844.0,
-    //         scale: 1.0,
-    //     }),
-    //     true,
-    // )?;
-    Ok(())
+    Ok(stat)
 }
 
-pub async fn run_web_page_stat(params: &WebPageParams) -> Result<()> {
-    let browser = Browser::connect_with_timeout(
-        params.cdp.clone(),
-        params.timeout.unwrap_or(Duration::from_secs(120)),
-    )
-    .map_err(|e| Error::HeadlessChrome {
-        message: e.to_string(),
-    })?;
-    return run_web_page_stat_with_browser(browser, params).await;
+pub fn new_browser(cdp: &str, timeout: Option<Duration>) -> Result<Browser> {
+    let browser =
+        Browser::connect_with_timeout(cdp.to_string(), timeout.unwrap_or(Duration::from_secs(120)))
+            .map_err(|e| Error::HeadlessChrome {
+                message: e.to_string(),
+            })?;
+    Ok(browser)
 }
