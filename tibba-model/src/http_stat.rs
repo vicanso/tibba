@@ -212,9 +212,9 @@ impl Model for HttpStat {
     fn keyword() -> String {
         "target_name".to_string()
     }
-    async fn schema_view(_pool: &Pool<MySql>) -> SchemaView {
+    async fn schema_view(pool: &Pool<MySql>) -> SchemaView {
         let mut detector_options = vec![];
-        if let Ok(detectors) = HttpDetector::list_enabled(_pool).await {
+        if let Ok(detectors) = HttpDetector::list_enabled(pool).await {
             for detector in detectors {
                 detector_options.push(SchemaOption {
                     label: detector.name,

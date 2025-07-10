@@ -109,8 +109,7 @@ pub struct WebPageStat {
     pub load_time: u32,
     pub exceptions: Vec<String>,
     pub resources: Vec<WebPageResource>,
-    pub image_data: Option<Vec<u8>>,
-    pub color_percents: Option<Vec<Vec<u8>>>,
+    pub screenshot: Option<Screenshot>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -132,10 +131,15 @@ pub struct WebPageLifecycle {
     pub load_time: f64,
 }
 
-fn analyze_web_page_screenshot(
-    tab: Arc<Tab>,
-    params: &WebPageParams,
-) -> Result<(Vec<u8>, Vec<Vec<u8>>)> {
+#[derive(Debug, Clone, Default)]
+pub struct Screenshot {
+    pub data: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+    pub color_percents: Vec<Vec<u8>>,
+}
+
+fn analyze_web_page_screenshot(tab: Arc<Tab>, params: &WebPageParams) -> Result<Screenshot> {
     let image_data = if let Some(capture_element) = &params.capture_element {
         tab.wait_for_element(capture_element)
             .map_err(|e| Error::HeadlessChrome {
@@ -169,6 +173,8 @@ fn analyze_web_page_screenshot(
                 message: e.to_string(),
             }
         })?;
+    let width = img.width();
+    let height = img.height();
     let mut color_percents = vec![];
     if let Some(img) = img.as_rgba8() {
         let luv_list = img
@@ -194,13 +200,15 @@ fn analyze_web_page_screenshot(
             color_percents.push((index, value));
         }
     }
-    Ok((
-        image_data,
-        color_percents
+    Ok(Screenshot {
+        data: image_data,
+        width,
+        height,
+        color_percents: color_percents
             .iter()
             .map(|item| vec![item.0 as u8, item.1])
             .collect(),
-    ))
+    })
 }
 
 pub async fn run_web_page_stat_with_browser(
@@ -402,9 +410,8 @@ pub async fn run_web_page_stat_with_browser(
     }
 
     if params.capture_screenshot {
-        if let Ok((image_data, color_percents)) = analyze_web_page_screenshot(tab.clone(), params) {
-            stat.image_data = Some(image_data);
-            stat.color_percents = Some(color_percents);
+        if let Ok(screenshot) = analyze_web_page_screenshot(tab.clone(), params) {
+            stat.screenshot = Some(screenshot);
         }
     }
 

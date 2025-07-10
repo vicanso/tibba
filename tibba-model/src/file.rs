@@ -136,6 +136,10 @@ impl File {
                 label: "Web".to_string(),
                 value: SchemaOptionValue::String("web".to_string()),
             },
+            SchemaOption {
+                label: "Web Page Stat".to_string(),
+                value: SchemaOptionValue::String("web_page_stat".to_string()),
+            },
         ];
         SchemaView {
             schemas: vec![

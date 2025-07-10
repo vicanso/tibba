@@ -12,14 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use super::dal::get_opendal_storage;
 use super::sql::get_db_pool;
 use ctor::ctor;
 use serde::Deserialize;
 use tibba_error::{Error, new_error};
 use tibba_headless::{WebPageParams, new_browser, run_web_page_stat_with_browser};
 use tibba_hook::register_before_task;
-use tibba_model::Configuration;
+use tibba_model::{Configuration, File, FileInsertParams};
 use tibba_scheduler::{Job, register_job_task};
+use tibba_util::uuid;
 use tracing::{error, info};
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -38,15 +40,39 @@ async fn run_web_page_stat() -> Result<(), Error> {
     }
     let browser =
         new_browser(&browser_less_config.urls[0], None).map_err(|e| new_error(e.to_string()))?;
-    let result = run_web_page_stat_with_browser(
+    let stat = run_web_page_stat_with_browser(
         browser,
         &WebPageParams {
             url: "https://www.xiaohongshu.com/".to_string(),
+            width: 390,
+            height: 844,
+            user_agent: Some(
+                "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1".to_string(),
+            ),
+            capture_screenshot: true,
             ..Default::default()
         },
     )
-    .await;
-    println!(">>>>>>>>>>> {result:?}");
+    .await
+    .map_err(|e| new_error(e.to_string()))?;
+    if let Some(screenshot) = stat.screenshot {
+        let file = format!("{}.png", uuid());
+        let storage = get_opendal_storage();
+        let file_size = screenshot.data.len() as i64;
+        let _ = storage.write_with(&file, screenshot.data, vec![]).await?;
+        let params = FileInsertParams {
+            group: "web_page_stat".to_string(),
+            filename: file.clone(),
+            file_size,
+            content_type: "image/png".to_string(),
+            uploader: "system".to_string(),
+            width: Some(screenshot.width as i32),
+            height: Some(screenshot.height as i32),
+            ..Default::default()
+        };
+        let _ = File::insert(pool, params).await?;
+        println!("file: {}", file);
+    }
 
     Ok(())
 }
@@ -67,7 +93,7 @@ fn init() {
                                 error!(
                                     category,
                                     error = ?e,
-                                    "run http detector failed"
+                                    "run web page stat failed"
                                 );
                             }
                             Ok(()) => {
