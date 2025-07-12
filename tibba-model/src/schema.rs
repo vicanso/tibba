@@ -152,6 +152,16 @@ impl Schema {
             ..Default::default()
         }
     }
+    pub fn new_remark() -> Self {
+        Self {
+            name: "remark".to_string(),
+            category: SchemaType::String,
+            required: true,
+            span: Some(2),
+            popover: true,
+            ..Default::default()
+        }
+    }
     pub fn new_created() -> Self {
         Self {
             name: "created".to_string(),
@@ -177,7 +187,7 @@ impl Schema {
         modified.filterable = true;
         modified
     }
-    pub fn new_remark() -> Self {
+    pub fn new_readonly_remark() -> Self {
         Self {
             name: "remark".to_string(),
             category: SchemaType::String,

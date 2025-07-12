@@ -397,7 +397,7 @@ impl Model for HttpStat {
                     category: SchemaType::String,
                     ..Default::default()
                 },
-                Schema::new_remark(),
+                Schema::new_readonly_remark(),
                 Schema::new_created(),
                 Schema::new_filterable_modified(),
             ],

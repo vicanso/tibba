@@ -22,7 +22,6 @@ use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use sqlx::types::Json;
 use sqlx::{MySql, Pool};
-use std::collections::HashMap;
 use substring::Substring;
 use time::OffsetDateTime;
 
@@ -205,11 +204,10 @@ impl Model for WebPageDetector {
                     category: SchemaType::String,
                     ..Default::default()
                 },
-                Schema {
-                    name: "remark".to_string(),
-                    category: SchemaType::String,
-                    ..Default::default()
-                },
+                Schema::new_status(),
+                Schema::new_remark(),
+                Schema::new_created(),
+                Schema::new_modified(),
             ],
             allow_edit: SchemaAllowEdit {
                 owner: true,
