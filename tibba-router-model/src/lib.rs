@@ -23,6 +23,7 @@ use sqlx::MySqlPool;
 use std::time::Duration;
 use tibba_model::{
     Configuration, File, HttpDetector, HttpStat, Model, ModelListParams, SchemaView, User,
+    WebPageDetector,
 };
 use tibba_session::AdminSession;
 use tibba_util::{CacheJsonResult, JsonParams, JsonResult, QueryParams};
@@ -45,6 +46,7 @@ async fn get_schema(
         "file" => File::schema_view(pool).await,
         "http_detector" => HttpDetector::schema_view(pool).await,
         "http_stat" => HttpStat::schema_view(pool).await,
+        "web_page_detector" => WebPageDetector::schema_view(pool).await,
         _ => return Err(tibba_error::new_error("The schema is not found").into()),
     };
     Ok((Duration::from_secs(5 * 60), view).into())
@@ -134,6 +136,18 @@ async fn list_model(
                     "items": stats,
                 })
         }
+        "web_page_detector" => {
+            let count = if params.count {
+                WebPageDetector::count(pool, &query_params).await?
+            } else {
+                -1
+            };
+            let detectors = WebPageDetector::list(pool, &query_params).await?;
+            json!({
+            "count": count,
+                    "items": detectors,
+                })
+        }
         _ => {
             return Err(tibba_error::new_error("The model is not supported").into());
         }
@@ -173,6 +187,10 @@ async fn get_detail(
             let stat = HttpStat::get_by_id(pool, params.id).await?;
             json!(stat)
         }
+        "web_page_detector" => {
+            let detector = WebPageDetector::get_by_id(pool, params.id).await?;
+            json!(detector)
+        }
         _ => {
             return Err(tibba_error::new_error("The model is not supported").into());
         }
@@ -207,6 +225,9 @@ async fn delete_model(
         "http_detector" => {
             HttpDetector::delete_by_id(pool, params.id).await?;
         }
+        "web_page_detector" => {
+            WebPageDetector::delete_by_id(pool, params.id).await?;
+        }
         _ => {
             return Err(tibba_error::new_error("The model is not supported").into());
         }
@@ -239,6 +260,9 @@ async fn update_model(
         "http_detector" => {
             HttpDetector::update_by_id(pool, params.id, params.data).await?;
         }
+        "web_page_detector" => {
+            WebPageDetector::update_by_id(pool, params.id, params.data).await?;
+        }
         _ => {
             return Err(tibba_error::new_error("The model is not supported").into());
         }
@@ -265,6 +289,7 @@ async fn create_model(
     let id = match params.model.as_str() {
         "configuration" => Configuration::insert(pool, data).await?,
         "http_detector" => HttpDetector::insert(pool, data).await?,
+        "web_page_detector" => WebPageDetector::insert(pool, data).await?,
         _ => {
             return Err(tibba_error::new_error("The model is not supported").into());
         }

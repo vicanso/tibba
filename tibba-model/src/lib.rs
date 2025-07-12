@@ -23,6 +23,10 @@ use tibba_error::Error as BaseError;
 use tibba_error::new_error;
 use time::OffsetDateTime;
 
+pub const REGION_ANY: &str = "any";
+pub const REGION_TX: &str = "tx";
+pub const REGION_GZ: &str = "gz";
+
 fn format_datetime(datetime: OffsetDateTime) -> String {
     if let Some(value) = DateTime::from_timestamp(datetime.unix_timestamp(), 0) {
         value.with_timezone(&offset::Local).to_string()
@@ -178,6 +182,7 @@ mod http_detector;
 mod http_stat;
 mod schema;
 mod user;
+mod web_page_detector;
 
 pub use configuration::*;
 pub use file::*;
@@ -185,3 +190,4 @@ pub use http_detector::*;
 pub use http_stat::*;
 pub use schema::*;
 pub use user::*;
+pub use web_page_detector::*;

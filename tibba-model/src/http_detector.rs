@@ -16,6 +16,7 @@ use super::{
     Error, Model, ModelListParams, Schema, SchemaAllowCreate, SchemaAllowEdit, SchemaType,
     SchemaView, format_datetime, new_schema_options,
 };
+use super::{REGION_ANY, REGION_GZ, REGION_TX};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
@@ -26,10 +27,6 @@ use substring::Substring;
 use time::OffsetDateTime;
 
 type Result<T> = std::result::Result<T, Error>;
-
-pub const REGION_ANY: &str = "any";
-pub const REGION_TX: &str = "tx";
-pub const REGION_GZ: &str = "gz";
 
 #[derive(FromRow)]
 struct HttpDetectorSchema {

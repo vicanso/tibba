@@ -211,8 +211,8 @@ fn analyze_web_page_screenshot(tab: Arc<Tab>, params: &WebPageParams) -> Result<
     })
 }
 
-pub async fn run_web_page_stat_with_browser(
-    browser: Browser,
+pub fn run_web_page_stat_with_browser(
+    browser: &Browser,
     params: &WebPageParams,
 ) -> Result<WebPageStat> {
     let tab = browser
@@ -380,7 +380,6 @@ pub async fn run_web_page_stat_with_browser(
             .map_err(|e| Error::HeadlessChrome {
                 message: e.to_string(),
             })?;
-        tokio::time::sleep(Duration::from_secs(3)).await;
     }
 
     let mut stat = WebPageStat {
