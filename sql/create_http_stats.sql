@@ -21,6 +21,7 @@ CREATE TABLE `http_stats` (
   `cert_cipher` VARCHAR(50) NOT NULL DEFAULT '' COMMENT '证书加密套件',
   `cert_domains` VARCHAR(3000) NOT NULL DEFAULT '' COMMENT '证书域名',
   `body_size` INT NOT NULL DEFAULT -1 COMMENT '响应体大小',
+  `region` VARCHAR(64) NOT NULL DEFAULT '' COMMENT '触发区域',
   `error` TEXT COMMENT '错误信息',
   `result` TINYINT unsigned NOT NULL DEFAULT 0 COMMENT '结果',
   `remark` VARCHAR(1000) NOT NULL DEFAULT '' COMMENT '备注',

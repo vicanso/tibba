@@ -53,6 +53,7 @@ struct HttpStatSchema {
     error: String,
     result: u8,
     remark: String,
+    region: String,
     created: OffsetDateTime,
     modified: OffsetDateTime,
 }
@@ -81,6 +82,7 @@ pub struct HttpStat {
     pub cert_cipher: String,
     pub cert_domains: Vec<String>,
     pub body_size: i32,
+    pub region: String,
     pub error: String,
     pub result: u8,
     pub remark: String,
@@ -117,6 +119,7 @@ impl From<HttpStatSchema> for HttpStat {
                 .map(|s| s.to_string())
                 .collect(),
             body_size: schema.body_size,
+            region: schema.region,
             error: schema.error,
             result: schema.result,
             remark: schema.remark,
@@ -150,6 +153,7 @@ pub struct HttpStatInsertParams {
     pub cert_cipher: Option<String>,
     pub cert_domains: Option<String>,
     pub body_size: Option<i32>,
+    pub region: String,
     pub error: Option<String>,
     pub result: u8,
     pub remark: String,
@@ -158,7 +162,7 @@ pub struct HttpStatInsertParams {
 impl HttpStat {
     pub async fn add_stat(pool: &Pool<MySql>, params: HttpStatInsertParams) -> Result<u64> {
         let result = sqlx::query(
-            r#"INSERT INTO http_stats (target_id, target_name, url, dns_lookup, quic_connect, tcp_connect, tls_handshake, server_processing, content_transfer, total, addr, status_code, tls, alpn, subject, issuer, cert_not_before, cert_not_after, cert_cipher, cert_domains, body_size, error, result, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+            r#"INSERT INTO http_stats (target_id, target_name, url, dns_lookup, quic_connect, tcp_connect, tls_handshake, server_processing, content_transfer, total, addr, status_code, tls, alpn, subject, issuer, cert_not_before, cert_not_after, cert_cipher, cert_domains, body_size, region, error, result, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
         )
         .bind(params.target_id)
         .bind(params.target_name)
@@ -181,6 +185,7 @@ impl HttpStat {
         .bind(params.cert_cipher.unwrap_or_default())
         .bind(params.cert_domains.unwrap_or_default())
         .bind(params.body_size.unwrap_or(-1))
+        .bind(params.region)
         .bind(params.error.unwrap_or_default())
         .bind(params.result)
         .bind(params.remark)
@@ -394,6 +399,11 @@ impl Model for HttpStat {
                 },
                 Schema {
                     name: "error".to_string(),
+                    category: SchemaType::String,
+                    ..Default::default()
+                },
+                Schema {
+                    name: "region".to_string(),
                     category: SchemaType::String,
                     ..Default::default()
                 },

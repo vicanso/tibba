@@ -14,6 +14,7 @@
 
 use super::sql::get_db_pool;
 use crate::cache::get_redis_cache;
+use crate::config::must_get_basic_config;
 use chrono::DateTime;
 use ctor::ctor;
 use futures::future::join_all;
@@ -42,7 +43,6 @@ use tracing::{error, info};
 
 type Result<T> = std::result::Result<T, Error>;
 
-static REGION: Lazy<Option<String>> = Lazy::new(|| env::var("HTTP_DETECTOR_REGION").ok());
 static HOSTNAME: Lazy<String> = Lazy::new(|| {
     hostname::get()
         .unwrap_or_default()
@@ -193,12 +193,13 @@ async fn do_request(
             err = Some(e.to_string());
         }
     }
+    let region = must_get_basic_config()
+        .region
+        .clone()
+        .unwrap_or("unknown".to_string());
     let remarks = [
         format!("retries:{retries}"),
-        format!(
-            "region:{}",
-            REGION.as_ref().unwrap_or(&"unknown".to_string())
-        ),
+        format!("region:{region}"),
         format!("hostname:{}", HOSTNAME.as_str()),
     ];
 
@@ -227,6 +228,7 @@ async fn do_request(
         error: err,
         result: result as u8,
         remark: remarks.join("; "),
+        region: region.clone(),
     };
     HttpStat::add_stat(pool, insert_params).await?;
     Ok(())
@@ -317,6 +319,7 @@ async fn run_detector_stat() -> Result<(i32, i32, i32)> {
 
     let limit = 100;
     let mut offset = 0;
+    let region = must_get_basic_config().region.clone();
 
     loop {
         // 最大并行任务数
@@ -325,7 +328,7 @@ async fn run_detector_stat() -> Result<(i32, i32, i32)> {
 
         let mut handles = vec![];
         let detectors =
-            HttpDetector::list_enabled_by_region(pool, REGION.clone(), limit, offset).await?;
+            HttpDetector::list_enabled_by_region(pool, region.clone(), limit, offset).await?;
         if detectors.is_empty() {
             break;
         }

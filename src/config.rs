@@ -49,6 +49,8 @@ pub struct BasicConfig {
     pub prefix: String,
     // commit id
     pub commit_id: String,
+    // region
+    pub region: Option<String>,
 }
 
 static BASIC_CONFIG: OnceCell<BasicConfig> = OnceCell::new();
@@ -64,6 +66,7 @@ fn new_basic_config(config: &Config) -> Result<BasicConfig> {
     } else {
         "--".to_string()
     };
+    let region = config.get_from_env_first("region", None);
     let basic_config = BasicConfig {
         listen: config.get_from_env_first("listen", None),
         processing_limit: config.get_int_from_env_first("processing_limit", Some(5000)),
@@ -71,6 +74,11 @@ fn new_basic_config(config: &Config) -> Result<BasicConfig> {
         secret: config.get_from_env_first("secret", None),
         prefix: config.get_from_env_first("prefix", None),
         commit_id,
+        region: if region.is_empty() {
+            None
+        } else {
+            Some(region)
+        },
     };
     basic_config
         .validate()
