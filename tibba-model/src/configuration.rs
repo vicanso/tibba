@@ -103,10 +103,16 @@ pub struct AlarmConfig {
     pub url: String,
 }
 
+#[derive(Default)]
+pub struct ConfigurationModel {}
+
 #[async_trait]
-impl Model for Configuration {
-    type Output = Self;
-    async fn schema_view(_pool: &Pool<MySql>) -> SchemaView {
+impl Model for ConfigurationModel {
+    type Output = Configuration;
+    fn new() -> Self {
+        Self::default()
+    }
+    async fn schema_view(&self, _pool: &Pool<MySql>) -> SchemaView {
         SchemaView {
             schemas: vec![
                 Schema::new_id(),
@@ -176,14 +182,14 @@ impl Model for Configuration {
         }
     }
 
-    fn filter_condition_sql(filters: &HashMap<String, String>) -> Option<Vec<String>> {
+    fn filter_condition_sql(&self, filters: &HashMap<String, String>) -> Option<Vec<String>> {
         let mut conditions = vec![];
         if let Some(category) = filters.get("category") {
             conditions.push(format!("category = '{category}'"));
         }
         (!conditions.is_empty()).then_some(conditions)
     }
-    async fn insert(pool: &Pool<MySql>, data: serde_json::Value) -> Result<u64> {
+    async fn insert(&self, pool: &Pool<MySql>, data: serde_json::Value) -> Result<u64> {
         let params: ConfigurationInsertParams =
             serde_json::from_value(data).map_err(|e| Error::Json { source: e })?;
         let id = sqlx::query(
@@ -204,7 +210,7 @@ impl Model for Configuration {
         Ok(id.last_insert_id())
     }
 
-    async fn get_by_id(pool: &Pool<MySql>, id: u64) -> Result<Option<Self>> {
+    async fn get_by_id(&self, pool: &Pool<MySql>, id: u64) -> Result<Option<Self::Output>> {
         let result = sqlx::query_as::<_, ConfigurationSchema>(
             r#"SELECT * FROM configurations WHERE id = ? AND deleted_at IS NULL"#,
         )
@@ -216,7 +222,7 @@ impl Model for Configuration {
         Ok(result.map(|schema| schema.into()))
     }
 
-    async fn delete_by_id(pool: &Pool<MySql>, id: u64) -> Result<()> {
+    async fn delete_by_id(&self, pool: &Pool<MySql>, id: u64) -> Result<()> {
         sqlx::query(
             r#"UPDATE configurations SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL"#,
         )
@@ -228,7 +234,12 @@ impl Model for Configuration {
         Ok(())
     }
 
-    async fn update_by_id(pool: &Pool<MySql>, id: u64, data: serde_json::Value) -> Result<()> {
+    async fn update_by_id(
+        &self,
+        pool: &Pool<MySql>,
+        id: u64,
+        data: serde_json::Value,
+    ) -> Result<()> {
         let params: ConfigurationUpdateParams =
             serde_json::from_value(data).map_err(|e| Error::Json { source: e })?;
         let _ = sqlx::query(
@@ -247,9 +258,9 @@ impl Model for Configuration {
         Ok(())
     }
 
-    async fn count(pool: &Pool<MySql>, params: &ModelListParams) -> Result<i64> {
+    async fn count(&self, pool: &Pool<MySql>, params: &ModelListParams) -> Result<i64> {
         let mut sql = String::from("SELECT COUNT(*) FROM configurations");
-        sql.push_str(&Self::condition_sql(params)?);
+        sql.push_str(&self.condition_sql(params)?);
         let count = sqlx::query_scalar::<_, i64>(&sql)
             .fetch_one(pool)
             .await
@@ -258,10 +269,14 @@ impl Model for Configuration {
         Ok(count)
     }
 
-    async fn list(pool: &Pool<MySql>, params: &ModelListParams) -> Result<Vec<Self>> {
+    async fn list(
+        &self,
+        pool: &Pool<MySql>,
+        params: &ModelListParams,
+    ) -> Result<Vec<Self::Output>> {
         let limit = params.limit.min(200);
         let mut sql = String::from("SELECT * FROM configurations");
-        sql.push_str(&Self::condition_sql(params)?);
+        sql.push_str(&self.condition_sql(params)?);
         if let Some(order_by) = &params.order_by {
             let (order_by, direction) = if order_by.starts_with("-") {
                 (order_by.substring(1, order_by.len()).to_string(), "DESC")
@@ -285,8 +300,12 @@ impl Model for Configuration {
     }
 }
 
-impl Configuration {
-    pub async fn get_response_headers(pool: &Pool<MySql>, name: &str) -> Result<Option<HeaderMap>> {
+impl ConfigurationModel {
+    pub async fn get_response_headers(
+        &self,
+        pool: &Pool<MySql>,
+        name: &str,
+    ) -> Result<Option<HeaderMap>> {
         let now = OffsetDateTime::now_utc();
         let configurations = sqlx::query_as::<_, ConfigurationSchema>(
             r#"SELECT * FROM configurations 
@@ -327,7 +346,7 @@ impl Configuration {
         }
         Ok(Some(headers))
     }
-    pub async fn get_config<T>(pool: &Pool<MySql>, category: &str, name: &str) -> Result<T>
+    pub async fn get_config<T>(&self, pool: &Pool<MySql>, category: &str, name: &str) -> Result<T>
     where
         T: DeserializeOwned,
     {

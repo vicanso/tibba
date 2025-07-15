@@ -24,7 +24,7 @@ use sqlx::MySqlPool;
 use tibba_cache::RedisCache;
 use tibba_error::{Error, new_error};
 use tibba_middleware::validate_captcha;
-use tibba_model::{Model, ROLE_SUPER_ADMIN, User, UserUpdateParams};
+use tibba_model::{Model, ROLE_SUPER_ADMIN, UserModel, UserUpdateParams};
 use tibba_session::{Session, SessionResponse, UserSession};
 use tibba_util::{
     JsonParams, JsonResult, is_development, is_test, now, sha256, timestamp, timestamp_hash, uuid,
@@ -96,7 +96,7 @@ async fn login(
     params.validate_token(&secret)?;
     let account = params.account;
     let account_password_err = new_error("Account or password is wrong");
-    let Some(user) = User::get_by_account(pool, &account).await? else {
+    let Some(user) = UserModel::new().get_by_account(pool, &account).await? else {
         return Err(account_password_err.into());
     };
 
@@ -142,7 +142,8 @@ async fn me(
     if !session.is_login() {
         return Ok((jar, Json(UserMeResp::default())));
     }
-    let user = User::get_by_account(pool, &account)
+    let user = UserModel::new()
+        .get_by_account(pool, &account)
         .await?
         .ok_or(new_error("User not found"))?;
     let info = UserMeResp {
@@ -177,16 +178,19 @@ async fn register(
     State(pool): State<&'static MySqlPool>,
     JsonParams(params): JsonParams<RegisterParams>,
 ) -> JsonResult<RegisterResp> {
-    let id = User::register(pool, &params.account, &params.password).await?;
-    if id == 1 {
-        User::update_by_id(
-            pool,
-            id,
-            json!({
-                "roles": [ROLE_SUPER_ADMIN.to_string()],
-            }),
-        )
+    let id = UserModel::new()
+        .register(pool, &params.account, &params.password)
         .await?;
+    if id == 1 {
+        UserModel::new()
+            .update_by_id(
+                pool,
+                id,
+                json!({
+                    "roles": [ROLE_SUPER_ADMIN.to_string()],
+                }),
+            )
+            .await?;
     }
     Ok(Json(RegisterResp {
         id,
@@ -227,7 +231,9 @@ async fn update_profile(
         avatar: params.avatar,
         ..Default::default()
     };
-    User::update_by_account(pool, &account, params).await?;
+    UserModel::new()
+        .update_by_account(pool, &account, params)
+        .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

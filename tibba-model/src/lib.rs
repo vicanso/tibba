@@ -14,7 +14,8 @@
 
 use async_trait::async_trait;
 use chrono::{DateTime, offset};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use serde_json::json;
 use snafu::ResultExt;
 use snafu::Snafu;
 use sqlx::{MySql, Pool};
@@ -87,19 +88,20 @@ type Result<T> = std::result::Result<T, Error>;
 
 #[async_trait]
 pub trait Model {
-    type Output;
-    async fn schema_view(_pool: &Pool<MySql>) -> SchemaView;
-    fn keyword() -> String {
+    type Output: Serialize;
+    fn new() -> Self;
+    async fn schema_view(&self, _pool: &Pool<MySql>) -> SchemaView;
+    fn keyword(&self) -> String {
         "name".to_string()
     }
-    fn filter_condition_sql(_filters: &HashMap<String, String>) -> Option<Vec<String>> {
+    fn filter_condition_sql(&self, _filters: &HashMap<String, String>) -> Option<Vec<String>> {
         None
     }
-    fn condition_sql(params: &ModelListParams) -> Result<String> {
+    fn condition_sql(&self, params: &ModelListParams) -> Result<String> {
         let mut where_conditions = vec!["deleted_at IS NULL".to_string()];
 
         if let Some(keyword) = &params.keyword {
-            where_conditions.push(format!("{} LIKE '%{}%'", Self::keyword(), keyword));
+            where_conditions.push(format!("{} LIKE '%{}%'", self.keyword(), keyword));
         }
 
         if let Some(filters) = &params.filters {
@@ -116,42 +118,68 @@ pub trait Model {
                 }
             }
 
-            if let Some(conditions) = Self::filter_condition_sql(&filters) {
+            if let Some(conditions) = self.filter_condition_sql(&filters) {
                 where_conditions.extend(conditions);
             }
         }
 
         Ok(format!(" WHERE {}", where_conditions.join(" AND ")))
     }
-    async fn insert(_pool: &Pool<MySql>, _params: serde_json::Value) -> Result<u64> {
+    async fn insert(&self, _pool: &Pool<MySql>, _params: serde_json::Value) -> Result<u64> {
         Err(Error::NotSupported {
             name: "insert".to_string(),
         })
     }
-    async fn get_by_id(_pool: &Pool<MySql>, _id: u64) -> Result<Option<Self::Output>> {
+    async fn get_by_id(&self, _pool: &Pool<MySql>, _id: u64) -> Result<Option<Self::Output>> {
         Err(Error::NotSupported {
             name: "get_by_id".to_string(),
         })
     }
-    async fn delete_by_id(_pool: &Pool<MySql>, _id: u64) -> Result<()> {
+    async fn delete_by_id(&self, _pool: &Pool<MySql>, _id: u64) -> Result<()> {
         Err(Error::NotSupported {
             name: "delete_by_id".to_string(),
         })
     }
-    async fn update_by_id(_pool: &Pool<MySql>, _id: u64, _params: serde_json::Value) -> Result<()> {
+    async fn update_by_id(
+        &self,
+        _pool: &Pool<MySql>,
+        _id: u64,
+        _params: serde_json::Value,
+    ) -> Result<()> {
         Err(Error::NotSupported {
             name: "update_by_id".to_string(),
         })
     }
-    async fn count(_pool: &Pool<MySql>, _params: &ModelListParams) -> Result<i64> {
+    async fn count(&self, _pool: &Pool<MySql>, _params: &ModelListParams) -> Result<i64> {
         Err(Error::NotSupported {
             name: "count".to_string(),
         })
     }
-    async fn list(_pool: &Pool<MySql>, _params: &ModelListParams) -> Result<Vec<Self::Output>> {
+    async fn list(
+        &self,
+        _pool: &Pool<MySql>,
+        _params: &ModelListParams,
+    ) -> Result<Vec<Self::Output>> {
         Err(Error::NotSupported {
             name: "list".to_string(),
         })
+    }
+    async fn list_and_count(
+        &self,
+        pool: &Pool<MySql>,
+        count: bool,
+        params: &ModelListParams,
+    ) -> Result<serde_json::Value> {
+        let count = if count {
+            self.count(pool, params).await?
+        } else {
+            -1
+        };
+        let items = self.list(pool, params).await?;
+        Ok(json!({
+        "count": count,
+        "items": items,
+        }))
     }
 }
 

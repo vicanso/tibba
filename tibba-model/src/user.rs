@@ -87,13 +87,18 @@ pub struct UserUpdateParams {
     pub status: Option<i8>,
 }
 
+pub struct UserModel {}
+
 #[async_trait]
-impl Model for User {
+impl Model for UserModel {
     type Output = User;
-    fn keyword() -> String {
+    fn new() -> Self {
+        Self {}
+    }
+    fn keyword(&self) -> String {
         "account".to_string()
     }
-    async fn schema_view(_pool: &Pool<MySql>) -> SchemaView {
+    async fn schema_view(&self, _pool: &Pool<MySql>) -> SchemaView {
         SchemaView {
             schemas: vec![
                 Schema::new_id(),
@@ -129,7 +134,7 @@ impl Model for User {
             ..Default::default()
         }
     }
-    async fn get_by_id(pool: &Pool<MySql>, id: u64) -> Result<Option<Self>> {
+    async fn get_by_id(&self, pool: &Pool<MySql>, id: u64) -> Result<Option<Self::Output>> {
         let result = sqlx::query_as::<_, UserSchema>(
             r#"SELECT * FROM users WHERE id = ? AND deleted_at IS NULL"#,
         )
@@ -140,7 +145,7 @@ impl Model for User {
 
         Ok(result.map(|user| user.into()))
     }
-    async fn delete_by_id(pool: &Pool<MySql>, id: u64) -> Result<()> {
+    async fn delete_by_id(&self, pool: &Pool<MySql>, id: u64) -> Result<()> {
         sqlx::query(
             r#"UPDATE users SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL"#
         )
@@ -150,7 +155,12 @@ impl Model for User {
             .map_err(|e| Error::Sqlx { source: e })?;
         Ok(())
     }
-    async fn update_by_id(pool: &Pool<MySql>, id: u64, data: serde_json::Value) -> Result<()> {
+    async fn update_by_id(
+        &self,
+        pool: &Pool<MySql>,
+        id: u64,
+        data: serde_json::Value,
+    ) -> Result<()> {
         let params: UserUpdateParams =
             serde_json::from_value(data).map_err(|e| Error::Json { source: e })?;
         let _ = sqlx::query(
@@ -176,7 +186,7 @@ impl Model for User {
 
         Ok(())
     }
-    fn filter_condition_sql(filters: &HashMap<String, String>) -> Option<Vec<String>> {
+    fn filter_condition_sql(&self, filters: &HashMap<String, String>) -> Option<Vec<String>> {
         let mut conditions = vec![];
         if let Some(status) = filters.get("status") {
             conditions.push(format!("status = {status}"));
@@ -190,9 +200,9 @@ impl Model for User {
         (!conditions.is_empty()).then_some(conditions)
     }
 
-    async fn count(pool: &Pool<MySql>, params: &ModelListParams) -> Result<i64> {
+    async fn count(&self, pool: &Pool<MySql>, params: &ModelListParams) -> Result<i64> {
         let mut sql = String::from("SELECT COUNT(*) FROM users");
-        sql.push_str(&Self::condition_sql(params)?);
+        sql.push_str(&self.condition_sql(params)?);
         let count = sqlx::query_scalar::<_, i64>(&sql)
             .fetch_one(pool)
             .await
@@ -200,11 +210,15 @@ impl Model for User {
         Ok(count)
     }
 
-    async fn list(pool: &Pool<MySql>, params: &ModelListParams) -> Result<Vec<Self>> {
+    async fn list(
+        &self,
+        pool: &Pool<MySql>,
+        params: &ModelListParams,
+    ) -> Result<Vec<Self::Output>> {
         let limit = params.limit.min(200);
         let mut sql = String::from("SELECT * FROM users");
 
-        sql.push_str(&Self::condition_sql(params)?);
+        sql.push_str(&self.condition_sql(params)?);
 
         if let Some(order_by) = &params.order_by {
             let (order_by, direction) = if order_by.starts_with("-") {
@@ -227,8 +241,8 @@ impl Model for User {
     }
 }
 
-impl User {
-    pub async fn register(pool: &Pool<MySql>, account: &str, password: &str) -> Result<u64> {
+impl UserModel {
+    pub async fn register(&self, pool: &Pool<MySql>, account: &str, password: &str) -> Result<u64> {
         // Get current time for created_at and updated_at
 
         // Insert user and return the last insert ID
@@ -251,7 +265,7 @@ impl User {
         Ok(result.last_insert_id())
     }
 
-    pub async fn get_by_account(pool: &Pool<MySql>, account: &str) -> Result<Option<Self>> {
+    pub async fn get_by_account(&self, pool: &Pool<MySql>, account: &str) -> Result<Option<User>> {
         let result = sqlx::query_as::<_, UserSchema>(
             r#"SELECT * FROM users WHERE account = ? AND deleted_at IS NULL"#,
         )
@@ -264,6 +278,7 @@ impl User {
     }
 
     pub async fn update_by_account(
+        &self,
         pool: &Pool<MySql>,
         account: &str,
         params: UserUpdateParams,

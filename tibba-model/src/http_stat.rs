@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use super::{
-    Error, HttpDetector, Model, ModelListParams, ResultValue, Schema, SchemaAllowCreate,
+    Error, HttpDetectorModel, Model, ModelListParams, ResultValue, Schema, SchemaAllowCreate,
     SchemaAllowEdit, SchemaOption, SchemaOptionValue, SchemaType, SchemaView, format_datetime,
 };
 use async_trait::async_trait;
@@ -159,8 +159,10 @@ pub struct HttpStatInsertParams {
     pub remark: String,
 }
 
-impl HttpStat {
-    pub async fn add_stat(pool: &Pool<MySql>, params: HttpStatInsertParams) -> Result<u64> {
+pub struct HttpStatModel {}
+
+impl HttpStatModel {
+    pub async fn add_stat(&self, pool: &Pool<MySql>, params: HttpStatInsertParams) -> Result<u64> {
         let result = sqlx::query(
             r#"INSERT INTO http_stats (target_id, target_name, url, dns_lookup, quic_connect, tcp_connect, tls_handshake, server_processing, content_transfer, total, addr, status_code, tls, alpn, subject, issuer, cert_not_before, cert_not_after, cert_cipher, cert_domains, body_size, region, error, result, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
         )
@@ -196,9 +198,10 @@ impl HttpStat {
         Ok(result.last_insert_id())
     }
     pub async fn list_by_created(
+        &self,
         pool: &Pool<MySql>,
         created_range: (&str, &str),
-    ) -> Result<Vec<Self>> {
+    ) -> Result<Vec<HttpStat>> {
         let detectors = sqlx::query_as::<_, HttpStatSchema>(
             r#"SELECT * FROM http_stats WHERE created >= ? AND created <= ?"#,
         )
@@ -212,14 +215,18 @@ impl HttpStat {
 }
 
 #[async_trait]
-impl Model for HttpStat {
-    type Output = Self;
-    fn keyword() -> String {
+impl Model for HttpStatModel {
+    type Output = HttpStat;
+    fn new() -> Self {
+        Self {}
+    }
+    fn keyword(&self) -> String {
         "target_name".to_string()
     }
-    async fn schema_view(pool: &Pool<MySql>) -> SchemaView {
+    async fn schema_view(&self, pool: &Pool<MySql>) -> SchemaView {
         let mut detector_options = vec![];
-        if let Ok(detectors) = HttpDetector::list_enabled(pool).await {
+        let detector_model = HttpDetectorModel {};
+        if let Ok(detectors) = detector_model.list_enabled(pool).await {
             for detector in detectors {
                 detector_options.push(SchemaOption {
                     label: detector.name,
@@ -422,7 +429,7 @@ impl Model for HttpStat {
         }
     }
 
-    fn filter_condition_sql(filters: &HashMap<String, String>) -> Option<Vec<String>> {
+    fn filter_condition_sql(&self, filters: &HashMap<String, String>) -> Option<Vec<String>> {
         let mut conditions = vec![];
         if let Some(result) = filters.get("result") {
             conditions.push(format!("result = '{result}'"));
@@ -436,10 +443,14 @@ impl Model for HttpStat {
         (!conditions.is_empty()).then_some(conditions)
     }
 
-    async fn list(pool: &Pool<MySql>, params: &ModelListParams) -> Result<Vec<Self>> {
+    async fn list(
+        &self,
+        pool: &Pool<MySql>,
+        params: &ModelListParams,
+    ) -> Result<Vec<Self::Output>> {
         let limit = params.limit.min(200);
         let mut sql = String::from("SELECT * FROM http_stats");
-        sql.push_str(&Self::condition_sql(params)?);
+        sql.push_str(&self.condition_sql(params)?);
         if let Some(order_by) = &params.order_by {
             let (order_by, direction) = if order_by.starts_with("-") {
                 (order_by.substring(1, order_by.len()).to_string(), "DESC")
@@ -458,16 +469,16 @@ impl Model for HttpStat {
 
         Ok(detectors.into_iter().map(|schema| schema.into()).collect())
     }
-    async fn count(pool: &Pool<MySql>, params: &ModelListParams) -> Result<i64> {
+    async fn count(&self, pool: &Pool<MySql>, params: &ModelListParams) -> Result<i64> {
         let mut sql = String::from("SELECT COUNT(*) FROM http_stats");
-        sql.push_str(&Self::condition_sql(params)?);
+        sql.push_str(&self.condition_sql(params)?);
         let count = sqlx::query_scalar::<_, i64>(&sql)
             .fetch_one(pool)
             .await
             .map_err(|e| Error::Sqlx { source: e })?;
         Ok(count)
     }
-    async fn get_by_id(pool: &Pool<MySql>, id: u64) -> Result<Option<Self>> {
+    async fn get_by_id(&self, pool: &Pool<MySql>, id: u64) -> Result<Option<Self::Output>> {
         let stat = sqlx::query_as::<_, HttpStatSchema>(r#"SELECT * FROM http_stats WHERE id = ?"#)
             .bind(id)
             .fetch_optional(pool)

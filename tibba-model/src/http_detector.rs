@@ -167,8 +167,10 @@ pub struct HttpDetectorUpdateParams {
     pub remark: Option<String>,
 }
 
-impl HttpDetector {
-    pub async fn list_enabled(pool: &Pool<MySql>) -> Result<Vec<Self>> {
+pub struct HttpDetectorModel {}
+
+impl HttpDetectorModel {
+    pub async fn list_enabled(&self, pool: &Pool<MySql>) -> Result<Vec<HttpDetector>> {
         let detectors = sqlx::query_as::<_, HttpDetectorSchema>(
             r#"SELECT * FROM http_detectors WHERE deleted_at IS NULL AND status = 1"#,
         )
@@ -179,11 +181,12 @@ impl HttpDetector {
         Ok(detectors.into_iter().map(|schema| schema.into()).collect())
     }
     pub async fn list_enabled_by_region(
+        &self,
         pool: &Pool<MySql>,
         region: Option<String>,
         limit: u64,
         offset: u64,
-    ) -> Result<Vec<Self>> {
+    ) -> Result<Vec<HttpDetector>> {
         let region = region.unwrap_or(REGION_ANY.to_string());
         let detectors = sqlx::query_as::<_, HttpDetectorSchema>(
             r#"SELECT * FROM http_detectors WHERE deleted_at IS NULL AND status = 1 AND (JSON_LENGTH(regions) = 0 OR JSON_CONTAINS(regions, ?) OR JSON_CONTAINS(regions, ?)) ORDER BY id ASC LIMIT ? OFFSET ?"#,
@@ -201,9 +204,12 @@ impl HttpDetector {
 }
 
 #[async_trait]
-impl Model for HttpDetector {
-    type Output = Self;
-    async fn schema_view(_pool: &Pool<MySql>) -> SchemaView {
+impl Model for HttpDetectorModel {
+    type Output = HttpDetector;
+    fn new() -> Self {
+        Self {}
+    }
+    async fn schema_view(&self, _pool: &Pool<MySql>) -> SchemaView {
         SchemaView {
             schemas: vec![
                 Schema::new_id(),
@@ -346,7 +352,7 @@ impl Model for HttpDetector {
         }
     }
 
-    fn filter_condition_sql(filters: &HashMap<String, String>) -> Option<Vec<String>> {
+    fn filter_condition_sql(&self, filters: &HashMap<String, String>) -> Option<Vec<String>> {
         let mut conditions = vec![];
 
         if let Some(status) = filters.get("status") {
@@ -355,7 +361,7 @@ impl Model for HttpDetector {
 
         (!conditions.is_empty()).then_some(conditions)
     }
-    async fn insert(pool: &Pool<MySql>, params: serde_json::Value) -> Result<u64> {
+    async fn insert(&self, pool: &Pool<MySql>, params: serde_json::Value) -> Result<u64> {
         let params: HttpDetectorInsertParams =
             serde_json::from_value(params).map_err(|e| Error::Json { source: e })?;
         let result = sqlx::query(
@@ -388,7 +394,7 @@ impl Model for HttpDetector {
 
         Ok(result.last_insert_id())
     }
-    async fn get_by_id(pool: &Pool<MySql>, id: u64) -> Result<Option<Self>> {
+    async fn get_by_id(&self, pool: &Pool<MySql>, id: u64) -> Result<Option<Self::Output>> {
         let result = sqlx::query_as::<_, HttpDetectorSchema>(
             r#"SELECT * FROM http_detectors WHERE id = ? AND deleted_at IS NULL"#,
         )
@@ -399,7 +405,7 @@ impl Model for HttpDetector {
 
         Ok(result.map(|schema| schema.into()))
     }
-    async fn delete_by_id(pool: &Pool<MySql>, id: u64) -> Result<()> {
+    async fn delete_by_id(&self, pool: &Pool<MySql>, id: u64) -> Result<()> {
         sqlx::query(
             r#"UPDATE http_detectors SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL"#,
         )
@@ -410,7 +416,12 @@ impl Model for HttpDetector {
 
         Ok(())
     }
-    async fn update_by_id(pool: &Pool<MySql>, id: u64, params: serde_json::Value) -> Result<()> {
+    async fn update_by_id(
+        &self,
+        pool: &Pool<MySql>,
+        id: u64,
+        params: serde_json::Value,
+    ) -> Result<()> {
         let params: HttpDetectorUpdateParams =
             serde_json::from_value(params).map_err(|e| Error::Json { source: e })?;
 
@@ -444,9 +455,9 @@ impl Model for HttpDetector {
 
         Ok(())
     }
-    async fn count(pool: &Pool<MySql>, params: &ModelListParams) -> Result<i64> {
+    async fn count(&self, pool: &Pool<MySql>, params: &ModelListParams) -> Result<i64> {
         let mut sql = String::from("SELECT COUNT(*) FROM http_detectors");
-        sql.push_str(&Self::condition_sql(params)?);
+        sql.push_str(&self.condition_sql(params)?);
         let count = sqlx::query_scalar::<_, i64>(&sql)
             .fetch_one(pool)
             .await
@@ -455,10 +466,14 @@ impl Model for HttpDetector {
         Ok(count)
     }
 
-    async fn list(pool: &Pool<MySql>, params: &ModelListParams) -> Result<Vec<Self>> {
+    async fn list(
+        &self,
+        pool: &Pool<MySql>,
+        params: &ModelListParams,
+    ) -> Result<Vec<Self::Output>> {
         let limit = params.limit.min(200);
         let mut sql = String::from("SELECT * FROM http_detectors");
-        sql.push_str(&Self::condition_sql(params)?);
+        sql.push_str(&self.condition_sql(params)?);
         if let Some(order_by) = &params.order_by {
             let (order_by, direction) = if order_by.starts_with("-") {
                 (order_by.substring(1, order_by.len()).to_string(), "DESC")

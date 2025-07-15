@@ -32,8 +32,8 @@ use std::{net::IpAddr, time::Duration};
 use tibba_error::{Error, new_error};
 use tibba_hook::register_before_task;
 use tibba_model::{
-    AlarmConfig, Configuration, HttpDetector, HttpStat, HttpStatInsertParams, Model, REGION_ANY,
-    ResultValue,
+    AlarmConfig, ConfigurationModel, HttpDetector, HttpDetectorModel, HttpStat,
+    HttpStatInsertParams, HttpStatModel, Model, REGION_ANY, ResultValue,
 };
 use tibba_scheduler::{Job, register_job_task};
 use time::OffsetDateTime;
@@ -230,24 +230,25 @@ async fn do_request(
         remark: remarks.join("; "),
         region: region.clone(),
     };
-    HttpStat::add_stat(pool, insert_params).await?;
+    HttpStatModel::new().add_stat(pool, insert_params).await?;
     Ok(())
 }
 
 async fn run_http_detector(pool: &MySqlPool, detector: HttpDetector) -> Result<()> {
     let Ok(mut params) = HttpRequest::try_from(detector.url.as_str()) else {
-        HttpStat::add_stat(
-            pool,
-            HttpStatInsertParams {
-                target_id: detector.id,
-                target_name: detector.name.clone(),
-                url: detector.url.clone(),
-                result: ResultValue::Failed as u8,
-                error: Some("url parse error".to_string()),
-                ..Default::default()
-            },
-        )
-        .await?;
+        HttpStatModel::new()
+            .add_stat(
+                pool,
+                HttpStatInsertParams {
+                    target_id: detector.id,
+                    target_name: detector.name.clone(),
+                    url: detector.url.clone(),
+                    result: ResultValue::Failed as u8,
+                    error: Some("url parse error".to_string()),
+                    ..Default::default()
+                },
+            )
+            .await?;
         return Ok(());
     };
     params.method = Some(detector.method.clone());
@@ -327,8 +328,9 @@ async fn run_detector_stat() -> Result<(i32, i32, i32)> {
         let semaphore = Arc::new(Semaphore::new(max_concurrent));
 
         let mut handles = vec![];
-        let detectors =
-            HttpDetector::list_enabled_by_region(pool, region.clone(), limit, offset).await?;
+        let detectors = HttpDetectorModel::new()
+            .list_enabled_by_region(pool, region.clone(), limit, offset)
+            .await?;
         if detectors.is_empty() {
             break;
         }
@@ -527,16 +529,18 @@ async fn run_stat_alarm() -> Result<(i32, i32)> {
         return Ok((0, -1));
     }
     let pool = get_db_pool();
-    let alarm_config =
-        if let Ok(alarm_config) = Configuration::get_config(pool, "alarm", "httpstat").await {
-            alarm_config
-        } else {
-            let robot_url = env::var("WECOM_ROBOT").unwrap_or_default();
-            AlarmConfig {
-                category: "httpstat".to_string(),
-                url: robot_url.to_string(),
-            }
-        };
+    let alarm_config = if let Ok(alarm_config) = ConfigurationModel::new()
+        .get_config(pool, "alarm", "httpstat")
+        .await
+    {
+        alarm_config
+    } else {
+        let robot_url = env::var("WECOM_ROBOT").unwrap_or_default();
+        AlarmConfig {
+            category: "httpstat".to_string(),
+            url: robot_url.to_string(),
+        }
+    };
 
     let key = "http_alarm_targets_cache";
     let mut alarm_cache = StatAlarmCache {
@@ -557,7 +561,9 @@ async fn run_stat_alarm() -> Result<(i32, i32)> {
     let now_check_time = chrono::DateTime::from_timestamp(now, 0)
         .ok_or(new_error("parse time error"))?
         .to_rfc3339();
-    let stats = HttpStat::list_by_created(pool, (&last_check_time, &now_check_time)).await?;
+    let stats = HttpStatModel::new()
+        .list_by_created(pool, (&last_check_time, &now_check_time))
+        .await?;
 
     // 因为相同的target id有可能会有多个http stat
     // 因此需要target id去重，若有失败的优先使用
@@ -627,7 +633,7 @@ async fn run_stat_alarm() -> Result<(i32, i32)> {
             }
         }
 
-        let Ok(Some(detector)) = HttpDetector::get_by_id(pool, *target_id).await else {
+        let Ok(Some(detector)) = HttpDetectorModel::new().get_by_id(pool, *target_id).await else {
             continue;
         };
         if trigger_targets.contains(target_id) {

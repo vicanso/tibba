@@ -19,7 +19,7 @@ use serde::Deserialize;
 use tibba_error::{Error, new_error};
 use tibba_headless::{WebPageParams, new_browser, run_web_page_stat_with_browser};
 use tibba_hook::register_before_task;
-use tibba_model::{Configuration, File, FileInsertParams, WebPageDetector};
+use tibba_model::{ConfigurationModel, FileInsertParams, FileModel, Model, WebPageDetectorModel};
 use tibba_scheduler::{Job, register_job_task};
 use tibba_util::uuid;
 use tracing::{error, info};
@@ -31,19 +31,21 @@ struct BrowserLessConfig {
 
 async fn run_web_page_stat() -> Result<(), Error> {
     let pool = get_db_pool();
-    let browser_less_config: BrowserLessConfig =
-        Configuration::get_config(pool, "app", "browserless")
-            .await
-            .map_err(|e| new_error(e.to_string()))?;
+    let browser_less_config: BrowserLessConfig = ConfigurationModel::new()
+        .get_config(pool, "app", "browserless")
+        .await
+        .map_err(|e| new_error(e.to_string()))?;
     if browser_less_config.urls.is_empty() {
         return Err(new_error("browser less urls is empty").into());
     }
     let browser =
         new_browser(&browser_less_config.urls[0], None).map_err(|e| new_error(e.to_string()))?;
 
-    let detectors = WebPageDetector::list_enabled_by_region(pool, None, 100, 0).await?;
+    let detectors = WebPageDetectorModel::new()
+        .list_enabled_by_region(pool, None, 100, 0)
+        .await?;
     for detector in detectors {
-        println!("{:?}", detector);
+        println!("detector: {detector:?}");
         let mut params = WebPageParams {
             url: detector.url,
             width: detector.width,
@@ -72,7 +74,7 @@ async fn run_web_page_stat() -> Result<(), Error> {
                 height: Some(screenshot.height as i32),
                 ..Default::default()
             };
-            let _ = File::insert(pool, params).await?;
+            let _ = FileModel::new().insert_file(pool, params).await?;
             println!("file: {file}");
         }
     }

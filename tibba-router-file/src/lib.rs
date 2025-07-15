@@ -26,7 +26,7 @@ use sqlx::MySqlPool;
 use std::collections::HashMap;
 use std::path::Path;
 use tibba_error::{Error, new_error};
-use tibba_model::{Configuration, File, FileInsertParams};
+use tibba_model::{ConfigurationModel, FileInsertParams, FileModel, Model};
 use tibba_opendal::Storage;
 use tibba_session::UserSession;
 use tibba_util::{JsonResult, QueryParams, uuid};
@@ -94,7 +94,7 @@ async fn create_file(
         };
 
         let _ = storage.write_with(&file, data.clone(), vec![]).await?;
-        let _ = File::insert(pool, params).await?;
+        let _ = FileModel::new().insert_file(pool, params).await?;
 
         files.insert(name.to_string(), file);
     }
@@ -118,7 +118,8 @@ async fn get_file(
     State((storage, pool)): State<(&'static Storage, &'static MySqlPool)>,
     QueryParams(params): QueryParams<GetFileParams>,
 ) -> Result<impl IntoResponse> {
-    let file = File::get_by_name(pool, &params.name)
+    let file = FileModel::new()
+        .get_by_name(pool, &params.name)
         .await?
         .ok_or(new_error("file not found").with_category(ERROR_CATEGORY))?;
     let mut data = storage.read(&params.name).await?;
@@ -172,7 +173,9 @@ async fn get_file(
     if let Some(metadata) = file.get_metadata() {
         headers.extend(metadata);
     }
-    let Some(response_headers) = Configuration::get_response_headers(pool, &file.group).await?
+    let Some(response_headers) = ConfigurationModel::new()
+        .get_response_headers(pool, &file.group)
+        .await?
     else {
         return Ok((headers, data.to_bytes()));
     };

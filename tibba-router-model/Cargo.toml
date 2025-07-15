@@ -13,6 +13,8 @@ serde = { workspace = true }
 validator = { workspace = true }
 sqlx = { workspace = true }
 serde_json = { workspace = true }
+once_cell = { workspace = true }
+strum = { workspace = true }
 tibba-model = { path = "../tibba-model" }
 tibba-util = { path = "../tibba-util" }
 tibba-validator = { path = "../tibba-validator" }

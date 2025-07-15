@@ -122,10 +122,18 @@ pub struct WebPageDetectorInsertParams {
     pub created_by: u64,
 }
 
+pub struct WebPageDetectorModel {}
+
 #[async_trait]
-impl Model for WebPageDetector {
-    type Output = Self;
-    async fn schema_view(_pool: &Pool<MySql>) -> SchemaView {
+impl Model for WebPageDetectorModel {
+    type Output = WebPageDetector;
+    fn new() -> Self {
+        Self {}
+    }
+    fn keyword(&self) -> String {
+        "name".to_string()
+    }
+    async fn schema_view(&self, _pool: &Pool<MySql>) -> SchemaView {
         SchemaView {
             schemas: vec![
                 Schema::new_id(),
@@ -220,15 +228,15 @@ impl Model for WebPageDetector {
             },
         }
     }
-    fn condition_sql(params: &ModelListParams) -> Result<String> {
+    fn condition_sql(&self, params: &ModelListParams) -> Result<String> {
         let mut where_conditions = vec!["deleted_at IS NULL".to_string()];
 
         if let Some(keyword) = &params.keyword {
-            where_conditions.push(format!("{} LIKE '%{}%'", Self::keyword(), keyword));
+            where_conditions.push(format!("{} LIKE '%{}%'", self.keyword(), keyword));
         }
         Ok(format!(" WHERE {}", where_conditions.join(" AND ")))
     }
-    async fn insert(pool: &Pool<MySql>, params: serde_json::Value) -> Result<u64> {
+    async fn insert(&self, pool: &Pool<MySql>, params: serde_json::Value) -> Result<u64> {
         let params: WebPageDetectorInsertParams =
             serde_json::from_value(params).map_err(|e| Error::Json { source: e })?;
         println!("{:?}", params);
@@ -257,9 +265,9 @@ impl Model for WebPageDetector {
 
         Ok(result.last_insert_id())
     }
-    async fn count(pool: &Pool<MySql>, params: &ModelListParams) -> Result<i64> {
+    async fn count(&self, pool: &Pool<MySql>, params: &ModelListParams) -> Result<i64> {
         let mut sql = String::from("SELECT COUNT(*) FROM web_page_detectors");
-        sql.push_str(&Self::condition_sql(params)?);
+        sql.push_str(&self.condition_sql(params)?);
         let count = sqlx::query_scalar::<_, i64>(&sql)
             .fetch_one(pool)
             .await
@@ -267,10 +275,14 @@ impl Model for WebPageDetector {
 
         Ok(count)
     }
-    async fn list(pool: &Pool<MySql>, params: &ModelListParams) -> Result<Vec<Self>> {
+    async fn list(
+        &self,
+        pool: &Pool<MySql>,
+        params: &ModelListParams,
+    ) -> Result<Vec<Self::Output>> {
         let limit = params.limit.min(200);
         let mut sql = String::from("SELECT * FROM web_page_detectors");
-        sql.push_str(&Self::condition_sql(params)?);
+        sql.push_str(&self.condition_sql(params)?);
         if let Some(order_by) = &params.order_by {
             let (order_by, direction) = if order_by.starts_with("-") {
                 (order_by.substring(1, order_by.len()).to_string(), "DESC")
@@ -297,13 +309,14 @@ impl Model for WebPageDetector {
     }
 }
 
-impl WebPageDetector {
+impl WebPageDetectorModel {
     pub async fn list_enabled_by_region(
+        &self,
         pool: &Pool<MySql>,
         region: Option<String>,
         limit: u64,
         offset: u64,
-    ) -> Result<Vec<Self>> {
+    ) -> Result<Vec<WebPageDetector>> {
         let region = region.unwrap_or(REGION_ANY.to_string());
         let detectors = sqlx::query_as::<_, WebPageDetectorSchema>(
             r#"SELECT * FROM web_page_detectors WHERE deleted_at IS NULL AND status = 1 AND (JSON_LENGTH(regions) = 0 OR JSON_CONTAINS(regions, ?) OR JSON_CONTAINS(regions, ?)) ORDER BY id ASC LIMIT ? OFFSET ?"#,

@@ -13,9 +13,10 @@
 // limitations under the License.
 
 use super::{
-    Error, ModelListParams, ROLE_ADMIN, ROLE_SUPER_ADMIN, Schema, SchemaAllowCreate,
+    Error, Model, ModelListParams, ROLE_ADMIN, ROLE_SUPER_ADMIN, Schema, SchemaAllowCreate,
     SchemaAllowEdit, SchemaOption, SchemaOptionValue, SchemaType, SchemaView, format_datetime,
 };
+use async_trait::async_trait;
 use http::header::{HeaderMap, HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
@@ -125,8 +126,53 @@ impl From<serde_json::Value> for FileUpdateParams {
     }
 }
 
-impl File {
-    pub async fn schema_view(_pool: &Pool<MySql>) -> SchemaView {
+#[derive(Default)]
+pub struct FileModel {}
+
+impl FileModel {
+    pub async fn insert_file(&self, pool: &Pool<MySql>, params: FileInsertParams) -> Result<u64> {
+        let id = sqlx::query(
+            r#"
+            INSERT INTO files (
+                `group`, filename, file_size, content_type,
+                image_width, image_height, metadata, uploader
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(params.group)
+        .bind(params.filename)
+        .bind(params.file_size)
+        .bind(params.content_type)
+        .bind(params.width.unwrap_or(-1))
+        .bind(params.height.unwrap_or(-1))
+        .bind(params.metadata.unwrap_or(serde_json::json!({})))
+        .bind(params.uploader)
+        .execute(pool)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+
+        Ok(id.last_insert_id())
+    }
+    pub async fn get_by_name(&self, pool: &Pool<MySql>, name: &str) -> Result<Option<File>> {
+        let result = sqlx::query_as::<_, FileSchema>(
+            r#"SELECT * FROM files WHERE filename = ? AND deleted_at IS NULL"#,
+        )
+        .bind(name)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| Error::Sqlx { source: e })?;
+
+        Ok(result.map(|file| file.into()))
+    }
+}
+
+#[async_trait]
+impl Model for FileModel {
+    type Output = File;
+    fn new() -> Self {
+        Self::default()
+    }
+    async fn schema_view(&self, _pool: &Pool<MySql>) -> SchemaView {
         let group_options = vec![
             SchemaOption {
                 label: "Tibba".to_string(),
@@ -217,7 +263,7 @@ impl File {
         }
     }
 
-    fn condition_sql(params: &ModelListParams) -> Result<String> {
+    fn condition_sql(&self, params: &ModelListParams) -> Result<String> {
         let mut where_conditions = vec!["deleted_at IS NULL".to_string()];
 
         if let Some(keyword) = &params.keyword {
@@ -236,31 +282,7 @@ impl File {
         Ok(format!(" WHERE {}", where_conditions.join(" AND ")))
     }
 
-    pub async fn insert(pool: &Pool<MySql>, params: FileInsertParams) -> Result<u64> {
-        let id = sqlx::query(
-            r#"
-            INSERT INTO files (
-                `group`, filename, file_size, content_type,
-                image_width, image_height, metadata, uploader
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            "#,
-        )
-        .bind(params.group)
-        .bind(params.filename)
-        .bind(params.file_size)
-        .bind(params.content_type)
-        .bind(params.width.unwrap_or(-1))
-        .bind(params.height.unwrap_or(-1))
-        .bind(params.metadata.unwrap_or(serde_json::json!({})))
-        .bind(params.uploader)
-        .execute(pool)
-        .await
-        .map_err(|e| Error::Sqlx { source: e })?;
-
-        Ok(id.last_insert_id())
-    }
-
-    pub async fn get_by_id(pool: &Pool<MySql>, id: u64) -> Result<Option<Self>> {
+    async fn get_by_id(&self, pool: &Pool<MySql>, id: u64) -> Result<Option<Self::Output>> {
         let result = sqlx::query_as::<_, FileSchema>(
             r#"SELECT * FROM files WHERE id = ? AND deleted_at IS NULL"#,
         )
@@ -272,19 +294,7 @@ impl File {
         Ok(result.map(|file| file.into()))
     }
 
-    pub async fn get_by_name(pool: &Pool<MySql>, name: &str) -> Result<Option<Self>> {
-        let result = sqlx::query_as::<_, FileSchema>(
-            r#"SELECT * FROM files WHERE filename = ? AND deleted_at IS NULL"#,
-        )
-        .bind(name)
-        .fetch_optional(pool)
-        .await
-        .map_err(|e| Error::Sqlx { source: e })?;
-
-        Ok(result.map(|file| file.into()))
-    }
-
-    pub async fn delete_by_id(pool: &Pool<MySql>, id: u64) -> Result<()> {
+    async fn delete_by_id(&self, pool: &Pool<MySql>, id: u64) -> Result<()> {
         sqlx::query(
             r#"UPDATE files SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL"#
         )
@@ -295,7 +305,14 @@ impl File {
         Ok(())
     }
 
-    pub async fn update_by_id(pool: &Pool<MySql>, id: u64, params: FileUpdateParams) -> Result<()> {
+    async fn update_by_id(
+        &self,
+        pool: &Pool<MySql>,
+        id: u64,
+        data: serde_json::Value,
+    ) -> Result<()> {
+        let params: FileUpdateParams =
+            serde_json::from_value(data).map_err(|e| Error::Json { source: e })?;
         let _ = sqlx::query(
             r#"UPDATE files SET metadata = COALESCE(?, metadata), `group` = COALESCE(?, `group`) WHERE id = ? AND deleted_at IS NULL"#,
         )
@@ -308,9 +325,9 @@ impl File {
         Ok(())
     }
 
-    pub async fn count(pool: &Pool<MySql>, params: &ModelListParams) -> Result<i64> {
+    async fn count(&self, pool: &Pool<MySql>, params: &ModelListParams) -> Result<i64> {
         let mut sql = String::from("SELECT COUNT(*) FROM files");
-        sql.push_str(&Self::condition_sql(params)?);
+        sql.push_str(&self.condition_sql(params)?);
         let count = sqlx::query_scalar::<_, i64>(&sql)
             .fetch_one(pool)
             .await
@@ -318,10 +335,14 @@ impl File {
         Ok(count)
     }
 
-    pub async fn list(pool: &Pool<MySql>, params: &ModelListParams) -> Result<Vec<File>> {
+    async fn list(
+        &self,
+        pool: &Pool<MySql>,
+        params: &ModelListParams,
+    ) -> Result<Vec<Self::Output>> {
         let limit = params.limit.min(200);
         let mut sql = String::from("SELECT * FROM files");
-        sql.push_str(&Self::condition_sql(params)?);
+        sql.push_str(&self.condition_sql(params)?);
         if let Some(order_by) = &params.order_by {
             let (order_by, direction) = if order_by.starts_with("-") {
                 (order_by.substring(1, order_by.len()).to_string(), "DESC")
