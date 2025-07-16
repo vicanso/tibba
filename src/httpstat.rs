@@ -25,7 +25,6 @@ use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use sqlx::MySqlPool;
 use std::collections::HashMap;
-use std::env;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::{net::IpAddr, time::Duration};
@@ -529,18 +528,9 @@ async fn run_stat_alarm() -> Result<(i32, i32)> {
         return Ok((0, -1));
     }
     let pool = get_db_pool();
-    let alarm_config = if let Ok(alarm_config) = ConfigurationModel::new()
+    let alarm_config = ConfigurationModel::new()
         .get_config(pool, "alarm", "httpstat")
-        .await
-    {
-        alarm_config
-    } else {
-        let robot_url = env::var("WECOM_ROBOT").unwrap_or_default();
-        AlarmConfig {
-            category: "httpstat".to_string(),
-            url: robot_url.to_string(),
-        }
-    };
+        .await?;
 
     let key = "http_alarm_targets_cache";
     let mut alarm_cache = StatAlarmCache {
@@ -695,13 +685,9 @@ fn init() {
                 let job = Job::new_async("0 * * * * *", |_, _| {
                     let category = "http_detector";
                     Box::pin(async move {
-                        if let Ok(delay) = humantime::parse_duration(
-                            std::env::var("HTTP_DETECTOR_TASK_DELAY")
-                                .unwrap_or_default()
-                                .as_str(),
-                        ) {
-                            tokio::time::sleep(delay).await;
-                        }
+                        // 随机delay，为了让各机器更好的获到执行的机会
+                        let delay = Duration::from_millis(rand::random::<u64>() % 2000);
+                        tokio::time::sleep(delay).await;
                         match run_detector_stat().await {
                             Err(e) => {
                                 error!(
@@ -737,13 +723,9 @@ fn init() {
                 let job = Job::new_async("30 */5 * * * *", |_, _| {
                     let category = "http_stat_alarm";
                     Box::pin(async move {
-                        if let Ok(delay) = humantime::parse_duration(
-                            std::env::var("HTTP_DETECTOR_TASK_DELAY")
-                                .unwrap_or_default()
-                                .as_str(),
-                        ) {
-                            tokio::time::sleep(delay).await;
-                        }
+                        // 随机delay，为了让各机器更好的获到执行的机会
+                        let delay = Duration::from_millis(rand::random::<u64>() % 2000);
+                        tokio::time::sleep(delay).await;
                         match run_stat_alarm().await {
                             Err(e) => {
                                 error!(
