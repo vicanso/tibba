@@ -233,6 +233,7 @@ impl Model for HttpStatModel {
                     value: SchemaOptionValue::String(detector.id.to_string()),
                 });
             }
+            detector_options.sort_by_key(|option| option.label.clone());
         }
         SchemaView {
             schemas: vec![

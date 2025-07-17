@@ -27,6 +27,7 @@ use time::OffsetDateTime;
 pub const REGION_ANY: &str = "any";
 pub const REGION_TX: &str = "tx";
 pub const REGION_GZ: &str = "gz";
+pub const REGION_ALIYUN: &str = "aliyun";
 
 fn format_datetime(datetime: OffsetDateTime) -> String {
     if let Some(value) = DateTime::from_timestamp(datetime.unix_timestamp(), 0) {

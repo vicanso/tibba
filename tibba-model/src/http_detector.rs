@@ -16,7 +16,7 @@ use super::{
     Error, Model, ModelListParams, Schema, SchemaAllowCreate, SchemaAllowEdit, SchemaType,
     SchemaView, format_datetime, new_schema_options,
 };
-use super::{REGION_ANY, REGION_GZ, REGION_TX};
+use super::{REGION_ALIYUN, REGION_ANY, REGION_GZ, REGION_TX};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
@@ -309,7 +309,12 @@ impl Model for HttpDetectorModel {
                 Schema {
                     name: "regions".to_string(),
                     category: SchemaType::Strings,
-                    options: Some(new_schema_options(&[REGION_ANY, REGION_TX, REGION_GZ])),
+                    options: Some(new_schema_options(&[
+                        REGION_ANY,
+                        REGION_TX,
+                        REGION_GZ,
+                        REGION_ALIYUN,
+                    ])),
                     ..Default::default()
                 },
                 Schema {

@@ -39,6 +39,7 @@ use time::OffsetDateTime;
 use tokio::sync::Semaphore;
 use tokio::time::timeout;
 use tracing::{error, info};
+static INLINE_JS: &'static str = include_str!("./inline.js");
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -83,7 +84,8 @@ fn run_js_detect(resp: &JsResponse, stat: &JsStat, detect_script: &str) -> Resul
     let ctx = quick_js::Context::new().map_err(new_error)?;
     let content = serde_json::to_string(&resp).map_err(new_error)?;
     let stat = serde_json::to_string(&stat).map_err(new_error)?;
-    let mut script = r#"
+    let mut script = INLINE_JS.to_string()
+        + r#"
 (function(response, stat) {
     try {
         response.body = JSON.parse(response.body);
@@ -91,8 +93,7 @@ fn run_js_detect(resp: &JsResponse, stat: &JsStat, detect_script: &str) -> Resul
     }
     __script__ 
 })(__response__, __stat__);
-"#
-    .to_string();
+"#;
     script = script.replace("__response__", &content);
     script = script.replace("__stat__", &stat);
     script = script.replace("__script__", detect_script);

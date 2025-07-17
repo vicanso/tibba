@@ -16,7 +16,7 @@ use super::{
     Error, Model, ModelListParams, Schema, SchemaAllowCreate, SchemaAllowEdit, SchemaType,
     SchemaView, format_datetime, new_schema_options,
 };
-use super::{REGION_ANY, REGION_GZ, REGION_TX};
+use super::{REGION_ALIYUN, REGION_ANY, REGION_GZ, REGION_TX};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
@@ -159,7 +159,12 @@ impl Model for WebPageDetectorModel {
                 Schema {
                     name: "regions".to_string(),
                     category: SchemaType::Strings,
-                    options: Some(new_schema_options(&[REGION_ANY, REGION_TX, REGION_GZ])),
+                    options: Some(new_schema_options(&[
+                        REGION_ANY,
+                        REGION_TX,
+                        REGION_GZ,
+                        REGION_ALIYUN,
+                    ])),
                     ..Default::default()
                 },
                 Schema {
@@ -239,7 +244,6 @@ impl Model for WebPageDetectorModel {
     async fn insert(&self, pool: &Pool<MySql>, params: serde_json::Value) -> Result<u64> {
         let params: WebPageDetectorInsertParams =
             serde_json::from_value(params).map_err(|e| Error::Json { source: e })?;
-        println!("{:?}", params);
         let result = sqlx::query(
             r#"INSERT INTO web_page_detectors (name, `interval`, url, width, height, user_agent, accept_language, platform, wait_for_element, device_scale_factor, timeout, capture_screenshot, capture_element, remark, regions, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
         )
