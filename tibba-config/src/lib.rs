@@ -54,7 +54,6 @@ impl From<Error> for BaseError {
                 .with_sub_category(&category)
                 .with_exception(true),
         }
-        .into()
     }
 }
 

@@ -39,7 +39,7 @@ use time::OffsetDateTime;
 use tokio::sync::Semaphore;
 use tokio::time::timeout;
 use tracing::{error, info};
-static INLINE_JS: &'static str = include_str!("./inline.js");
+static INLINE_JS: &str = include_str!("./inline.js");
 
 type Result<T> = std::result::Result<T, Error>;
 

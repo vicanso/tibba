@@ -68,7 +68,7 @@ impl LoginParams {
             return Ok(());
         }
         if (self.ts - timestamp()).abs() > 60 {
-            return Err(new_error("Timestamp is invalid").into());
+            return Err(new_error("Timestamp is invalid"));
         }
         validate_timestamp_hash(self.ts, &self.token, &self.hash, secret)?;
         Ok(())
@@ -97,13 +97,13 @@ async fn login(
     let account = params.account;
     let account_password_err = new_error("Account or password is wrong");
     let Some(user) = UserModel::new().get_by_account(pool, &account).await? else {
-        return Err(account_password_err.into());
+        return Err(account_password_err);
     };
 
     let password = user.password;
     let msg = format!("{}:{password}", params.hash);
     if sha256(msg.as_bytes()) != params.password {
-        return Err(account_password_err.into());
+        return Err(account_password_err);
     }
 
     let groups = user.groups.clone().unwrap_or_default();

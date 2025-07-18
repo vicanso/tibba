@@ -13,11 +13,21 @@
 // limitations under the License.
 
 use snafu::Snafu;
+use tibba_error::{Error as BaseError, new_error};
 
 #[derive(Debug, Snafu)]
 pub enum Error {
     #[snafu(display("{message}"))]
     HeadlessChrome { message: String },
+}
+impl From<Error> for BaseError {
+    fn from(error: Error) -> Self {
+        match error {
+            Error::HeadlessChrome { message } => {
+                new_error(message).with_category("headless_chrome")
+            }
+        }
+    }
 }
 
 mod chrome;

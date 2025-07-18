@@ -131,26 +131,17 @@ impl From<Error> for BaseError {
     fn from(source: Error) -> Self {
         let error_category = "sql";
         match source {
-            Error::Sqlx { source } => {
-                let he = new_error(source)
-                    .with_category(error_category)
-                    .with_sub_category("sqlx")
-                    .with_exception(true);
-                he.into()
-            }
-            Error::Validate { source } => {
-                let he = new_error(source)
-                    .with_category(error_category)
-                    .with_sub_category("validate")
-                    .with_exception(true);
-                he.into()
-            }
-            Error::Common { category, message } => {
-                let he = new_error(message)
-                    .with_category(category.as_str())
-                    .with_exception(true);
-                he.into()
-            }
+            Error::Sqlx { source } => new_error(source)
+                .with_category(error_category)
+                .with_sub_category("sqlx")
+                .with_exception(true),
+            Error::Validate { source } => new_error(source)
+                .with_category(error_category)
+                .with_sub_category("validate")
+                .with_exception(true),
+            Error::Common { category, message } => new_error(message)
+                .with_category(category.as_str())
+                .with_exception(true),
         }
     }
 }

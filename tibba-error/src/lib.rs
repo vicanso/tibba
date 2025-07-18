@@ -20,43 +20,13 @@ use axum::http::{Method, Uri};
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 use snafu::Snafu;
-use std::fmt;
 use tracing::error;
 use validator::ValidationErrors;
 
 // Main Error enum that wraps HttpError
 // Uses Snafu for error handling boilerplate generation
-#[derive(Debug, Snafu)]
-pub enum Error {
-    #[snafu(display("{error}"))]
-    Http { error: HttpError },
-}
-
-// Implementation of From trait to convert HttpError into Error
-impl From<HttpError> for Error {
-    fn from(error: HttpError) -> Self {
-        Error::Http { error }
-    }
-}
-impl From<ValidationErrors> for Error {
-    fn from(error: ValidationErrors) -> Self {
-        Error::Http {
-            error: HttpError {
-                message: error.to_string(),
-                category: "validation".to_string(),
-                status: 400,
-                code: "validation_error".to_string(),
-                exception: true,
-                extra: None,
-            },
-        }
-    }
-}
-
-// Represents an HTTP error with detailed information
-// Implements serialization for JSON responses
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct HttpError {
+#[derive(Debug, Snafu, Default, Serialize, Deserialize)]
+pub struct Error {
     // error message
     pub message: String,
     // error category
@@ -71,13 +41,20 @@ pub struct HttpError {
     pub extra: Option<Vec<String>>,
 }
 
-impl fmt::Display for HttpError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.message)
+impl From<ValidationErrors> for Error {
+    fn from(error: ValidationErrors) -> Self {
+        Error {
+            message: error.to_string(),
+            category: "validation".to_string(),
+            status: 400,
+            code: "validation_error".to_string(),
+            exception: true,
+            extra: None,
+        }
     }
 }
 
-impl HttpError {
+impl Error {
     pub fn with_category(mut self, category: &str) -> Self {
         self.category = category.to_string();
         self
@@ -109,13 +86,9 @@ impl HttpError {
 // Sets appropriate status code and headers
 impl IntoResponse for Error {
     fn into_response(self) -> Response {
-        let e = match self {
-            Error::Http { error } => error,
-        };
-
-        let status = StatusCode::from_u16(e.status).unwrap_or(StatusCode::BAD_REQUEST);
+        let status = StatusCode::from_u16(self.status).unwrap_or(StatusCode::BAD_REQUEST);
         // for error, set no-cache
-        let mut res = Json(e).into_response();
+        let mut res = Json(self).into_response();
         res.headers_mut()
             .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
         (status, res).into_response()
@@ -123,8 +96,8 @@ impl IntoResponse for Error {
 }
 
 // Creates a new Error with default status code 400 (Bad Request)
-pub fn new_error(message: impl ToString) -> HttpError {
-    HttpError {
+pub fn new_error(message: impl ToString) -> Error {
+    Error {
         message: message.to_string(),
         ..Default::default()
     }
@@ -154,11 +127,10 @@ pub async fn handle_error(
     };
 
     // Create and return appropriate HttpError
-    HttpError {
+    Error {
         message,
         category,
         status,
         ..Default::default()
     }
-    .into()
 }

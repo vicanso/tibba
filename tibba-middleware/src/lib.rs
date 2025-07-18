@@ -40,7 +40,6 @@ impl From<Error> for BaseError {
             .with_sub_category("too_many_requests")
             .with_status(429),
         }
-        .into()
     }
 }
 

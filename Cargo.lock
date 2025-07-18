@@ -4966,6 +4966,7 @@ dependencies = [
  "palette",
  "scopeguard",
  "snafu",
+ "tibba-error",
  "tokio",
 ]
 

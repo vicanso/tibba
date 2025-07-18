@@ -56,7 +56,6 @@ impl From<Error> for BaseError {
                 .with_category(error_category)
                 .with_sub_category("axum"),
         }
-        .into()
     }
 }
 

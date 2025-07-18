@@ -36,10 +36,9 @@ async fn run_web_page_stat() -> Result<(), Error> {
         .await
         .map_err(|e| new_error(e.to_string()))?;
     if browser_less_config.urls.is_empty() {
-        return Err(new_error("browser less urls is empty").into());
+        return Err(new_error("browser less urls is empty"));
     }
-    let browser =
-        new_browser(&browser_less_config.urls[0], None).map_err(|e| new_error(e.to_string()))?;
+    let browser = new_browser(&browser_less_config.urls[0], None)?;
 
     let detectors = WebPageDetectorModel::new()
         .list_enabled_by_region(pool, None, 100, 0)
@@ -56,8 +55,7 @@ async fn run_web_page_stat() -> Result<(), Error> {
         if !detector.user_agent.is_empty() {
             params.user_agent = Some(detector.user_agent);
         }
-        let stat = run_web_page_stat_with_browser(&browser, &params)
-            .map_err(|e| new_error(e.to_string()))?;
+        let stat = run_web_page_stat_with_browser(&browser, &params)?;
 
         if let Some(screenshot) = stat.screenshot {
             let file = format!("{}.png", uuid());

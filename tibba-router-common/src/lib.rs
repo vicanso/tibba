@@ -36,8 +36,7 @@ async fn ping(State(state): State<&'static AppState>) -> Result<&'static str> {
     if !state.is_running() {
         return Err(new_error("Server is not running")
             .with_category(ERROR_CATEGORY)
-            .with_status(503)
-            .into());
+            .with_status(503));
     }
     Ok("pong")
 }

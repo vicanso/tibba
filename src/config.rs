@@ -80,9 +80,7 @@ fn new_basic_config(config: &Config) -> Result<BasicConfig> {
             Some(region)
         },
     };
-    basic_config
-        .validate()
-        .map_err(|e| new_error(e).with_category("config"))?;
+    basic_config.validate()?;
     Ok(basic_config)
 }
 
@@ -113,9 +111,7 @@ fn new_session_config(config: &Config) -> Result<SessionConfig> {
         cookie: config.get_from_env_first("cookie", None),
         max_renewal: config.get_int_from_env_first("max_renewal", Some(52)) as u8,
     };
-    session_config
-        .validate()
-        .map_err(|e| new_error(e).with_category("config"))?;
+    session_config.validate()?;
     Ok(session_config)
 }
 
@@ -145,8 +141,9 @@ fn new_config() -> Result<&'static Config> {
             arr.push(std::str::from_utf8(&data).unwrap_or_default().to_string());
         }
 
-        tibba_config::new_config(arr.iter().map(|s| s.as_str()).collect(), Some("TIBBA_WEB"))
-            .map_err(|e| new_error(e).with_category(category).into())
+        let config =
+            tibba_config::new_config(arr.iter().map(|s| s.as_str()).collect(), Some("TIBBA_WEB"))?;
+        Ok(config)
     })
 }
 

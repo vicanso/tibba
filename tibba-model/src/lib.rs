@@ -53,34 +53,22 @@ impl From<Error> for BaseError {
     fn from(source: Error) -> Self {
         let error_category = "model";
         match source {
-            Error::Sqlx { source } => {
-                let he = new_error(source)
-                    .with_category(error_category)
-                    .with_sub_category("sqlx")
-                    .with_exception(true);
-                he.into()
-            }
-            Error::Json { source } => {
-                let he = new_error(source)
-                    .with_category(error_category)
-                    .with_sub_category("json")
-                    .with_exception(true);
-                he.into()
-            }
-            Error::NotSupported { name } => {
-                let he = new_error(format!("Not supported function: {name}"))
-                    .with_category(error_category)
-                    .with_sub_category("not_supported")
-                    .with_exception(true);
-                he.into()
-            }
-            Error::NotFound => {
-                let he = new_error("Not found")
-                    .with_category(error_category)
-                    .with_sub_category("not_found")
-                    .with_exception(true);
-                he.into()
-            }
+            Error::Sqlx { source } => new_error(source)
+                .with_category(error_category)
+                .with_sub_category("sqlx")
+                .with_exception(true),
+            Error::Json { source } => new_error(source)
+                .with_category(error_category)
+                .with_sub_category("json")
+                .with_exception(true),
+            Error::NotSupported { name } => new_error(format!("Not supported function: {name}"))
+                .with_category(error_category)
+                .with_sub_category("not_supported")
+                .with_exception(true),
+            Error::NotFound => new_error("Not found")
+                .with_category(error_category)
+                .with_sub_category("not_found")
+                .with_exception(true),
         }
     }
 }

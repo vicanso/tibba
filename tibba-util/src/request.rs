@@ -67,16 +67,14 @@ where
             let value: T = match serde_path_to_error::deserialize(deserializer) {
                 Ok(value) => value,
                 Err(err) => {
-                    return Err(new_error(err).with_category("params:serde_json").into());
+                    return Err(new_error(err).with_category("params:serde_json"));
                 }
             };
             value.validate()?;
 
             Ok(JsonParams(value))
         } else {
-            Err(new_error("Missing json content type")
-                .with_category("params:from_json")
-                .into())
+            Err(new_error("Missing json content type").with_category("params:from_json"))
         }
     }
 }

@@ -70,6 +70,5 @@ impl From<Error> for BaseError {
                 .with_status(403)
                 .with_exception(false),
         }
-        .into()
     }
 }

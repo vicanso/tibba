@@ -54,27 +54,18 @@ impl From<Error> for BaseError {
     fn from(source: Error) -> Self {
         let error_category = "open_dal";
         match source {
-            Error::OpenDal { source } => {
-                let he = new_error(source)
-                    .with_category(error_category)
-                    .with_sub_category("opendal")
-                    .with_exception(true);
-                he.into()
-            }
-            Error::ParseUrl { source } => {
-                let he = new_error(source)
-                    .with_category(error_category)
-                    .with_sub_category("parse_url")
-                    .with_exception(true);
-                he.into()
-            }
-            Error::Validate { source } => {
-                let he = new_error(source)
-                    .with_category(error_category)
-                    .with_sub_category("validate")
-                    .with_exception(true);
-                he.into()
-            }
+            Error::OpenDal { source } => new_error(source)
+                .with_category(error_category)
+                .with_sub_category("opendal")
+                .with_exception(true),
+            Error::ParseUrl { source } => new_error(source)
+                .with_category(error_category)
+                .with_sub_category("parse_url")
+                .with_exception(true),
+            Error::Validate { source } => new_error(source)
+                .with_category(error_category)
+                .with_sub_category("validate")
+                .with_exception(true),
         }
     }
 }

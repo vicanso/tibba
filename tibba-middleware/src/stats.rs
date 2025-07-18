@@ -19,7 +19,7 @@ use axum::extract::State;
 use axum::middleware::Next;
 use axum::response::Response;
 use scopeguard::defer;
-use tibba_error::{Error, new_error};
+use tibba_error::Error;
 use tibba_state::{AppState, CTX};
 use tibba_util::{get_header_value, json_get, read_http_body};
 use tracing::{debug, info};
@@ -74,9 +74,7 @@ pub async fn stats(
     if status >= 400 {
         // Decompose response to read body
         let (parts, body) = res.into_parts();
-        let data = read_http_body(body)
-            .await
-            .map_err(|e| new_error(e).with_status(500))?;
+        let data = read_http_body(body).await?;
         // Extract error message from response body
         message = Some(json_get(&data, "message"));
         // Reconstruct response

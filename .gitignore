@@ -23,3 +23,4 @@ report.*
 .shuttle*
 Secrets*.toml
 tmp.png
+Cargo.lock

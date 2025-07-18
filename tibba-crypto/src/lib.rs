@@ -36,7 +36,6 @@ impl From<Error> for BaseError {
                 .with_status(500)
                 .with_exception(true),
         }
-        .into()
     }
 }
 

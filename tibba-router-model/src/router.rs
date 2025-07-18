@@ -26,6 +26,7 @@ use serde_json::{Value, json};
 use sqlx::MySqlPool;
 use std::str::FromStr;
 use std::time::Duration;
+use tibba_error::{Error, new_error};
 use tibba_model::{Model, ModelListParams, SchemaView};
 use tibba_session::AdminSession;
 use tibba_util::{CacheJsonResult, JsonParams, JsonResult, QueryParams};
@@ -38,12 +39,15 @@ struct GetSchemaParams {
     name: String,
 }
 
+fn get_model(name: &str) -> Result<CmsModel, Error> {
+    CmsModel::from_str(name).map_err(|_| new_error("The model is not supported"))
+}
+
 async fn get_schema(
     State(pool): State<&'static MySqlPool>,
     QueryParams(params): QueryParams<GetSchemaParams>,
 ) -> CacheJsonResult<SchemaView> {
-    let model = CmsModel::from_str(params.name.as_str())
-        .map_err(|_| tibba_error::new_error("The model is not supported"))?;
+    let model = get_model(&params.name)?;
     let view = match model {
         CmsModel::User => USER_MODEL.schema_view(pool).await,
         CmsModel::Configuration => CONFIGURATION_MODEL.schema_view(pool).await,
@@ -78,8 +82,7 @@ async fn list_model(
         keyword: params.keyword,
         filters: params.filters,
     };
-    let model = CmsModel::from_str(params.model.as_str())
-        .map_err(|_| tibba_error::new_error("The model is not supported"))?;
+    let model = get_model(&params.model)?;
     let value = match model {
         CmsModel::User => {
             USER_MODEL
@@ -126,8 +129,7 @@ async fn get_detail(
     QueryParams(params): QueryParams<GetModelParams>,
     _session: AdminSession,
 ) -> JsonResult<Value> {
-    let model = CmsModel::from_str(params.model.as_str())
-        .map_err(|_| tibba_error::new_error("The model is not supported"))?;
+    let model = get_model(&params.model)?;
     let data = match model {
         CmsModel::User => {
             let user = USER_MODEL.get_by_id(pool, params.id).await?;
@@ -155,7 +157,7 @@ async fn get_detail(
         }
     };
     if data.is_null() {
-        return Err(tibba_error::new_error("The record is not found").into());
+        return Err(new_error("The record is not found"));
     }
     Ok(Json(data))
 }
@@ -171,8 +173,7 @@ async fn delete_model(
     _session: AdminSession,
     QueryParams(params): QueryParams<DeleteModelParams>,
 ) -> Result<StatusCode, tibba_error::Error> {
-    let model = CmsModel::from_str(params.model.as_str())
-        .map_err(|_| tibba_error::new_error("The model is not supported"))?;
+    let model = get_model(&params.model)?;
     match model {
         CmsModel::User => {
             USER_MODEL.delete_by_id(pool, params.id).await?;
@@ -210,8 +211,7 @@ async fn update_model(
     _session: AdminSession,
     JsonParams(params): JsonParams<UpdateModelParams>,
 ) -> Result<StatusCode, tibba_error::Error> {
-    let model = CmsModel::from_str(params.model.as_str())
-        .map_err(|_| tibba_error::new_error("The model is not supported"))?;
+    let model = get_model(&params.model)?;
     match model {
         CmsModel::User => {
             USER_MODEL
@@ -239,7 +239,7 @@ async fn update_model(
                 .await?;
         }
         _ => {
-            return Err(tibba_error::new_error("The model is not supported").into());
+            return Err(new_error("The model is not supported"));
         }
     }
     Ok(StatusCode::NO_CONTENT)
@@ -256,8 +256,7 @@ async fn create_model(
     session: AdminSession,
     JsonParams(params): JsonParams<CreateModelParams>,
 ) -> JsonResult<Value> {
-    let model = CmsModel::from_str(params.model.as_str())
-        .map_err(|_| tibba_error::new_error("The model is not supported"))?;
+    let model = get_model(&params.model)?;
     let mut data = params.data;
     if let Some(obj) = data.as_object_mut() {
         obj.insert("created_by".to_string(), session.get_user_id().into());
@@ -268,7 +267,7 @@ async fn create_model(
         CmsModel::HttpDetector => HTTP_DETECTOR_MODEL.insert(pool, data).await?,
         CmsModel::WebPageDetector => WEB_PAGE_DETECTOR_MODEL.insert(pool, data).await?,
         _ => {
-            return Err(tibba_error::new_error("The model is not supported").into());
+            return Err(new_error("The model is not supported"));
         }
     };
     Ok(Json(json!({
