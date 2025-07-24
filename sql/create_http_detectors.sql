@@ -20,6 +20,7 @@ CREATE TABLE `http_detectors` (
   `alarm_on_change` BOOLEAN NOT NULL DEFAULT FALSE COMMENT '是否仅在状态变更时推送告警',
   `verbose` BOOLEAN NOT NULL DEFAULT FALSE COMMENT '是否详细输出',
   `regions` JSON NOT NULL DEFAULT (JSON_ARRAY()) COMMENT '触发区域',
+  `group` VARCHAR(50) NOT NULL DEFAULT '' COMMENT '分组',
   `created` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   `created_by` BIGINT UNSIGNED NOT NULL COMMENT '创建人',
   `remark` VARCHAR(1000) NOT NULL DEFAULT '' COMMENT '备注',
@@ -27,5 +28,5 @@ CREATE TABLE `http_detectors` (
   `deleted_at` DATETIME DEFAULT NULL COMMENT '软删除时间',
   PRIMARY KEY (`id`) COMMENT '主键',
   KEY `idx_deleted_at` (`deleted_at`) COMMENT '软删除索引',
-  UNIQUE KEY `name` (`name`, `deleted_at`) COMMENT '名称唯一索引（仅对未删除记录生效）'
+  UNIQUE KEY `name_group` (`name`, `group`, `deleted_at`) COMMENT '名称唯一索引（仅对未删除记录生效）'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT="http_detectors表";

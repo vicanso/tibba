@@ -50,6 +50,7 @@ struct HttpDetectorSchema {
     retries: u8,
     failure_threshold: u8,
     regions: Json<Vec<String>>,
+    group: String,
     verbose: bool,
     created_by: u64,
     remark: String,
@@ -62,6 +63,7 @@ pub struct HttpDetector {
     pub id: u64,
     pub status: i8,
     pub name: String,
+    pub group: String,
     pub interval: u16,
     pub url: String,
     pub method: String,
@@ -92,6 +94,7 @@ impl From<HttpDetectorSchema> for HttpDetector {
             id: schema.id,
             status: schema.status,
             name: schema.name,
+            group: schema.group,
             interval: schema.interval,
             url: schema.url,
             method: schema.method,
@@ -122,6 +125,7 @@ impl From<HttpDetectorSchema> for HttpDetector {
 pub struct HttpDetectorInsertParams {
     pub status: i8,
     pub name: String,
+    pub group: String,
     pub url: String,
     pub method: String,
     pub alpn_protocols: Option<Vec<String>>,
@@ -147,6 +151,7 @@ pub struct HttpDetectorInsertParams {
 pub struct HttpDetectorUpdateParams {
     pub status: Option<i8>,
     pub name: Option<String>,
+    pub group: Option<String>,
     pub url: Option<String>,
     pub method: Option<String>,
     pub alpn_protocols: Option<Vec<String>>,
@@ -221,9 +226,9 @@ impl Model for HttpDetectorModel {
                     ..Default::default()
                 },
                 Schema {
-                    name: "interval".to_string(),
-                    category: SchemaType::Number,
-                    default_value: Some(serde_json::json!(1)),
+                    name: "group".to_string(),
+                    category: SchemaType::String,
+                    required: true,
                     ..Default::default()
                 },
                 Schema {
@@ -231,6 +236,12 @@ impl Model for HttpDetectorModel {
                     span: Some(2),
                     category: SchemaType::String,
                     required: true,
+                    ..Default::default()
+                },
+                Schema {
+                    name: "interval".to_string(),
+                    category: SchemaType::Number,
+                    default_value: Some(serde_json::json!(1)),
                     ..Default::default()
                 },
                 Schema {
@@ -244,6 +255,17 @@ impl Model for HttpDetectorModel {
                     name: "alpn_protocols".to_string(),
                     category: SchemaType::Strings,
                     options: Some(new_schema_options(&["http/1.1", "h2", "h3"])),
+                    ..Default::default()
+                },
+                Schema {
+                    name: "regions".to_string(),
+                    category: SchemaType::Strings,
+                    options: Some(new_schema_options(&[
+                        REGION_ANY,
+                        REGION_TX,
+                        REGION_GZ,
+                        REGION_ALIYUN,
+                    ])),
                     ..Default::default()
                 },
                 Schema {
@@ -307,22 +329,6 @@ impl Model for HttpDetectorModel {
                     ..Default::default()
                 },
                 Schema {
-                    name: "regions".to_string(),
-                    category: SchemaType::Strings,
-                    options: Some(new_schema_options(&[
-                        REGION_ANY,
-                        REGION_TX,
-                        REGION_GZ,
-                        REGION_ALIYUN,
-                    ])),
-                    ..Default::default()
-                },
-                Schema {
-                    name: "placeholder".to_string(),
-                    category: SchemaType::Placeholder,
-                    ..Default::default()
-                },
-                Schema {
                     name: "dns_servers".to_string(),
                     category: SchemaType::Strings,
                     ..Default::default()
@@ -370,10 +376,11 @@ impl Model for HttpDetectorModel {
         let params: HttpDetectorInsertParams =
             serde_json::from_value(params).map_err(|e| Error::Json { source: e })?;
         let result = sqlx::query(
-            r#"INSERT INTO http_detectors (status, name, url, method, alpn_protocols, resolves, headers, ip_version, skip_verify, body, `interval`, script, alarm_url, random_querystring, alarm_on_change, retries, failure_threshold, verbose, regions, created_by, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+            r#"INSERT INTO http_detectors (status, name, group, url, method, alpn_protocols, resolves, headers, ip_version, skip_verify, body, `interval`, script, alarm_url, random_querystring, alarm_on_change, retries, failure_threshold, verbose, regions, created_by, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
         )
         .bind(params.status)
         .bind(params.name)
+        .bind(params.group)
         .bind(params.url)
         .bind(params.method)
         .bind(params.alpn_protocols.map(Json).unwrap_or_default())
@@ -431,10 +438,11 @@ impl Model for HttpDetectorModel {
             serde_json::from_value(params).map_err(|e| Error::Json { source: e })?;
 
         let _ = sqlx::query(
-            r#"UPDATE http_detectors SET status = COALESCE(?, status), name = COALESCE(?, name), url = COALESCE(?, url), method = COALESCE(?, method), alpn_protocols = COALESCE(?, alpn_protocols), resolves = COALESCE(?, resolves), headers = COALESCE(?, headers), ip_version = COALESCE(?, ip_version), skip_verify = COALESCE(?, skip_verify), body = COALESCE(?, body), `interval` = COALESCE(?, `interval`), script = COALESCE(?, script), alarm_url = COALESCE(?, alarm_url), random_querystring = COALESCE(?, random_querystring), alarm_on_change = COALESCE(?, alarm_on_change), retries = COALESCE(?, retries), failure_threshold = COALESCE(?, failure_threshold), verbose = COALESCE(?, verbose), regions = COALESCE(?, regions), remark = COALESCE(?, remark) WHERE id = ? AND deleted_at IS NULL"#,
+            r#"UPDATE http_detectors SET status = COALESCE(?, status), name = COALESCE(?, name), group = COALESCE(?, group), url = COALESCE(?, url), method = COALESCE(?, method), alpn_protocols = COALESCE(?, alpn_protocols), resolves = COALESCE(?, resolves), headers = COALESCE(?, headers), ip_version = COALESCE(?, ip_version), skip_verify = COALESCE(?, skip_verify), body = COALESCE(?, body), `interval` = COALESCE(?, `interval`), script = COALESCE(?, script), alarm_url = COALESCE(?, alarm_url), random_querystring = COALESCE(?, random_querystring), alarm_on_change = COALESCE(?, alarm_on_change), retries = COALESCE(?, retries), failure_threshold = COALESCE(?, failure_threshold), verbose = COALESCE(?, verbose), regions = COALESCE(?, regions), remark = COALESCE(?, remark) WHERE id = ? AND deleted_at IS NULL"#,
         )
         .bind(params.status)
         .bind(params.name)
+        .bind(params.group)
         .bind(params.url)
         .bind(params.method)
         .bind(params.alpn_protocols.map(Json))

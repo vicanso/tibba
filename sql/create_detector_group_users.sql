@@ -1,0 +1,21 @@
+CREATE TABLE `detector_group_users` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+  `user_id` BIGINT UNSIGNED NOT NULL COMMENT '用户ID',
+  `group_id` BIGINT UNSIGNED NOT NULL COMMENT '组ID',
+  `role` VARCHAR(50) NOT NULL DEFAULT 'member' COMMENT '用户在组中的角色：owner-所有者，admin-管理员，member-成员，viewer-查看者',
+  `permissions` JSON NOT NULL DEFAULT (JSON_OBJECT()) COMMENT '用户在该组中的具体权限配置',
+  `status` TINYINT NOT NULL DEFAULT '1' COMMENT '状态，0：禁用，1：启用',
+  `effective_start_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '生效开始时间',
+  `effective_end_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '生效结束时间',
+  `invited_by` BIGINT UNSIGNED DEFAULT NULL COMMENT '邀请人ID',
+  `remark` VARCHAR(500) NOT NULL DEFAULT '' COMMENT '备注',
+  `created` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `created_by` BIGINT UNSIGNED NOT NULL COMMENT '创建人',
+  `modified` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  `deleted_at` DATETIME DEFAULT NULL COMMENT '软删除时间',
+  PRIMARY KEY (`id`) COMMENT '主键',
+  KEY `idx_deleted_at` (`deleted_at`) COMMENT '软删除索引',
+  KEY `idx_effective_time` (`status`, `effective_start_time`, `effective_end_time`, `deleted_at`) COMMENT '状态和生效时间索引（包含软删除）',
+  UNIQUE KEY `uk_user_group` (`user_id`, `group_id`, `deleted_at`) COMMENT '用户组关系唯一索引（仅对未删除记录生效）',
+  INDEX `idx_group_status` (`group_id`, `status`) COMMENT '组状态复合索引'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT="检测器组用户关系表";
