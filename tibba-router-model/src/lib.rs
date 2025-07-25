@@ -15,8 +15,8 @@
 use once_cell::sync::Lazy;
 use strum::EnumString;
 use tibba_model::{
-    ConfigurationModel, FileModel, HttpDetectorModel, HttpStatModel, Model, UserModel,
-    WebPageDetectorModel,
+    ConfigurationModel, DetectorGroupModel, FileModel, HttpDetectorModel, HttpStatModel, Model,
+    UserModel, WebPageDetectorModel,
 };
 
 mod router;
@@ -30,6 +30,7 @@ enum CmsModel {
     HttpDetector,
     HttpStat,
     WebPageDetector,
+    DetectorGroup,
 }
 
 pub static USER_MODEL: Lazy<UserModel> = Lazy::new(UserModel::new);
@@ -39,5 +40,6 @@ pub static HTTP_DETECTOR_MODEL: Lazy<HttpDetectorModel> = Lazy::new(HttpDetector
 pub static HTTP_STAT_MODEL: Lazy<HttpStatModel> = Lazy::new(HttpStatModel::new);
 pub static WEB_PAGE_DETECTOR_MODEL: Lazy<WebPageDetectorModel> =
     Lazy::new(WebPageDetectorModel::new);
+pub static DETECTOR_GROUP_MODEL: Lazy<DetectorGroupModel> = Lazy::new(DetectorGroupModel::new);
 
 pub use router::*;

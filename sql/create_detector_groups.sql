@@ -2,7 +2,6 @@ CREATE TABLE `detector_groups` (
   `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键ID',
   `name` VARCHAR(255) NOT NULL COMMENT '组名称',
   `code` VARCHAR(100) NOT NULL COMMENT '组代码，用于程序标识',
-  `description` TEXT NOT NULL DEFAULT '' COMMENT '组描述',
   `owner_id` BIGINT UNSIGNED NOT NULL COMMENT '组所有者ID',
   `status` TINYINT NOT NULL DEFAULT '1' COMMENT '状态，0：禁用，1：启用',
   `remark` VARCHAR(1000) NOT NULL DEFAULT '' COMMENT '备注',

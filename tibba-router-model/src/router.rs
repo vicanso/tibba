@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use crate::{
-    CONFIGURATION_MODEL, CmsModel, FILE_MODEL, HTTP_DETECTOR_MODEL, HTTP_STAT_MODEL, USER_MODEL,
-    WEB_PAGE_DETECTOR_MODEL,
+    CONFIGURATION_MODEL, CmsModel, DETECTOR_GROUP_MODEL, FILE_MODEL, HTTP_DETECTOR_MODEL,
+    HTTP_STAT_MODEL, USER_MODEL, WEB_PAGE_DETECTOR_MODEL,
 };
 use axum::Json;
 use axum::Router;
@@ -55,6 +55,7 @@ async fn get_schema(
         CmsModel::HttpDetector => HTTP_DETECTOR_MODEL.schema_view(pool).await,
         CmsModel::HttpStat => HTTP_STAT_MODEL.schema_view(pool).await,
         CmsModel::WebPageDetector => WEB_PAGE_DETECTOR_MODEL.schema_view(pool).await,
+        CmsModel::DetectorGroup => DETECTOR_GROUP_MODEL.schema_view(pool).await,
     };
     Ok((Duration::from_secs(5 * 60), view).into())
 }
@@ -114,6 +115,11 @@ async fn list_model(
                 .list_and_count(pool, params.count, &query_params)
                 .await?
         }
+        CmsModel::DetectorGroup => {
+            DETECTOR_GROUP_MODEL
+                .list_and_count(pool, params.count, &query_params)
+                .await?
+        }
     };
     Ok(Json(value))
 }
@@ -155,6 +161,10 @@ async fn get_detail(
             let detector = WEB_PAGE_DETECTOR_MODEL.get_by_id(pool, params.id).await?;
             json!(detector)
         }
+        CmsModel::DetectorGroup => {
+            let group = DETECTOR_GROUP_MODEL.get_by_id(pool, params.id).await?;
+            json!(group)
+        }
     };
     if data.is_null() {
         return Err(new_error("The record is not found"));
@@ -194,6 +204,9 @@ async fn delete_model(
             WEB_PAGE_DETECTOR_MODEL
                 .delete_by_id(pool, params.id)
                 .await?;
+        }
+        CmsModel::DetectorGroup => {
+            DETECTOR_GROUP_MODEL.delete_by_id(pool, params.id).await?;
         }
     }
     Ok(StatusCode::NO_CONTENT)
@@ -238,6 +251,11 @@ async fn update_model(
                 .update_by_id(pool, params.id, params.data)
                 .await?;
         }
+        CmsModel::DetectorGroup => {
+            DETECTOR_GROUP_MODEL
+                .update_by_id(pool, params.id, params.data)
+                .await?;
+        }
         _ => {
             return Err(new_error("The model is not supported"));
         }
@@ -258,14 +276,21 @@ async fn create_model(
 ) -> JsonResult<Value> {
     let model = get_model(&params.model)?;
     let mut data = params.data;
+    let user_id = session.get_user_id();
     if let Some(obj) = data.as_object_mut() {
-        obj.insert("created_by".to_string(), session.get_user_id().into());
+        obj.insert("created_by".to_string(), user_id.into());
     }
 
     let id = match model {
         CmsModel::Configuration => CONFIGURATION_MODEL.insert(pool, data).await?,
         CmsModel::HttpDetector => HTTP_DETECTOR_MODEL.insert(pool, data).await?,
         CmsModel::WebPageDetector => WEB_PAGE_DETECTOR_MODEL.insert(pool, data).await?,
+        CmsModel::DetectorGroup => {
+            if let Some(obj) = data.as_object_mut() {
+                obj.insert("owner_id".to_string(), user_id.into());
+            }
+            DETECTOR_GROUP_MODEL.insert(pool, data).await?
+        }
         _ => {
             return Err(new_error("The model is not supported"));
         }

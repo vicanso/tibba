@@ -31,7 +31,6 @@ struct DetectorGroupSchema {
     id: u64,
     name: String,
     code: String,
-    description: String,
     owner_id: u64,
     status: i8,
     remark: String,
@@ -45,7 +44,6 @@ pub struct DetectorGroup {
     pub id: u64,
     pub name: String,
     pub code: String,
-    pub description: String,
     pub owner_id: u64,
     pub status: i8,
     pub created_by: u64,
@@ -60,7 +58,6 @@ impl From<DetectorGroupSchema> for DetectorGroup {
             id: schema.id,
             name: schema.name,
             code: schema.code,
-            description: schema.description,
             owner_id: schema.owner_id,
             status: schema.status,
             created_by: schema.created_by,
@@ -75,8 +72,8 @@ impl From<DetectorGroupSchema> for DetectorGroup {
 pub struct DetectorGroupInsertParams {
     pub name: String,
     pub code: String,
-    pub description: String,
     pub owner_id: u64,
+    pub created_by: u64,
     pub status: i8,
     pub remark: String,
 }
@@ -84,7 +81,6 @@ pub struct DetectorGroupInsertParams {
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct DetectorGroupUpdateParams {
     pub name: Option<String>,
-    pub description: Option<String>,
     pub owner_id: Option<u64>,
     pub status: Option<i8>,
     pub remark: Option<String>,
@@ -129,14 +125,10 @@ impl Model for DetectorGroupModel {
                     ..Default::default()
                 },
                 Schema {
-                    name: "description".to_string(),
-                    category: SchemaType::String,
-                    ..Default::default()
-                },
-                Schema {
                     name: "owner_id".to_string(),
                     category: SchemaType::Number,
                     read_only: true,
+                    auto_create: true,
                     ..Default::default()
                 },
                 Schema::new_status(),
@@ -170,12 +162,12 @@ impl Model for DetectorGroupModel {
         let params: DetectorGroupInsertParams =
             serde_json::from_value(params).map_err(|e| Error::Json { source: e })?;
         let result = sqlx::query(
-            r#"INSERT INTO detector_groups (name, code, description, owner_id, status, remark) VALUES (?, ?, ?, ?, ?, ?)"#,
+            r#"INSERT INTO detector_groups (name, code, owner_id, created_by, status, remark) VALUES (?, ?, ?, ?, ?, ?)"#,
         )
         .bind(params.name)
         .bind(params.code)
-        .bind(params.description)
         .bind(params.owner_id)
+        .bind(params.created_by)
         .bind(params.status)
         .bind(params.remark)
         .execute(pool)
@@ -217,10 +209,9 @@ impl Model for DetectorGroupModel {
             serde_json::from_value(params).map_err(|e| Error::Json { source: e })?;
 
         let _ = sqlx::query(
-            r#"UPDATE detector_groups SET name = COALESCE(?, name), description = COALESCE(?, description), owner_id = COALESCE(?, owner_id), status = COALESCE(?, status), remark = COALESCE(?, remark) WHERE id = ? AND deleted_at IS NULL"#,
+            r#"UPDATE detector_groups SET name = COALESCE(?, name), owner_id = COALESCE(?, owner_id), status = COALESCE(?, status), remark = COALESCE(?, remark) WHERE id = ? AND deleted_at IS NULL"#,
         )
         .bind(params.name)
-        .bind(params.description)
         .bind(params.owner_id)
         .bind(params.status)
         .bind(params.remark)

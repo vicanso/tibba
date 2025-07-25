@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use super::{
-    Error, Model, ModelListParams, Schema, SchemaAllowCreate, SchemaAllowEdit, SchemaType,
-    SchemaView, format_datetime, new_schema_options,
+    DetectorGroupModel, Error, Model, ModelListParams, Schema, SchemaAllowCreate, SchemaAllowEdit,
+    SchemaOption, SchemaOptionValue, SchemaType, SchemaView, format_datetime, new_schema_options,
 };
 use super::{REGION_ALIYUN, REGION_ANY, REGION_GZ, REGION_TX};
 use async_trait::async_trait;
@@ -214,7 +214,18 @@ impl Model for HttpDetectorModel {
     fn new() -> Self {
         Self {}
     }
-    async fn schema_view(&self, _pool: &Pool<MySql>) -> SchemaView {
+    async fn schema_view(&self, pool: &Pool<MySql>) -> SchemaView {
+        let mut group_options = vec![];
+        let group_model = DetectorGroupModel {};
+        if let Ok(groups) = group_model.list_enabled(pool).await {
+            for group in groups {
+                group_options.push(SchemaOption {
+                    label: group.name,
+                    value: SchemaOptionValue::String(group.id.to_string()),
+                });
+            }
+            group_options.sort_by_key(|option| option.label.clone());
+        }
         SchemaView {
             schemas: vec![
                 Schema::new_id(),
@@ -229,6 +240,7 @@ impl Model for HttpDetectorModel {
                     name: "group".to_string(),
                     category: SchemaType::String,
                     required: true,
+                    options: Some(group_options),
                     ..Default::default()
                 },
                 Schema {
@@ -241,7 +253,7 @@ impl Model for HttpDetectorModel {
                 Schema {
                     name: "interval".to_string(),
                     category: SchemaType::Number,
-                    default_value: Some(serde_json::json!(1)),
+                    default_value: Some(serde_json::json!(5)),
                     ..Default::default()
                 },
                 Schema {
@@ -376,7 +388,7 @@ impl Model for HttpDetectorModel {
         let params: HttpDetectorInsertParams =
             serde_json::from_value(params).map_err(|e| Error::Json { source: e })?;
         let result = sqlx::query(
-            r#"INSERT INTO http_detectors (status, name, group, url, method, alpn_protocols, resolves, headers, ip_version, skip_verify, body, `interval`, script, alarm_url, random_querystring, alarm_on_change, retries, failure_threshold, verbose, regions, created_by, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+            r#"INSERT INTO http_detectors (status, name, `group`, url, method, alpn_protocols, resolves, headers, ip_version, skip_verify, body, `interval`, script, alarm_url, random_querystring, alarm_on_change, retries, failure_threshold, verbose, regions, created_by, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
         )
         .bind(params.status)
         .bind(params.name)
