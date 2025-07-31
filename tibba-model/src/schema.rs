@@ -49,6 +49,7 @@ pub enum SchemaType {
 pub enum SchemaOptionValue {
     String(String),
     Number(f64),
+    Integer(i64),
 }
 
 impl Serialize for SchemaOptionValue {
@@ -59,6 +60,7 @@ impl Serialize for SchemaOptionValue {
         match self {
             SchemaOptionValue::String(s) => serializer.serialize_str(s),
             SchemaOptionValue::Number(n) => serializer.serialize_f64(*n),
+            SchemaOptionValue::Integer(i) => serializer.serialize_i64(*i),
         }
     }
 }
