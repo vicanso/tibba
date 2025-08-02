@@ -28,5 +28,5 @@ CREATE TABLE `http_detectors` (
   `deleted_at` DATETIME DEFAULT NULL COMMENT '软删除时间',
   PRIMARY KEY (`id`) COMMENT '主键',
   KEY `idx_deleted_at` (`deleted_at`) COMMENT '软删除索引',
-  UNIQUE KEY `name_group` (`name`, `group`, `deleted_at`) COMMENT '名称唯一索引（仅对未删除记录生效）'
+  UNIQUE KEY `name_group_id` (`name`, `group_id`, `deleted_at`) COMMENT '名称唯一索引（仅对未删除记录生效）'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT="http_detectors表";

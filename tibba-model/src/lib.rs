@@ -195,6 +195,7 @@ impl ModelListParams {
 
 mod configuration;
 mod detector_group;
+mod detector_group_user;
 mod file;
 mod http_detector;
 mod http_stat;
@@ -204,6 +205,7 @@ mod web_page_detector;
 
 pub use configuration::*;
 pub use detector_group::*;
+pub use detector_group_user::*;
 pub use file::*;
 pub use http_detector::*;
 pub use http_stat::*;

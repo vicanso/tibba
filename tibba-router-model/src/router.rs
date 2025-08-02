@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::DETECTOR_GROUP_USER_MODEL;
 use crate::{
     CONFIGURATION_MODEL, CmsModel, DETECTOR_GROUP_MODEL, FILE_MODEL, HTTP_DETECTOR_MODEL,
     HTTP_STAT_MODEL, USER_MODEL, WEB_PAGE_DETECTOR_MODEL,
@@ -56,6 +57,7 @@ async fn get_schema(
         CmsModel::HttpStat => HTTP_STAT_MODEL.schema_view(pool).await,
         CmsModel::WebPageDetector => WEB_PAGE_DETECTOR_MODEL.schema_view(pool).await,
         CmsModel::DetectorGroup => DETECTOR_GROUP_MODEL.schema_view(pool).await,
+        CmsModel::DetectorGroupUser => DETECTOR_GROUP_USER_MODEL.schema_view(pool).await,
     };
     Ok((Duration::from_secs(5 * 60), view).into())
 }
@@ -120,6 +122,11 @@ async fn list_model(
                 .list_and_count(pool, params.count, &query_params)
                 .await?
         }
+        CmsModel::DetectorGroupUser => {
+            DETECTOR_GROUP_USER_MODEL
+                .list_and_count(pool, params.count, &query_params)
+                .await?
+        }
     };
     Ok(Json(value))
 }
@@ -165,6 +172,10 @@ async fn get_detail(
             let group = DETECTOR_GROUP_MODEL.get_by_id(pool, params.id).await?;
             json!(group)
         }
+        CmsModel::DetectorGroupUser => {
+            let user = DETECTOR_GROUP_USER_MODEL.get_by_id(pool, params.id).await?;
+            json!(user)
+        }
     };
     if data.is_null() {
         return Err(new_error("The record is not found"));
@@ -207,6 +218,11 @@ async fn delete_model(
         }
         CmsModel::DetectorGroup => {
             DETECTOR_GROUP_MODEL.delete_by_id(pool, params.id).await?;
+        }
+        CmsModel::DetectorGroupUser => {
+            DETECTOR_GROUP_USER_MODEL
+                .delete_by_id(pool, params.id)
+                .await?;
         }
     }
     Ok(StatusCode::NO_CONTENT)
@@ -256,6 +272,11 @@ async fn update_model(
                 .update_by_id(pool, params.id, params.data)
                 .await?;
         }
+        CmsModel::DetectorGroupUser => {
+            DETECTOR_GROUP_USER_MODEL
+                .update_by_id(pool, params.id, params.data)
+                .await?;
+        }
         _ => {
             return Err(new_error("The model is not supported"));
         }
@@ -291,6 +312,7 @@ async fn create_model(
             }
             DETECTOR_GROUP_MODEL.insert(pool, data).await?
         }
+        CmsModel::DetectorGroupUser => DETECTOR_GROUP_USER_MODEL.insert(pool, data).await?,
         _ => {
             return Err(new_error("The model is not supported"));
         }

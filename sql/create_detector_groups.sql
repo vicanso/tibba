@@ -13,4 +13,4 @@ CREATE TABLE `detector_groups` (
   KEY `idx_deleted_at` (`deleted_at`) COMMENT '软删除索引',
   KEY `idx_owner_id` (`owner_id`) COMMENT '所有者索引',
   UNIQUE KEY `uk_code` (`code`, `deleted_at`) COMMENT '组代码唯一索引（仅对未删除记录生效）'
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT="检测器组表";
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT="检测器分组表";

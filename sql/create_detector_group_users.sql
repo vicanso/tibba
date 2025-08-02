@@ -2,8 +2,7 @@ CREATE TABLE `detector_group_users` (
   `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键ID',
   `user_id` BIGINT UNSIGNED NOT NULL COMMENT '用户ID',
   `group_id` BIGINT UNSIGNED NOT NULL COMMENT '组ID',
-  `role` VARCHAR(50) NOT NULL DEFAULT 'member' COMMENT '用户在组中的角色：owner-所有者，admin-管理员，member-成员，viewer-查看者',
-  `permissions` JSON NOT NULL DEFAULT (JSON_OBJECT()) COMMENT '用户在该组中的具体权限配置',
+  `role` TINYINT NOT NULL DEFAULT '3' COMMENT '用户在组中的角色：1-所有者，2-管理员，3-成员，4-查看者',
   `status` TINYINT NOT NULL DEFAULT '1' COMMENT '状态，0：禁用，1：启用',
   `effective_start_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '生效开始时间',
   `effective_end_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '生效结束时间',
@@ -18,4 +17,4 @@ CREATE TABLE `detector_group_users` (
   KEY `idx_effective_time` (`status`, `effective_start_time`, `effective_end_time`, `deleted_at`) COMMENT '状态和生效时间索引（包含软删除）',
   UNIQUE KEY `uk_user_group` (`user_id`, `group_id`, `deleted_at`) COMMENT '用户组关系唯一索引（仅对未删除记录生效）',
   INDEX `idx_group_status` (`group_id`, `status`) COMMENT '组状态复合索引'
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT="检测器组用户关系表";
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT="检测器分组用户关系表";
