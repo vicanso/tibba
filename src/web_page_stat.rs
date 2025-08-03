@@ -31,6 +31,14 @@ struct BrowserLessConfig {
 
 async fn run_web_page_stat() -> Result<(), Error> {
     let pool = get_db_pool();
+    let detectors = WebPageDetectorModel::new()
+        .list_enabled_by_region(pool, None, 100, 0)
+        .await?;
+
+    if detectors.is_empty() {
+        return Ok(());
+    }
+
     let browser_less_config: BrowserLessConfig = ConfigurationModel::new()
         .get_config(pool, "app", "browserless")
         .await
@@ -40,9 +48,6 @@ async fn run_web_page_stat() -> Result<(), Error> {
     }
     let browser = new_browser(&browser_less_config.urls[0], None)?;
 
-    let detectors = WebPageDetectorModel::new()
-        .list_enabled_by_region(pool, None, 100, 0)
-        .await?;
     for detector in detectors {
         println!("detector: {detector:?}");
         let mut params = WebPageParams {

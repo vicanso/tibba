@@ -80,6 +80,9 @@ impl Error {
         self.exception = exception;
         self
     }
+    pub fn to_string(&self) -> String {
+        self.message.clone()
+    }
 }
 
 // Implements conversion of Error into HTTP Response
