@@ -28,18 +28,15 @@ pub enum Error {
 
 impl From<Error> for BaseError {
     fn from(val: Error) -> Self {
-        let error_category = "middleware";
-        match val {
-            Error::Common { message, category } => new_error(&message)
-                .with_category(error_category)
-                .with_sub_category(&category),
+        let err = match val {
+            Error::Common { message, category } => new_error(&message).with_sub_category(&category),
             Error::TooManyRequests { limit, current } => new_error(format!(
                 "Too many requests, limit: {limit}, current: {current}"
             ))
-            .with_category(error_category)
             .with_sub_category("too_many_requests")
             .with_status(429),
-        }
+        };
+        err.with_category("middleware")
     }
 }
 

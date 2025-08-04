@@ -13,80 +13,73 @@
 // limitations under the License.
 
 // Import required dependencies for HTTP handling, serialization, and logging
-use axum::BoxError;
 use axum::Json;
 use axum::http::{HeaderValue, StatusCode, header};
-use axum::http::{Method, Uri};
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 use snafu::Snafu;
-use tracing::error;
-use validator::ValidationErrors;
 
-// Main Error enum that wraps HttpError
-// Uses Snafu for error handling boilerplate generation
+/// Main Error enum that wraps HttpError
+/// Uses Snafu for error handling boilerplate generation
 #[derive(Debug, Snafu, Default, Serialize, Deserialize)]
+#[snafu(display("{message}"))]
 pub struct Error {
-    // error message
-    pub message: String,
-    // error category
-    pub category: String,
-    // error code
-    pub code: String,
     // HTTP status code
     pub status: u16,
+    // error category
+    pub category: String,
+    // error message
+    pub message: String,
+    // sub-category
+    pub sub_category: Option<String>,
+    // error code
+    pub code: Option<String>,
     // whether it is an exception
-    pub exception: bool,
+    pub exception: Option<bool>,
     // other extra information
-    pub extra: Option<Vec<String>>,
-}
-
-impl From<ValidationErrors> for Error {
-    fn from(error: ValidationErrors) -> Self {
-        Error {
-            message: error.to_string(),
-            category: "validation".to_string(),
-            status: 400,
-            code: "validation_error".to_string(),
-            exception: true,
-            extra: None,
-        }
-    }
+    pub extra: Option<Box<Vec<String>>>,
 }
 
 impl Error {
+    /// Sets the error category
     pub fn with_category(mut self, category: &str) -> Self {
         self.category = category.to_string();
         self
     }
+    /// Sets the sub-category
     pub fn with_sub_category(mut self, sub_category: &str) -> Self {
-        if self.category.is_empty() {
-            self.category = sub_category.to_string();
-        } else {
-            self.category = format!("{}.{}", self.category, sub_category);
-        }
+        self.sub_category = Some(sub_category.to_string());
         self
     }
-
+    /// Sets the error code
     pub fn with_code(mut self, code: &str) -> Self {
-        self.code = code.to_string();
+        self.code = Some(code.to_string());
         self
     }
+    /// Sets the HTTP status code
     pub fn with_status(mut self, status: u16) -> Self {
         self.status = status;
         self
     }
+    /// Sets whether it is an exception
     pub fn with_exception(mut self, exception: bool) -> Self {
-        self.exception = exception;
+        self.exception = Some(exception);
         self
     }
-    pub fn to_string(&self) -> String {
-        self.message.clone()
+    /// Adds extra information
+    pub fn add_extra(mut self, value: impl ToString) -> Self {
+        if self.extra.is_none() {
+            self.extra = Some(Box::new(vec![]));
+        }
+        if let Some(extra) = self.extra.as_mut() {
+            extra.push(value.to_string());
+        }
+        self
     }
 }
 
-// Implements conversion of Error into HTTP Response
-// Sets appropriate status code and headers
+/// Implements conversion of Error into HTTP Response
+/// Sets appropriate status code and headers
 impl IntoResponse for Error {
     fn into_response(self) -> Response {
         let status = StatusCode::from_u16(self.status).unwrap_or(StatusCode::BAD_REQUEST);
@@ -98,42 +91,10 @@ impl IntoResponse for Error {
     }
 }
 
-// Creates a new Error with default status code 400 (Bad Request)
+/// Creates a new Error with error message
 pub fn new_error(message: impl ToString) -> Error {
     Error {
         message: message.to_string(),
-        ..Default::default()
-    }
-}
-
-// Global error handler for the application
-// Processes unhandled errors and converts them into appropriate Error responses
-// Handles special cases like timeout errors
-pub async fn handle_error(
-    method: Method, // HTTP method of the request
-    uri: Uri,       // URI of the request
-    err: BoxError,  // The error that occurred
-) -> Error {
-    // Log the error with request details
-    error!("method:{}, uri:{}, error:{}", method, uri, err.to_string());
-
-    // Special handling for timeout errors
-    // Otherwise treats as internal server error (500)
-    let (message, category, status) = if err.is::<tower::timeout::error::Elapsed>() {
-        (
-            "Request took too long".to_string(),
-            "timeout".to_string(),
-            408,
-        )
-    } else {
-        (err.to_string(), "exception".to_string(), 500)
-    };
-
-    // Create and return appropriate HttpError
-    Error {
-        message,
-        category,
-        status,
         ..Default::default()
     }
 }

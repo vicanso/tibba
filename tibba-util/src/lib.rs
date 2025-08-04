@@ -38,24 +38,20 @@ pub enum Error {
 
 impl From<Error> for BaseError {
     fn from(val: Error) -> Self {
-        let error_category = "util";
-        match val {
-            Error::Zstd { source } => new_error(source)
-                .with_category(error_category)
-                .with_sub_category("zstd"),
-            Error::Lz4Decompress { source } => new_error(source)
-                .with_category(error_category)
-                .with_sub_category("lz4_decompress"),
-            Error::InvalidHeaderName { source } => new_error(source)
-                .with_category(error_category)
-                .with_sub_category("invalid_header_name"),
-            Error::InvalidHeaderValue { source } => new_error(source)
-                .with_category(error_category)
-                .with_sub_category("invalid_header_value"),
-            Error::Axum { source } => new_error(source)
-                .with_category(error_category)
-                .with_sub_category("axum"),
-        }
+        let err = match val {
+            Error::Zstd { source } => new_error(source).with_sub_category("zstd"),
+            Error::Lz4Decompress { source } => {
+                new_error(source).with_sub_category("lz4_decompress")
+            }
+            Error::InvalidHeaderName { source } => {
+                new_error(source).with_sub_category("invalid_header_name")
+            }
+            Error::InvalidHeaderValue { source } => {
+                new_error(source).with_sub_category("invalid_header_value")
+            }
+            Error::Axum { source } => new_error(source).with_sub_category("axum"),
+        };
+        err.with_category("util")
     }
 }
 

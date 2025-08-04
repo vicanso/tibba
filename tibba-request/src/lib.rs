@@ -46,17 +46,10 @@ pub enum Error {
 
 impl From<Error> for BaseError {
     fn from(val: Error) -> Self {
-        let error_category = "request";
-        match val {
-            Error::Common { service, message } => new_error(message)
-                .with_category(error_category)
-                .with_sub_category(&service),
-            Error::Build { service, source } => new_error(source)
-                .with_category(error_category)
-                .with_sub_category(&service),
-            Error::Uri { service, source } => new_error(source)
-                .with_category(error_category)
-                .with_sub_category(&service),
+        let err = match val {
+            Error::Common { service, message } => new_error(message).with_sub_category(&service),
+            Error::Build { service, source } => new_error(source).with_sub_category(&service),
+            Error::Uri { service, source } => new_error(source).with_sub_category(&service),
             Error::Request {
                 service,
                 path: _,
@@ -65,15 +58,13 @@ impl From<Error> for BaseError {
                 let status = source.status().map_or(400, |v| v.as_u16());
                 let exception = source.is_timeout() || source.is_request() || source.is_connect();
                 new_error(source)
-                    .with_category(error_category)
                     .with_sub_category(&service)
                     .with_status(status)
                     .with_exception(exception)
             }
-            Error::Serde { service, source } => new_error(source)
-                .with_category(error_category)
-                .with_sub_category(&service),
-        }
+            Error::Serde { service, source } => new_error(source).with_sub_category(&service),
+        };
+        err.with_category("request")
     }
 }
 

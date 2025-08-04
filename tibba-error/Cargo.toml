@@ -8,9 +8,6 @@ name = "tibba_error"
 path = "src/lib.rs"
 
 [dependencies]
-snafu = { workspace = true }
 axum = { workspace = true }
 serde = { workspace = true }
-tracing = { workspace = true }
-tower = { workspace = true }
-validator = { workspace = true }
+snafu = { workspace = true }

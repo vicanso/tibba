@@ -10,15 +10,15 @@ path = "src/lib.rs"
 
 [dependencies]
 axum = { workspace = true }
-serde = { workspace = true }
-validator = { workspace = true }
-sqlx = { workspace = true }
 image = { workspace = true }
-mime_guess = { workspace = true }
-tibba-opendal = { path = "../tibba-opendal" }
-tibba-util = { path = "../tibba-util" }
-tibba-error = { path = "../tibba-error" }
-tibba-validator = { path = "../tibba-validator" }
-tibba-session = { path = "../tibba-session" }
-tibba-model = { path = "../tibba-model" }
 imageoptimize = "0.2.1"
+mime_guess = { workspace = true }
+serde = { workspace = true }
+sqlx = { workspace = true }
+tibba-error = { path = "../tibba-error" }
+tibba-model = { path = "../tibba-model" }
+tibba-opendal = { path = "../tibba-opendal" }
+tibba-session = { path = "../tibba-session" }
+tibba-util = { path = "../tibba-util" }
+tibba-validator = { path = "../tibba-validator" }
+validator = { workspace = true }

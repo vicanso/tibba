@@ -9,15 +9,15 @@ name = "tibba_router_common"
 path = "src/lib.rs"
 
 [dependencies]
-hostname = "0.4.1"
 axum = { workspace = true }
-serde = { workspace = true }
-os_info = { workspace = true }
-humantime = { workspace = true }
-captcha = { workspace = true }
 base64 = { workspace = true }
-validator = { workspace = true }
-tibba-state = { path = "../tibba-state" }
-tibba-error = { path = "../tibba-error" }
-tibba-util = { path = "../tibba-util" }
+captcha = { workspace = true }
+hostname = "0.4.1"
+humantime = { workspace = true }
+os_info = { workspace = true }
+serde = { workspace = true }
 tibba-cache = { path = "../tibba-cache" }
+tibba-error = { path = "../tibba-error" }
+tibba-state = { path = "../tibba-state" }
+tibba-util = { path = "../tibba-util" }
+validator = { workspace = true }

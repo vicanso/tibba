@@ -8,25 +8,25 @@ name = "tibba_util"
 path = "src/lib.rs"
 
 [dependencies]
-snafu = { workspace = true }
-uuid = { workspace = true }
-nanoid = { workspace = true }
-chrono = { workspace = true }
-lz4_flex = { workspace = true }
-zstd = { workspace = true }
 axum = { workspace = true }
-http-body-util = { workspace = true }
 axum-extra = { workspace = true }
+chrono = { workspace = true }
 cookie = { workspace = true }
-serde_json = { workspace = true }
-humantime = { workspace = true }
-serde = { workspace = true }
-validator = { workspace = true }
-sha2 = { workspace = true }
-serde_urlencoded = { workspace = true }
 hex = { workspace = true }
+humantime = { workspace = true }
+http-body-util = { workspace = true }
+lz4_flex = { workspace = true }
+nanoid = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 serde_path_to_error = { workspace = true }
+serde_urlencoded = { workspace = true }
+sha2 = { workspace = true }
+snafu = { workspace = true }
 tibba-error = { path = "../tibba-error" }
+uuid = { workspace = true }
+validator = { workspace = true }
+zstd = { workspace = true }
 
 [dev-dependencies]
 pretty_assertions = "1.4.1"

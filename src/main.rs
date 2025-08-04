@@ -14,14 +14,15 @@
 
 use crate::router::new_router;
 use crate::state::get_app_state;
+use axum::BoxError;
 use axum::Router;
 use axum::error_handling::HandleErrorLayer;
+use axum::http::{Method, Uri};
 use axum::middleware::from_fn_with_state;
 use std::env;
 use std::net::SocketAddr;
 use std::str::FromStr;
 use std::time::Duration;
-use tibba_error::handle_error;
 use tibba_hook::{register_after_task, run_after_tasks, run_before_tasks};
 use tibba_middleware::{entry, processing_limit, session, stats};
 use tibba_scheduler::run_scheduler_jobs;
@@ -41,6 +42,38 @@ mod router;
 mod sql;
 mod state;
 mod web_page_stat;
+
+// Global error handler for the application
+// Processes unhandled errors and converts them into appropriate Error responses
+// Handles special cases like timeout errors
+pub async fn handle_error(
+    method: Method, // HTTP method of the request
+    uri: Uri,       // URI of the request
+    err: BoxError,  // The error that occurred
+) -> tibba_error::Error {
+    // Log the error with request details
+    error!("method:{}, uri:{}, error:{}", method, uri, err.to_string());
+
+    // Special handling for timeout errors
+    // Otherwise treats as internal server error (500)
+    let (message, category, status) = if err.is::<tower::timeout::error::Elapsed>() {
+        (
+            "Request took too long".to_string(),
+            "timeout".to_string(),
+            408,
+        )
+    } else {
+        (err.to_string(), "exception".to_string(), 500)
+    };
+
+    // Create and return appropriate HttpError
+    tibba_error::Error {
+        message,
+        category,
+        status,
+        ..Default::default()
+    }
+}
 
 async fn shutdown_signal() {
     let ctrl_c = async {

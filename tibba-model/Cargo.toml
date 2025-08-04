@@ -9,14 +9,14 @@ name = "tibba_model"
 path = "src/lib.rs"
 
 [dependencies]
-sqlx = { workspace = true }
-time = { workspace = true }
-snafu = { workspace = true }
-serde_json = { workspace = true }
-serde = { workspace = true }
-substring = { workspace = true }
+async-trait = { workspace = true }
 chrono = { workspace = true }
 http = { workspace = true }
-async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+snafu = { workspace = true }
+sqlx = { workspace = true }
+substring = { workspace = true }
 tibba-error = { path = "../tibba-error" }
 tibba-util = { path = "../tibba-util" }
+time = { workspace = true }

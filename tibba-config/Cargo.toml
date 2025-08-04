@@ -9,7 +9,7 @@ path = "src/lib.rs"
 
 [dependencies]
 config = { workspace = true }
-url = { workspace = true }
 humantime = { workspace = true }
 snafu = { workspace = true }
 tibba-error = { path = "../tibba-error" }
+url = { workspace = true }

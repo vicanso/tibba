@@ -40,9 +40,11 @@ where
 
     // create temp request
     let temp_req = Request::from_parts(parts.clone(), body);
-    let body = Bytes::from_request(temp_req, state)
-        .await
-        .map_err(|err| new_error(err).with_category("params:read_body"))?;
+    let body = Bytes::from_request(temp_req, state).await.map_err(|err| {
+        new_error(err)
+            .with_category("params")
+            .with_sub_category("read_body")
+    })?;
 
     // cache result
     parts.extensions.insert(BodyBytes { data: body.clone() });
@@ -67,14 +69,22 @@ where
             let value: T = match serde_path_to_error::deserialize(deserializer) {
                 Ok(value) => value,
                 Err(err) => {
-                    return Err(new_error(err).with_category("params:serde_json"));
+                    return Err(new_error(err)
+                        .with_category("params")
+                        .with_sub_category("serde_json"));
                 }
             };
-            value.validate()?;
+            value.validate().map_err(|e| {
+                new_error(e.to_string())
+                    .with_category("params")
+                    .with_sub_category("validate")
+            })?;
 
             Ok(JsonParams(value))
         } else {
-            Err(new_error("Missing json content type").with_category("params:from_json"))
+            Err(new_error("Missing json content type")
+                .with_category("params")
+                .with_sub_category("from_json"))
         }
     }
 }
@@ -107,9 +117,16 @@ where
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
         let query = parts.uri.query().unwrap_or_default();
-        let params: T = serde_urlencoded::from_str(query)
-            .map_err(|err| new_error(err).with_category("params:from_query"))?;
-        params.validate()?;
+        let params: T = serde_urlencoded::from_str(query).map_err(|err| {
+            new_error(err)
+                .with_category("params")
+                .with_sub_category("from_query")
+        })?;
+        params.validate().map_err(|e| {
+            new_error(e.to_string())
+                .with_category("params")
+                .with_sub_category("validate")
+        })?;
         Ok(QueryParams(params))
     }
 }

@@ -28,6 +28,10 @@ static CONFIGS: OnceCell<Config> = OnceCell::new();
 
 static SESSION_PARAMS: OnceCell<SessionParams> = OnceCell::new();
 
+fn map_error(err: impl ToString) -> Error {
+    new_error(err).with_category("config")
+}
+
 #[derive(RustEmbed)]
 #[folder = "configs/"]
 struct Configs;
@@ -80,7 +84,7 @@ fn new_basic_config(config: &Config) -> Result<BasicConfig> {
             Some(region)
         },
     };
-    basic_config.validate()?;
+    basic_config.validate().map_err(map_error)?;
     Ok(basic_config)
 }
 
@@ -111,7 +115,7 @@ fn new_session_config(config: &Config) -> Result<SessionConfig> {
         cookie: config.get_from_env_first("cookie", None),
         max_renewal: config.get_int_from_env_first("max_renewal", Some(52)) as u8,
     };
-    session_config.validate()?;
+    session_config.validate().map_err(map_error)?;
     Ok(session_config)
 }
 
@@ -135,7 +139,7 @@ fn new_config() -> Result<&'static Config> {
         let mut arr = vec![];
         for name in ["default.toml", &format!("{}.toml", tibba_util::get_env())] {
             let data = Configs::get(name)
-                .ok_or(new_error(format!("{name} not found")).with_category(category))?
+                .ok_or(map_error(format!("{name} not found")))?
                 .data;
             info!(category, "load config from {}", name);
             arr.push(std::str::from_utf8(&data).unwrap_or_default().to_string());
@@ -160,11 +164,11 @@ async fn init_config() -> Result<()> {
     let basic_config = new_basic_config(&app_config.sub_config("basic"))?;
     BASIC_CONFIG
         .set(basic_config)
-        .map_err(|_| new_error("basic config init failed").with_category("config"))?;
+        .map_err(|_| map_error("basic config init failed"))?;
     let session_config = new_session_config(&app_config.sub_config("session"))?;
     SESSION_CONFIG
         .set(session_config)
-        .map_err(|_| new_error("session config init failed").with_category("config"))?;
+        .map_err(|_| map_error("session config init failed"))?;
     Ok(())
 }
 

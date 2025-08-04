@@ -10,7 +10,7 @@ path = "src/lib.rs"
 
 [dependencies]
 dashmap = { workspace = true }
-tokio-cron-scheduler = { workspace = true }
 once_cell = { workspace = true }
-tracing = { workspace = true }
 tibba-error = { path = "../tibba-error" }
+tokio-cron-scheduler = { workspace = true }
+tracing = { workspace = true }

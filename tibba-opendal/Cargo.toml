@@ -8,9 +8,9 @@ name = "tibba_opendal"
 path = "src/lib.rs"
 
 [dependencies]
-snafu = { workspace = true }
 opendal = { workspace = true }
-url = { workspace = true }
-validator = { workspace = true }
+snafu = { workspace = true }
 tibba-config = { path = "../tibba-config" }
 tibba-error = { path = "../tibba-error" }
+url = { workspace = true }
+validator = { workspace = true }

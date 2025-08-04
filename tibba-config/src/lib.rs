@@ -39,21 +39,14 @@ pub enum Error {
 
 impl From<Error> for BaseError {
     fn from(val: Error) -> Self {
-        let error_category = "config";
-        match val {
-            Error::Url { category, source } => new_error(source)
-                .with_category(error_category)
-                .with_sub_category(&category)
-                .with_exception(true),
-            Error::Config { category, source } => new_error(source)
-                .with_category(error_category)
-                .with_sub_category(&category)
-                .with_exception(true),
-            Error::ParseDuration { category, source } => new_error(source)
-                .with_category(error_category)
-                .with_sub_category(&category)
-                .with_exception(true),
-        }
+        let err = match val {
+            Error::Url { category, source } => new_error(source).with_sub_category(&category),
+            Error::Config { category, source } => new_error(source).with_sub_category(&category),
+            Error::ParseDuration { category, source } => {
+                new_error(source).with_sub_category(&category)
+            }
+        };
+        err.with_category("config").with_exception(true)
     }
 }
 

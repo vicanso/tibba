@@ -52,21 +52,18 @@ pub enum Error {
 
 impl From<Error> for BaseError {
     fn from(source: Error) -> Self {
-        let error_category = "open_dal";
-        match source {
+        let err = match source {
             Error::OpenDal { source } => new_error(source)
-                .with_category(error_category)
                 .with_sub_category("opendal")
                 .with_exception(true),
             Error::ParseUrl { source } => new_error(source)
-                .with_category(error_category)
                 .with_sub_category("parse_url")
                 .with_exception(true),
             Error::Validate { source } => new_error(source)
-                .with_category(error_category)
                 .with_sub_category("validate")
                 .with_exception(true),
-        }
+        };
+        err.with_category("open_dal")
     }
 }
 

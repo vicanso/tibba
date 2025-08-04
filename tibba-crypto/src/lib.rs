@@ -25,17 +25,14 @@ pub enum Error {
 
 impl From<Error> for BaseError {
     fn from(val: Error) -> Self {
-        let error_category = "crypto";
-        match val {
-            Error::HmacSha256 { message } => new_error(&message)
-                .with_category(error_category)
-                .with_sub_category("hmac_sha256"),
+        let err = match val {
+            Error::HmacSha256 { message } => new_error(&message).with_sub_category("hmac_sha256"),
             Error::KeyGripEmpty => new_error("key grip empty")
-                .with_category(error_category)
                 .with_sub_category("key_grip")
                 .with_status(500)
                 .with_exception(true),
-        }
+        };
+        err.with_category("crypto")
     }
 }
 
