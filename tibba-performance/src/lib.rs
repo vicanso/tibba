@@ -12,26 +12,34 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use memory_stats::memory_stats;
 use serde::{Deserialize, Serialize};
-use sysinfo::{Pid, System};
+use sysinfo::{Pid, ProcessesToUpdate, System};
 
 /// Represents system resource usage information for a process
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct ProcessSystemInfo {
-    /// Physical memory usage in bytes
-    pub physical_mem: usize,
-    /// Virtual memory usage in bytes
-    pub virtual_mem: usize,
+    /// Memory usage in bytes
+    pub memory_usage: u64,
     /// CPU usage as a percentage (0-100)
     pub cpu_usage: f32,
+    /// CPU time in milliseconds
+    pub cpu_time: u64,
+    /// Open files
+    pub open_files: Option<u32>,
+    /// Total number of written bytes.
+    pub total_written_bytes: u64,
+    /// Number of written bytes since the last refresh.
+    pub written_bytes: u64,
+    /// Total number of read bytes.
+    pub total_read_bytes: u64,
+    /// Number of read bytes since the last refresh.
+    pub read_bytes: u64,
 }
 
 /// Retrieves current system resource usage information for this process
 ///
 /// Collects information about:
-/// - Physical memory usage
-/// - Virtual memory usage
+/// - Memory usage
 /// - CPU usage percentage
 ///
 /// # Returns
@@ -43,20 +51,23 @@ pub fn get_process_system_info(pid: usize) -> ProcessSystemInfo {
         ..Default::default()
     };
 
-    // Get memory statistics if available
-    if let Some(usage) = memory_stats() {
-        info.physical_mem = usage.physical_mem;
-        info.virtual_mem = usage.virtual_mem;
-    }
-
     // Initialize system information collector
     let mut sys = System::new();
+    let pid = Pid::from(pid);
     // Refresh CPU usage statistics
-    sys.refresh_cpu_usage();
+    sys.refresh_processes(ProcessesToUpdate::Some(&[pid]), false);
 
     // Get CPU usage for current process if available
-    if let Some(process) = sys.process(Pid::from(pid)) {
+    if let Some(process) = sys.process(pid) {
         info.cpu_usage = process.cpu_usage();
+        info.memory_usage = process.memory();
+        info.cpu_time = process.accumulated_cpu_time();
+        let disk_usage = process.disk_usage();
+        info.total_written_bytes = disk_usage.total_written_bytes;
+        info.written_bytes = disk_usage.written_bytes;
+        info.total_read_bytes = disk_usage.total_read_bytes;
+        info.read_bytes = disk_usage.read_bytes;
+        info.open_files = process.open_files();
     }
 
     info

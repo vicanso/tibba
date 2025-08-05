@@ -69,8 +69,7 @@ pub fn set_header_if_not_exist(
     name: &str,
     value: &str,
 ) -> Result<()> {
-    let current = headers.get(name);
-    if current.is_some() {
+    if headers.contains_key(name) {
         return Ok(());
     }
     let values = [(name.to_string(), value.to_string())].into();
@@ -146,7 +145,6 @@ pub fn get_device_id_from_cookie(jar: &CookieJar) -> String {
 /// Generates a new device ID cookie
 ///
 /// Creates a cookie with:
-/// - 10-character nanoid
 /// - 52-week expiration
 /// - HTTP-only flag
 /// - Root path
@@ -156,7 +154,7 @@ pub fn get_device_id_from_cookie(jar: &CookieJar) -> String {
 pub fn generate_device_id_cookie() -> CookieBuilder<'static> {
     let expires =
         cookie::time::OffsetDateTime::now_utc().saturating_add(cookie::time::Duration::weeks(52));
-    Cookie::build((DEVICE_ID_NAME, nanoid!(10)))
+    Cookie::build((DEVICE_ID_NAME, nanoid!(16)))
         .http_only(true)
         .expires(expires)
         .path("/")

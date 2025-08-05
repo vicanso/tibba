@@ -678,7 +678,7 @@ async fn run_stat_alarm() -> Result<(i32, i32)> {
 #[ctor]
 fn init() {
     register_before_task(
-        "init_http_detector",
+        "launch_http_detector_stat_job",
         u8::MAX,
         Box::new(|| {
             Box::pin(async {
@@ -716,7 +716,7 @@ fn init() {
     );
 
     register_before_task(
-        "init_stat_alarm",
+        "launch_http_stat_alarm_job",
         u8::MAX,
         Box::new(|| {
             Box::pin(async {

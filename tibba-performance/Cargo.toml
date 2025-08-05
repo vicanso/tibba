@@ -8,6 +8,5 @@ name = "tibba_performance"
 path = "src/lib.rs"
 
 [dependencies]
-memory-stats = { workspace = true }
 serde = { workspace = true }
 sysinfo = { workspace = true }

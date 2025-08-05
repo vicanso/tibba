@@ -12,12 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::is_disabled;
 use super::{
     CODE_FILE_GROUP, CODE_FILE_NAME, CODE_IMAGE_FORMAT, CODE_IMAGE_QUALITY, CODE_LISTEN_ADDR,
     CODE_SCHEMA_NAME, CODE_SHA256, CODE_UUID,
 };
-use std::borrow::Cow;
+use super::{is_disabled, new_error};
 use std::net::ToSocketAddrs;
 use std::path::Path;
 use validator::ValidationError;
@@ -31,31 +30,23 @@ pub fn x_listen_addr(addr: &str) -> Result<()> {
     // validate port
     if let Some(value) = addr.strip_prefix(':') {
         let port = value.parse::<u16>().map_err(|_| {
-            ValidationError::new(CODE_LISTEN_ADDR)
-                .with_message(Cow::from("Port must be a number between 1 and 65535"))
+            new_error(
+                CODE_LISTEN_ADDR,
+                "port must be a number between 1 and 65535",
+            )
         })?;
         if port == 0 {
-            return Err(
-                ValidationError::new(CODE_LISTEN_ADDR).with_message(Cow::from("Port cannot be 0"))
-            );
+            return Err(new_error(CODE_LISTEN_ADDR, "port cannot be 0"));
         }
         return Ok(());
     }
 
     // validate address to socket addrs
-    let addr_result = addr.to_socket_addrs();
-    match addr_result {
-        Ok(mut addrs) => {
-            // ensure at least one valid address
-            if addrs.next().is_none() {
-                return Err(ValidationError::new(CODE_LISTEN_ADDR)
-                    .with_message(Cow::from("No valid address found")));
-            }
-        }
-        Err(_) => {
-            return Err(ValidationError::new(CODE_LISTEN_ADDR)
-                .with_message(Cow::from("Invalid address format")));
-        }
+    let addrs = addr
+        .to_socket_addrs()
+        .map_err(|_| new_error(CODE_LISTEN_ADDR, "invalid address format"))?;
+    if addrs.len() == 0 {
+        return Err(new_error(CODE_LISTEN_ADDR, "no valid address found"));
     }
     Ok(())
 }
@@ -65,7 +56,7 @@ pub fn x_uuid(uuid: &str) -> Result<()> {
         return Ok(());
     }
     if uuid.len() != 36 {
-        return Err(ValidationError::new(CODE_UUID).with_message(Cow::from("Invalid uuid format")));
+        return Err(new_error(CODE_UUID, "invalid uuid format"));
     }
     Ok(())
 }
@@ -75,9 +66,7 @@ pub fn x_sha256(sha256: &str) -> Result<()> {
         return Ok(());
     }
     if sha256.len() != 64 {
-        return Err(
-            ValidationError::new(CODE_SHA256).with_message(Cow::from("Invalid sha256 format"))
-        );
+        return Err(new_error(CODE_SHA256, "invalid sha256 format"));
     }
     Ok(())
 }
@@ -87,12 +76,13 @@ pub fn x_file_name(name: &str) -> Result<()> {
         return Ok(());
     }
     if name.is_empty() {
-        return Err(ValidationError::new(CODE_FILE_NAME)
-            .with_message(Cow::from("File name cannot be empty")));
+        return Err(new_error(CODE_FILE_NAME, "file name cannot be empty"));
     }
     if Path::new(name).extension().is_none() {
-        return Err(ValidationError::new(CODE_FILE_NAME)
-            .with_message(Cow::from("File name must have an extension")));
+        return Err(new_error(
+            CODE_FILE_NAME,
+            "file name must have an extension",
+        ));
     }
     Ok(())
 }
@@ -102,16 +92,16 @@ pub fn x_file_group(group: &str) -> Result<()> {
         return Ok(());
     }
     if group.is_empty() {
-        return Err(ValidationError::new(CODE_FILE_GROUP)
-            .with_message(Cow::from("File group cannot be empty")));
+        return Err(new_error(CODE_FILE_GROUP, "file group cannot be empty"));
     }
     if !group.is_ascii() {
-        return Err(ValidationError::new(CODE_FILE_GROUP)
-            .with_message(Cow::from("File group must be ASCII")));
+        return Err(new_error(CODE_FILE_GROUP, "file group must be ASCII"));
     }
     if group.len() > 100 {
-        return Err(ValidationError::new(CODE_FILE_GROUP)
-            .with_message(Cow::from("File group must be less than 100 characters")));
+        return Err(new_error(
+            CODE_FILE_GROUP,
+            "file group must be less than 100 characters",
+        ));
     }
     Ok(())
 }
@@ -121,9 +111,7 @@ pub fn x_image_format(format: &str) -> Result<()> {
         return Ok(());
     }
     if !["avif", "webp", "png", "jpeg"].contains(&format) {
-        return Err(
-            ValidationError::new(CODE_IMAGE_FORMAT).with_message(Cow::from("Invalid image format"))
-        );
+        return Err(new_error(CODE_IMAGE_FORMAT, "invalid image format"));
     }
     Ok(())
 }
@@ -133,8 +121,10 @@ pub fn x_image_quality(quality: u8) -> Result<()> {
         return Ok(());
     }
     if !(50..=100).contains(&quality) {
-        return Err(ValidationError::new(CODE_IMAGE_QUALITY)
-            .with_message(Cow::from("Image quality must be between 50 and 100")));
+        return Err(new_error(
+            CODE_IMAGE_QUALITY,
+            "image quality must be between 50 and 100",
+        ));
     }
     Ok(())
 }
@@ -144,16 +134,16 @@ pub fn x_schema_name(name: &str) -> Result<()> {
         return Ok(());
     }
     if name.is_empty() {
-        return Err(ValidationError::new(CODE_SCHEMA_NAME)
-            .with_message(Cow::from("Schema name cannot be empty")));
+        return Err(new_error(CODE_SCHEMA_NAME, "schema name cannot be empty"));
     }
     if !name.is_ascii() {
-        return Err(ValidationError::new(CODE_SCHEMA_NAME)
-            .with_message(Cow::from("Schema name must be ASCII")));
+        return Err(new_error(CODE_SCHEMA_NAME, "schema name must be ASCII"));
     }
     if name.len() > 50 {
-        return Err(ValidationError::new(CODE_SCHEMA_NAME)
-            .with_message(Cow::from("Schema name must be less than 50 characters")));
+        return Err(new_error(
+            CODE_SCHEMA_NAME,
+            "schema name must be less than 50 characters",
+        ));
     }
     Ok(())
 }

@@ -13,10 +13,30 @@
 // limitations under the License.
 
 use super::config::must_get_basic_config;
-use once_cell::sync::OnceCell;
+use ctor::ctor;
+use once_cell::sync::{Lazy, OnceCell};
+use std::time::Duration;
+use tibba_error::new_error;
+use tibba_hook::register_before_task;
+use tibba_performance::get_process_system_info;
+use tibba_scheduler::{Job, register_job_task};
 use tibba_state::AppState;
+use tokio::sync::RwLock;
+use tracing::info;
 
 static STATE: OnceCell<AppState> = OnceCell::new();
+
+#[derive(Debug, Default)]
+struct Performance {
+    refresh_count: u32,
+    memory_usage_mb: u32,
+    cpu_usage: u16,
+    cpu_time: u64,
+    open_files: u32,
+    written_mb: u32,
+    read_mb: u32,
+}
+static PERFORMANCE: Lazy<RwLock<Performance>> = Lazy::new(|| RwLock::new(Performance::default()));
 
 pub fn get_app_state() -> &'static AppState {
     STATE.get_or_init(|| {
@@ -26,4 +46,47 @@ pub fn get_app_state() -> &'static AppState {
             basic_config.commit_id.clone(),
         )
     })
+}
+
+async fn update_performance() {
+    let pid = std::process::id() as usize;
+    let process_system_info = get_process_system_info(pid);
+
+    let mb = 1024 * 1024;
+    let mut data = PERFORMANCE.write().await;
+    data.refresh_count += 1;
+    data.memory_usage_mb = (process_system_info.memory_usage / mb) as u32;
+    data.cpu_usage = process_system_info.cpu_usage as u16;
+    data.cpu_time = process_system_info.cpu_time - data.cpu_time;
+    data.open_files = process_system_info.open_files.unwrap_or(0);
+    data.written_mb = (process_system_info.written_bytes / mb) as u32;
+    data.read_mb = (process_system_info.read_bytes / mb) as u32;
+    info!(
+        category = "application_performance",
+        memory_usage = data.memory_usage_mb,
+        cpu_usage = data.cpu_usage,
+        cpu_time = data.cpu_time,
+        open_files = data.open_files,
+        written_mb = data.written_mb,
+        read_mb = data.read_mb,
+    );
+}
+
+#[ctor]
+fn init() {
+    register_before_task(
+        "launch_application_performance_job",
+        u8::MAX,
+        Box::new(|| {
+            Box::pin(async {
+                let pid = std::process::id() as usize;
+                let job = Job::new_repeated_async(Duration::from_secs(60), move |_, _| {
+                    Box::pin(update_performance())
+                })
+                .map_err(new_error)?;
+                register_job_task("application_performance", job);
+                Ok(())
+            })
+        }),
+    );
 }

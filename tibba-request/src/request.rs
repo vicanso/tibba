@@ -28,7 +28,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
-use tibba_util::{json_get, new_get_duration_ms};
+use tibba_util::{json_get, new_get_elapsed_ms};
 use tracing::info;
 type Result<T> = std::result::Result<T, Error>;
 
@@ -351,7 +351,7 @@ impl Client {
             }
         }
         // TODO dns tcp tls process
-        let process_done = new_get_duration_ms();
+        let process_done = new_get_elapsed_ms();
         let res = req.send().await.map_err(|e| Error::Request {
             service: self.config.service.clone(),
             path: path.to_string(),
@@ -379,7 +379,7 @@ impl Client {
         // }
 
         let status = res.status().as_u16();
-        let transfer_done = new_get_duration_ms();
+        let transfer_done = new_get_elapsed_ms();
         let mut full = res.bytes().await.map_err(|e| Error::Request {
             service: self.config.service.clone(),
             path: path.to_string(),
@@ -411,7 +411,7 @@ impl Client {
     ) -> Result<T> {
         let full = self.raw(stats, params).await?;
 
-        let serde_done = new_get_duration_ms();
+        let serde_done = new_get_elapsed_ms();
         let data = serde_json::from_slice(&full).map_err(|e| Error::Serde {
             service: self.config.service.clone(),
             source: e,
@@ -429,7 +429,7 @@ impl Client {
         let mut stats = HttpStats {
             ..Default::default()
         };
-        let done = new_get_duration_ms();
+        let done = new_get_elapsed_ms();
         let result = self.do_request(&mut stats, params).await;
         stats.total = done();
         let mut err = None;
@@ -451,7 +451,7 @@ impl Client {
         let mut stats = HttpStats {
             ..Default::default()
         };
-        let done = new_get_duration_ms();
+        let done = new_get_elapsed_ms();
         let result = self.raw(&mut stats, params).await;
         stats.total = done();
         let mut err = None;

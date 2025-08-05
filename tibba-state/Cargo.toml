@@ -8,4 +8,5 @@ name = "tibba_state"
 path = "src/lib.rs"
 
 [dependencies]
+arc-swap = { workspace = true }
 tokio = { workspace = true }

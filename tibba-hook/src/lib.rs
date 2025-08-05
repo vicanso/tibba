@@ -89,3 +89,47 @@ pub async fn run_before_tasks() -> Result<()> {
 pub async fn run_after_tasks() -> Result<()> {
     run_task(&HOOK_AFTER_TASKS).await
 }
+
+// Example usage of the hook system
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+    use tokio::time::sleep;
+
+    async fn example_before_task() -> Result<()> {
+        // Simulate some async work
+        sleep(Duration::from_millis(100)).await;
+        info!("Example before task executed");
+        Ok(())
+    }
+
+    async fn example_after_task() -> Result<()> {
+        // Simulate some async work
+        sleep(Duration::from_millis(50)).await;
+        info!("Example after task executed");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_hook_system() -> Result<()> {
+        // Register before tasks with different priorities
+        register_before_task(
+            "validation",
+            1,
+            Box::new(|| Box::pin(example_before_task())),
+        );
+
+        register_before_task("logging", 2, Box::new(|| Box::pin(example_before_task())));
+
+        // Register after tasks
+        register_after_task("cleanup", 1, Box::new(|| Box::pin(example_after_task())));
+
+        // Execute hooks
+        run_before_tasks().await?;
+        // ... main operation would happen here ...
+        run_after_tasks().await?;
+
+        Ok(())
+    }
+}

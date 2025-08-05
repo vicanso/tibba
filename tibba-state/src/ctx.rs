@@ -12,16 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use arc_swap::ArcSwap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-// Request Context
-#[derive(Debug, Clone)]
+/// Trace context for the current request
+#[derive(Debug)]
 pub struct Context {
+    /// Device ID
     pub device_id: String,
+    /// Trace ID
     pub trace_id: String,
+    /// Start time
     start_time: Instant,
-    // account: Option<String>,
+    /// Account
+    account: ArcSwap<String>,
 }
 
 impl Context {
@@ -30,11 +35,20 @@ impl Context {
             device_id: device_id.to_string(),
             trace_id: trace_id.to_string(),
             start_time: Instant::now(),
-            // account: None,
+            account: ArcSwap::new(Arc::new("".to_string())),
         }
     }
+    /// Get the elapsed time since the start of the request
     pub fn elapsed(&self) -> Duration {
         self.start_time.elapsed()
+    }
+    /// Get the account
+    pub fn get_account(&self) -> String {
+        self.account.load().to_string()
+    }
+    /// Set the account
+    pub fn set_account(&self, account: &str) {
+        self.account.store(Arc::new(account.to_string()));
     }
 }
 

@@ -56,18 +56,18 @@ pub fn from_timestamp(secs: i64, nsecs: u32) -> String {
 ///
 /// # Example
 /// ```
-/// let get_duration = new_get_duration();
+/// let get_duration = new_get_elapsed();
 /// // ... do some work ...
 /// let elapsed = get_duration(); // get elapsed time
 /// ```
-pub fn new_get_duration() -> impl FnOnce() -> Duration {
+pub fn new_get_elapsed() -> impl FnOnce() -> Duration {
     let start = Instant::now();
     move || -> Duration { start.elapsed() }
 }
 
 /// Creates a closure that measures elapsed time in milliseconds
 ///
-/// Similar to new_get_duration but returns milliseconds as u32
+/// Similar to new_get_elapsed but returns milliseconds as u32
 /// Ensures minimum return value of 1ms to avoid default value confusion
 ///
 /// # Returns
@@ -75,11 +75,11 @@ pub fn new_get_duration() -> impl FnOnce() -> Duration {
 ///
 /// # Example
 /// ```
-/// let get_ms = new_get_duration_ms();
+/// let get_ms = new_get_elapsed_ms();
 /// // ... do some work ...
 /// let elapsed_ms = get_ms(); // get elapsed milliseconds
 /// ```
-pub fn new_get_duration_ms() -> impl FnOnce() -> u32 {
+pub fn new_get_elapsed_ms() -> impl FnOnce() -> u32 {
     let start = Instant::now();
     move || -> u32 {
         let value = start.elapsed().as_millis() as u32;
@@ -90,18 +90,18 @@ pub fn new_get_duration_ms() -> impl FnOnce() -> u32 {
 
 /// Creates a closure that measures elapsed time in human-readable format
 ///
-/// Similar to new_get_duration but returns a string with human-readable format
+/// Similar to new_get_elapsed but returns a string with human-readable format
 ///
 /// # Returns
 /// * Closure that returns elapsed time in human-readable format when called
 ///
 /// # Example
 /// ```
-/// let get_human_duration = new_get_human_duration();
+/// let get_human_elapsed = new_get_human_elapsed();
 /// // ... do some work ...
-/// let elapsed = get_human_duration(); // get elapsed time
+/// let elapsed = get_human_elapsed(); // get elapsed time
 /// ```
-pub fn new_get_human_duration() -> impl FnOnce() -> String {
+pub fn new_get_human_elapsed() -> impl FnOnce() -> String {
     let start = Instant::now();
     move || -> String {
         let duration = start.elapsed();

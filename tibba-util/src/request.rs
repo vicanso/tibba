@@ -26,6 +26,12 @@ struct BodyBytes {
     data: Bytes,
 }
 
+fn map_err(err: impl ToString, sub_category: &str) -> Error {
+    new_error(err)
+        .with_category("params")
+        .with_sub_category(sub_category)
+}
+
 async fn get_body_bytes<S>(req: Request<Body>, state: &S) -> Result<Bytes, Error>
 where
     S: Send + Sync,
@@ -40,11 +46,9 @@ where
 
     // create temp request
     let temp_req = Request::from_parts(parts.clone(), body);
-    let body = Bytes::from_request(temp_req, state).await.map_err(|err| {
-        new_error(err)
-            .with_category("params")
-            .with_sub_category("read_body")
-    })?;
+    let body = Bytes::from_request(temp_req, state)
+        .await
+        .map_err(|err| map_err(err, "read_body"))?;
 
     // cache result
     parts.extensions.insert(BodyBytes { data: body.clone() });
@@ -69,22 +73,14 @@ where
             let value: T = match serde_path_to_error::deserialize(deserializer) {
                 Ok(value) => value,
                 Err(err) => {
-                    return Err(new_error(err)
-                        .with_category("params")
-                        .with_sub_category("serde_json"));
+                    return Err(map_err(err, "serde_json"));
                 }
             };
-            value.validate().map_err(|e| {
-                new_error(e.to_string())
-                    .with_category("params")
-                    .with_sub_category("validate")
-            })?;
+            value.validate().map_err(|e| map_err(e, "validate"))?;
 
             Ok(JsonParams(value))
         } else {
-            Err(new_error("Missing json content type")
-                .with_category("params")
-                .with_sub_category("from_json"))
+            Err(map_err("Missing json content type", "from_json"))
         }
     }
 }
@@ -117,16 +113,9 @@ where
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
         let query = parts.uri.query().unwrap_or_default();
-        let params: T = serde_urlencoded::from_str(query).map_err(|err| {
-            new_error(err)
-                .with_category("params")
-                .with_sub_category("from_query")
-        })?;
-        params.validate().map_err(|e| {
-            new_error(e.to_string())
-                .with_category("params")
-                .with_sub_category("validate")
-        })?;
+        let params: T =
+            serde_urlencoded::from_str(query).map_err(|err| map_err(err, "from_query"))?;
+        params.validate().map_err(|e| map_err(e, "validate"))?;
         Ok(QueryParams(params))
     }
 }

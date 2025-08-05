@@ -93,6 +93,21 @@ pub fn json_get(data: &[u8], key: &str) -> String {
     json_get_strings(data, &[key])[0].clone()
 }
 
+/// Extracts a string value from a JSON map by key
+///
+/// This function provides a safe way to extract string values from a JSON map with the following features:
+/// - Handles missing keys gracefully
+/// - Converts non-string values to strings
+/// - Returns empty string for missing keys
+///
+/// # Arguments
+/// * `data` - JSON map to extract value from
+/// * `key` - Key to look up in the JSON map
+///
+/// # Returns
+/// * String containing the value or empty string if:
+///   - Key doesn't exist
+///   - Value cannot be converted to string
 pub fn get_map_string(data: &Map<String, Value>, key: &str) -> String {
     if let Some(value) = data.get(key) {
         value.as_str().map_or(value.to_string(), |s| s.to_string())

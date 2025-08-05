@@ -16,10 +16,13 @@ use crate::config::must_get_config;
 use ctor::ctor;
 use once_cell::sync::OnceCell;
 use sqlx::MySqlPool;
-use std::sync::Arc;
+use std::sync::{Arc, atomic::Ordering};
+use std::time::Duration;
 use tibba_error::new_error;
 use tibba_hook::register_before_task;
+use tibba_scheduler::{Job, register_job_task};
 use tibba_sql::{PoolStat, new_mysql_pool};
+use tracing::info;
 
 static DB_POOL: OnceCell<MySqlPool> = OnceCell::new();
 
@@ -37,12 +40,21 @@ fn init() {
             Box::pin(async {
                 let app_config = must_get_config();
                 let stat = Arc::new(PoolStat::default());
-                let pool = new_mysql_pool(&app_config.sub_config("database"), Some(stat))
+                let pool = new_mysql_pool(&app_config.sub_config("database"), Some(stat.clone()))
                     .await
                     .map_err(new_error)?;
                 DB_POOL
                     .set(pool)
                     .map_err(|_| new_error("set db pool fail"))?;
+
+                let task = "database_performance";
+                let job = Job::new_repeated(Duration::from_secs(60), move |_, _| {
+                    let connected = stat.connected.load(Ordering::Relaxed);
+                    let executions = stat.executions.load(Ordering::Relaxed);
+                    info!(category = task, connected, executions);
+                })
+                .map_err(new_error)?;
+                register_job_task(task, job);
 
                 Ok(())
             })

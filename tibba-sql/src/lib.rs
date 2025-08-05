@@ -16,7 +16,7 @@ use snafu::Snafu;
 use sqlx::MySqlPool;
 use sqlx::pool::PoolOptions;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::time::Duration;
 use tibba_config::Config;
 use tibba_error::Error as BaseError;
@@ -144,7 +144,7 @@ impl From<Error> for BaseError {
 
 #[derive(Debug, Default)]
 pub struct PoolStat {
-    pub connected: AtomicUsize,
+    pub connected: AtomicU32,
     pub executions: AtomicUsize,
 }
 
@@ -160,6 +160,7 @@ pub async fn new_mysql_pool(
     info!(url, "connect to database");
     let after_connect_pool_stat = pool_stat.clone();
     let before_acquire_pool_stat = pool_stat.clone();
+    let after_release_pool_stat = pool_stat.clone();
     let pool = PoolOptions::new()
         .after_connect(move |_conn, _meta| {
             Box::pin({
@@ -183,10 +184,14 @@ pub async fn new_mysql_pool(
                 }
             })
         })
-        .after_release(|_conn, meta| {
+        .after_release(move |_conn, meta| {
+            let pool_stat = after_release_pool_stat.clone();
             Box::pin(async move {
                 if meta.age.as_secs() < 6 * 60 * 60 {
                     return Ok(true);
+                }
+                if let Some(pool_stat) = &pool_stat {
+                    pool_stat.connected.fetch_sub(1, Ordering::Relaxed);
                 }
                 Ok(false)
             })

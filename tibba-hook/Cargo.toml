@@ -12,3 +12,4 @@ dashmap = { workspace = true }
 once_cell = { workspace = true }
 tibba-error = { path = "../tibba-error" }
 tracing = { workspace = true }
+tokio = { workspace = true }

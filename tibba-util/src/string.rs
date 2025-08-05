@@ -129,17 +129,36 @@ pub fn timestamp_hash(value: &str, secret: &str) -> (i64, String) {
     (ts, hash)
 }
 
+/// Validates the signature of the input data
+///
+/// # Arguments
+/// * `value` - Input data to hash
+/// * `hash` - Signature to validate
+/// * `secret` - Secret key
+///
+/// # Returns
+/// * Result containing the validation result
 pub fn validate_sign_hash(value: &str, hash: &str, secret: &str) -> Result<()> {
     if sign_hash(value, secret) != hash {
-        return Err(new_error("Signature is invalid").with_category("sign_hash"));
+        return Err(new_error("signature is invalid").with_category("sign_hash"));
     }
     Ok(())
 }
 
+/// Validates the signature of the input data
+///
+/// # Arguments
+/// * `ts` - Timestamp
+/// * `value` - Input data to hash
+/// * `hash` - Signature to validate
+/// * `secret` - Secret key
+///
+/// # Returns
+/// * Result containing the validation result
 pub fn validate_timestamp_hash(ts: i64, value: &str, hash: &str, secret: &str) -> Result<()> {
     let category = "timestamp_hash";
     if (timestamp() - ts).abs() > 5 * 60 {
-        return Err(new_error("Signature is expired").with_category(category));
+        return Err(new_error("signature is expired").with_category(category));
     }
     validate_sign_hash(&format!("{ts}:{value}"), hash, secret)
 }
