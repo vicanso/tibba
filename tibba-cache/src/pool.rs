@@ -173,6 +173,10 @@ pub fn new_redis_pool(config: &Config) -> Result<RedisPool> {
             .map_err(|e| Error::ClusterBuild { source: e })?;
         RedisPool::Cluster(pool)
     };
-    info!(nodes = nodes.join(","), "connect to redis");
+    info!(
+        category = "redis",
+        nodes = nodes.join(","),
+        "connect to redis"
+    );
     Ok(pool)
 }

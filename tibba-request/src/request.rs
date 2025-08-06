@@ -44,10 +44,15 @@ where
     Q: Serialize + ?Sized,
     P: Serialize + ?Sized,
 {
+    // http method
     pub method: Method,
+    // request timeout
     pub timeout: Option<Duration>,
+    // query parameters
     pub query: Option<&'a Q>,
+    // request body
     pub body: Option<&'a P>,
+    // request url
     pub url: &'a str,
 }
 
@@ -171,6 +176,13 @@ pub struct ClientBuilder {
 }
 
 impl ClientBuilder {
+    /// Create a new client builder
+    ///
+    /// # Arguments
+    /// * `service` - Service name
+    ///
+    /// # Returns
+    /// * `ClientBuilder` - A new client builder
     pub fn new(service: &str) -> Self {
         Self {
             config: ClientConfig {
@@ -189,11 +201,25 @@ impl ClientBuilder {
         }
     }
 
+    /// Set the base URL for requests
+    ///
+    /// # Arguments
+    /// * `base_url` - Base URL for requests
+    ///
+    /// # Returns
+    /// * `ClientBuilder` - A new client builder
     pub fn with_base_url(mut self, base_url: &str) -> Self {
         self.config.base_url = base_url.to_string();
         self
     }
 
+    /// Set the interceptor for requests
+    ///
+    /// # Arguments
+    /// * `interceptor` - Interceptor for requests
+    ///
+    /// # Returns
+    /// * `ClientBuilder` - A new client builder
     pub fn with_interceptor(mut self, interceptor: Box<dyn HttpInterceptor>) -> Self {
         if let Some(interceptors) = &mut self.config.interceptors {
             interceptors.push(interceptor);
@@ -203,46 +229,109 @@ impl ClientBuilder {
         self
     }
 
+    /// Set the timeout for requests
+    ///
+    /// # Arguments
+    /// * `timeout` - Timeout for requests
+    ///
+    /// # Returns
+    /// * `ClientBuilder` - A new client builder
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.config.timeout = Some(timeout);
         self
     }
 
+    /// Set the read timeout for requests
+    ///
+    /// # Arguments
+    /// * `read_timeout` - Read timeout for requests
+    ///
+    /// # Returns
+    /// * `ClientBuilder` - A new client builder
     pub fn with_read_timeout(mut self, read_timeout: Duration) -> Self {
         self.config.read_timeout = Some(read_timeout);
         self
     }
 
+    /// Set the connect timeout for requests
+    ///
+    /// # Arguments
+    /// * `connect_timeout` - Connect timeout for requests
+    ///
+    /// # Returns
+    /// * `ClientBuilder` - A new client builder
     pub fn with_connect_timeout(mut self, connect_timeout: Duration) -> Self {
         self.config.connect_timeout = Some(connect_timeout);
         self
     }
 
+    /// Set the pool idle timeout for requests
+    ///
+    /// # Arguments
+    /// * `pool_idle_timeout` - Pool idle timeout for requests
+    ///
+    /// # Returns
+    /// * `ClientBuilder` - A new client builder
     pub fn with_pool_idle_timeout(mut self, pool_idle_timeout: Duration) -> Self {
         self.config.pool_idle_timeout = Some(pool_idle_timeout);
         self
     }
 
+    /// Set the headers for requests
+    ///
+    /// # Arguments
+    /// * `headers` - Headers for requests
+    ///
+    /// # Returns
+    /// * `ClientBuilder` - A new client builder
     pub fn with_headers(mut self, headers: HeaderMap) -> Self {
         self.config.headers = Some(headers);
         self
     }
 
+    /// Set the common interceptor for requests
+    ///
+    /// # Arguments
+    /// * `self` - Client builder
+    ///
+    /// # Returns
+    /// * `ClientBuilder` - A new client builder
     pub fn with_common_interceptor(self) -> Self {
         let service = self.config.service.clone();
         self.with_interceptor(Box::new(CommonInterceptor::new(&service)))
     }
 
+    /// Set the pool max idle per host for requests
+    ///
+    /// # Arguments
+    /// * `pool_max_idle_per_host` - Pool max idle per host for requests
+    ///
+    /// # Returns
+    /// * `ClientBuilder` - A new client builder
     pub fn with_pool_max_idle_per_host(mut self, pool_max_idle_per_host: usize) -> Self {
         self.config.pool_max_idle_per_host = pool_max_idle_per_host;
         self
     }
 
+    /// Set the DNS overrides for requests
+    ///
+    /// # Arguments
+    /// * `dns_overrides` - DNS overrides for requests
+    ///
+    /// # Returns
+    /// * `ClientBuilder` - A new client builder
     pub fn with_dns_overrides(mut self, dns_overrides: HashMap<String, Vec<SocketAddr>>) -> Self {
         self.config.dns_overrides = Some(dns_overrides);
         self
     }
 
+    /// Build the client
+    ///
+    /// # Arguments
+    /// * `self` - Client builder
+    ///
+    /// # Returns
+    /// * `Result<Client>` - A new client
     pub fn build(self) -> Result<Client> {
         let mut builder = ReqwestClient::builder()
             .user_agent("tibba-request/1.0")
@@ -444,6 +533,14 @@ impl Client {
 
         result
     }
+
+    /// Makes raw HTTP request and returns bytes
+    ///
+    /// # Arguments
+    /// * `params` - Request parameters
+    ///
+    /// # Returns
+    /// * `Result<Bytes>` - Raw response bytes
     pub async fn request_raw<Q: Serialize + ?Sized, P: Serialize + ?Sized>(
         &self,
         params: Params<'_, Q, P>,
@@ -466,6 +563,13 @@ impl Client {
 
         result
     }
+    /// Makes GET request and deserializes response
+    ///
+    /// # Arguments
+    /// * `url` - Request URL
+    ///
+    /// # Returns
+    /// * `Result<T>` - Deserialized response
     pub async fn get<T: DeserializeOwned>(&self, url: &str) -> Result<T> {
         self.request(Params {
             timeout: None,
@@ -476,6 +580,14 @@ impl Client {
         })
         .await
     }
+    /// Makes GET request with query parameters and deserializes response
+    ///
+    /// # Arguments
+    /// * `url` - Request URL
+    /// * `query` - Query parameters
+    ///
+    /// # Returns
+    /// * `Result<T>` - Deserialized response
     pub async fn get_with_query<P: Serialize + ?Sized, T: DeserializeOwned>(
         &self,
         url: &str,
@@ -490,6 +602,14 @@ impl Client {
         })
         .await
     }
+    /// Makes POST request with JSON body and deserializes response
+    ///
+    /// # Arguments
+    /// * `url` - Request URL
+    /// * `json` - JSON body
+    ///
+    /// # Returns
+    /// * `Result<T>` - Deserialized response
     pub async fn post<P: Serialize + ?Sized, T: DeserializeOwned>(
         &self,
         url: &str,
@@ -504,6 +624,15 @@ impl Client {
         })
         .await
     }
+    /// Makes POST request with JSON body and query parameters and deserializes response
+    ///
+    /// # Arguments
+    /// * `url` - Request URL
+    /// * `json` - JSON body
+    /// * `query` - Query parameters
+    ///
+    /// # Returns
+    /// * `Result<T>` - Deserialized response
     pub async fn post_with_query<
         P: Serialize + ?Sized,
         Q: Serialize + ?Sized,
@@ -523,6 +652,10 @@ impl Client {
         })
         .await
     }
+    /// Gets the current processing count
+    ///
+    /// # Returns
+    /// * `u32` - Current processing count
     pub fn get_processing(&self) -> u32 {
         self.processing.load(Ordering::Relaxed)
     }

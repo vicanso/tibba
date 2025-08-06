@@ -12,7 +12,6 @@ path = "src/lib.rs"
 axum = { workspace = true }
 axum-extra = { workspace = true }
 cookie = { workspace = true }
-derivative = { workspace = true }
 snafu = { workspace = true }
 serde = { workspace = true }
 tibba-cache = { path = "../tibba-cache" }

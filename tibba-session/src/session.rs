@@ -19,7 +19,6 @@ use axum::http::request::Parts;
 use axum::response::{IntoResponse, Response};
 use axum_extra::extract::cookie::{Key, SignedCookieJar};
 use cookie::CookieBuilder;
-use derivative::Derivative;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tibba_cache::RedisCache;
@@ -33,20 +32,18 @@ static ROLE_SUPER_ADMIN: &str = "su";
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SessionParams {
+    // secret for session cookie
     pub secret: String,
+    // cookie name
     pub cookie: String,
+    // ttl of session
     pub ttl: i64,
+    // max renewal count
     pub max_renewal: u8,
 }
 
-#[derive(Serialize, Deserialize, Default, Clone, Derivative)]
-#[derivative(Debug)]
-pub struct Session {
-    #[serde(skip)]
-    #[derivative(Debug = "ignore")]
-    cache: Option<&'static RedisCache>,
-    #[serde(skip)]
-    params: SessionParams,
+#[derive(Serialize, Deserialize, Default, Clone)]
+struct SessionData {
     user_id: u64,
     // id
     id: String,
@@ -62,83 +59,172 @@ pub struct Session {
     groups: Vec<String>,
 }
 
+#[derive(Clone)]
+pub struct Session {
+    cache: &'static RedisCache,
+    params: SessionParams,
+    data: SessionData,
+}
+
 impl Session {
+    /// Create a new session
+    ///
+    /// # Arguments
+    /// * `cache` - Redis cache
+    /// * `params` - Session parameters
+    ///
+    /// # Returns
+    /// * `Session` - A new session
     pub fn new(cache: &'static RedisCache, params: SessionParams) -> Self {
         Self {
-            cache: Some(cache),
+            cache,
             params,
-            ..Default::default()
+            data: SessionData::default(),
         }
     }
+    /// Get the session key
+    ///
+    /// # Arguments
+    /// * `id` - Session ID
+    ///
+    /// # Returns
+    /// * `String` - Session key
     fn get_key(id: &str) -> String {
         format!("ss:{id}")
     }
+    /// Validate the login
+    ///
+    /// # Returns
+    /// * `Result<()>` - Result of the validation
     fn validate_login(&self) -> Result<()> {
         if !self.is_login() {
             return Err(Error::UserNotLogin.into());
         }
         Ok(())
     }
+    /// Check if the session is logged in
+    ///
+    /// # Returns
+    /// * `bool` - True if the session is logged in
     pub fn is_login(&self) -> bool {
-        !self.account.is_empty()
+        !self.data.account.is_empty()
     }
+    /// Check if the session can be renewed
+    ///
+    /// # Returns
+    /// * `bool` - True if the session can be renewed
     pub fn can_renew(&self) -> bool {
-        self.renewal_count < self.params.max_renewal
+        self.data.renewal_count < self.params.max_renewal
     }
+    /// Set the account and user ID for the session
+    ///
+    /// # Arguments
+    /// * `account` - Account
+    /// * `user_id` - User ID
+    ///
+    /// # Returns
+    /// * `Session` - A new session
     pub fn with_account(mut self, account: &str, user_id: u64) -> Self {
-        if self.id.is_empty() || self.account != account {
-            self.id = uuid();
+        if self.data.id.is_empty() || self.data.account != account {
+            self.data.id = uuid();
         }
-        self.account = account.to_string();
-        self.user_id = user_id;
-        self.iat = timestamp();
+        self.data.account = account.to_string();
+        self.data.user_id = user_id;
+        self.data.iat = timestamp();
         self
     }
+    /// Set the roles for the session
+    ///
+    /// # Arguments
+    /// * `roles` - Roles
+    ///
+    /// # Returns
+    /// * `Session` - A new session
     pub fn with_roles(mut self, roles: Vec<String>) -> Self {
-        self.roles = roles;
+        self.data.roles = roles;
         self
     }
+    /// Set the groups for the session
+    ///
+    /// # Arguments
+    /// * `groups` - Groups
+    ///
+    /// # Returns
+    /// * `Session` - A new session
     pub fn with_groups(mut self, groups: Vec<String>) -> Self {
-        self.groups = groups;
+        self.data.groups = groups;
         self
     }
+    /// Refresh the session
+    ///
+    /// # Returns
+    /// * `Session` - A new session
     pub fn refresh(&mut self) {
-        self.renewal_count += 1;
-        self.iat = timestamp();
+        self.data.renewal_count += 1;
+        self.data.iat = timestamp();
     }
+    /// Get the account
+    ///
+    /// # Returns
+    /// * `String` - Account
     pub fn get_account(&self) -> String {
-        self.account.clone()
+        self.data.account.clone()
     }
+    /// Get the user ID
+    ///
+    /// # Returns
+    /// * `u64` - User ID
     pub fn get_user_id(&self) -> u64 {
-        self.user_id
+        self.data.user_id
     }
+    /// Get the expired at
+    ///
+    /// # Returns
+    /// * `String` - Expired at
     pub fn get_expired_at(&self) -> String {
-        from_timestamp(self.iat + self.params.ttl, 0)
+        from_timestamp(self.data.iat + self.params.ttl, 0)
     }
+    /// Check if the session will expire in the next hour
+    ///
+    /// # Returns
+    /// * `bool` - True if the session will expire in the next hour
     pub fn is_will_expired(&self) -> bool {
-        self.iat + self.params.ttl - timestamp() < 3600
+        self.data.iat + self.params.ttl - timestamp() < 3600
     }
+    /// Get the issued at
+    ///
+    /// # Returns
+    /// * `String` - Issued at
     pub fn get_issued_at(&self) -> String {
-        from_timestamp(self.iat, 0)
+        from_timestamp(self.data.iat, 0)
     }
+    /// Check if the session is expired
+    ///
+    /// # Returns
+    /// * `bool` - True if the session is expired
     pub fn is_expired(&self) -> bool {
-        self.iat + self.params.ttl < timestamp()
+        self.data.iat + self.params.ttl < timestamp()
     }
+    /// Reset the session
+    ///
+    /// # Returns
+    /// * `Session` - A new session
     pub fn reset(&mut self) {
-        self.id = "".to_string();
-        self.account = "".to_string();
+        self.data.id = "".to_string();
+        self.data.account = "".to_string();
     }
+    /// Save the session
+    ///
+    /// # Returns
+    /// * `Result<()>` - Result of the save
     pub async fn save(&self) -> Result<()> {
-        if self.id.is_empty() {
+        if self.data.id.is_empty() {
             return Err(Error::SessionIdEmpty.into());
         }
-        let Some(cache) = self.cache else {
-            return Err(Error::SessionCacheNotSet.into());
-        };
-        cache
+        self.cache
             .set_struct(
-                &Self::get_key(&self.id),
-                &self,
+                &Self::get_key(&self.data.id),
+                &self.data,
                 Some(Duration::from_secs(self.params.ttl as u64)),
             )
             .await?;
@@ -150,12 +236,12 @@ impl TryFrom<&Session> for SignedCookieJar {
     type Error = tibba_error::Error;
 
     fn try_from(se: &Session) -> Result<Self, Self::Error> {
-        let mut c = CookieBuilder::new(se.params.cookie.clone(), se.id.clone())
+        let mut c = CookieBuilder::new(se.params.cookie.clone(), se.data.id.clone())
             .path("/")
             .http_only(true)
             .max_age(time::Duration::seconds(se.params.ttl));
 
-        if se.id.is_empty() {
+        if se.data.id.is_empty() {
             c = c.max_age(time::Duration::days(0));
         }
         let key =
@@ -179,8 +265,8 @@ impl IntoResponse for Session {
             Ok(jar) => (
                 jar,
                 Json(SessionResp {
-                    account: self.account,
-                    renewal_count: self.renewal_count,
+                    account: self.data.account,
+                    renewal_count: self.data.renewal_count,
                 }),
             )
                 .into_response(),
@@ -214,50 +300,47 @@ where
         parts: &mut Parts,
         _state: &S,
     ) -> std::result::Result<Self, Self::Rejection> {
-        let se = parts
+        let mut se = parts
             .extensions
             .get::<Session>()
-            .ok_or::<Error>(Error::SessionNotFound)?;
+            .ok_or::<Error>(Error::SessionNotFound)?
+            .clone();
         debug!(
-            id = se.id,
-            iat = se.iat,
+            id = se.data.id,
+            iat = se.data.iat,
             category = "session",
             "from_request_parts"
         );
-        let Some(cache) = se.cache else {
-            return Err(Error::SessionCacheNotSet.into());
-        };
         // not fetch
-        if se.iat == 0 {
+        if se.data.iat == 0 {
             let key =
                 Key::try_from(se.params.secret.as_bytes()).map_err(|e| Error::Key { source: e })?;
             let jar = SignedCookieJar::from_headers(&parts.headers, key);
-            let Some(session_id) = jar.get(&se.params.cookie) else {
-                return Ok(Session {
-                    iat: timestamp(),
-                    ..se.clone()
-                });
+            let Some(c) = jar.get(&se.params.cookie) else {
+                return Ok(se);
             };
-            if let Some(mut data) = cache
-                .get_struct::<Session>(&Session::get_key(session_id.value()))
+            let session_id = c.value();
+            if session_id.len() < 36 {
+                return Err(Error::SessionIdInvalid.into());
+            }
+            if let Some(data) = se
+                .cache
+                .get_struct::<SessionData>(&Session::get_key(session_id))
                 .await?
             {
-                data.params = se.params.clone();
-                data.cache = Some(cache);
-                parts.extensions.insert(data.clone());
                 debug!(
                     id = data.id,
                     iat = data.iat,
                     category = "session",
                     "load from cache"
                 );
-                return Ok(data);
+                se.data = data;
+                parts.extensions.insert(se.clone());
+
+                return Ok(se);
             }
         }
-        Ok(Session {
-            iat: timestamp(),
-            ..se.clone()
-        })
+        Ok(se)
     }
 }
 
@@ -320,6 +403,7 @@ where
         let se = Session::from_request_parts(parts, _state).await?;
         se.validate_login()?;
         if !se
+            .data
             .roles
             .iter()
             .any(|role| role == ROLE_ADMIN || role == ROLE_SUPER_ADMIN)

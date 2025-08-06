@@ -28,6 +28,14 @@ pub struct JobTask {
 
 static JOB_TASKS: Lazy<DashMap<String, JobTask>> = Lazy::new(DashMap::new);
 
+/// Register a job task
+///
+/// # Arguments
+/// * `name` - Job name
+/// * `job` - Job
+///
+/// # Returns
+/// * `JobTask` - Job task
 pub fn register_job_task(name: &str, job: Job) {
     JOB_TASKS.insert(
         name.to_string(),
@@ -38,25 +46,31 @@ pub fn register_job_task(name: &str, job: Job) {
     );
 }
 
+/// Run scheduler jobs
+///
+/// # Returns
+/// * `JobScheduler` - Job scheduler
 pub async fn run_scheduler_jobs() -> Result<JobScheduler> {
+    let category = "scheduler";
     let scheduler = JobScheduler::new()
         .await
-        .map_err(|e| new_error(e).with_category("scheduler"))?;
+        .map_err(|e| new_error(e).with_category(category))?;
     for job in JOB_TASKS.iter() {
         let value = job.value();
-        scheduler
-            .add(value.job.clone())
-            .await
-            .map_err(|e| new_error(e).with_category(&format!("scheduler.{}", value.name)))?;
-        info!(category = "scheduler", "add job: {}", value.name);
+        scheduler.add(value.job.clone()).await.map_err(|e| {
+            new_error(e)
+                .with_category(category)
+                .with_sub_category(&value.name)
+        })?;
+        info!(category, name = value.name, "add job success");
     }
     scheduler.shutdown_on_ctrl_c();
     scheduler
         .start()
         .await
-        .map_err(|err| new_error(err).with_category("scheduler"))?;
+        .map_err(|err| new_error(err).with_category(category))?;
 
-    info!(category = "scheduler", "scheduler started");
+    info!(category, "scheduler started");
 
     Ok(scheduler)
 }

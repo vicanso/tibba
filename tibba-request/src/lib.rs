@@ -19,25 +19,25 @@ mod request;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
-    #[snafu(display("request {service} fail, {message}"))]
+    #[snafu(display("{service} request fail, {message}"))]
     Common { service: String, message: String },
-    #[snafu(display("build {service} http request fail, {source}"))]
+    #[snafu(display("{service} build http request fail, {source}"))]
     Build {
         service: String,
         source: reqwest::Error,
     },
-    #[snafu(display("uri {service} fail, {source}"))]
+    #[snafu(display("{service} uri fail, {source}"))]
     Uri {
         service: String,
         source: axum::http::uri::InvalidUri,
     },
-    #[snafu(display("Http {service} request fail, {path} {source}"))]
+    #[snafu(display("{service} http request fail, {path} {source}"))]
     Request {
         service: String,
         path: String,
         source: reqwest::Error,
     },
-    #[snafu(display("Json {service} fail, {source}"))]
+    #[snafu(display("{service} json fail, {source}"))]
     Serde {
         service: String,
         source: serde_json::Error,

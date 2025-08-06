@@ -23,7 +23,7 @@ use validator::Validate;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
-    #[snafu(display("category: {category}, error: {message}"))]
+    #[snafu(display("category: {category}, {message}"))]
     Common { category: String, message: String },
     #[snafu(display("{source}"))]
     SingleBuild { source: deadpool_redis::BuildError },
@@ -31,19 +31,19 @@ pub enum Error {
     ClusterBuild {
         source: deadpool_redis::cluster::CreatePoolError,
     },
-    #[snafu(display("category: {category}, error: {source}"))]
+    #[snafu(display("category: {category}, {source}"))]
     Redis {
         category: String,
         source: deadpool_redis::redis::RedisError,
     },
     #[snafu(display("{source}"))]
     Compression { source: tibba_util::Error },
-    #[snafu(display("category: {category}, error: {source}"))]
+    #[snafu(display("category: {category}, {source}"))]
     Url {
         category: String,
         source: url::ParseError,
     },
-    #[snafu(display("category: {category}, error: {source}"))]
+    #[snafu(display("category: {category}, {source}"))]
     Validate {
         category: String,
         source: validator::ValidationErrors,

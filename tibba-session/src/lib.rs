@@ -21,41 +21,46 @@ pub use session::*;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
-    #[snafu(display("Session id is empty"))]
+    #[snafu(display("session id is empty"))]
     SessionIdEmpty,
-    #[snafu(display("Session cache is not set"))]
+    #[snafu(display("session id is invalid"))]
+    SessionIdInvalid,
+    #[snafu(display("session cache is not set"))]
     SessionCacheNotSet,
     #[snafu(display("{source}"))]
     Key { source: cookie::KeyError },
-    #[snafu(display("Session not found"))]
+    #[snafu(display("session not found"))]
     SessionNotFound,
-    #[snafu(display("User not login"))]
+    #[snafu(display("user not login"))]
     UserNotLogin,
-    #[snafu(display("User not admin"))]
+    #[snafu(display("user not admin"))]
     UserNotAdmin,
 }
 
 impl From<Error> for BaseError {
     fn from(val: Error) -> Self {
         let err = match val {
-            Error::SessionIdEmpty => new_error("Session id is empty")
+            Error::SessionIdEmpty => new_error("session id is empty")
                 .with_status(500)
                 .with_exception(true),
-            Error::SessionCacheNotSet => new_error("Session cache is not set")
+            Error::SessionIdInvalid => new_error("session id is invalid")
+                .with_status(500)
+                .with_exception(true),
+            Error::SessionCacheNotSet => new_error("session cache is not set")
                 .with_status(500)
                 .with_exception(true),
             Error::Key { source } => new_error(source)
                 .with_sub_category("cookie")
                 .with_status(500)
                 .with_exception(true),
-            Error::SessionNotFound => new_error("Session not found")
+            Error::SessionNotFound => new_error("session not found")
                 .with_status(500)
                 .with_exception(true),
-            Error::UserNotLogin => new_error("User not login")
+            Error::UserNotLogin => new_error("user not login")
                 .with_sub_category("user")
                 .with_status(401)
                 .with_exception(false),
-            Error::UserNotAdmin => new_error("User not admin")
+            Error::UserNotAdmin => new_error("user not admin")
                 .with_sub_category("user")
                 .with_status(403)
                 .with_exception(false),

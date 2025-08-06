@@ -35,9 +35,7 @@ pub fn get_redis_cache() -> &'static RedisCache {
         // get redis pool is checked in init function
         // so it can be unwrap here
         let pool = get_redis_pool().unwrap();
-        RedisCacheBuilder::new(pool)
-            .with_prefix("tw:".to_string())
-            .build()
+        RedisCacheBuilder::new(pool).build()
     })
 }
 
