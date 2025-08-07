@@ -17,5 +17,6 @@ serde = { workspace = true }
 tibba-cache = { path = "../tibba-cache" }
 tibba-error = { path = "../tibba-error" }
 tibba-util = { path = "../tibba-util" }
+tibba-state = { path = "../tibba-state" }
 time = { workspace = true }
 tracing = { workspace = true }

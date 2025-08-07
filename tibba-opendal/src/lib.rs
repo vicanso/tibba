@@ -53,9 +53,7 @@ pub enum Error {
 impl From<Error> for BaseError {
     fn from(source: Error) -> Self {
         let err = match source {
-            Error::OpenDal { source } => new_error(source)
-                .with_sub_category("opendal")
-                .with_exception(true),
+            Error::OpenDal { source } => new_error(source).with_exception(true),
             Error::ParseUrl { source } => new_error(source)
                 .with_sub_category("parse_url")
                 .with_exception(true),
@@ -98,6 +96,7 @@ fn parse_params(url: &str) -> Result<StorageParams> {
     })
 }
 
+/// Create a new S3 storage.
 fn new_s3_dal(url: &str) -> Result<Storage> {
     let params = parse_params(url)?;
     let mut builder = opendal::services::S3::default().endpoint(&params.endpoint);
@@ -126,6 +125,7 @@ fn new_s3_dal(url: &str) -> Result<Storage> {
     Ok(Storage::new(dal))
 }
 
+/// Create a new MySQL storage.
 fn new_mysql_dal(url: &str) -> Result<Storage> {
     let builder = opendal::services::Mysql::default()
         .connection_string(url)
@@ -140,6 +140,9 @@ fn new_mysql_dal(url: &str) -> Result<Storage> {
     Ok(Storage::new(dal))
 }
 
+/// Create a new storage from config.
+/// If it's a MySQL URL, it will create a MySQL storage.
+/// Otherwise, it will create a S3 storage.
 pub fn new_opendal_storage(config: &Config) -> Result<Storage> {
     let opendal_config = new_opendal_config(config)?;
     let url = opendal_config.url.as_str();

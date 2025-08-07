@@ -112,7 +112,7 @@ pub async fn validate_captcha(
         .headers()
         .get("X-Captcha")
         .ok_or(Error::Common {
-            message: "Captcha is required".to_string(),
+            message: "captcha is required".to_string(),
             category: category.to_string(),
         })?
         .to_str()
@@ -127,7 +127,7 @@ pub async fn validate_captcha(
     // Validate the header format
     if arr.len() != 2 {
         return Err(Error::Common {
-            message: "Captcha parameter is invalid".to_string(),
+            message: "captcha parameter is invalid".to_string(),
             category: category.to_string(),
         }
         .into());
@@ -142,7 +142,7 @@ pub async fn validate_captcha(
         let code: Option<String> = cache.get_del(arr[0]).await?;
         let Some(code) = code else {
             return Err(Error::Common {
-                message: "Captcha is expired".to_string(),
+                message: "captcha is expired".to_string(),
                 category: category.to_string(),
             }
             .into());
@@ -151,7 +151,7 @@ pub async fn validate_captcha(
         // Compare the provided code against the stored code
         if code != arr[1] {
             return Err(Error::Common {
-                message: "Captcha is invalid".to_string(),
+                message: "captcha is invalid".to_string(),
                 category: category.to_string(),
             }
             .into());

@@ -30,14 +30,7 @@ pub struct RedisCache {
     pool: &'static RedisPool,
 }
 
-/// Builder pattern implementation for RedisCache
-pub struct RedisCacheBuilder {
-    ttl: Duration,
-    prefix: String,
-    pool: &'static RedisPool,
-}
-
-impl RedisCacheBuilder {
+impl RedisCache {
     /// Creates a new RedisCacheBuilder with default settings:
     /// - TTL: 10 minutes
     /// - Empty prefix
@@ -64,17 +57,6 @@ impl RedisCacheBuilder {
         self
     }
 
-    /// Constructs and returns a new RedisCache instance with the configured settings
-    pub fn build(self) -> RedisCache {
-        RedisCache {
-            ttl: self.ttl,
-            prefix: self.prefix,
-            pool: self.pool,
-        }
-    }
-}
-
-impl RedisCache {
     /// Generates the full cache key by combining prefix (if any) with the provided key
     /// # Arguments
     /// * `key` - The base key to be prefixed
@@ -161,10 +143,9 @@ impl RedisCache {
     /// * `Err(Error)` - Redis operation failed
     pub async fn lock(&self, key: &str, ttl: Option<Duration>) -> Result<bool> {
         let mut conn = self.pool.get().await?;
-        let k = self.get_key(key);
 
         let result = cmd("SET")
-            .arg(&k)
+            .arg(self.get_key(key))
             .arg(true)
             .arg("NX")
             .arg("EX")
@@ -185,10 +166,9 @@ impl RedisCache {
     /// * `Err(Error)` - Redis operation failed
     pub async fn del(&self, key: &str) -> Result<()> {
         let mut conn = self.pool.get().await?;
-        let k = self.get_key(key);
 
         let () = cmd("DEL")
-            .arg(&k)
+            .arg(self.get_key(key))
             .query_async(&mut conn)
             .await
             .map_err(|e| Error::Redis {
@@ -206,7 +186,7 @@ impl RedisCache {
     /// * `Ok(i64)` - The new value after incrementing
     /// * `Err(Error)` - Redis operation failed
     /// # Notes
-    /// If the key doesn't exist, it's initialized to 0 before incrementing
+    /// If the key doesn't exist, it's initialized to 0 with ttl before incrementing
     pub async fn incr(&self, key: &str, delta: i64, ttl: Option<Duration>) -> Result<i64> {
         let mut conn = self.pool.get().await?;
         let k = self.get_key(key);
@@ -238,16 +218,14 @@ impl RedisCache {
         value: T,
         ttl: Option<Duration>,
     ) -> Result<()> {
-        let k = self.get_key(key);
-        self.set_value(&k, value, ttl).await
+        self.set_value(&self.get_key(key), value, ttl).await
     }
     /// Retrieves a value from Redis
     /// - Value type must implement FromRedisValue trait
     /// - Key will be automatically prefixed if a prefix is configured
     /// - Returns Error if key doesn't exist or value can't be converted to T
     pub async fn get<T: redis::FromRedisValue>(&self, key: &str) -> Result<T> {
-        let k = self.get_key(key);
-        self.get_value::<T>(&k).await
+        self.get_value::<T>(&self.get_key(key)).await
     }
     /// Serializes and stores a struct in Redis as JSON
     /// - Value must implement Serialize trait
@@ -261,8 +239,7 @@ impl RedisCache {
             category: "set_struct".to_string(),
             message: e.to_string(),
         })?;
-        let k = self.get_key(key);
-        self.set_value(&k, &value, ttl).await?;
+        self.set_value(&self.get_key(key), &value, ttl).await?;
         Ok(())
     }
     /// Retrieves and deserializes a struct from Redis
@@ -274,8 +251,7 @@ impl RedisCache {
     where
         T: DeserializeOwned,
     {
-        let k = self.get_key(key);
-        let buf: Vec<u8> = self.get_value(&k).await?;
+        let buf: Vec<u8> = self.get_value(&self.get_key(key)).await?;
 
         if buf.is_empty() {
             return Ok(None);
@@ -300,9 +276,8 @@ impl RedisCache {
     /// * `Err(Error)` - Redis operation failed
     pub async fn ttl(&self, key: &str) -> Result<i32> {
         let mut conn = self.pool.get().await?;
-        let k = self.get_key(key);
         let result = cmd("TTL")
-            .arg(&k)
+            .arg(self.get_key(key))
             .query_async(&mut conn)
             .await
             .map_err(|e| Error::Redis {
@@ -311,7 +286,7 @@ impl RedisCache {
             })?;
         Ok(result)
     }
-    /// Atomically retrieves a value and deletes it from Redis
+    /// Atomically retrieves a value and deletes it from Redis(>=6.2.0)
     /// # Type Parameters
     /// * `T` - The type to deserialize the Redis value into
     /// # Arguments
@@ -320,20 +295,17 @@ impl RedisCache {
     /// * `Ok(T)` - The value before deletion
     /// * `Err(Error)` - Redis operation failed or value conversion error
     pub async fn get_del<T: redis::FromRedisValue>(&self, key: &str) -> Result<T> {
-        let k = self.get_key(key);
         let mut conn = self.pool.get().await?;
-        let (value, _) = pipe()
-            .cmd("GET")
-            .arg(&k)
-            .cmd("DEL")
-            .arg(&k)
-            .query_async::<(T, bool)>(&mut conn)
+
+        let result = cmd("GETDEL")
+            .arg(self.get_key(key))
+            .query_async(&mut conn)
             .await
             .map_err(|e| Error::Redis {
                 category: "get_del".to_string(),
                 source: e,
             })?;
-        Ok(value)
+        Ok(result)
     }
     /// Serializes a struct to JSON, compresses it with LZ4, and stores in Redis
     /// # Type Parameters
@@ -353,8 +325,7 @@ impl RedisCache {
             message: e.to_string(),
         })?;
         let buf = lz4_encode(&value);
-        let k = self.get_key(key);
-        self.set_value(&k, &buf, ttl).await?;
+        self.set_value(&self.get_key(key), &buf, ttl).await?;
         Ok(())
     }
     /// Retrieves, decompresses (LZ4), and deserializes a struct from Redis
@@ -370,8 +341,7 @@ impl RedisCache {
     where
         T: DeserializeOwned,
     {
-        let k = self.get_key(key);
-        let value: Vec<u8> = self.get_value(&k).await?;
+        let value: Vec<u8> = self.get_value(&self.get_key(key)).await?;
 
         if value.is_empty() {
             return Ok(None);
@@ -409,8 +379,7 @@ impl RedisCache {
             message: e.to_string(),
         })?;
         let buf = zstd_encode(&value).map_err(|e| Error::Compression { source: e })?;
-        let k = self.get_key(key);
-        self.set_value(&k, &buf, ttl).await?;
+        self.set_value(&self.get_key(key), &buf, ttl).await?;
         Ok(())
     }
     /// Retrieves, decompresses (Zstd), and deserializes a struct from Redis
@@ -426,8 +395,7 @@ impl RedisCache {
     where
         T: DeserializeOwned,
     {
-        let k = self.get_key(key);
-        let value: Vec<u8> = self.get_value(&k).await?;
+        let value: Vec<u8> = self.get_value(&self.get_key(key)).await?;
 
         if value.is_empty() {
             return Ok(None);

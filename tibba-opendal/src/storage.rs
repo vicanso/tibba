@@ -22,15 +22,18 @@ pub struct Storage {
 }
 
 impl Storage {
+    /// Create a new storage.
     pub fn new(dal: opendal::Operator) -> Self {
         Self { dal }
     }
+    /// Write data to the storage.
     pub async fn write(&self, path: &str, bs: impl Into<Buffer>) -> Result<Metadata> {
         let metadata = self.dal.write(path, bs).await.map_err(|e| Error::OpenDal {
             source: Box::new(e),
         })?;
         Ok(metadata)
     }
+    /// Write data to the storage with user metadata.
     pub async fn write_with(
         &self,
         path: &str,
@@ -53,18 +56,21 @@ impl Storage {
         })?;
         Ok(metadata)
     }
+    /// Read data from the storage.
     pub async fn read(&self, path: &str) -> Result<Buffer> {
         let bs = self.dal.read(path).await.map_err(|e| Error::OpenDal {
             source: Box::new(e),
         })?;
         Ok(bs)
     }
+    /// Get metadata of the storage.
     pub async fn stat(&self, path: &str) -> Result<Metadata> {
         let metadata = self.dal.stat(path).await.map_err(|e| Error::OpenDal {
             source: Box::new(e),
         })?;
         Ok(metadata)
     }
+    /// Get info of the storage.
     pub fn info(&self) -> OperatorInfo {
         self.dal.info()
     }

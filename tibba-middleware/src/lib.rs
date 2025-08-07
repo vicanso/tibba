@@ -22,7 +22,7 @@ use tibba_error::{Error as BaseError, new_error};
 pub enum Error {
     #[snafu(display("{message}"))]
     Common { message: String, category: String },
-    #[snafu(display("Too many requests, limit: {limit}, current: {current}"))]
+    #[snafu(display("too many requests, limit: {limit}, current: {current}"))]
     TooManyRequests { limit: i64, current: i64 },
 }
 
@@ -30,11 +30,9 @@ impl From<Error> for BaseError {
     fn from(val: Error) -> Self {
         let err = match val {
             Error::Common { message, category } => new_error(&message).with_sub_category(&category),
-            Error::TooManyRequests { limit, current } => new_error(format!(
-                "Too many requests, limit: {limit}, current: {current}"
-            ))
-            .with_sub_category("too_many_requests")
-            .with_status(429),
+            Error::TooManyRequests { .. } => new_error(val.to_string())
+                .with_sub_category("too_many_requests")
+                .with_status(429),
         };
         err.with_category("middleware")
     }

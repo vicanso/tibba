@@ -14,6 +14,7 @@
 
 use super::{Error, new_redis_config};
 use async_trait::async_trait;
+use deadpool_redis::Status;
 use redis::aio::ConnectionLike;
 use redis::{Cmd, Pipeline, RedisFuture, Value};
 use tibba_config::Config;
@@ -52,6 +53,15 @@ impl RedisPool {
             }
         };
         Ok(conn)
+    }
+    /// Gets the status of the pool
+    /// # Returns
+    /// * `Status` - The status of the pool
+    pub fn status(&self) -> Status {
+        match self {
+            RedisPool::Single(p) => p.status(),
+            RedisPool::Cluster(p) => p.status(),
+        }
     }
 }
 

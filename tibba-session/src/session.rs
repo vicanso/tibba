@@ -22,6 +22,7 @@ use cookie::CookieBuilder;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tibba_cache::RedisCache;
+use tibba_state::CTX;
 use tibba_util::{from_timestamp, timestamp, uuid};
 use tracing::debug;
 
@@ -336,6 +337,9 @@ where
                 );
                 se.data = data;
                 parts.extensions.insert(se.clone());
+                if se.is_login() {
+                    CTX.get().set_account(&se.get_account());
+                }
 
                 return Ok(se);
             }

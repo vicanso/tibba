@@ -172,14 +172,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             .layer(from_fn_with_state(state, entry))
             .layer(from_fn_with_state(state, stats))
             .layer(from_fn_with_state(
-                (
-                    cache::get_redis_cache(),
-                    config::get_session_params(),
-                    ["/files/preview"]
-                        .iter()
-                        .map(|s| format!("{}{}", basic_config.prefix, s))
-                        .collect(),
-                ),
+                (cache::get_redis_cache(), config::get_session_params()),
                 session,
             ))
             .layer(from_fn_with_state(state, processing_limit)),

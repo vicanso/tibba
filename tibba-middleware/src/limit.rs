@@ -63,11 +63,10 @@ pub async fn processing_limit(
 
     // Increment processing counter and get new count
     let count = state.inc_processing() + 1;
+    defer!(state.dec_processing(););
 
     // Check if processing limit has been exceeded
     if count > limit {
-        // Decrement counter since request won't be processed
-        state.dec_processing();
         // Return 429 Too Many Requests error
         return Err(Error::TooManyRequests {
             limit: limit as i64,
@@ -78,8 +77,6 @@ pub async fn processing_limit(
 
     // Process the request
     let res = next.run(req).await;
-    // Decrement processing counter after request completes
-    state.dec_processing();
 
     Ok(res)
 }
