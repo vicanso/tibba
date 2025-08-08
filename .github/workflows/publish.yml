@@ -79,13 +79,19 @@ jobs:
           echo ${{ steps.docker_build.outputs.digest }}
   merge:
     runs-on: ubuntu-22.04
-    needs: build # 等待所有架构构建完成
+    needs: [build] # 等待所有架构构建完成
     steps:
+      - name: Enable Docker experimental features  # 永久启用实验特性
+        run: |
+          mkdir -p ~/.docker
+          echo '{"experimental": "enabled"}' > ~/.docker/config.json
       - uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_HUB_USERNAME }}
           password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
       - run: |
+          docker inspect ${{ env.IMAGE_NAME }}:amd64
+          docker inspect ${{ env.IMAGE_NAME }}:arm64
           docker manifest create ${{ env.IMAGE_NAME }}:latest \
             ${{ env.IMAGE_NAME }}:amd64 \
             ${{ env.IMAGE_NAME }}:arm64
