@@ -16,7 +16,7 @@ use snafu::Snafu;
 use sqlx::MySqlPool;
 use sqlx::pool::PoolOptions;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
 use tibba_config::Config;
 use tibba_error::Error as BaseError;
@@ -144,8 +144,18 @@ impl From<Error> for BaseError {
 
 #[derive(Debug, Default)]
 pub struct PoolStat {
-    pub connected: AtomicU32,
-    pub executions: AtomicUsize,
+    connected: AtomicU32,
+    executions: AtomicUsize,
+    idle: AtomicU64,
+}
+
+impl PoolStat {
+    pub fn stat(&self) -> (u32, usize, u64) {
+        let connected = self.connected.load(Ordering::Relaxed);
+        let executions = self.executions.swap(0, Ordering::Relaxed);
+        let idle = self.idle.swap(0, Ordering::Relaxed);
+        (connected, executions, idle)
+    }
 }
 
 type Result<T> = std::result::Result<T, Error>;
@@ -157,7 +167,8 @@ pub async fn new_mysql_pool(
     let database_config = new_database_config(config)?;
     let password = database_config.password.clone().unwrap_or_default();
     let url = database_config.url.replace(&password, "***");
-    info!(url, "connect to database");
+    let category = "sqlx";
+    info!(category, url, "connect to database");
     let after_connect_pool_stat = pool_stat.clone();
     let before_acquire_pool_stat = pool_stat.clone();
     let after_release_pool_stat = pool_stat.clone();
@@ -173,12 +184,15 @@ pub async fn new_mysql_pool(
                 }
             })
         })
-        .before_acquire(move |_conn, _meta| {
+        .before_acquire(move |_conn, meta| {
             Box::pin({
                 let pool_stat = before_acquire_pool_stat.clone();
                 async move {
+                    let idle = meta.idle_for.as_secs();
+                    info!(category, age = meta.age.as_secs(), idle, "before acquire");
                     if let Some(pool_stat) = &pool_stat {
                         pool_stat.executions.fetch_add(1, Ordering::Relaxed);
+                        pool_stat.idle.fetch_add(idle, Ordering::Relaxed);
                     }
                     Ok(true)
                 }
@@ -187,9 +201,17 @@ pub async fn new_mysql_pool(
         .after_release(move |_conn, meta| {
             let pool_stat = after_release_pool_stat.clone();
             Box::pin(async move {
+                // Only check connections older than 6 hours.
                 if meta.age.as_secs() < 6 * 60 * 60 {
                     return Ok(true);
                 }
+                let idle = meta.idle_for.as_secs();
+                info!(
+                    category,
+                    age = meta.age.as_secs(),
+                    idle,
+                    "release connection"
+                );
                 if let Some(pool_stat) = &pool_stat {
                     pool_stat.connected.fetch_sub(1, Ordering::Relaxed);
                 }

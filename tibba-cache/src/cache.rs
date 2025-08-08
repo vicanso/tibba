@@ -12,8 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, RedisPool};
+use super::{Error, RedisConnection, RedisPool};
 use deadpool_redis::redis::{cmd, pipe};
+use redis::AsyncCommands;
 use serde::{Serialize, de::DeserializeOwned};
 use std::time::Duration;
 use tibba_util::{lz4_decode, lz4_encode, zstd_decode, zstd_encode};
@@ -31,6 +32,10 @@ pub struct RedisCache {
 }
 
 impl RedisCache {
+    #[inline]
+    pub async fn conn(&self) -> Result<RedisConnection> {
+        self.pool.get().await
+    }
     /// Creates a new RedisCacheBuilder with default settings:
     /// - TTL: 10 minutes
     /// - Empty prefix
@@ -74,14 +79,10 @@ impl RedisCache {
     /// * `Ok(())` - Connection is successful
     /// * `Err(Error)` - Redis operation failed
     pub async fn ping(&self) -> Result<()> {
-        let mut conn = self.pool.get().await?;
-        let () = cmd("PING")
-            .query_async(&mut conn)
-            .await
-            .map_err(|e| Error::Redis {
-                category: "ping".to_string(),
-                source: e,
-            })?;
+        let () = self.conn().await?.ping().await.map_err(|e| Error::Redis {
+            category: "ping".to_string(),
+            source: e,
+        })?;
         Ok(())
     }
     /// Retrieves a raw value from Redis for the given key
@@ -93,10 +94,10 @@ impl RedisCache {
     /// * `Ok(T)` - Successfully retrieved and converted value
     /// * `Err(Error)` - Redis error or value conversion error
     async fn get_value<T: redis::FromRedisValue>(&self, key: &str) -> Result<T> {
-        let mut conn = self.pool.get().await?;
-        let result = cmd("GET")
-            .arg(key)
-            .query_async(&mut conn)
+        let result = self
+            .conn()
+            .await?
+            .get(key)
             .await
             .map_err(|e| Error::Redis {
                 category: "get".to_string(),
@@ -112,20 +113,17 @@ impl RedisCache {
     /// * `key` - The key under which to store the value
     /// * `value` - The value to store
     /// * `ttl` - Optional time-to-live duration (uses instance default if None)
-    async fn set_value<T: redis::ToRedisArgs>(
+    async fn set_value<T: redis::ToRedisArgs + Send + Sync>(
         &self,
         key: &str,
         value: T,
         ttl: Option<Duration>,
     ) -> Result<()> {
-        let mut conn = self.pool.get().await?;
-
         let seconds = ttl.unwrap_or(self.ttl).as_secs();
-        let () = cmd("SETEX")
-            .arg(key)
-            .arg(seconds)
-            .arg(value)
-            .query_async(&mut conn)
+        let () = self
+            .conn()
+            .await?
+            .set_ex(key, value, seconds)
             .await
             .map_err(|e| Error::Redis {
                 category: "set".to_string(),
@@ -142,7 +140,7 @@ impl RedisCache {
     /// * `Ok(false)` - Lock already exists
     /// * `Err(Error)` - Redis operation failed
     pub async fn lock(&self, key: &str, ttl: Option<Duration>) -> Result<bool> {
-        let mut conn = self.pool.get().await?;
+        let mut conn = self.conn().await?;
 
         let result = cmd("SET")
             .arg(self.get_key(key))
@@ -165,16 +163,16 @@ impl RedisCache {
     /// * `Ok(())` - Key was successfully deleted (or didn't exist)
     /// * `Err(Error)` - Redis operation failed
     pub async fn del(&self, key: &str) -> Result<()> {
-        let mut conn = self.pool.get().await?;
-
-        let () = cmd("DEL")
-            .arg(self.get_key(key))
-            .query_async(&mut conn)
+        let () = self
+            .conn()
+            .await?
+            .del(self.get_key(key))
             .await
             .map_err(|e| Error::Redis {
                 category: "del".to_string(),
                 source: e,
             })?;
+
         Ok(())
     }
     /// Atomically increments a counter by delta
@@ -212,7 +210,7 @@ impl RedisCache {
     /// - If TTL is None, uses the default TTL configured for this cache
     /// - Value type must implement ToRedisArgs trait
     /// - Key will be automatically prefixed if a prefix is configured
-    pub async fn set<T: redis::ToRedisArgs>(
+    pub async fn set<T: redis::ToRedisArgs + Send + Sync>(
         &self,
         key: &str,
         value: T,
@@ -275,15 +273,16 @@ impl RedisCache {
     ///   * `seconds = -1` - Key exists but has no expiry
     /// * `Err(Error)` - Redis operation failed
     pub async fn ttl(&self, key: &str) -> Result<i32> {
-        let mut conn = self.pool.get().await?;
-        let result = cmd("TTL")
-            .arg(self.get_key(key))
-            .query_async(&mut conn)
+        let result = self
+            .conn()
+            .await?
+            .ttl(self.get_key(key))
             .await
             .map_err(|e| Error::Redis {
                 category: "ttl".to_string(),
                 source: e,
             })?;
+
         Ok(result)
     }
     /// Atomically retrieves a value and deletes it from Redis(>=6.2.0)
@@ -295,16 +294,16 @@ impl RedisCache {
     /// * `Ok(T)` - The value before deletion
     /// * `Err(Error)` - Redis operation failed or value conversion error
     pub async fn get_del<T: redis::FromRedisValue>(&self, key: &str) -> Result<T> {
-        let mut conn = self.pool.get().await?;
-
-        let result = cmd("GETDEL")
-            .arg(self.get_key(key))
-            .query_async(&mut conn)
+        let result = self
+            .conn()
+            .await?
+            .get_del(self.get_key(key))
             .await
             .map_err(|e| Error::Redis {
                 category: "get_del".to_string(),
                 source: e,
             })?;
+
         Ok(result)
     }
     /// Serializes a struct to JSON, compresses it with LZ4, and stores in Redis

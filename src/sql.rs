@@ -16,7 +16,7 @@ use crate::config::must_get_config;
 use ctor::ctor;
 use once_cell::sync::OnceCell;
 use sqlx::MySqlPool;
-use std::sync::{Arc, atomic::Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 use tibba_error::new_error;
 use tibba_hook::register_before_task;
@@ -49,9 +49,8 @@ fn init() {
 
                 let task = "database_performance";
                 let job = Job::new_repeated(Duration::from_secs(60), move |_, _| {
-                    let connected = stat.connected.load(Ordering::Relaxed);
-                    let executions = stat.executions.load(Ordering::Relaxed);
-                    info!(category = task, connected, executions);
+                    let (connected, executions, idle) = stat.stat();
+                    info!(category = task, connected, executions, idle);
                 })
                 .map_err(new_error)?;
                 register_job_task(task, job);
