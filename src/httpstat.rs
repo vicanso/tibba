@@ -356,6 +356,9 @@ async fn run_detector_stat() -> Result<(i32, i32, i32)> {
                 {
                     lock_key += format!("_{}", detector.regions.join(",")).as_str();
                 }
+                // 随机delay，为了让各机器更好的获到执行的机会
+                let delay = Duration::from_millis(rand::random::<u64>() % 200);
+                tokio::time::sleep(delay).await;
                 let locked = match get_redis_cache()
                     .lock(&lock_key, Some(Duration::from_secs(30)))
                     .await
@@ -686,9 +689,6 @@ fn init() {
                 let job = Job::new_async("0 * * * * *", |_, _| {
                     let category = "http_detector";
                     Box::pin(async move {
-                        // 随机delay，为了让各机器更好的获到执行的机会
-                        let delay = Duration::from_millis(rand::random::<u64>() % 2000);
-                        tokio::time::sleep(delay).await;
                         match run_detector_stat().await {
                             Err(e) => {
                                 error!(
