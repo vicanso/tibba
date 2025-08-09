@@ -16,8 +16,8 @@ jobs:
     strategy:
       matrix:
         platform:
-          - { arch: "linux/amd64", tag: "amd64", runs-on: "ubuntu-22.04" }
-          - { arch: "linux/arm64", tag: "arm64", runs-on: "ubuntu-22.04-arm" }
+          - { arch: "linux/amd64", tag: "amd64", runs-on: "ubuntu-24.04" }
+          - { arch: "linux/arm64", tag: "arm64", runs-on: "ubuntu-24.04-arm" }
     steps:
       - name: Change Swap Space
         run: |
@@ -72,7 +72,7 @@ jobs:
         run: |
           echo ${{ steps.docker_build.outputs.digest }}
   merge:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     needs: [build] # 等待所有架构构建完成
     steps:
       - name: Set up Docker Buildx

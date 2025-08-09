@@ -26,11 +26,10 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::MySqlPool;
 use std::str::FromStr;
-use std::time::Duration;
 use tibba_error::{Error, new_error};
 use tibba_model::{Model, ModelListParams, SchemaView};
-use tibba_session::AdminSession;
-use tibba_util::{CacheJsonResult, JsonParams, JsonResult, QueryParams};
+use tibba_session::{AdminSession, UserSession};
+use tibba_util::{JsonParams, JsonResult, QueryParams};
 use tibba_validator::x_schema_name;
 use validator::Validate;
 
@@ -47,7 +46,8 @@ fn get_model(name: &str) -> Result<CmsModel, Error> {
 async fn get_schema(
     State(pool): State<&'static MySqlPool>,
     QueryParams(params): QueryParams<GetSchemaParams>,
-) -> CacheJsonResult<SchemaView> {
+    _session: UserSession,
+) -> JsonResult<SchemaView> {
     let model = get_model(&params.name)?;
     let view = match model {
         CmsModel::User => USER_MODEL.schema_view(pool).await,
@@ -59,7 +59,7 @@ async fn get_schema(
         CmsModel::DetectorGroup => DETECTOR_GROUP_MODEL.schema_view(pool).await,
         CmsModel::DetectorGroupUser => DETECTOR_GROUP_USER_MODEL.schema_view(pool).await,
     };
-    Ok((Duration::from_secs(5 * 60), view).into())
+    Ok(Json(view))
 }
 
 #[derive(Deserialize, Validate)]

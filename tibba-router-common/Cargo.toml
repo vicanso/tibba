@@ -12,7 +12,7 @@ path = "src/lib.rs"
 axum = { workspace = true }
 base64 = { workspace = true }
 captcha = { workspace = true }
-hostname = "0.4.1"
+hostname = { workspace = true }
 humantime = { workspace = true }
 os_info = { workspace = true }
 serde = { workspace = true }

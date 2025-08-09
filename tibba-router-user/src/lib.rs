@@ -41,6 +41,7 @@ struct LoginTokenResp {
     hash: String,
     token: String,
 }
+/// Generate login token, which is hashed with secret and timestamp
 async fn login_token(State(secret): State<String>) -> JsonResult<LoginTokenResp> {
     let token = uuid();
     let (ts, hash) = timestamp_hash(&token, &secret);
@@ -68,7 +69,7 @@ impl LoginParams {
             return Ok(());
         }
         if (self.ts - timestamp()).abs() > 60 {
-            return Err(new_error("Timestamp is invalid"));
+            return Err(new_error("timestamp is expired"));
         }
         validate_timestamp_hash(self.ts, &self.token, &self.hash, secret)?;
         Ok(())
@@ -88,6 +89,7 @@ struct UserMeResp {
     groups: Option<Vec<String>>,
 }
 
+/// Login with account and password
 async fn login(
     State((secret, pool)): State<(String, &'static MySqlPool)>,
     session: Session,
@@ -95,7 +97,7 @@ async fn login(
 ) -> Result<SessionResponse<Json<UserMeResp>>> {
     params.validate_token(&secret)?;
     let account = params.account;
-    let account_password_err = new_error("Account or password is wrong");
+    let account_password_err = new_error("account or password is wrong");
     let Some(user) = UserModel::new().get_by_account(pool, &account).await? else {
         return Err(account_password_err);
     };
@@ -130,6 +132,7 @@ async fn login(
     Ok(SessionResponse(session, Json(info)))
 }
 
+/// Get login user info
 async fn me(
     State(pool): State<&'static MySqlPool>,
     mut jar: CookieJar,
@@ -145,7 +148,7 @@ async fn me(
     let user = UserModel::new()
         .get_by_account(pool, &account)
         .await?
-        .ok_or(new_error("User not found"))?;
+        .ok_or(new_error("user not found"))?;
     let info = UserMeResp {
         account,
         expired_at: session.get_expired_at(),
@@ -174,6 +177,7 @@ struct RegisterResp {
     account: String,
 }
 
+/// Register a new user
 async fn register(
     State(pool): State<&'static MySqlPool>,
     JsonParams(params): JsonParams<RegisterParams>,
@@ -198,6 +202,7 @@ async fn register(
     }))
 }
 
+/// Refresh session
 async fn refresh_session(mut session: UserSession) -> Result<Session> {
     if !session.can_renew() {
         return Ok(session.into());
@@ -207,6 +212,7 @@ async fn refresh_session(mut session: UserSession) -> Result<Session> {
     Ok(session.into())
 }
 
+/// Logout
 async fn logout(mut session: Session) -> Session {
     session.reset();
     session
@@ -220,6 +226,7 @@ struct UpdateProfileParams {
     avatar: Option<String>,
 }
 
+/// Update user profile
 async fn update_profile(
     State(pool): State<&'static MySqlPool>,
     session: UserSession,

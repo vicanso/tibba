@@ -32,6 +32,7 @@ type Result<T> = std::result::Result<T, Error>;
 
 const ERROR_CATEGORY: &str = "common_router";
 
+/// Ping the server to check if it is running
 async fn ping(State(state): State<&'static AppState>) -> Result<&'static str> {
     if !state.is_running() {
         return Err(new_error("Server is not running")
@@ -51,16 +52,14 @@ struct ApplicationInfo {
     hostname: String,
 }
 
+/// Get the application information
 async fn get_application_info(
     State(state): State<&'static AppState>,
 ) -> JsonResult<ApplicationInfo> {
     let uptime = state.get_started_at().elapsed().unwrap_or_default();
-    let os = os_info::get().os_type().to_string();
-    let mut arch = "x86";
-    // simple detection
-    if cfg!(any(target_arch = "arm", target_arch = "aarch64")) {
-        arch = "arm64"
-    }
+    let info = os_info::get();
+    let os = info.os_type().to_string();
+    let arch = info.architecture().unwrap_or_default();
     let uptime_str = humantime::format_duration(uptime).to_string();
     let mut uptime_values = uptime_str.split(" ").collect::<Vec<_>>();
     if uptime_values.len() > 2 {
@@ -92,6 +91,7 @@ struct CaptchaInfo {
     data: String,
 }
 
+/// Generate a captcha image
 async fn captcha(
     State(cache): State<&'static RedisCache>,
     QueryParams(params): QueryParams<CaptchaParams>,
