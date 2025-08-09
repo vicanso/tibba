@@ -193,7 +193,6 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-#[tokio::main]
 async fn start() {
     // only use unwrap in run function
     if let Err(e) = run().await {
@@ -209,5 +208,15 @@ fn main() {
         std::process::exit(1);
     }));
     init_logger();
-    start();
+    let cpus = std::env::var("TIBBA_THREADS")
+        .map(|v| v.parse::<usize>().unwrap_or(num_cpus::get()))
+        .unwrap_or(num_cpus::get())
+        .max(1);
+    info!(threads = cpus, "start static server");
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .worker_threads(cpus)
+        .build()
+        .unwrap()
+        .block_on(start());
 }

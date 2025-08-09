@@ -4840,6 +4840,7 @@ dependencies = [
  "http-stat",
  "humantime",
  "nanoid",
+ "num_cpus",
  "once_cell",
  "quick-js",
  "rand 0.9.2",
