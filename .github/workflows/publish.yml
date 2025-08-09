@@ -23,6 +23,10 @@ jobs:
         run: |
           swapon --show=NAME | tail -n 1
           df -lh
+          if [ -d /usr/local/lib/android ]; then
+            du -sh /usr/local/lib/android
+            sudo rm -rf /usr/local/lib/android
+          fi
           export SWAP_FILE=$(swapon --show=NAME | tail -n 1)
           sudo swapoff $SWAP_FILE
           sudo rm $SWAP_FILE
@@ -43,16 +47,6 @@ jobs:
           arch
       - name: Checkout
         uses: actions/checkout@v4
-      # - name: Docker meta
-      #   id: meta
-      #   uses: docker/metadata-action@v4
-      #   with:
-      #     images: |
-      #       vicanso/tibba
-      #     tags: |
-      #       type=raw,value=latest
-      # - name: Set up QEMU
-      #   uses: docker/setup-qemu-action@v3
       - name: Set up Docker Buildx
         id: buildx
         uses: docker/setup-buildx-action@v3

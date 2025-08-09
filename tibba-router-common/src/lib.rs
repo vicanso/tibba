@@ -26,7 +26,7 @@ use std::time::Duration;
 use tibba_cache::RedisCache;
 use tibba_error::{Error, new_error};
 use tibba_state::AppState;
-use tibba_util::{CacheJsonResult, QueryParams, get_env, uuid};
+use tibba_util::{JsonResult, QueryParams, get_env, uuid};
 use validator::Validate;
 type Result<T> = std::result::Result<T, Error>;
 
@@ -53,7 +53,7 @@ struct ApplicationInfo {
 
 async fn get_application_info(
     State(state): State<&'static AppState>,
-) -> CacheJsonResult<ApplicationInfo> {
+) -> JsonResult<ApplicationInfo> {
     let uptime = state.get_started_at().elapsed().unwrap_or_default();
     let os = os_info::get().os_type().to_string();
     let mut arch = "x86";
@@ -78,7 +78,7 @@ async fn get_application_info(
             .to_string_lossy()
             .to_string(),
     };
-    Ok((Duration::from_secs(60), info).into())
+    Ok(Json(info))
 }
 
 #[derive(Debug, Deserialize, Clone, Validate)]
