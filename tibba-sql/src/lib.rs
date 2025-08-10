@@ -151,7 +151,7 @@ pub struct PoolStat {
 
 impl PoolStat {
     pub fn stat(&self) -> (u32, usize, u64) {
-        let connected = self.connected.load(Ordering::Relaxed);
+        let connected = self.connected.swap(0, Ordering::Relaxed);
         let executions = self.executions.swap(0, Ordering::Relaxed);
         let idle = self.idle.swap(0, Ordering::Relaxed);
         (connected, executions, idle)
@@ -171,7 +171,6 @@ pub async fn new_mysql_pool(
     info!(category, url, "connect to database");
     let after_connect_pool_stat = pool_stat.clone();
     let before_acquire_pool_stat = pool_stat.clone();
-    let after_release_pool_stat = pool_stat.clone();
     let pool = PoolOptions::new()
         .after_connect(move |_conn, _meta| {
             Box::pin({
@@ -196,26 +195,6 @@ pub async fn new_mysql_pool(
                     }
                     Ok(true)
                 }
-            })
-        })
-        .after_release(move |_conn, meta| {
-            let pool_stat = after_release_pool_stat.clone();
-            Box::pin(async move {
-                // Only check connections older than 6 hours.
-                if meta.age.as_secs() < 6 * 60 * 60 {
-                    return Ok(true);
-                }
-                let idle = meta.idle_for.as_secs();
-                info!(
-                    category,
-                    age = meta.age.as_secs(),
-                    idle,
-                    "release connection"
-                );
-                if let Some(pool_stat) = &pool_stat {
-                    pool_stat.connected.fetch_sub(1, Ordering::Relaxed);
-                }
-                Ok(false)
             })
         })
         .max_connections(database_config.max_connections)
