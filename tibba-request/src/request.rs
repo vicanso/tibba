@@ -360,6 +360,8 @@ impl ClientBuilder {
             }
         }
 
+        builder = builder.tls_info(true);
+
         let client = builder.build().map_err(|e| Error::Build {
             service: self.config.service.clone(),
             source: e,

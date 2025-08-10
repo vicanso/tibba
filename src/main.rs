@@ -196,8 +196,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 async fn start() {
     // only use unwrap in run function
     if let Err(e) = run().await {
-        error!(category = "launch_app", message = e.to_string(),);
-        return;
+        error!(category = "launch_app", message = e.to_string())
     }
 }
 

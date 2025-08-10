@@ -16,49 +16,68 @@ use super::{Error, new_redis_config};
 use async_trait::async_trait;
 use deadpool_redis::Status;
 use redis::aio::ConnectionLike;
-use redis::{Cmd, Pipeline, RedisFuture, Value};
+use redis::{Arg, Cmd, Pipeline, RedisFuture, Value};
+use std::time::Duration;
 use tibba_config::Config;
 use tracing::info;
 
 type Result<T> = std::result::Result<T, Error>;
 
+#[derive(Debug, Default)]
+pub struct RedisCmdStat {
+    pub cmd: String,
+    pub elapsed: Duration,
+    pub error: Option<String>,
+}
+
+pub type RedisCmdStatCallback = dyn Fn(RedisCmdStat) + 'static + Send + Sync;
+
 /// Redis connection pool enum that supports both single node and cluster configurations
-pub enum RedisPool {
+enum RedisPool {
     /// Single Redis node connection pool
     Single(deadpool_redis::Pool),
     /// Redis cluster connection pool
     Cluster(deadpool_redis::cluster::Pool),
 }
 
-impl RedisPool {
+pub struct RedisClient {
+    pool: RedisPool,
+    stat_callback: Option<&'static RedisCmdStatCallback>,
+}
+
+impl RedisClient {
     /// Gets a connection from the pool
     /// # Returns
     /// * `Ok(RedisConnection)` - A connection wrapper that works with both single and cluster modes
     /// * `Err(Error)` - Failed to get connection from pool
+    #[inline]
     pub async fn get(&self) -> Result<RedisConnection> {
-        let conn = match self {
+        let conn = match &self.pool {
             RedisPool::Single(p) => {
                 let conn = p.get().await.map_err(|e| Error::Common {
                     category: "connection".to_string(),
                     message: e.to_string(),
                 })?;
-                RedisConnection::Single(conn)
+                RedisConnection::Single(conn, self.stat_callback)
             }
             RedisPool::Cluster(p) => {
                 let conn = p.get().await.map_err(|e| Error::Common {
                     category: "connection".to_string(),
                     message: e.to_string(),
                 })?;
-                RedisConnection::Cluster(conn)
+                RedisConnection::Cluster(conn, self.stat_callback)
             }
         };
         Ok(conn)
+    }
+    pub fn with_stat_callback(&mut self, callback: &'static RedisCmdStatCallback) {
+        self.stat_callback = Some(callback);
     }
     /// Gets the status of the pool
     /// # Returns
     /// * `Status` - The status of the pool
     pub fn status(&self) -> Status {
-        match self {
+        match &self.pool {
             RedisPool::Single(p) => p.status(),
             RedisPool::Cluster(p) => p.status(),
         }
@@ -68,9 +87,55 @@ impl RedisPool {
 /// Connection wrapper that supports both single node and cluster connections
 pub enum RedisConnection {
     /// Single Redis node connection
-    Single(deadpool_redis::Connection),
+    Single(
+        deadpool_redis::Connection,
+        Option<&'static RedisCmdStatCallback>,
+    ),
     /// Redis cluster connection
-    Cluster(deadpool_redis::cluster::Connection),
+    Cluster(
+        deadpool_redis::cluster::Connection,
+        Option<&'static RedisCmdStatCallback>,
+    ),
+}
+
+#[inline]
+fn get_command_name(cmd: &Cmd) -> String {
+    for (i, item) in cmd.args_iter().enumerate() {
+        if i != 0 {
+            break;
+        }
+        if let Arg::Simple(val) = item {
+            return std::str::from_utf8(val).unwrap_or("unknown").to_string();
+        }
+    }
+    "unknown".to_string()
+}
+
+#[inline]
+fn wrap_with_stat<'a, 'cb, T>(
+    name: String,
+    fut: RedisFuture<'a, T>,
+    callback: &'cb RedisCmdStatCallback,
+) -> RedisFuture<'a, T>
+where
+    T: Send + 'a,
+    'cb: 'a,
+{
+    Box::pin(async move {
+        let start = std::time::Instant::now();
+        let res = fut.await;
+        let elapsed = start.elapsed();
+        let mut stat = RedisCmdStat {
+            cmd: name,
+            elapsed,
+            ..Default::default()
+        };
+        if let Err(e) = &res {
+            stat.error = Some(e.to_string());
+        }
+        callback(stat);
+        res
+    })
 }
 
 #[async_trait]
@@ -82,8 +147,22 @@ impl ConnectionLike for RedisConnection {
     /// * `RedisFuture<Value>` - Future that resolves to the command result
     fn req_packed_command<'a>(&'a mut self, cmd: &'a Cmd) -> RedisFuture<'a, Value> {
         match self {
-            RedisConnection::Single(c) => c.req_packed_command(cmd),
-            RedisConnection::Cluster(c) => c.req_packed_command(cmd),
+            RedisConnection::Single(c, callback) => match callback {
+                Some(cb) => {
+                    let name = get_command_name(cmd);
+                    let fut = c.req_packed_command(cmd);
+                    wrap_with_stat(name, fut, cb)
+                }
+                None => c.req_packed_command(cmd),
+            },
+            RedisConnection::Cluster(c, callback) => match callback {
+                Some(cb) => {
+                    let name = get_command_name(cmd);
+                    let fut = c.req_packed_command(cmd);
+                    wrap_with_stat(name, fut, cb)
+                }
+                None => c.req_packed_command(cmd),
+            },
         }
     }
 
@@ -101,8 +180,20 @@ impl ConnectionLike for RedisConnection {
         count: usize,
     ) -> RedisFuture<'a, Vec<Value>> {
         match self {
-            RedisConnection::Single(c) => c.req_packed_commands(cmd, offset, count),
-            RedisConnection::Cluster(c) => c.req_packed_commands(cmd, offset, count),
+            RedisConnection::Single(c, callback) => match callback {
+                Some(cb) => {
+                    let fut = c.req_packed_commands(cmd, offset, count);
+                    wrap_with_stat("pipeline".to_string(), fut, cb)
+                }
+                None => c.req_packed_commands(cmd, offset, count),
+            },
+            RedisConnection::Cluster(c, callback) => match callback {
+                Some(cb) => {
+                    let fut = c.req_packed_commands(cmd, offset, count);
+                    wrap_with_stat("pipeline".to_string(), fut, cb)
+                }
+                None => c.req_packed_commands(cmd, offset, count),
+            },
         }
     }
 
@@ -120,13 +211,13 @@ impl ConnectionLike for RedisConnection {
 /// # Arguments
 /// * `config` - Redis configuration including connection details and pool settings
 /// # Returns
-/// * `Ok(RedisPool)` - Successfully created pool (single or cluster)
+/// * `Ok(RedisClient)` - Successfully created pool (single or cluster)
 /// * `Err(Error)` - Failed to create pool
 /// # Notes
 /// * Creates a single node pool if only one node is configured
 /// * Creates a cluster pool if multiple nodes are configured
 /// * Configures pool size and various timeouts from the provided config
-pub fn new_redis_pool(config: &Config) -> Result<RedisPool> {
+pub fn new_redis_client(config: &Config) -> Result<RedisClient> {
     let redis_config = new_redis_config(config)?;
 
     let password = redis_config.password.clone().unwrap_or_default();
@@ -188,5 +279,8 @@ pub fn new_redis_pool(config: &Config) -> Result<RedisPool> {
         nodes = nodes.join(","),
         "connect to redis"
     );
-    Ok(pool)
+    Ok(RedisClient {
+        pool,
+        stat_callback: None,
+    })
 }

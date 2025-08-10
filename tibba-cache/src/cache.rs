@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, RedisConnection, RedisPool};
+use super::{Error, RedisClient, RedisConnection};
 use deadpool_redis::redis::{cmd, pipe};
 use redis::AsyncCommands;
 use serde::{Serialize, de::DeserializeOwned};
@@ -28,23 +28,23 @@ pub struct RedisCache {
     /// Prefix added to all cache keys
     prefix: String,
     /// Redis connection pool
-    pool: &'static RedisPool,
+    client: &'static RedisClient,
 }
 
 impl RedisCache {
     #[inline]
     pub async fn conn(&self) -> Result<RedisConnection> {
-        self.pool.get().await
+        self.client.get().await
     }
     /// Creates a new RedisCacheBuilder with default settings:
     /// - TTL: 10 minutes
     /// - Empty prefix
     /// - Given Redis pool
-    pub fn new(pool: &'static RedisPool) -> Self {
+    pub fn new(client: &'static RedisClient) -> Self {
         Self {
             ttl: Duration::from_secs(10 * 60),
             prefix: "".to_string(),
-            pool,
+            client,
         }
     }
 
@@ -186,7 +186,7 @@ impl RedisCache {
     /// # Notes
     /// If the key doesn't exist, it's initialized to 0 with ttl before incrementing
     pub async fn incr(&self, key: &str, delta: i64, ttl: Option<Duration>) -> Result<i64> {
-        let mut conn = self.pool.get().await?;
+        let mut conn = self.conn().await?;
         let k = self.get_key(key);
         let (_, count) = pipe()
             .cmd("SET")

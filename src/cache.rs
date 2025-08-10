@@ -16,7 +16,7 @@ use super::config::must_get_config;
 use ctor::ctor;
 use once_cell::sync::OnceCell;
 use std::time::Duration;
-use tibba_cache::{RedisCache, RedisPool, new_redis_pool};
+use tibba_cache::{RedisCache, RedisClient, RedisCmdStat, new_redis_client};
 use tibba_error::{Error, new_error};
 use tibba_hook::register_before_task;
 use tibba_scheduler::{Job, register_job_task};
@@ -25,12 +25,30 @@ use tracing::{error, info};
 
 type Result<T> = std::result::Result<T, Error>;
 static REDIS_CACHE: OnceCell<RedisCache> = OnceCell::new();
-static REDIS_POOL: OnceCell<RedisPool> = OnceCell::new();
+static REDIS_CLIENT: OnceCell<RedisClient> = OnceCell::new();
 
-fn get_redis_pool() -> Result<&'static RedisPool> {
-    REDIS_POOL.get_or_try_init(|| {
-        let pool = new_redis_pool(&must_get_config().sub_config("redis"))?;
-        Ok(pool)
+fn cmd_stat(stat: RedisCmdStat) {
+    let elapsed = stat.elapsed.as_millis();
+    let category = "redis_cmd_stat";
+
+    if let Some(error) = stat.error {
+        error!(
+            category,
+            cmd = stat.cmd,
+            elapsed,
+            error = error,
+            "redis error cmd"
+        );
+    } else if elapsed > 10 {
+        info!(category, cmd = stat.cmd, elapsed, "redis slow cmd");
+    }
+}
+
+fn get_redis_client() -> Result<&'static RedisClient> {
+    REDIS_CLIENT.get_or_try_init(|| {
+        let mut client = new_redis_client(&must_get_config().sub_config("redis"))?;
+        client.with_stat_callback(&cmd_stat);
+        Ok(client)
     })
 }
 
@@ -38,7 +56,7 @@ pub fn get_redis_cache() -> &'static RedisCache {
     REDIS_CACHE.get_or_init(|| {
         // get redis pool is checked in init function
         // so it can be unwrap here
-        let pool = get_redis_pool().unwrap();
+        let pool = get_redis_client().unwrap();
         RedisCache::new(pool)
     })
 }
@@ -60,7 +78,7 @@ fn init() {
         16,
         Box::new(|| {
             Box::pin(async {
-                let _ = get_redis_pool()?;
+                let _ = get_redis_client()?;
                 get_redis_cache().ping().await?;
                 let job = Job::new_repeated_async(Duration::from_secs(60), |_, _| {
                     Box::pin(redis_health_check())
@@ -69,10 +87,10 @@ fn init() {
                 register_job_task("redis_health_check", job);
 
                 let job = Job::new_repeated(Duration::from_secs(60), |_, _| {
-                    if let Ok(pool) = get_redis_pool() {
-                        let status = pool.status();
+                    if let Ok(client) = get_redis_client() {
+                        let status = client.status();
                         info!(
-                            category = "redis_pool_status",
+                            category = "redis_client_status",
                             max_size = status.max_size,
                             size = status.size,
                             available = status.available,
@@ -81,7 +99,7 @@ fn init() {
                     }
                 })
                 .map_err(new_error)?;
-                register_job_task("redis_pool_status", job);
+                register_job_task("redis_client_status", job);
                 Ok(())
             })
         }),
