@@ -50,7 +50,14 @@ fn init() {
                 let task = "database_performance";
                 let job = Job::new_repeated(Duration::from_secs(60), move |_, _| {
                     let (connected, executions, idle) = stat.stat();
-                    info!(category = task, connected, executions, idle);
+                    let pool = get_db_pool();
+                    let connection_size = pool.size();
+                    let connection_idle = pool.num_idle();
+
+                    info!(
+                        category = task,
+                        connection_size, connection_idle, connected, executions, idle,
+                    );
                 })
                 .map_err(new_error)?;
                 register_job_task(task, job);
