@@ -18,7 +18,7 @@ use once_cell::sync::OnceCell;
 use std::time::Duration;
 use tibba_cache::{RedisCache, RedisClient, RedisCmdStat, new_redis_client};
 use tibba_error::{Error, new_error};
-use tibba_hook::register_before_task;
+use tibba_hook::{register_after_task, register_before_task};
 use tibba_scheduler::{Job, register_job_task};
 use tibba_util::new_get_elapsed_ms;
 use tracing::{error, info};
@@ -100,6 +100,18 @@ fn init() {
                 })
                 .map_err(new_error)?;
                 register_job_task("redis_client_status", job);
+                Ok(())
+            })
+        }),
+    );
+    register_after_task(
+        "close_redis_client",
+        16,
+        Box::new(|| {
+            Box::pin(async {
+                if let Ok(client) = get_redis_client() {
+                    client.close();
+                }
                 Ok(())
             })
         }),

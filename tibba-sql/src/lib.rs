@@ -146,15 +146,15 @@ impl From<Error> for BaseError {
 pub struct PoolStat {
     connected: AtomicU32,
     executions: AtomicUsize,
-    idle: AtomicU64,
+    idle_for: AtomicU64,
 }
 
 impl PoolStat {
     pub fn stat(&self) -> (u32, usize, u64) {
         let connected = self.connected.swap(0, Ordering::Relaxed);
         let executions = self.executions.swap(0, Ordering::Relaxed);
-        let idle = self.idle.swap(0, Ordering::Relaxed);
-        (connected, executions, idle)
+        let idle_for = self.idle_for.swap(0, Ordering::Relaxed);
+        (connected, executions, idle_for)
     }
 }
 
@@ -191,7 +191,7 @@ pub async fn new_mysql_pool(
                     info!(category, age = meta.age.as_secs(), idle, "before acquire");
                     if let Some(pool_stat) = &pool_stat {
                         pool_stat.executions.fetch_add(1, Ordering::Relaxed);
-                        pool_stat.idle.fetch_add(idle, Ordering::Relaxed);
+                        pool_stat.idle_for.fetch_add(idle, Ordering::Relaxed);
                     }
                     Ok(true)
                 }

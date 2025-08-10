@@ -19,7 +19,7 @@ use sqlx::MySqlPool;
 use std::sync::Arc;
 use std::time::Duration;
 use tibba_error::new_error;
-use tibba_hook::register_before_task;
+use tibba_hook::{register_after_task, register_before_task};
 use tibba_scheduler::{Job, register_job_task};
 use tibba_sql::{PoolStat, new_mysql_pool};
 use tracing::info;
@@ -49,19 +49,30 @@ fn init() {
 
                 let task = "database_performance";
                 let job = Job::new_repeated(Duration::from_secs(60), move |_, _| {
-                    let (connected, executions, idle) = stat.stat();
+                    let (connected, executions, idle_for) = stat.stat();
                     let pool = get_db_pool();
                     let connection_size = pool.size();
                     let connection_idle = pool.num_idle();
 
                     info!(
                         category = task,
-                        connection_size, connection_idle, connected, executions, idle,
+                        connection_size, connection_idle, connected, executions, idle_for,
                     );
                 })
                 .map_err(new_error)?;
                 register_job_task(task, job);
 
+                Ok(())
+            })
+        }),
+    );
+    register_after_task(
+        "close_db_pool",
+        1,
+        Box::new(|| {
+            Box::pin(async {
+                let pool = get_db_pool();
+                pool.close().await;
                 Ok(())
             })
         }),

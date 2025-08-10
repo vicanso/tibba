@@ -97,6 +97,15 @@ impl RedisClient {
             RedisPool::Cluster(p) => p.status(),
         }
     }
+    /// Closes the pool
+    /// # Notes
+    /// * This operation resizes the pool to 0
+    pub fn close(&self) {
+        match &self.pool {
+            RedisPool::Single(p) => p.close(),
+            RedisPool::Cluster(p) => p.close(),
+        }
+    }
 }
 
 #[inline]
