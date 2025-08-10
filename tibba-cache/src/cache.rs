@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, RedisClient, RedisConnection};
+use super::{Error, RedisClient, RedisClientConn};
 use deadpool_redis::redis::{cmd, pipe};
 use redis::AsyncCommands;
 use serde::{Serialize, de::DeserializeOwned};
@@ -33,8 +33,8 @@ pub struct RedisCache {
 
 impl RedisCache {
     #[inline]
-    pub async fn conn(&self) -> Result<RedisConnection> {
-        self.client.get().await
+    pub async fn conn(&self) -> Result<RedisClientConn> {
+        self.client.conn().await
     }
     /// Creates a new RedisCacheBuilder with default settings:
     /// - TTL: 10 minutes

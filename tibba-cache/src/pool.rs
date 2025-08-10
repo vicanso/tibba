@@ -40,8 +40,20 @@ enum RedisPool {
     Cluster(deadpool_redis::cluster::Pool),
 }
 
+/// Connection wrapper that supports both single node and cluster connections
+enum RedisConnection {
+    /// Single Redis node connection
+    Single(deadpool_redis::Connection),
+    /// Redis cluster connection
+    Cluster(deadpool_redis::cluster::Connection),
+}
+
 pub struct RedisClient {
     pool: RedisPool,
+    stat_callback: Option<&'static RedisCmdStatCallback>,
+}
+pub struct RedisClientConn {
+    conn: RedisConnection,
     stat_callback: Option<&'static RedisCmdStatCallback>,
 }
 
@@ -51,24 +63,27 @@ impl RedisClient {
     /// * `Ok(RedisConnection)` - A connection wrapper that works with both single and cluster modes
     /// * `Err(Error)` - Failed to get connection from pool
     #[inline]
-    pub async fn get(&self) -> Result<RedisConnection> {
+    pub async fn conn(&self) -> Result<RedisClientConn> {
         let conn = match &self.pool {
             RedisPool::Single(p) => {
                 let conn = p.get().await.map_err(|e| Error::Common {
                     category: "connection".to_string(),
                     message: e.to_string(),
                 })?;
-                RedisConnection::Single(conn, self.stat_callback)
+                RedisConnection::Single(conn)
             }
             RedisPool::Cluster(p) => {
                 let conn = p.get().await.map_err(|e| Error::Common {
                     category: "connection".to_string(),
                     message: e.to_string(),
                 })?;
-                RedisConnection::Cluster(conn, self.stat_callback)
+                RedisConnection::Cluster(conn)
             }
         };
-        Ok(conn)
+        Ok(RedisClientConn {
+            conn,
+            stat_callback: self.stat_callback,
+        })
     }
     pub fn with_stat_callback(&mut self, callback: &'static RedisCmdStatCallback) {
         self.stat_callback = Some(callback);
@@ -82,20 +97,6 @@ impl RedisClient {
             RedisPool::Cluster(p) => p.status(),
         }
     }
-}
-
-/// Connection wrapper that supports both single node and cluster connections
-pub enum RedisConnection {
-    /// Single Redis node connection
-    Single(
-        deadpool_redis::Connection,
-        Option<&'static RedisCmdStatCallback>,
-    ),
-    /// Redis cluster connection
-    Cluster(
-        deadpool_redis::cluster::Connection,
-        Option<&'static RedisCmdStatCallback>,
-    ),
 }
 
 #[inline]
@@ -139,15 +140,15 @@ where
 }
 
 #[async_trait]
-impl ConnectionLike for RedisConnection {
+impl ConnectionLike for RedisClientConn {
     /// Executes a packed Redis command
     /// # Arguments
     /// * `cmd` - The Redis command to execute
     /// # Returns
     /// * `RedisFuture<Value>` - Future that resolves to the command result
     fn req_packed_command<'a>(&'a mut self, cmd: &'a Cmd) -> RedisFuture<'a, Value> {
-        match self {
-            RedisConnection::Single(c, callback) => match callback {
+        match &mut self.conn {
+            RedisConnection::Single(c) => match self.stat_callback {
                 Some(cb) => {
                     let name = get_command_name(cmd);
                     let fut = c.req_packed_command(cmd);
@@ -155,7 +156,7 @@ impl ConnectionLike for RedisConnection {
                 }
                 None => c.req_packed_command(cmd),
             },
-            RedisConnection::Cluster(c, callback) => match callback {
+            RedisConnection::Cluster(c) => match self.stat_callback {
                 Some(cb) => {
                     let name = get_command_name(cmd);
                     let fut = c.req_packed_command(cmd);
@@ -179,15 +180,15 @@ impl ConnectionLike for RedisConnection {
         offset: usize,
         count: usize,
     ) -> RedisFuture<'a, Vec<Value>> {
-        match self {
-            RedisConnection::Single(c, callback) => match callback {
+        match &mut self.conn {
+            RedisConnection::Single(c) => match self.stat_callback {
                 Some(cb) => {
                     let fut = c.req_packed_commands(cmd, offset, count);
                     wrap_with_stat("pipeline".to_string(), fut, cb)
                 }
                 None => c.req_packed_commands(cmd, offset, count),
             },
-            RedisConnection::Cluster(c, callback) => match callback {
+            RedisConnection::Cluster(c) => match self.stat_callback {
                 Some(cb) => {
                     let fut = c.req_packed_commands(cmd, offset, count);
                     wrap_with_stat("pipeline".to_string(), fut, cb)
