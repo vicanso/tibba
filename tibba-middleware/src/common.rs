@@ -159,6 +159,6 @@ pub async fn validate_captcha(
     }
 
     // If validation passes, continue with the request
-    let resp = next.run(req).await;
-    Ok(resp)
+    let res = next.run(req).await;
+    Ok(res)
 }

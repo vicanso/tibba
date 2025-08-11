@@ -161,7 +161,7 @@ async fn do_request(
         }
     }
     if result == ResultValue::Success && detector.script.is_some() {
-        let resp = JsResponse {
+        let res = JsResponse {
             status: stat.status.unwrap_or_default().as_u16(),
             body: String::from_utf8(stat.body.unwrap_or_default().to_vec()).unwrap_or_default(),
             headers: stat
@@ -189,7 +189,7 @@ async fn do_request(
             cert_cipher: stat.cert_cipher.clone(),
             cert_domains: stat.cert_domains.clone(),
         };
-        if let Err(e) = run_js_detect(&resp, &stat, &detector.script.clone().unwrap_or_default()) {
+        if let Err(e) = run_js_detect(&res, &stat, &detector.script.clone().unwrap_or_default()) {
             result = ResultValue::Failed;
             err = Some(e.to_string());
         }

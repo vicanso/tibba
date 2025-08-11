@@ -21,7 +21,7 @@ use snafu::Snafu;
 
 /// Main Error enum that wraps HttpError
 /// Uses Snafu for error handling boilerplate generation
-#[derive(Debug, Snafu, Default, Serialize, Deserialize)]
+#[derive(Debug, Snafu, Default, Serialize, Deserialize, Clone)]
 #[snafu(display("{message}"))]
 pub struct Error {
     // HTTP status code

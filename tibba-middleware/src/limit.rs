@@ -167,13 +167,13 @@ pub async fn error_limiter(
             .into());
         }
     }
-    let resp = next.run(req).await;
+    let res = next.run(req).await;
     // Increment counter only on error responses
-    if resp.status().as_u16() >= 400 {
+    if res.status().as_u16() >= 400 {
         // Ignore Redis errors when incrementing
         let _ = cache.incr(&key, 1, Some(ttl)).await;
     }
-    Ok(resp)
+    Ok(res)
 }
 
 /// Standard rate limiting middleware
@@ -197,6 +197,6 @@ pub async fn limiter(
         .into());
     }
 
-    let resp = next.run(req).await;
-    Ok(resp)
+    let res = next.run(req).await;
+    Ok(res)
 }

@@ -4965,6 +4965,7 @@ dependencies = [
  "axum",
  "axum-extra",
  "scopeguard",
+ "serde_json",
  "snafu",
  "tibba-cache",
  "tibba-error",

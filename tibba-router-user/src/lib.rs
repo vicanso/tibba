@@ -23,7 +23,7 @@ use serde_json::json;
 use sqlx::MySqlPool;
 use tibba_cache::RedisCache;
 use tibba_error::{Error, new_error};
-use tibba_middleware::validate_captcha;
+use tibba_middleware::{user_tracker, validate_captcha};
 use tibba_model::{Model, ROLE_SUPER_ADMIN, UserModel, UserUpdateParams};
 use tibba_session::{Session, SessionResponse, UserSession};
 use tibba_util::{
@@ -252,10 +252,17 @@ pub struct UserRouterParams {
 }
 
 pub fn new_user_router(params: UserRouterParams) -> Router {
+    let name = "login".to_string();
+
     Router::new()
         .route(
             "/login/token",
-            get(login_token).with_state(params.secret.clone()),
+            get(login_token)
+                .with_state(params.secret.clone())
+                .layer(from_fn_with_state(
+                    (name.clone(), "init".to_string()),
+                    user_tracker,
+                )),
         )
         .route(
             "/login",
@@ -264,11 +271,21 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
                 .layer(from_fn_with_state(
                     (params.magic_code, params.cache),
                     validate_captcha,
+                ))
+                .layer(from_fn_with_state(
+                    (name.clone(), "submit".to_string()),
+                    user_tracker,
                 )),
         )
         .route("/me", get(me).with_state(params.pool))
         .route("/refresh", patch(refresh_session))
         .route("/register", post(register).with_state(params.pool))
-        .route("/logout", delete(logout))
+        .route(
+            "/logout",
+            delete(logout).layer(from_fn_with_state(
+                ("logout".to_string(), "submit".to_string()),
+                user_tracker,
+            )),
+        )
         .route("/profile", patch(update_profile).with_state(params.pool))
 }
