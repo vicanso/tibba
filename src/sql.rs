@@ -13,17 +13,19 @@
 // limitations under the License.
 
 use crate::config::must_get_config;
+use async_trait::async_trait;
 use ctor::ctor;
 use once_cell::sync::OnceCell;
 use sqlx::MySqlPool;
 use std::sync::Arc;
 use std::time::Duration;
-use tibba_error::new_error;
-use tibba_hook::{register_after_task, register_before_task};
+use tibba_error::{Error, new_error};
+use tibba_hook::{Task, register_task};
 use tibba_scheduler::{Job, register_job_task};
 use tibba_sql::{PoolStat, new_mysql_pool};
 use tracing::info;
 
+type Result<T> = std::result::Result<T, Error>;
 static DB_POOL: OnceCell<MySqlPool> = OnceCell::new();
 
 pub fn get_db_pool() -> &'static MySqlPool {
@@ -31,50 +33,48 @@ pub fn get_db_pool() -> &'static MySqlPool {
     DB_POOL.get().unwrap()
 }
 
+struct SqlTask;
+
+#[async_trait]
+impl Task for SqlTask {
+    async fn before(&self) -> Result<bool> {
+        let app_config = must_get_config();
+        let stat = Arc::new(PoolStat::default());
+        let pool = new_mysql_pool(&app_config.sub_config("database"), Some(stat.clone()))
+            .await
+            .map_err(new_error)?;
+        DB_POOL
+            .set(pool)
+            .map_err(|_| new_error("set db pool fail"))?;
+
+        let task = "database_performance";
+        let job = Job::new_repeated(Duration::from_secs(60), move |_, _| {
+            let (connected, executions, idle_for) = stat.stat();
+            let pool = get_db_pool();
+            let connection_size = pool.size();
+            let connection_idle = pool.num_idle();
+
+            info!(
+                category = task,
+                connection_size, connection_idle, connected, executions, idle_for,
+            );
+        })
+        .map_err(new_error)?;
+        register_job_task(task, job);
+
+        Ok(true)
+    }
+    async fn after(&self) -> Result<bool> {
+        let pool = get_db_pool();
+        pool.close().await;
+        Ok(true)
+    }
+    fn priority(&self) -> u8 {
+        16
+    }
+}
+
 #[ctor]
 fn init() {
-    register_before_task(
-        "init_db_pool",
-        16,
-        Box::new(|| {
-            Box::pin(async {
-                let app_config = must_get_config();
-                let stat = Arc::new(PoolStat::default());
-                let pool = new_mysql_pool(&app_config.sub_config("database"), Some(stat.clone()))
-                    .await
-                    .map_err(new_error)?;
-                DB_POOL
-                    .set(pool)
-                    .map_err(|_| new_error("set db pool fail"))?;
-
-                let task = "database_performance";
-                let job = Job::new_repeated(Duration::from_secs(60), move |_, _| {
-                    let (connected, executions, idle_for) = stat.stat();
-                    let pool = get_db_pool();
-                    let connection_size = pool.size();
-                    let connection_idle = pool.num_idle();
-
-                    info!(
-                        category = task,
-                        connection_size, connection_idle, connected, executions, idle_for,
-                    );
-                })
-                .map_err(new_error)?;
-                register_job_task(task, job);
-
-                Ok(())
-            })
-        }),
-    );
-    register_after_task(
-        "close_db_pool",
-        1,
-        Box::new(|| {
-            Box::pin(async {
-                let pool = get_db_pool();
-                pool.close().await;
-                Ok(())
-            })
-        }),
-    );
+    register_task("sql", Box::new(SqlTask));
 }

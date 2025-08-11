@@ -14,22 +14,25 @@
 
 use super::dal::get_opendal_storage;
 use super::sql::get_db_pool;
+use async_trait::async_trait;
 use ctor::ctor;
 use serde::Deserialize;
 use tibba_error::{Error, new_error};
 use tibba_headless::{WebPageParams, new_browser, run_web_page_stat_with_browser};
-use tibba_hook::register_before_task;
+use tibba_hook::{Task, register_task};
 use tibba_model::{ConfigurationModel, FileInsertParams, FileModel, Model, WebPageDetectorModel};
 use tibba_scheduler::{Job, register_job_task};
 use tibba_util::uuid;
 use tracing::{error, info};
+
+type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, Clone, Deserialize, Default)]
 struct BrowserLessConfig {
     urls: Vec<String>,
 }
 
-async fn run_web_page_stat() -> Result<(), Error> {
+async fn run_web_page_stat() -> Result<()> {
     let pool = get_db_pool();
     let detectors = WebPageDetectorModel::new()
         .list_enabled_by_region(pool, None, 100, 0)
@@ -85,35 +88,38 @@ async fn run_web_page_stat() -> Result<(), Error> {
     Ok(())
 }
 
+struct WebPageStatTask;
+
+#[async_trait]
+impl Task for WebPageStatTask {
+    async fn before(&self) -> Result<bool> {
+        // 每分钟
+        let job = Job::new_async("30 * * * * *", |_, _| {
+            let category = "web_page_stat";
+            Box::pin(async move {
+                match run_web_page_stat().await {
+                    Err(e) => {
+                        error!(
+                            category,
+                            error = ?e,
+                            "run web page stat failed"
+                        );
+                    }
+                    Ok(()) => {
+                        info!(category, "run web page stat success");
+                    }
+                };
+            })
+        })
+        .map_err(new_error)?;
+        register_job_task("web_page_stat", job);
+        Ok(true)
+    }
+    fn priority(&self) -> u8 {
+        u8::MAX
+    }
+}
 #[ctor]
 fn init() {
-    register_before_task(
-        "init_web_page_stat",
-        u8::MAX,
-        Box::new(|| {
-            Box::pin(async {
-                // 每分钟
-                let job = Job::new_async("30 * * * * *", |_, _| {
-                    let category = "web_page_stat";
-                    Box::pin(async move {
-                        match run_web_page_stat().await {
-                            Err(e) => {
-                                error!(
-                                    category,
-                                    error = ?e,
-                                    "run web page stat failed"
-                                );
-                            }
-                            Ok(()) => {
-                                info!(category, "run web page stat success");
-                            }
-                        };
-                    })
-                })
-                .map_err(new_error)?;
-                register_job_task("web_page_stat", job);
-                Ok(())
-            })
-        }),
-    );
+    register_task("web_page_stat", Box::new(WebPageStatTask));
 }

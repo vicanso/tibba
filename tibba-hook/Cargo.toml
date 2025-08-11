@@ -8,6 +8,7 @@ name = "tibba_hook"
 path = "src/lib.rs"
 
 [dependencies]
+async-trait = { workspace = true }
 dashmap = { workspace = true }
 once_cell = { workspace = true }
 tibba-error = { path = "../tibba-error" }

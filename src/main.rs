@@ -14,6 +14,7 @@
 
 use crate::router::new_router;
 use crate::state::get_app_state;
+use async_trait::async_trait;
 use axum::BoxError;
 use axum::Router;
 use axum::error_handling::HandleErrorLayer;
@@ -23,7 +24,7 @@ use std::env;
 use std::net::SocketAddr;
 use std::str::FromStr;
 use std::time::Duration;
-use tibba_hook::{register_after_task, run_after_tasks, run_before_tasks};
+use tibba_hook::{Task, register_task, run_after_tasks, run_before_tasks};
 use tibba_middleware::{entry, processing_limit, session, stats};
 use tibba_scheduler::run_scheduler_jobs;
 use tibba_util::{is_development, is_production};
@@ -99,9 +100,6 @@ async fn shutdown_signal() {
         _ = terminate => {},
     }
     info!("signal received, starting graceful shutdown");
-    if let Err(e) = run_after_tasks().await {
-        error!(category = "run_after_tasks", message = e.to_string(),);
-    }
 }
 fn init_logger() {
     let mut level = Level::INFO;
@@ -118,9 +116,6 @@ fn init_logger() {
         )
     });
 
-    // dal::get_opendal_storage().dal.write(path, bs)
-
-    // .with(httptrace::HTTPTraceLayer)
     let subscriber = FmtSubscriber::builder()
         .with_max_level(level)
         .with_timer(timer)
@@ -129,24 +124,22 @@ fn init_logger() {
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 }
 
-async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    register_after_task(
-        "stop_app",
-        u8::MAX,
-        Box::new(|| {
-            Box::pin(async {
-                if !is_production() {
-                    return Ok(());
-                }
-                // wait x seconds --> set flag --> wait y seconds
-                tokio::time::sleep(Duration::from_secs(5)).await;
-                get_app_state().stop();
-                tokio::time::sleep(Duration::from_secs(3)).await;
-                Ok(())
-            })
-        }),
-    );
+struct StopAppTask;
+#[async_trait]
+impl Task for StopAppTask {
+    async fn after(&self) -> Result<bool, tibba_error::Error> {
+        if !is_production() {
+            return Ok(false);
+        }
+        // set flag --> wait x seconds
+        get_app_state().stop();
+        tokio::time::sleep(Duration::from_secs(10)).await;
+        Ok(true)
+    }
+}
 
+async fn run() -> Result<(), Box<dyn std::error::Error>> {
+    register_task("stop_app", Box::new(StopAppTask));
     run_before_tasks().await?;
     run_scheduler_jobs().await?;
 
@@ -197,6 +190,9 @@ async fn start() {
     // only use unwrap in run function
     if let Err(e) = run().await {
         error!(category = "launch_app", message = e.to_string())
+    }
+    if let Err(e) = run_after_tasks().await {
+        error!(category = "run_after_tasks", message = e.to_string(),);
     }
 }
 

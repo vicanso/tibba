@@ -12,13 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use async_trait::async_trait;
 use ctor::ctor;
 use once_cell::sync::OnceCell;
 use rust_embed::RustEmbed;
 use std::time::Duration;
 use tibba_config::Config;
 use tibba_error::{Error, new_error};
-use tibba_hook::register_before_task;
+use tibba_hook::{Task, register_task};
 use tibba_session::SessionParams;
 use tracing::info;
 use validator::Validate;
@@ -172,12 +173,18 @@ async fn init_config() -> Result<()> {
     Ok(())
 }
 
+struct ConfigTask;
+
+#[async_trait]
+impl Task for ConfigTask {
+    async fn before(&self) -> Result<bool> {
+        init_config().await?;
+        Ok(true)
+    }
+}
+
 // add application init before application start
 #[ctor]
 fn init() {
-    register_before_task(
-        "application_config",
-        0,
-        Box::new(|| Box::pin(async { init_config().await })),
-    );
+    register_task("config", Box::new(ConfigTask));
 }

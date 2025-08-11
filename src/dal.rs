@@ -13,12 +13,15 @@
 // limitations under the License.
 
 use crate::config::must_get_config;
+use async_trait::async_trait;
 use ctor::ctor;
 use once_cell::sync::OnceCell;
-use tibba_error::new_error;
-use tibba_hook::register_before_task;
+use tibba_error::{Error, new_error};
+use tibba_hook::{Task, register_task};
 use tibba_opendal::{Storage, new_opendal_storage};
 use tracing::info;
+
+type Result<T> = std::result::Result<T, Error>;
 
 static OPENDAL_STORAGE: OnceCell<Storage> = OnceCell::new();
 
@@ -27,28 +30,32 @@ pub fn get_opendal_storage() -> &'static Storage {
     OPENDAL_STORAGE.get().unwrap()
 }
 
+struct DalTask;
+
+#[async_trait]
+impl Task for DalTask {
+    async fn before(&self) -> Result<bool> {
+        let app_config = must_get_config();
+        let storage = new_opendal_storage(&app_config.sub_config("opendal"))?;
+        let info = storage.info();
+        OPENDAL_STORAGE
+            .set(storage)
+            .map_err(|_| new_error("set opendal storage fail"))?;
+
+        info!(
+            schema = ?info.scheme(),
+            full_capability = ?info.full_capability(),
+            "open dal storage init success"
+        );
+
+        Ok(true)
+    }
+    fn priority(&self) -> u8 {
+        16
+    }
+}
+
 #[ctor]
 fn init() {
-    register_before_task(
-        "init_opendal_storage",
-        16,
-        Box::new(|| {
-            Box::pin(async {
-                let app_config = must_get_config();
-                let storage = new_opendal_storage(&app_config.sub_config("opendal"))?;
-                let info = storage.info();
-                OPENDAL_STORAGE
-                    .set(storage)
-                    .map_err(|_| new_error("set opendal storage fail"))?;
-
-                info!(
-                    schema = ?info.scheme(),
-                    full_capability = ?info.full_capability(),
-                    "open dal storage init success"
-                );
-
-                Ok(())
-            })
-        }),
-    );
+    register_task("dal", Box::new(DalTask));
 }

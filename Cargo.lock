@@ -4831,6 +4831,7 @@ dependencies = [
 name = "tibba"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "axum",
  "chrono",
  "ctor",
@@ -4949,6 +4950,7 @@ dependencies = [
 name = "tibba-hook"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "dashmap",
  "once_cell",
  "tibba-error",

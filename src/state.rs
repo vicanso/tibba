@@ -13,16 +13,19 @@
 // limitations under the License.
 
 use super::config::must_get_basic_config;
+use async_trait::async_trait;
 use ctor::ctor;
 use once_cell::sync::{Lazy, OnceCell};
 use std::time::Duration;
-use tibba_error::new_error;
-use tibba_hook::register_before_task;
+use tibba_error::{Error, new_error};
+use tibba_hook::{Task, register_task};
 use tibba_performance::get_process_system_info;
 use tibba_scheduler::{Job, register_job_task};
 use tibba_state::AppState;
 use tokio::sync::RwLock;
 use tracing::info;
+
+type Result<T> = std::result::Result<T, Error>;
 
 static STATE: OnceCell<AppState> = OnceCell::new();
 
@@ -72,21 +75,24 @@ async fn update_performance() {
     );
 }
 
+struct StateTask;
+
+#[async_trait]
+impl Task for StateTask {
+    async fn before(&self) -> Result<bool> {
+        let job = Job::new_repeated_async(Duration::from_secs(60), move |_, _| {
+            Box::pin(update_performance())
+        })
+        .map_err(new_error)?;
+        register_job_task("application_performance", job);
+        Ok(true)
+    }
+    fn priority(&self) -> u8 {
+        u8::MAX
+    }
+}
+
 #[ctor]
 fn init() {
-    register_before_task(
-        "launch_application_performance_job",
-        u8::MAX,
-        Box::new(|| {
-            Box::pin(async {
-                let pid = std::process::id() as usize;
-                let job = Job::new_repeated_async(Duration::from_secs(60), move |_, _| {
-                    Box::pin(update_performance())
-                })
-                .map_err(new_error)?;
-                register_job_task("application_performance", job);
-                Ok(())
-            })
-        }),
-    );
+    register_task("state", Box::new(StateTask));
 }
