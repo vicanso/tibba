@@ -12,35 +12,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use axum::body::Body;
 use axum::extract::Request;
 use axum::extract::State;
 use axum::middleware::Next;
 use axum::response::Response;
-use tibba_error::{Error, new_error};
+use tibba_error::Error;
 use tibba_state::CTX;
-use tibba_util::read_http_body;
 use tracing::{error, info};
 
 type Result<T> = std::result::Result<T, Error>;
 
-async fn get_http_error(res: Response) -> Result<(Response, Error)> {
-    let (parts, body) = res.into_parts();
-    let data = read_http_body(body)
-        .await
-        .map_err(|e| new_error(e.to_string()))?;
-    let err = serde_json::from_slice::<Error>(&data).map_err(|e| new_error(e.to_string()))?;
-    Ok((Response::from_parts(parts, Body::from(data)), err))
-}
-
 pub async fn user_tracker(
-    State((name, step)): State<(String, String)>,
+    State((name, step)): State<(&str, &str)>,
     req: Request,
     next: Next,
 ) -> Result<Response> {
     let category = "tracker";
     let res = next.run(req).await;
     let ctx = CTX.get();
+    let elapsed = ctx.elapsed().as_millis();
     let device_id = &ctx.device_id;
     let trace_id = &ctx.trace_id;
     let account = ctx.get_account();
@@ -52,14 +42,22 @@ pub async fn user_tracker(
             name,
             account,
             step = step,
+            elapsed,
             result = "success",
         );
         return Ok(res);
     }
-    let data = get_http_error(res)
-        .await
-        .map_err(|e| e.with_category(category))?;
-    let err = data.1;
+    let mut error = None;
+    let mut error_category = None;
+    let mut error_sub_category = None;
+    // it should get error success, otherwise it should be exception error
+    let mut error_exception = true;
+    if let Some(err) = res.extensions().get::<Error>() {
+        error = Some(err.message.clone());
+        error_category = Some(err.category.clone());
+        error_sub_category = err.sub_category.clone();
+        error_exception = err.exception.unwrap_or_default();
+    }
     // TODO add tracker
     error!(
         category = category,
@@ -68,12 +66,12 @@ pub async fn user_tracker(
         name = name,
         account,
         step,
-        error = err.message,
-        error_category = err.category,
-        error_sub_category = err.sub_category,
-        error_code = err.code,
-        error_exception = err.exception,
+        error,
+        error_category,
+        error_sub_category,
+        error_exception,
+        elapsed,
         result = "failure",
     );
-    Ok(data.0)
+    Ok(res)
 }

@@ -14,6 +14,7 @@ base64 = { workspace = true }
 captcha = { workspace = true }
 hostname = { workspace = true }
 humantime = { workspace = true }
+image = { workspace = true }
 os_info = { workspace = true }
 serde = { workspace = true }
 tibba-cache = { path = "../tibba-cache" }

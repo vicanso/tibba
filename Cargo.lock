@@ -5041,6 +5041,7 @@ dependencies = [
  "captcha",
  "hostname",
  "humantime",
+ "image 0.25.6",
  "os_info",
  "serde",
  "tibba-cache",

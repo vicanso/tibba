@@ -22,12 +22,14 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use captcha::Captcha;
 use captcha::filters::{Noise, Wave};
 use serde::{Deserialize, Serialize};
+use std::io::Cursor;
 use std::time::Duration;
 use tibba_cache::RedisCache;
 use tibba_error::{Error, new_error};
 use tibba_state::AppState;
 use tibba_util::{JsonResult, QueryParams, get_env, uuid};
 use validator::Validate;
+
 type Result<T> = std::result::Result<T, Error>;
 
 const ERROR_CATEGORY: &str = "common_router";
@@ -83,6 +85,7 @@ async fn get_application_info(
 #[derive(Debug, Deserialize, Clone, Validate)]
 pub struct CaptchaParams {
     pub preview: Option<bool>,
+    pub theme: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -96,6 +99,7 @@ async fn captcha(
     State(cache): State<&'static RedisCache>,
     QueryParams(params): QueryParams<CaptchaParams>,
 ) -> Result<impl IntoResponse> {
+    let is_dark = params.theme.unwrap_or_default() == "dark";
     // captcha is not supported send
     let (text, data) = {
         let mut c = Captcha::new();
@@ -106,7 +110,21 @@ async fn captcha(
             .apply_filter(Wave::new(2.0, 8.0).horizontal())
             .apply_filter(Wave::new(2.0, 8.0).vertical())
             .view(120, 38);
-        (c.chars_as_string(), c.as_png().unwrap_or_default())
+        if is_dark {
+            c.set_color([60, 60, 60]);
+        }
+        let buffer = c.as_png().unwrap_or_default();
+        if is_dark {
+            let mut img = image::load_from_memory(&buffer)
+                .map_err(|e| new_error(e.to_string()).with_exception(true))?;
+            img.invert();
+            let mut buffer: Vec<u8> = Vec::new();
+            img.write_to(&mut Cursor::new(&mut buffer), image::ImageFormat::Png)
+                .map_err(|e| new_error(e.to_string()).with_exception(true))?;
+            (c.chars_as_string(), buffer)
+        } else {
+            (c.chars_as_string(), buffer)
+        }
     };
 
     if params.preview.unwrap_or_default() {

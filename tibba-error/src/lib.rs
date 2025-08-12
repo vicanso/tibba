@@ -25,6 +25,7 @@ use snafu::Snafu;
 #[snafu(display("{message}"))]
 pub struct Error {
     // HTTP status code
+    #[serde(skip)]
     pub status: u16,
     // error category
     pub category: String,
@@ -84,7 +85,8 @@ impl IntoResponse for Error {
     fn into_response(self) -> Response {
         let status = StatusCode::from_u16(self.status).unwrap_or(StatusCode::BAD_REQUEST);
         // for error, set no-cache
-        let mut res = Json(self).into_response();
+        let mut res = Json(&self).into_response();
+        res.extensions_mut().insert(self);
         res.headers_mut()
             .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
         (status, res).into_response()

@@ -48,11 +48,11 @@ impl Config {
     }
     /// Converts a string to i32
     pub fn convert_string_to_i32(value: &str) -> i32 {
-        value.parse::<i32>().unwrap_or_default()
+        value.parse().unwrap_or_default()
     }
     /// Converts a string to bool
     pub fn convert_string_to_bool(value: &str) -> bool {
-        value.parse::<bool>().unwrap_or_default()
+        value.parse().unwrap_or_default()
     }
     /// Parses a duration string
     pub fn parse_duration(value: &str) -> Result<Duration> {

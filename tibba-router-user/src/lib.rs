@@ -252,17 +252,14 @@ pub struct UserRouterParams {
 }
 
 pub fn new_user_router(params: UserRouterParams) -> Router {
-    let name = "login".to_string();
+    let name = "user";
 
     Router::new()
         .route(
             "/login/token",
             get(login_token)
                 .with_state(params.secret.clone())
-                .layer(from_fn_with_state(
-                    (name.clone(), "init".to_string()),
-                    user_tracker,
-                )),
+                .layer(from_fn_with_state((name, "login_token"), user_tracker)),
         )
         .route(
             "/login",
@@ -272,20 +269,19 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
                     (params.magic_code, params.cache),
                     validate_captcha,
                 ))
-                .layer(from_fn_with_state(
-                    (name.clone(), "submit".to_string()),
-                    user_tracker,
-                )),
+                .layer(from_fn_with_state((name, "login"), user_tracker)),
         )
         .route("/me", get(me).with_state(params.pool))
         .route("/refresh", patch(refresh_session))
-        .route("/register", post(register).with_state(params.pool))
+        .route(
+            "/register",
+            post(register)
+                .with_state(params.pool)
+                .layer(from_fn_with_state((name, "register"), user_tracker)),
+        )
         .route(
             "/logout",
-            delete(logout).layer(from_fn_with_state(
-                ("logout".to_string(), "submit".to_string()),
-                user_tracker,
-            )),
+            delete(logout).layer(from_fn_with_state((name, "logout"), user_tracker)),
         )
         .route("/profile", patch(update_profile).with_state(params.pool))
 }

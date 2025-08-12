@@ -13,7 +13,6 @@
 // limitations under the License.
 
 use super::ClientIp;
-use axum::body::Body;
 use axum::extract::Request;
 use axum::extract::State;
 use axum::middleware::Next;
@@ -21,7 +20,7 @@ use axum::response::Response;
 use scopeguard::defer;
 use tibba_error::Error;
 use tibba_state::{AppState, CTX};
-use tibba_util::{get_header_value, json_get, read_http_body};
+use tibba_util::get_header_value;
 use tracing::{debug, info};
 use urlencoding::decode;
 
@@ -65,20 +64,16 @@ pub async fn stats(
     let referrer = get_header_value(req.headers(), "Referer");
 
     // Process the request
-    let mut res = next.run(req).await;
+    let res = next.run(req).await;
     let status = res.status().as_u16();
     let ctx = CTX.get();
 
     // Extract error message for 4xx/5xx responses
     let mut message = None;
-    if status >= 400 {
-        // Decompose response to read body
-        let (parts, body) = res.into_parts();
-        let data = read_http_body(body).await?;
-        // Extract error message from response body
-        message = Some(json_get(&data, "message"));
-        // Reconstruct response
-        res = Response::from_parts(parts, Body::from(data));
+    if status >= 400
+        && let Some(err) = res.extensions().get::<Error>()
+    {
+        message = Some(err.message.clone());
     }
 
     // Log comprehensive request/response information
