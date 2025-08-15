@@ -8,5 +8,6 @@ name = "tibba_performance"
 path = "src/lib.rs"
 
 [dependencies]
+cached = { workspace = true }
 serde = { workspace = true }
 sysinfo = { workspace = true }

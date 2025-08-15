@@ -8,6 +8,7 @@ name = "tibba_config"
 path = "src/lib.rs"
 
 [dependencies]
+bytesize = { workspace = true }
 config = { workspace = true }
 humantime = { workspace = true }
 snafu = { workspace = true }

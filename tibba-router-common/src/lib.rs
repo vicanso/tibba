@@ -26,6 +26,7 @@ use std::io::Cursor;
 use std::time::Duration;
 use tibba_cache::RedisCache;
 use tibba_error::{Error, new_error};
+use tibba_performance::get_process_system_info;
 use tibba_state::AppState;
 use tibba_util::{JsonResult, QueryParams, get_env, uuid};
 use validator::Validate;
@@ -52,6 +53,11 @@ struct ApplicationInfo {
     arch: String,
     commit_id: String,
     hostname: String,
+    memory_usage_mb: u32,
+    cpu_usage: u32,
+    open_files: u32,
+    total_written_mb: u32,
+    total_read_mb: u32,
 }
 
 /// Get the application information
@@ -67,6 +73,8 @@ async fn get_application_info(
     if uptime_values.len() > 2 {
         uptime_values.truncate(2);
     }
+    let performance = get_process_system_info(std::process::id() as usize);
+    let mb = 1024 * 1024;
 
     let info = ApplicationInfo {
         uptime: uptime_values.join(" "),
@@ -78,6 +86,11 @@ async fn get_application_info(
             .unwrap_or_default()
             .to_string_lossy()
             .to_string(),
+        cpu_usage: performance.cpu_usage as u32,
+        memory_usage_mb: (performance.memory_usage / mb) as u32,
+        open_files: performance.open_files.unwrap_or_default() as u32,
+        total_written_mb: (performance.total_written_bytes / mb) as u32,
+        total_read_mb: (performance.total_read_bytes / mb) as u32,
     };
     Ok(Json(info))
 }

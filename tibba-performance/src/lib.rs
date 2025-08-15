@@ -12,11 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use cached::proc_macro::cached;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 use sysinfo::{Pid, ProcessesToUpdate, System};
 
 /// Represents system resource usage information for a process
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize, Clone)]
 pub struct ProcessSystemInfo {
     /// Memory usage in bytes
     pub memory_usage: u64,
@@ -45,6 +47,7 @@ pub struct ProcessSystemInfo {
 /// # Returns
 /// Returns a `ProcessSystemInfo` struct containing the resource usage metrics.
 /// If any metrics cannot be retrieved, they will contain default values (0).
+#[cached(time = 10, sync_writes = "by_key")]
 pub fn get_process_system_info(pid: usize) -> ProcessSystemInfo {
     // Initialize info struct with default values
     let mut info = ProcessSystemInfo {

@@ -527,7 +527,7 @@ async fn send_alarms(alarm_params: Vec<StatAlarmParam>, alarm_config: AlarmConfi
 async fn run_stat_alarm() -> Result<(i32, i32)> {
     let task = "http_alarm_task";
     let locked = get_redis_cache()
-        .lock(task, Some(Duration::from_secs(120)))
+        .lock(task, Some(Duration::from_secs(20)))
         .await?;
     if !locked {
         return Ok((0, -1));
@@ -721,8 +721,8 @@ struct HttpStatAlarmTask;
 #[async_trait]
 impl Task for HttpStatAlarmTask {
     async fn before(&self) -> Result<bool> {
-        // 每5分钟
-        let job = Job::new_async("30 */5 * * * *", |_, _| {
+        // 每分钟
+        let job = Job::new_async("30 * * * * *", |_, _| {
             let category = "http_stat_alarm";
             Box::pin(async move {
                 // 随机delay，为了让各机器更好的获到执行的机会

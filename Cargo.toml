@@ -92,6 +92,8 @@ axum = { version = "0.8.4", features = ["multipart"] }
 axum-extra = { version = "0.10.1", features = ["cookie", "cookie-signed"] }
 base64 = "0.22.1"
 bytes = "1.10.1"
+bytesize = "2.0.1"
+cached = "0.56.0"
 captcha = "1.0.0"
 chrono = "0.4.41"
 config = "0.15.13"

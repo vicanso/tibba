@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use super::Error;
+use bytesize::ByteSize;
 use config::{File, FileFormat, FileSourceString};
 use std::collections::HashMap;
 use std::env;
@@ -102,6 +103,17 @@ impl Config {
         }
         default_value.unwrap_or_default()
     }
+    /// Retrieves a configuration value by key with optional default value
+    pub fn get_byte_size(&self, key: &str, default_value: Option<usize>) -> usize {
+        let value = self.get(key, None);
+        if !value.is_empty()
+            && let Ok(size) = value.parse::<ByteSize>()
+        {
+            return size.as_u64() as usize;
+        }
+
+        default_value.unwrap_or_default()
+    }
     /// Retrieves value from environment variable first, falls back to config file
     pub fn get_from_env_first(&self, key: &str, default_value: Option<String>) -> String {
         let k = self.get_key(key);
@@ -142,6 +154,15 @@ impl Config {
             return Self::parse_duration(&value).unwrap_or(v);
         }
         v
+    }
+    pub fn get_byte_size_from_env_first(&self, key: &str, default_value: Option<usize>) -> usize {
+        let value = self.get_from_env_first(key, None);
+        if !value.is_empty()
+            && let Ok(size) = value.parse::<ByteSize>()
+        {
+            return size.as_u64() as usize;
+        }
+        default_value.unwrap_or_default()
     }
     /// Create a new sub config
     pub fn sub_config(&self, prefix: &str) -> Config {

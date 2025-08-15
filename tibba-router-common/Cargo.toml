@@ -19,6 +19,7 @@ os_info = { workspace = true }
 serde = { workspace = true }
 tibba-cache = { path = "../tibba-cache" }
 tibba-error = { path = "../tibba-error" }
+tibba-performance = { path = "../tibba-performance" }
 tibba-state = { path = "../tibba-state" }
 tibba-util = { path = "../tibba-util" }
 validator = { workspace = true }
