@@ -579,7 +579,19 @@ async fn run_stat_alarm() -> Result<(i32, i32)> {
 
     let mut trigger_targets = vec![];
     let mut alarm_params = vec![];
-    let mut failed_targets = vec![];
+    let mut failed_targets = alarm_cache
+        .failed_targets
+        .iter()
+        .filter(|item| {
+            // 如果失败的记录在本次检测中不存中
+            // 则还是失败
+            if stat_map.contains_key(&item.target_id) {
+                return false;
+            }
+            return true;
+        })
+        .map(|item| item.clone())
+        .collect::<Vec<_>>();
     for (target_id, stat) in stat_map.iter() {
         let is_failed = stat.result == ResultValue::Failed as u8;
         if is_failed {
