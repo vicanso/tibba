@@ -594,7 +594,9 @@ async fn run_stat_alarm() -> Result<(i32, i32)> {
         .collect::<Vec<_>>();
     for (target_id, stat) in stat_map.iter() {
         let is_failed = stat.result == ResultValue::Failed as u8;
+        // 如果失败
         if is_failed {
+            // 如果原有记录中存在，则直接使用
             if let Some(fail_target) = alarm_cache
                 .failed_targets
                 .iter()
@@ -607,42 +609,40 @@ async fn run_stat_alarm() -> Result<(i32, i32)> {
                     ..Default::default()
                 });
             }
-        }
-        // 如果成功，而且原有失败列表中没有，则跳过
-        if !is_failed
-            && !alarm_cache
-                .failed_targets
-                .iter()
-                .any(|t| t.target_id == *target_id)
+        } else if !alarm_cache
+            .failed_targets
+            .iter()
+            .any(|t| t.target_id == *target_id)
         {
+            // 如果成功，而且原有失败列表中没有，则跳过
             continue;
         }
 
         let mut status_changed = true;
 
-        // 如果失败，而且失败记录发送时间在1小时内，则跳过
-        if is_failed {
-            if let Some(fail_target) = failed_targets
+        if is_failed
+            && let Some(fail_target) = failed_targets
                 .iter_mut()
                 .find(|t| t.target_id == *target_id)
-            {
-                // 如果状态失败，而且在失败记录中存在，则状态未改变
-                if fail_target.alarm_count > 0 {
-                    status_changed = false;
-                }
-                let offset = fail_target.alarm_count.min(12) as i64 * 2 * 3600;
-                if fail_target.alarm_time > now - offset {
-                    continue;
-                }
-                // 如果不是，则记录时间，并增加计数
-                fail_target.alarm_time = now;
-                fail_target.alarm_count += 1;
+        {
+            // 如果状态失败，而且在失败记录中存在，则状态未改变
+            if fail_target.alarm_count > 0 {
+                status_changed = false;
             }
+            let offset = fail_target.alarm_count.min(12) as i64 * 2 * 3600;
+            // 如果告警时间在x小时内，则跳过
+            if fail_target.alarm_time > now - offset {
+                continue;
+            }
+            // 如果不是，则记录时间，并增加计数
+            fail_target.alarm_time = now;
+            fail_target.alarm_count += 1;
         }
 
         let Ok(Some(detector)) = HttpDetectorModel::new().get_by_id(pool, *target_id).await else {
             continue;
         };
+        // 如果已触发过
         if trigger_targets.contains(target_id) {
             continue;
         }
@@ -652,6 +652,7 @@ async fn run_stat_alarm() -> Result<(i32, i32)> {
         if detector.alarm_on_change && !status_changed {
             continue;
         }
+        // 有单独配置告警地址，则单独发送
         if !detector.alarm_url.is_empty() {
             alarm_params.push(StatAlarmParam {
                 stat: stat.clone(),
