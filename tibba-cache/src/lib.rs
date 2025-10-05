@@ -17,7 +17,6 @@ use std::time::Duration;
 use substring::Substring;
 use tibba_config::Config;
 use tibba_error::Error as BaseError;
-use tibba_error::new_error;
 use url::Url;
 use validator::Validate;
 
@@ -142,27 +141,31 @@ fn new_redis_config(config: &Config) -> Result<RedisConfig> {
 impl From<Error> for BaseError {
     fn from(val: Error) -> Self {
         let err = match val {
-            Error::Common { category, message } => new_error(message).with_sub_category(&category),
-            Error::SingleBuild { source } => new_error(source)
+            Error::Common { category, message } => {
+                BaseError::new(message).with_sub_category(&category)
+            }
+            Error::SingleBuild { source } => BaseError::new(source)
                 .with_sub_category("single_build")
                 .with_status(500)
                 .with_exception(true),
-            Error::ClusterBuild { source } => new_error(source)
+            Error::ClusterBuild { source } => BaseError::new(source)
                 .with_sub_category("cluster_build")
                 .with_status(500)
                 .with_exception(true),
-            Error::Redis { category, source } => new_error(source)
+            Error::Redis { category, source } => BaseError::new(source)
                 .with_sub_category(&category)
                 .with_status(500)
                 .with_exception(true),
-            Error::Compression { source } => new_error(source)
+            Error::Compression { source } => BaseError::new(source)
                 .with_sub_category("compression")
                 .with_exception(true),
-            Error::Url { category, source } => new_error(source)
+            Error::Url { category, source } => BaseError::new(source)
                 .with_sub_category(&category)
                 .with_status(500)
                 .with_exception(true),
-            Error::Validate { category, source } => new_error(source).with_sub_category(&category),
+            Error::Validate { category, source } => {
+                BaseError::new(source).with_sub_category(&category)
+            }
         };
         err.with_category("cache")
     }

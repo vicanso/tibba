@@ -13,7 +13,6 @@
 // limitations under the License.
 use snafu::Snafu;
 use tibba_error::Error as BaseError;
-use tibba_error::new_error;
 
 mod app_config;
 
@@ -40,10 +39,12 @@ pub enum Error {
 impl From<Error> for BaseError {
     fn from(val: Error) -> Self {
         let err = match val {
-            Error::Url { category, source } => new_error(source).with_sub_category(&category),
-            Error::Config { category, source } => new_error(source).with_sub_category(&category),
+            Error::Url { category, source } => BaseError::new(source).with_sub_category(&category),
+            Error::Config { category, source } => {
+                BaseError::new(source).with_sub_category(&category)
+            }
             Error::ParseDuration { category, source } => {
-                new_error(source).with_sub_category(&category)
+                BaseError::new(source).with_sub_category(&category)
             }
         };
         err.with_category("config").with_exception(true)

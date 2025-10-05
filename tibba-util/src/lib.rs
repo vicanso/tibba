@@ -16,7 +16,6 @@ use lz4_flex::block::DecompressError;
 use snafu::Snafu;
 use std::env;
 use tibba_error::Error as BaseError;
-use tibba_error::new_error;
 
 #[derive(Snafu, Debug)]
 pub enum Error {
@@ -39,17 +38,17 @@ pub enum Error {
 impl From<Error> for BaseError {
     fn from(val: Error) -> Self {
         let err = match val {
-            Error::Zstd { source } => new_error(source).with_sub_category("zstd"),
+            Error::Zstd { source } => BaseError::new(source).with_sub_category("zstd"),
             Error::Lz4Decompress { source } => {
-                new_error(source).with_sub_category("lz4_decompress")
+                BaseError::new(source).with_sub_category("lz4_decompress")
             }
             Error::InvalidHeaderName { source } => {
-                new_error(source).with_sub_category("invalid_header_name")
+                BaseError::new(source).with_sub_category("invalid_header_name")
             }
             Error::InvalidHeaderValue { source } => {
-                new_error(source).with_sub_category("invalid_header_value")
+                BaseError::new(source).with_sub_category("invalid_header_value")
             }
-            Error::Axum { source } => new_error(source).with_sub_category("axum"),
+            Error::Axum { source } => BaseError::new(source).with_sub_category("axum"),
         };
         err.with_category("util")
     }

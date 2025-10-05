@@ -20,7 +20,6 @@ use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
 use tibba_config::Config;
 use tibba_error::Error as BaseError;
-use tibba_error::new_error;
 use tracing::info;
 use url::Url;
 use validator::Validate;
@@ -130,13 +129,13 @@ pub enum Error {
 impl From<Error> for BaseError {
     fn from(source: Error) -> Self {
         let err = match source {
-            Error::Sqlx { source } => new_error(source)
+            Error::Sqlx { source } => BaseError::new(source)
                 .with_sub_category("sqlx")
                 .with_exception(true),
-            Error::Validate { source } => new_error(source)
+            Error::Validate { source } => BaseError::new(source)
                 .with_sub_category("validate")
                 .with_exception(true),
-            Error::Common { message, .. } => new_error(message).with_exception(true),
+            Error::Common { message, .. } => BaseError::new(message).with_exception(true),
         };
         err.with_category("sql")
     }

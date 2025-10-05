@@ -17,7 +17,7 @@ use async_trait::async_trait;
 use ctor::ctor;
 use once_cell::sync::{Lazy, OnceCell};
 use std::time::Duration;
-use tibba_error::{Error, new_error};
+use tibba_error::Error;
 use tibba_hook::{Task, register_task};
 use tibba_performance::get_process_system_info;
 use tibba_scheduler::{Job, register_job_task};
@@ -83,7 +83,7 @@ impl Task for StateTask {
         let job = Job::new_repeated_async(Duration::from_secs(60), move |_, _| {
             Box::pin(update_performance())
         })
-        .map_err(new_error)?;
+        .map_err(Error::new)?;
         register_job_task("application_performance", job);
         Ok(true)
     }

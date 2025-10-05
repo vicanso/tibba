@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sqlx::MySqlPool;
 use tibba_cache::RedisCache;
-use tibba_error::{Error, new_error};
+use tibba_error::Error;
 use tibba_middleware::{user_tracker, validate_captcha};
 use tibba_model::{Model, ROLE_SUPER_ADMIN, UserModel, UserUpdateParams};
 use tibba_session::{Session, SessionResponse, UserSession};
@@ -69,7 +69,7 @@ impl LoginParams {
             return Ok(());
         }
         if (self.ts - timestamp()).abs() > 60 {
-            return Err(new_error("timestamp is expired"));
+            return Err(Error::new("timestamp is expired"));
         }
         validate_timestamp_hash(self.ts, &self.token, &self.hash, secret)?;
         Ok(())
@@ -97,7 +97,7 @@ async fn login(
 ) -> Result<SessionResponse<Json<UserMeResp>>> {
     params.validate_token(&secret)?;
     let account = params.account;
-    let account_password_err = new_error("account or password is wrong");
+    let account_password_err = Error::new("account or password is wrong");
     let Some(user) = UserModel::new().get_by_account(pool, &account).await? else {
         return Err(account_password_err);
     };
@@ -148,7 +148,7 @@ async fn me(
     let user = UserModel::new()
         .get_by_account(pool, &account)
         .await?
-        .ok_or(new_error("user not found"))?;
+        .ok_or(Error::new("user not found"))?;
     let info = UserMeResp {
         account,
         expired_at: session.get_expired_at(),

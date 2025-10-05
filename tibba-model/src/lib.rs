@@ -21,7 +21,6 @@ use snafu::Snafu;
 use sqlx::{MySql, Pool};
 use std::collections::HashMap;
 use tibba_error::Error as BaseError;
-use tibba_error::new_error;
 use time::OffsetDateTime;
 
 pub const REGION_ANY: &str = "any";
@@ -52,16 +51,18 @@ pub enum Error {
 impl From<Error> for BaseError {
     fn from(source: Error) -> Self {
         let err = match source {
-            Error::Sqlx { source } => new_error(source)
+            Error::Sqlx { source } => BaseError::new(source)
                 .with_sub_category("sqlx")
                 .with_exception(true),
-            Error::Json { source } => new_error(source)
+            Error::Json { source } => BaseError::new(source)
                 .with_sub_category("json")
                 .with_exception(true),
-            Error::NotSupported { name } => new_error(format!("Not supported function: {name}"))
-                .with_sub_category("not_supported")
-                .with_exception(true),
-            Error::NotFound => new_error("Not found")
+            Error::NotSupported { name } => {
+                BaseError::new(format!("Not supported function: {name}"))
+                    .with_sub_category("not_supported")
+                    .with_exception(true)
+            }
+            Error::NotFound => BaseError::new("Not found")
                 .with_sub_category("not_found")
                 .with_exception(true),
         };

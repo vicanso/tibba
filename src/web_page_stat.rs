@@ -17,7 +17,7 @@ use super::sql::get_db_pool;
 use async_trait::async_trait;
 use ctor::ctor;
 use serde::Deserialize;
-use tibba_error::{Error, new_error};
+use tibba_error::Error;
 use tibba_headless::{WebPageParams, new_browser, run_web_page_stat_with_browser};
 use tibba_hook::{Task, register_task};
 use tibba_model::{ConfigurationModel, FileInsertParams, FileModel, Model, WebPageDetectorModel};
@@ -45,9 +45,9 @@ async fn run_web_page_stat() -> Result<()> {
     let browser_less_config: BrowserLessConfig = ConfigurationModel::new()
         .get_config(pool, "app", "browserless")
         .await
-        .map_err(|e| new_error(e.to_string()))?;
+        .map_err(|e| Error::new(e.to_string()))?;
     if browser_less_config.urls.is_empty() {
-        return Err(new_error("browser less urls is empty"));
+        return Err(Error::new("browser less urls is empty"));
     }
     let browser = new_browser(&browser_less_config.urls[0], None)?;
 
@@ -111,7 +111,7 @@ impl Task for WebPageStatTask {
                 };
             })
         })
-        .map_err(new_error)?;
+        .map_err(Error::new)?;
         register_job_task("web_page_stat", job);
         Ok(true)
     }

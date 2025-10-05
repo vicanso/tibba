@@ -19,7 +19,7 @@ use once_cell::sync::OnceCell;
 use sqlx::MySqlPool;
 use std::sync::Arc;
 use std::time::Duration;
-use tibba_error::{Error, new_error};
+use tibba_error::Error;
 use tibba_hook::{Task, register_task};
 use tibba_scheduler::{Job, register_job_task};
 use tibba_sql::{PoolStat, new_mysql_pool};
@@ -42,10 +42,10 @@ impl Task for SqlTask {
         let stat = Arc::new(PoolStat::default());
         let pool = new_mysql_pool(&app_config.sub_config("database"), Some(stat.clone()))
             .await
-            .map_err(new_error)?;
+            .map_err(Error::new)?;
         DB_POOL
             .set(pool)
-            .map_err(|_| new_error("set db pool fail"))?;
+            .map_err(|_| Error::new("set db pool fail"))?;
 
         let task = "database_performance";
         let job = Job::new_repeated(Duration::from_secs(60), move |_, _| {
@@ -59,7 +59,7 @@ impl Task for SqlTask {
                 connection_size, connection_idle, connected, executions, idle_for,
             );
         })
-        .map_err(new_error)?;
+        .map_err(Error::new)?;
         register_job_task(task, job);
 
         Ok(true)

@@ -16,7 +16,7 @@ use crate::config::must_get_config;
 use async_trait::async_trait;
 use ctor::ctor;
 use once_cell::sync::OnceCell;
-use tibba_error::{Error, new_error};
+use tibba_error::Error;
 use tibba_hook::{Task, register_task};
 use tibba_opendal::{Storage, new_opendal_storage};
 use tracing::info;
@@ -40,7 +40,7 @@ impl Task for DalTask {
         let info = storage.info();
         OPENDAL_STORAGE
             .set(storage)
-            .map_err(|_| new_error("set opendal storage fail"))?;
+            .map_err(|_| Error::new("set opendal storage fail"))?;
 
         info!(
             schema = ?info.scheme(),

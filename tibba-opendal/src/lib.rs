@@ -17,7 +17,7 @@ use opendal::layers::MimeGuessLayer;
 use snafu::Snafu;
 use std::collections::HashMap;
 use tibba_config::Config;
-use tibba_error::{Error as BaseError, new_error};
+use tibba_error::Error as BaseError;
 use url::Url;
 use validator::Validate;
 
@@ -53,11 +53,11 @@ pub enum Error {
 impl From<Error> for BaseError {
     fn from(source: Error) -> Self {
         let err = match source {
-            Error::OpenDal { source } => new_error(source).with_exception(true),
-            Error::ParseUrl { source } => new_error(source)
+            Error::OpenDal { source } => BaseError::new(source).with_exception(true),
+            Error::ParseUrl { source } => BaseError::new(source)
                 .with_sub_category("parse_url")
                 .with_exception(true),
-            Error::Validate { source } => new_error(source)
+            Error::Validate { source } => BaseError::new(source)
                 .with_sub_category("validate")
                 .with_exception(true),
         };

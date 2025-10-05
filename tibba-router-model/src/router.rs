@@ -26,7 +26,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::MySqlPool;
 use std::str::FromStr;
-use tibba_error::{Error, new_error};
+use tibba_error::Error;
 use tibba_model::{Model, ModelListParams, SchemaView};
 use tibba_session::{AdminSession, UserSession};
 use tibba_util::{JsonParams, JsonResult, QueryParams};
@@ -40,7 +40,7 @@ struct GetSchemaParams {
 }
 
 fn get_model(name: &str) -> Result<CmsModel, Error> {
-    CmsModel::from_str(name).map_err(|_| new_error("The model is not supported"))
+    CmsModel::from_str(name).map_err(|_| Error::new("The model is not supported"))
 }
 
 async fn get_schema(
@@ -178,7 +178,7 @@ async fn get_detail(
         }
     };
     if data.is_null() {
-        return Err(new_error("The record is not found"));
+        return Err(Error::new("The record is not found"));
     }
     Ok(Json(data))
 }
@@ -278,7 +278,7 @@ async fn update_model(
                 .await?;
         }
         _ => {
-            return Err(new_error("The model is not supported"));
+            return Err(Error::new("The model is not supported"));
         }
     }
     Ok(StatusCode::NO_CONTENT)
@@ -314,7 +314,7 @@ async fn create_model(
         }
         CmsModel::DetectorGroupUser => DETECTOR_GROUP_USER_MODEL.insert(pool, data).await?,
         _ => {
-            return Err(new_error("The model is not supported"));
+            return Err(Error::new("The model is not supported"));
         }
     };
     Ok(Json(json!({

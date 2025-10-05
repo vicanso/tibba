@@ -14,7 +14,7 @@
 
 use dashmap::DashMap;
 use once_cell::sync::Lazy;
-use tibba_error::{Error, new_error};
+use tibba_error::Error;
 use tokio_cron_scheduler::JobScheduler;
 use tracing::info;
 type Result<T> = std::result::Result<T, Error>;
@@ -54,11 +54,11 @@ pub async fn run_scheduler_jobs() -> Result<JobScheduler> {
     let category = "scheduler";
     let scheduler = JobScheduler::new()
         .await
-        .map_err(|e| new_error(e).with_category(category))?;
+        .map_err(|e| Error::new(e).with_category(category))?;
     for job in JOB_TASKS.iter() {
         let value = job.value();
         scheduler.add(value.job.clone()).await.map_err(|e| {
-            new_error(e)
+            Error::new(e)
                 .with_category(category)
                 .with_sub_category(&value.name)
         })?;
@@ -68,7 +68,7 @@ pub async fn run_scheduler_jobs() -> Result<JobScheduler> {
     scheduler
         .start()
         .await
-        .map_err(|err| new_error(err).with_category(category))?;
+        .map_err(|err| Error::new(err).with_category(category))?;
 
     info!(category, "scheduler started");
 

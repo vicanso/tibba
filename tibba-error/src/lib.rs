@@ -42,32 +42,45 @@ pub struct Error {
 }
 
 impl Error {
+    #[must_use]
+    pub fn new(message: impl ToString) -> Self {
+        Self {
+            message: message.to_string(),
+            ..Default::default()
+        }
+    }
     /// Sets the error category
+    #[must_use]
     pub fn with_category(mut self, category: impl ToString) -> Self {
         self.category = category.to_string();
         self
     }
     /// Sets the sub-category
+    #[must_use]
     pub fn with_sub_category(mut self, sub_category: impl ToString) -> Self {
         self.sub_category = Some(sub_category.to_string());
         self
     }
     /// Sets the error code
+    #[must_use]
     pub fn with_code(mut self, code: impl ToString) -> Self {
         self.code = Some(code.to_string());
         self
     }
     /// Sets the HTTP status code
+    #[must_use]
     pub fn with_status(mut self, status: u16) -> Self {
         self.status = status;
         self
     }
     /// Sets whether it is an exception
+    #[must_use]
     pub fn with_exception(mut self, exception: bool) -> Self {
         self.exception = Some(exception);
         self
     }
     /// Adds extra information
+    #[must_use]
     pub fn add_extra(mut self, value: impl ToString) -> Self {
         if self.extra.is_none() {
             self.extra = Some(Box::new(vec![]));
@@ -90,13 +103,5 @@ impl IntoResponse for Error {
         res.headers_mut()
             .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
         (status, res).into_response()
-    }
-}
-
-/// Creates a new Error with error message
-pub fn new_error(message: impl ToString) -> Error {
-    Error {
-        message: message.to_string(),
-        ..Default::default()
     }
 }

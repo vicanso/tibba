@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use std::io::Cursor;
 use std::time::Duration;
 use tibba_cache::RedisCache;
-use tibba_error::{Error, new_error};
+use tibba_error::Error;
 use tibba_performance::get_process_system_info;
 use tibba_state::AppState;
 use tibba_util::{JsonResult, QueryParams, get_env, uuid};
@@ -38,7 +38,7 @@ const ERROR_CATEGORY: &str = "common_router";
 /// Ping the server to check if it is running
 async fn ping(State(state): State<&'static AppState>) -> Result<&'static str> {
     if !state.is_running() {
-        return Err(new_error("Server is not running")
+        return Err(Error::new("Server is not running")
             .with_category(ERROR_CATEGORY)
             .with_status(503));
     }
@@ -129,11 +129,11 @@ async fn captcha(
         let buffer = c.as_png().unwrap_or_default();
         if is_dark {
             let mut img = image::load_from_memory(&buffer)
-                .map_err(|e| new_error(e.to_string()).with_exception(true))?;
+                .map_err(|e| Error::new(e.to_string()).with_exception(true))?;
             img.invert();
             let mut buffer: Vec<u8> = Vec::new();
             img.write_to(&mut Cursor::new(&mut buffer), image::ImageFormat::Png)
-                .map_err(|e| new_error(e.to_string()).with_exception(true))?;
+                .map_err(|e| Error::new(e.to_string()).with_exception(true))?;
             (c.chars_as_string(), buffer)
         } else {
             (c.chars_as_string(), buffer)

@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use snafu::Snafu;
-use tibba_error::{Error as BaseError, new_error};
+use tibba_error::Error as BaseError;
 
 mod session;
 
@@ -40,27 +40,27 @@ pub enum Error {
 impl From<Error> for BaseError {
     fn from(val: Error) -> Self {
         let err = match val {
-            Error::SessionIdEmpty => new_error("session id is empty")
+            Error::SessionIdEmpty => BaseError::new("session id is empty")
                 .with_status(500)
                 .with_exception(true),
-            Error::SessionIdInvalid => new_error("session id is invalid")
+            Error::SessionIdInvalid => BaseError::new("session id is invalid")
                 .with_status(500)
                 .with_exception(true),
-            Error::SessionCacheNotSet => new_error("session cache is not set")
+            Error::SessionCacheNotSet => BaseError::new("session cache is not set")
                 .with_status(500)
                 .with_exception(true),
-            Error::Key { source } => new_error(source)
+            Error::Key { source } => BaseError::new(source)
                 .with_sub_category("cookie")
                 .with_status(500)
                 .with_exception(true),
-            Error::SessionNotFound => new_error("session not found")
+            Error::SessionNotFound => BaseError::new("session not found")
                 .with_status(500)
                 .with_exception(true),
-            Error::UserNotLogin => new_error("user not login")
+            Error::UserNotLogin => BaseError::new("user not login")
                 .with_sub_category("user")
                 .with_status(401)
                 .with_exception(false),
-            Error::UserNotAdmin => new_error("user not admin")
+            Error::UserNotAdmin => BaseError::new("user not admin")
                 .with_sub_category("user")
                 .with_status(403)
                 .with_exception(false),

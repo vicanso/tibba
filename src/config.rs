@@ -18,7 +18,7 @@ use once_cell::sync::OnceCell;
 use rust_embed::RustEmbed;
 use std::time::Duration;
 use tibba_config::Config;
-use tibba_error::{Error, new_error};
+use tibba_error::Error;
 use tibba_hook::{Task, register_task};
 use tibba_session::SessionParams;
 use tracing::info;
@@ -30,7 +30,7 @@ static CONFIGS: OnceCell<Config> = OnceCell::new();
 static SESSION_PARAMS: OnceCell<SessionParams> = OnceCell::new();
 
 fn map_error(err: impl ToString) -> Error {
-    new_error(err).with_category("config")
+    Error::new(err).with_category("config")
 }
 
 #[derive(RustEmbed)]

@@ -29,7 +29,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::{net::IpAddr, time::Duration};
-use tibba_error::{Error, new_error};
+use tibba_error::Error;
 use tibba_hook::{Task, register_task};
 use tibba_model::{
     AlarmConfig, ConfigurationModel, HttpDetector, HttpDetectorModel, HttpStat,
@@ -82,9 +82,9 @@ fn run_js_detect(resp: &JsResponse, stat: &JsStat, detect_script: &str) -> Resul
     if detect_script.is_empty() {
         return Ok(());
     }
-    let ctx = quick_js::Context::new().map_err(new_error)?;
-    let content = serde_json::to_string(&resp).map_err(new_error)?;
-    let stat = serde_json::to_string(&stat).map_err(new_error)?;
+    let ctx = quick_js::Context::new().map_err(Error::new)?;
+    let content = serde_json::to_string(&resp).map_err(Error::new)?;
+    let stat = serde_json::to_string(&stat).map_err(Error::new)?;
     let mut script = INLINE_JS.to_string()
         + r#"
 (function(response, stat) {
@@ -98,7 +98,7 @@ fn run_js_detect(resp: &JsResponse, stat: &JsStat, detect_script: &str) -> Resul
     script = script.replace("__response__", &content);
     script = script.replace("__stat__", &stat);
     script = script.replace("__script__", detect_script);
-    ctx.eval(&script).map_err(new_error)?;
+    ctx.eval(&script).map_err(Error::new)?;
     Ok(())
 }
 
@@ -483,13 +483,13 @@ async fn send_alarms(alarm_params: Vec<StatAlarmParam>, alarm_config: AlarmConfi
                 if res.status().is_success() {
                     Ok(())
                 } else {
-                    Err(new_error(format!(
+                    Err(Error::new(format!(
                         "send alarm message failed, status: {}",
                         res.status()
                     )))
                 }
             }
-            Err(e) => Err(new_error(e.to_string())),
+            Err(e) => Err(Error::new(e.to_string())),
         }?;
         Ok(())
     };
@@ -550,10 +550,10 @@ async fn run_stat_alarm() -> Result<(i32, i32)> {
 
     let pool = get_db_pool();
     let last_check_time = chrono::DateTime::from_timestamp(alarm_cache.last_check_time, 0)
-        .ok_or(new_error("parse time error"))?
+        .ok_or(Error::new("parse time error"))?
         .to_rfc3339();
     let now_check_time = chrono::DateTime::from_timestamp(now, 0)
-        .ok_or(new_error("parse time error"))?
+        .ok_or(Error::new("parse time error"))?
         .to_rfc3339();
     let stats = HttpStatModel::new()
         .list_by_created(pool, (&last_check_time, &now_check_time))
@@ -719,7 +719,7 @@ impl Task for HttpDetectorTask {
                 };
             })
         })
-        .map_err(new_error)?;
+        .map_err(Error::new)?;
         register_job_task("http_detector", job);
         Ok(true)
     }
@@ -756,7 +756,7 @@ impl Task for HttpStatAlarmTask {
                 }
             })
         })
-        .map_err(new_error)?;
+        .map_err(Error::new)?;
         register_job_task("http_stat_alarm", job);
         Ok(true)
     }

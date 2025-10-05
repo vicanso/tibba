@@ -13,7 +13,6 @@
 // limitations under the License.
 use snafu::Snafu;
 use tibba_error::Error as BaseError;
-use tibba_error::new_error;
 
 mod request;
 
@@ -47,9 +46,11 @@ pub enum Error {
 impl From<Error> for BaseError {
     fn from(val: Error) -> Self {
         let err = match val {
-            Error::Common { service, message } => new_error(message).with_sub_category(&service),
-            Error::Build { service, source } => new_error(source).with_sub_category(&service),
-            Error::Uri { service, source } => new_error(source).with_sub_category(&service),
+            Error::Common { service, message } => {
+                BaseError::new(message).with_sub_category(&service)
+            }
+            Error::Build { service, source } => BaseError::new(source).with_sub_category(&service),
+            Error::Uri { service, source } => BaseError::new(source).with_sub_category(&service),
             Error::Request {
                 service,
                 path: _,
@@ -57,12 +58,12 @@ impl From<Error> for BaseError {
             } => {
                 let status = source.status().map_or(400, |v| v.as_u16());
                 let exception = source.is_timeout() || source.is_request() || source.is_connect();
-                new_error(source)
+                BaseError::new(source)
                     .with_sub_category(&service)
                     .with_status(status)
                     .with_exception(exception)
             }
-            Error::Serde { service, source } => new_error(source).with_sub_category(&service),
+            Error::Serde { service, source } => BaseError::new(source).with_sub_category(&service),
         };
         err.with_category("request")
     }

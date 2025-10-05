@@ -16,7 +16,7 @@ use axum::extract::{ConnectInfo, FromRequestParts};
 use axum::http::request::Parts;
 use snafu::Snafu;
 use std::net::{IpAddr, SocketAddr};
-use tibba_error::{Error as BaseError, new_error};
+use tibba_error::Error as BaseError;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -29,8 +29,10 @@ pub enum Error {
 impl From<Error> for BaseError {
     fn from(val: Error) -> Self {
         let err = match val {
-            Error::Common { message, category } => new_error(&message).with_sub_category(&category),
-            Error::TooManyRequests { .. } => new_error(val.to_string())
+            Error::Common { message, category } => {
+                BaseError::new(&message).with_sub_category(&category)
+            }
+            Error::TooManyRequests { .. } => BaseError::new(val.to_string())
                 .with_sub_category("too_many_requests")
                 .with_status(429),
         };
@@ -70,7 +72,7 @@ where
             .extensions
             .get::<ConnectInfo<SocketAddr>>()
             .map(|ConnectInfo(addr)| addr.ip())
-            .ok_or_else(|| tibba_error::new_error("no connect info"))?;
+            .ok_or_else(|| BaseError::new("no connect info"))?;
         Ok(ClientIp(ip))
     }
 }

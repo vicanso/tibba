@@ -18,7 +18,7 @@ use axum::http::header::HeaderMap;
 use axum::http::request::Parts;
 use axum::http::{Request, header};
 use serde::de::DeserializeOwned;
-use tibba_error::{Error, new_error};
+use tibba_error::Error;
 use validator::Validate;
 
 #[derive(Debug, Clone)]
@@ -27,7 +27,7 @@ struct BodyBytes {
 }
 
 fn map_err(err: impl ToString, sub_category: &str) -> Error {
-    new_error(err)
+    Error::new(err)
         .with_category("params")
         .with_sub_category(sub_category)
 }
