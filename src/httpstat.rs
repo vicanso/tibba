@@ -150,14 +150,13 @@ async fn do_request(
             err = Some(format!("http status code is >= 400, status: {status}",));
         }
     }
-    if let Some(cert_not_after) = &stat.cert_not_after {
-        if let Ok(cert_not_after) = DateTime::parse_from_str(cert_not_after, "%Y-%m-%d %H:%M:%S %z")
-        {
-            // 提前7天设置为失败
-            if cert_not_after.timestamp() < chrono::Utc::now().timestamp() - 7 * 24 * 3600 {
-                err = Some("certificate will expired in 7 days".to_string());
-                result = ResultValue::Failed;
-            }
+    if let Some(cert_not_after) = &stat.cert_not_after
+        && let Ok(cert_not_after) = DateTime::parse_from_str(cert_not_after, "%Y-%m-%d %H:%M:%S %z")
+    {
+        // 提前7天设置为失败
+        if cert_not_after.timestamp() < chrono::Utc::now().timestamp() - 7 * 24 * 3600 {
+            err = Some("certificate will expired in 7 days".to_string());
+            result = ResultValue::Failed;
         }
     }
     if result == ResultValue::Success && detector.script.is_some() {
@@ -566,11 +565,11 @@ async fn run_stat_alarm() -> Result<(i32, i32)> {
     for stat in stats {
         let is_failed = stat.result == ResultValue::Failed as u8;
         let target_id = stat.target_id;
-        if let Some(value) = stat_map.get_mut(&target_id) {
-            if is_failed {
-                *value = stat;
-                continue;
-            }
+        if let Some(value) = stat_map.get_mut(&target_id)
+            && is_failed
+        {
+            *value = stat;
+            continue;
         }
         stat_map.insert(target_id, stat);
     }
@@ -588,9 +587,9 @@ async fn run_stat_alarm() -> Result<(i32, i32)> {
             if stat_map.contains_key(&item.target_id) {
                 return false;
             }
-            return true;
+            true
         })
-        .map(|item| item.clone())
+        .cloned()
         .collect::<Vec<_>>();
     for (target_id, stat) in stat_map.iter() {
         let is_failed = stat.result == ResultValue::Failed as u8;

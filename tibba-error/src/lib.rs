@@ -43,17 +43,17 @@ pub struct Error {
 
 impl Error {
     /// Sets the error category
-    pub fn with_category(mut self, category: &str) -> Self {
+    pub fn with_category(mut self, category: impl ToString) -> Self {
         self.category = category.to_string();
         self
     }
     /// Sets the sub-category
-    pub fn with_sub_category(mut self, sub_category: &str) -> Self {
+    pub fn with_sub_category(mut self, sub_category: impl ToString) -> Self {
         self.sub_category = Some(sub_category.to_string());
         self
     }
     /// Sets the error code
-    pub fn with_code(mut self, code: &str) -> Self {
+    pub fn with_code(mut self, code: impl ToString) -> Self {
         self.code = Some(code.to_string());
         self
     }

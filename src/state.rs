@@ -35,7 +35,7 @@ struct Performance {
     memory_usage_mb: u32,
     cpu_usage: u16,
     cpu_time: u64,
-    open_files: u32,
+    open_files: usize,
     written_mb: u32,
     read_mb: u32,
 }

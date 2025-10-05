@@ -27,7 +27,7 @@ pub struct ProcessSystemInfo {
     /// CPU time in milliseconds
     pub cpu_time: u64,
     /// Open files
-    pub open_files: Option<u32>,
+    pub open_files: Option<usize>,
     /// Total number of written bytes.
     pub total_written_bytes: u64,
     /// Number of written bytes since the last refresh.

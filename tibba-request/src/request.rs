@@ -401,13 +401,13 @@ impl Client {
         defer! {
             self.processing.fetch_sub(1, Ordering::Relaxed);
         };
-        if let Some(max_processing) = self.config.max_processing {
-            if processing > max_processing {
-                return Err(Error::Common {
-                    service: self.config.service.clone(),
-                    message: "too many requests".to_string(),
-                });
-            }
+        if let Some(max_processing) = self.config.max_processing
+            && processing > max_processing
+        {
+            return Err(Error::Common {
+                service: self.config.service.clone(),
+                message: "too many requests".to_string(),
+            });
         }
 
         let url = self.get_url(params.url);

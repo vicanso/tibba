@@ -286,10 +286,10 @@ pub fn run_web_page_stat_with_browser(
             let params = &lifecycle.params;
             match params.name.as_str() {
                 "init" => {
-                    if let Ok(mut lifecycle) = lifecycle_clone.lock() {
-                        if lifecycle.init_time == 0.0 {
-                            lifecycle.init_time = params.timestamp;
-                        }
+                    if let Ok(mut lifecycle) = lifecycle_clone.lock()
+                        && lifecycle.init_time == 0.0
+                    {
+                        lifecycle.init_time = params.timestamp;
                     }
                 }
                 "load" => {
@@ -299,17 +299,17 @@ pub fn run_web_page_stat_with_browser(
                     loaded_clone.store(true, Ordering::SeqCst);
                 }
                 "firstContentfulPaint" => {
-                    if let Ok(mut lifecycle) = lifecycle_clone.lock() {
-                        if lifecycle.fcp_time == 0.0 {
-                            lifecycle.fcp_time = params.timestamp;
-                        }
+                    if let Ok(mut lifecycle) = lifecycle_clone.lock()
+                        && lifecycle.fcp_time == 0.0
+                    {
+                        lifecycle.fcp_time = params.timestamp;
                     }
                 }
                 "DOMContentLoaded" => {
-                    if let Ok(mut lifecycle) = lifecycle_clone.lock() {
-                        if lifecycle.dcl_time == 0.0 {
-                            lifecycle.dcl_time = params.timestamp;
-                        }
+                    if let Ok(mut lifecycle) = lifecycle_clone.lock()
+                        && lifecycle.dcl_time == 0.0
+                    {
+                        lifecycle.dcl_time = params.timestamp;
                     }
                 }
                 _ => {}
@@ -408,10 +408,10 @@ pub fn run_web_page_stat_with_browser(
         }
     }
 
-    if params.capture_screenshot {
-        if let Ok(screenshot) = analyze_web_page_screenshot(tab.clone(), params) {
-            stat.screenshot = Some(screenshot);
-        }
+    if params.capture_screenshot
+        && let Ok(screenshot) = analyze_web_page_screenshot(tab.clone(), params)
+    {
+        stat.screenshot = Some(screenshot);
     }
 
     Ok(stat)

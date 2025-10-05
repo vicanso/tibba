@@ -103,10 +103,10 @@ async fn shutdown_signal() {
 }
 fn init_logger() {
     let mut level = Level::INFO;
-    if let Ok(log_level) = env::var("RUST_LOG") {
-        if let Ok(value) = Level::from_str(log_level.as_str()) {
-            level = value;
-        }
+    if let Ok(log_level) = env::var("RUST_LOG")
+        && let Ok(value) = Level::from_str(log_level.as_str())
+    {
+        level = value;
     }
 
     let timer = tracing_subscriber::fmt::time::OffsetTime::local_rfc_3339().unwrap_or_else(|_| {

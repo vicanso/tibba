@@ -67,12 +67,11 @@ impl Config {
         let mut s = "".to_string();
         let k = self.get_key(key);
         let arr: Vec<&str> = k.split('.').collect();
-        if arr.len() == 2 {
-            if let Some(value) = self.settings.get(arr[0]) {
-                if let Some(v) = value.get(arr[1]) {
-                    s = v.clone();
-                }
-            }
+        if arr.len() == 2
+            && let Some(value) = self.settings.get(arr[0])
+            && let Some(v) = value.get(arr[1])
+        {
+            s = v.clone();
         }
         if !s.is_empty() {
             return s;

@@ -51,22 +51,20 @@ where
         parts: &mut Parts,
         _state: &S,
     ) -> std::result::Result<Self, Self::Rejection> {
-        if let Some(x_forwarded_for) = parts.headers.get("X-Forwarded-For") {
-            if let Some(ip) = x_forwarded_for
+        if let Some(x_forwarded_for) = parts.headers.get("X-Forwarded-For")
+            && let Some(ip) = x_forwarded_for
                 .to_str()
                 .unwrap_or_default()
                 .split(',')
                 .next()
-            {
-                if let Ok(ip) = ip.parse::<IpAddr>() {
-                    return Ok(ClientIp(ip));
-                }
-            }
+            && let Ok(ip) = ip.parse::<IpAddr>()
+        {
+            return Ok(ClientIp(ip));
         }
-        if let Some(x_real_ip) = parts.headers.get("X-Real-Ip") {
-            if let Ok(ip) = x_real_ip.to_str().unwrap().parse::<IpAddr>() {
-                return Ok(ClientIp(ip));
-            }
+        if let Some(x_real_ip) = parts.headers.get("X-Real-Ip")
+            && let Ok(ip) = x_real_ip.to_str().unwrap().parse::<IpAddr>()
+        {
+            return Ok(ClientIp(ip));
         }
         let ip = parts
             .extensions

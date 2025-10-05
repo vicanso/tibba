@@ -158,14 +158,14 @@ pub async fn error_limiter(
 ) -> Result<Response> {
     let (key, ttl) = get_limit_params(&req, ip, &params);
     // Check if current error count exceeds limit
-    if let Ok(count) = cache.get::<i64>(&key).await {
-        if count > params.max {
-            return Err(Error::TooManyRequests {
-                limit: params.max,
-                current: count,
-            }
-            .into());
+    if let Ok(count) = cache.get::<i64>(&key).await
+        && count > params.max
+    {
+        return Err(Error::TooManyRequests {
+            limit: params.max,
+            current: count,
         }
+        .into());
     }
     let res = next.run(req).await;
     // Increment counter only on error responses

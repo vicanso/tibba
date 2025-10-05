@@ -1,4 +1,4 @@
-FROM rust:1.88.0 AS builder
+FROM rust:1.90.0 AS builder
 
 # Accept GIT_COMMIT_ID as build argument
 ARG GIT_COMMIT_ID

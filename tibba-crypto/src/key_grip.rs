@@ -69,20 +69,20 @@ impl KeyGrip {
     /// Updates the keys in the thread-safe storage
     /// No-op if using non-thread-safe storage
     pub fn update_keys(&self, new_keys: Vec<Vec<u8>>) {
-        if let Some(lock_keys) = &self.lock_keys {
-            if let Ok(mut keys) = lock_keys.write() {
-                *keys = new_keys;
-            }
+        if let Some(lock_keys) = &self.lock_keys
+            && let Ok(mut keys) = lock_keys.write()
+        {
+            *keys = new_keys;
         }
     }
 
     /// Internal method to retrieve current keys
     /// Handles both thread-safe and non-thread-safe implementations
     fn get_keys(&self) -> Vec<Vec<u8>> {
-        if let Some(keys) = &self.lock_keys {
-            if let Ok(keys) = keys.read() {
-                return keys.clone();
-            }
+        if let Some(keys) = &self.lock_keys
+            && let Ok(keys) = keys.read()
+        {
+            return keys.clone();
         }
         if let Some(keys) = &self.keys {
             return keys.clone();
