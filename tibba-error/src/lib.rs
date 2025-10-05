@@ -82,12 +82,9 @@ impl Error {
     /// Adds extra information
     #[must_use]
     pub fn add_extra(mut self, value: impl ToString) -> Self {
-        if self.extra.is_none() {
-            self.extra = Some(Box::new(vec![]));
-        }
-        if let Some(extra) = self.extra.as_mut() {
-            extra.push(value.to_string());
-        }
+        self.extra
+            .get_or_insert_with(Box::default)
+            .push(value.to_string());
         self
     }
 }
