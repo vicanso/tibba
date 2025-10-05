@@ -4981,6 +4981,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "deadpool-redis",
+ "humantime",
  "lru",
  "redis",
  "serde",
@@ -5003,6 +5004,7 @@ dependencies = [
  "bytesize",
  "config",
  "humantime",
+ "serde",
  "snafu",
  "tibba-error",
  "url",
@@ -5238,6 +5240,7 @@ dependencies = [
 name = "tibba-sql"
 version = "0.1.0"
 dependencies = [
+ "humantime",
  "snafu",
  "sqlx",
  "tibba-config",

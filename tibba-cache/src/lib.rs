@@ -73,7 +73,7 @@ pub struct RedisConfig {
 // Creates a new RedisConfig instance from the configuration
 // Parses Redis URI and extracts connection parameters
 fn new_redis_config(config: &Config) -> Result<RedisConfig> {
-    let uri = config.get_from_env_first("uri", None);
+    let uri = config.get_str("uri", "");
     if uri.is_empty() {
         return Err(Error::Common {
             category: "redis".to_string(),
@@ -114,17 +114,17 @@ fn new_redis_config(config: &Config) -> Result<RedisConfig> {
                 }
             }
             "connection_timeout" => {
-                if let Ok(value) = Config::parse_duration(&value) {
+                if let Ok(value) = humantime::parse_duration(&value) {
                     redis_config.connection_timeout = value;
                 }
             }
             "wait_timeout" => {
-                if let Ok(value) = Config::parse_duration(&value) {
+                if let Ok(value) = humantime::parse_duration(&value) {
                     redis_config.wait_timeout = value;
                 }
             }
             "recycle_timeout" => {
-                if let Ok(value) = Config::parse_duration(&value) {
+                if let Ok(value) = humantime::parse_duration(&value) {
                     redis_config.recycle_timeout = value;
                 }
             }

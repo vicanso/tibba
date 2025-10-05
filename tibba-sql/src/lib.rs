@@ -42,7 +42,7 @@ pub struct DatabaseConfig {
 
 // Creates a new DatabaseConfig instance from the configuration
 fn new_database_config(config: &Config) -> Result<DatabaseConfig> {
-    let origin_url = config.get_from_env_first("uri", None);
+    let origin_url = config.get_str("uri", "");
     if origin_url.is_empty() {
         return Err(Error::Common {
             category: "config".to_string(),
@@ -64,29 +64,29 @@ fn new_database_config(config: &Config) -> Result<DatabaseConfig> {
         for (key, value) in info.query_pairs() {
             match key.to_string().as_str() {
                 "max_connections" => {
-                    let value = Config::convert_string_to_i32(&value);
+                    let value = value.parse::<u32>().unwrap_or(0);
                     if value > 0 {
-                        max_connections = value as u32;
+                        max_connections = value;
                     }
                 }
                 "min_connections" => {
-                    let value = Config::convert_string_to_i32(&value);
+                    let value = value.parse::<u32>().unwrap_or(0);
                     if value > 0 {
-                        min_connections = value as u32;
+                        min_connections = value;
                     }
                 }
                 "connect_timeout" => {
-                    if let Ok(value) = Config::parse_duration(&value) {
+                    if let Ok(value) = humantime::parse_duration(&value) {
                         connect_timeout = value;
                     }
                 }
                 "idle_timeout" => {
-                    if let Ok(value) = Config::parse_duration(&value) {
+                    if let Ok(value) = humantime::parse_duration(&value) {
                         idle_timeout = value;
                     }
                 }
                 "max_lifetime" => {
-                    if let Ok(value) = Config::parse_duration(&value) {
+                    if let Ok(value) = humantime::parse_duration(&value) {
                         max_lifetime = value;
                     }
                 }

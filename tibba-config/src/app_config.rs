@@ -14,188 +14,112 @@
 
 use super::Error;
 use bytesize::ByteSize;
-use config::{File, FileFormat, FileSourceString};
-use std::collections::HashMap;
-use std::env;
+use config::{Config as RawConfig, Environment, File, FileFormat};
+use serde::Deserialize;
 use std::time::Duration;
 
 type Result<T> = std::result::Result<T, Error>;
 
-/// Config struct represents the application configuration
-/// It manages configuration settings with environment variable support
+/// Config struct represents the application configuration.
+/// It wraps the `config::Config` instance to provide namespacing and convenience methods.
 #[derive(Debug, Clone, Default)]
 pub struct Config {
-    /// Prefix for environment variables
+    /// Prefix for environment variables (e.g., "APP").
     env_prefix: String,
-    /// Prefix for configuration keys
+    /// Prefix for configuration keys, used for sub-configs.
     prefix: String,
-    /// Nested HashMap storing configuration values
-    settings: HashMap<String, HashMap<String, String>>,
+    settings: RawConfig,
 }
 
 impl Config {
-    /// Sets a new prefix and returns a new Config instance
-    fn set_prefix(&self, prefix: &str) -> Config {
-        let mut config = self.clone();
-        config.prefix = prefix.to_string();
-        config
-    }
-    /// Constructs the full configuration key using the prefix
-    fn get_key(&self, key: &str) -> String {
-        if self.prefix.is_empty() {
-            return key.to_string();
+    pub fn new(data: Vec<&str>, env_prefix: Option<&str>) -> Result<Self> {
+        let env_prefix_str = env_prefix.unwrap_or_default();
+
+        let mut builder = RawConfig::builder();
+
+        // Add file sources
+        for d in data {
+            if !d.is_empty() {
+                builder = builder.add_source(File::from_str(d, FileFormat::Toml));
+            }
         }
-        format!("{}.{key}", self.prefix)
+
+        // Environment variables are used to override the configuration values.
+        // For example, `APP_DATABASE_PORT=5433` will automatically override the `database.port` configuration.
+        builder = builder.add_source(
+            Environment::with_prefix(env_prefix_str)
+                .prefix_separator("_")
+                .separator("_"), // use `_` as the separator, for example `APP_DATABASE_HOST`
+        );
+
+        let settings = builder.build().map_err(|e| Error::Config {
+            category: "builder".to_string(),
+            source: e,
+        })?;
+
+        Ok(Self {
+            env_prefix: env_prefix_str.to_string(),
+            settings,
+            prefix: "".to_string(),
+        })
     }
-    /// Converts a string to i32
-    pub fn convert_string_to_i32(value: &str) -> i32 {
-        value.parse().unwrap_or_default()
-    }
-    /// Converts a string to bool
-    pub fn convert_string_to_bool(value: &str) -> bool {
-        value.parse().unwrap_or_default()
-    }
-    /// Parses a duration string
-    pub fn parse_duration(value: &str) -> Result<Duration> {
-        humantime::parse_duration(value).map_err(|e| Error::ParseDuration {
-            category: "parse_duration".to_string(),
+
+    /// Retrieves a value, returning a default if not found or type mismatch.
+    pub fn get<'de, T: Deserialize<'de>>(&self, key: &str) -> Result<T> {
+        let full_key = if self.prefix.is_empty() {
+            key.to_string()
+        } else {
+            format!("{}.{}", self.prefix, key)
+        };
+        self.settings.get(&full_key).map_err(|e| Error::Config {
+            category: "config".to_string(),
             source: e,
         })
     }
-    /// Retrieves a configuration value by key with optional default value
-    pub fn get(&self, key: &str, default_value: Option<String>) -> String {
-        let mut s = "".to_string();
-        let k = self.get_key(key);
-        let arr: Vec<&str> = k.split('.').collect();
-        if arr.len() == 2
-            && let Some(value) = self.settings.get(arr[0])
-            && let Some(v) = value.get(arr[1])
-        {
-            s = v.clone();
-        }
-        if !s.is_empty() {
-            return s;
-        }
-        default_value.unwrap_or(s)
-    }
-    /// Retrieves a configuration value by key with optional default value
-    pub fn get_int(&self, key: &str, default_value: Option<i32>) -> i32 {
-        let value = self.get(key, None);
-        if !value.is_empty() {
-            return Self::convert_string_to_i32(&value);
-        }
-        default_value.unwrap_or_default()
-    }
-    /// Retrieves a configuration value by key with optional default value
-    pub fn get_duration(&self, key: &str, default_value: Option<Duration>) -> Result<Duration> {
-        let value = self.get(key, None);
-        if !value.is_empty() {
-            return Self::parse_duration(&value);
-        }
-        Ok(default_value.unwrap_or_default())
-    }
-    /// Retrieves a configuration value by key with optional default value
-    pub fn get_bool(&self, key: &str, default_value: Option<bool>) -> bool {
-        let value = self.get(key, None);
-        if !value.is_empty() {
-            return Self::convert_string_to_bool(&value);
-        }
-        default_value.unwrap_or_default()
-    }
-    /// Retrieves a configuration value by key with optional default value
-    pub fn get_byte_size(&self, key: &str, default_value: Option<usize>) -> usize {
-        let value = self.get(key, None);
-        if !value.is_empty()
-            && let Ok(size) = value.parse::<ByteSize>()
-        {
-            return size.as_u64() as usize;
-        }
 
-        default_value.unwrap_or_default()
+    /// Retrieves a string value, returning a default if not found or type mismatch.
+    pub fn get_str(&self, key: &str, default_value: &str) -> String {
+        self.get(key).unwrap_or_else(|_| default_value.to_string())
     }
-    /// Retrieves value from environment variable first, falls back to config file
-    pub fn get_from_env_first(&self, key: &str, default_value: Option<String>) -> String {
-        let k = self.get_key(key);
-        let mut env_key = k.replace('.', "_").to_uppercase();
-        if !self.env_prefix.is_empty() {
-            env_key = format!("{}_{env_key}", self.env_prefix);
-        }
-        if let Ok(value) = env::var(env_key) {
-            return value;
-        }
-        self.get(key, default_value)
+
+    /// Retrieves an integer value, returning a default if not found or type mismatch.
+    pub fn get_int(&self, key: &str, default_value: i64) -> i64 {
+        self.get(key).unwrap_or(default_value)
     }
-    /// Similar to get_from_env_first but converts the value to integer
-    pub fn get_int_from_env_first(&self, key: &str, default_value: Option<i32>) -> i32 {
-        let value = self.get_from_env_first(key, None);
-        if !value.is_empty() {
-            return Self::convert_string_to_i32(&value);
-        }
-        default_value.unwrap_or_default()
+
+    /// Retrieves a boolean value, returning a default if not found or type mismatch.
+    pub fn get_bool(&self, key: &str, default_value: bool) -> bool {
+        self.get(key).unwrap_or(default_value)
     }
-    /// Similar to get_from_env_first but converts the value to bool
-    pub fn get_bool_from_env_first(&self, key: &str, default_value: Option<bool>) -> bool {
-        let value = self.get_from_env_first(key, None);
-        if !value.is_empty() {
-            return Self::convert_string_to_bool(&value);
-        }
-        default_value.unwrap_or_default()
+
+    /// Retrieves a Duration value, returning a default if not found or parsing fails.
+    /// Note: `config` crate can deserialize human-readable strings ("10s", "1h") into `Duration`
+    /// if the `humantime` feature is enabled on the `config` crate.
+    pub fn get_duration(&self, key: &str, default_value: Duration) -> Duration {
+        self.get(key).unwrap_or(default_value)
     }
-    /// Similar to get_from_env_first but converts the value to Duration
-    pub fn get_duration_from_env_first(
-        &self,
-        key: &str,
-        default_value: Option<Duration>,
-    ) -> Duration {
-        let value = self.get_from_env_first(key, None);
-        let v = default_value.unwrap_or_default();
-        if !value.is_empty() {
-            return Self::parse_duration(&value).unwrap_or(v);
-        }
-        v
+
+    /// Retrieves a byte size value, returning a default if not found or parsing fails.
+    pub fn get_byte_size(&self, key: &str, default_value: usize) -> usize {
+        self.get::<String>(key)
+            .ok()
+            .and_then(|s| s.parse::<ByteSize>().ok())
+            .map(|bs| bs.as_u64() as usize)
+            .unwrap_or(default_value)
     }
-    pub fn get_byte_size_from_env_first(&self, key: &str, default_value: Option<usize>) -> usize {
-        let value = self.get_from_env_first(key, None);
-        if !value.is_empty()
-            && let Ok(size) = value.parse::<ByteSize>()
-        {
-            return size.as_u64() as usize;
-        }
-        default_value.unwrap_or_default()
-    }
-    /// Create a new sub config
+
+    /// Create a new sub-config with a given prefix.
     pub fn sub_config(&self, prefix: &str) -> Config {
-        self.clone().set_prefix(prefix)
-    }
-}
+        let new_prefix = if self.prefix.is_empty() {
+            prefix.to_string()
+        } else {
+            format!("{}.{}", self.prefix, prefix)
+        };
 
-/// Creates a new File source from TOML string data
-fn new_source(data: &str) -> File<FileSourceString, FileFormat> {
-    File::from_str(data, FileFormat::Toml)
-}
-
-/// Creates a new AppConfig instance from multiple TOML configuration strings
-pub fn new_config(data: Vec<&str>, env_prefix: Option<&str>) -> Result<Config> {
-    let mut builder = config::Config::builder();
-    for d in data {
-        if !d.is_empty() {
-            builder = builder.add_source(new_source(d));
+        Config {
+            env_prefix: self.env_prefix.clone(),
+            prefix: new_prefix,
+            settings: self.settings.clone(),
         }
     }
-    let settings = builder
-        .build()
-        .map_err(|e| Error::Config {
-            category: "builder".to_string(),
-            source: e,
-        })?
-        .try_deserialize::<HashMap<String, HashMap<String, String>>>()
-        .map_err(|e| Error::Config {
-            category: "deserialize".to_string(),
-            source: e,
-        })?;
-    Ok(Config {
-        env_prefix: env_prefix.unwrap_or_default().to_string(),
-        settings,
-        ..Default::default()
-    })
 }

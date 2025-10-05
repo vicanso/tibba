@@ -8,6 +8,7 @@ name = "tibba_sql"
 path = "src/lib.rs"
 
 [dependencies]
+humantime = { workspace = true }
 snafu = { workspace = true }
 sqlx = { workspace = true }
 tibba-config = { path = "../tibba-config" }

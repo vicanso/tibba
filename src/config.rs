@@ -62,7 +62,7 @@ static BASIC_CONFIG: OnceCell<BasicConfig> = OnceCell::new();
 
 /// Create a new basic config, if the config is invalid, it will panic
 fn new_basic_config(config: &Config) -> Result<BasicConfig> {
-    let timeout = config.get_duration_from_env_first("timeout", Some(Duration::from_secs(60)));
+    let timeout = config.get_duration("timeout", Duration::from_secs(60));
     let commit_id = if let Some(data) = Configs::get("commit_id.txt") {
         std::str::from_utf8(&data.data)
             .unwrap_or_default()
@@ -71,13 +71,13 @@ fn new_basic_config(config: &Config) -> Result<BasicConfig> {
     } else {
         "--".to_string()
     };
-    let region = config.get_from_env_first("region", None);
+    let region = config.get_str("region", "");
     let basic_config = BasicConfig {
-        listen: config.get_from_env_first("listen", None),
-        processing_limit: config.get_int_from_env_first("processing_limit", Some(5000)),
+        listen: config.get_str("listen", ""),
+        processing_limit: config.get_int("processing_limit", 5000) as i32,
         timeout,
-        secret: config.get_from_env_first("secret", None),
-        prefix: config.get_from_env_first("prefix", None),
+        secret: config.get_str("secret", ""),
+        prefix: config.get_str("prefix", ""),
         commit_id,
         region: if region.is_empty() {
             None
@@ -109,12 +109,12 @@ static SESSION_CONFIG: OnceCell<SessionConfig> = OnceCell::new();
 
 // Creates a new SessionConfig instance from the configuration
 fn new_session_config(config: &Config) -> Result<SessionConfig> {
-    let ttl = config.get_duration_from_env_first("ttl", Some(Duration::from_secs(2 * 24 * 3600)));
+    let ttl = config.get_duration("ttl", Duration::from_secs(2 * 24 * 3600));
     let session_config = SessionConfig {
         ttl_seconds: ttl.as_secs(),
-        secret: config.get_from_env_first("secret", None),
-        cookie: config.get_from_env_first("cookie", None),
-        max_renewal: config.get_int_from_env_first("max_renewal", Some(52)) as u8,
+        secret: config.get_str("secret", ""),
+        cookie: config.get_str("cookie", ""),
+        max_renewal: config.get_int("max_renewal", 52) as u8,
     };
     session_config.validate().map_err(map_error)?;
     Ok(session_config)
@@ -147,7 +147,7 @@ fn new_config() -> Result<&'static Config> {
         }
 
         let config =
-            tibba_config::new_config(arr.iter().map(|s| s.as_str()).collect(), Some("TIBBA_WEB"))?;
+            tibba_config::Config::new(arr.iter().map(|s| s.as_str()).collect(), Some("TIBBA_WEB"))?;
         Ok(config)
     })
 }

@@ -32,7 +32,7 @@ pub struct OpenDalConfig {
 }
 
 fn new_opendal_config(config: &Config) -> Result<OpenDalConfig> {
-    let url = config.get_from_env_first("url", None);
+    let url = config.get_str("url", "");
     let open_dal_config = OpenDalConfig { url };
     open_dal_config
         .validate()

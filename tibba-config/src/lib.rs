@@ -38,16 +38,16 @@ pub enum Error {
 
 impl From<Error> for BaseError {
     fn from(val: Error) -> Self {
-        let err = match val {
-            Error::Url { category, source } => BaseError::new(source).with_sub_category(&category),
-            Error::Config { category, source } => {
-                BaseError::new(source).with_sub_category(&category)
-            }
-            Error::ParseDuration { category, source } => {
-                BaseError::new(source).with_sub_category(&category)
-            }
+        let (category, err) = match val {
+            Error::Url { category, source } => (category, source.to_string()),
+            Error::Config { category, source } => (category, source.to_string()),
+            Error::ParseDuration { category, source } => (category, source.to_string()),
         };
-        err.with_category("config").with_exception(true)
+
+        BaseError::new(err)
+            .with_sub_category(&category)
+            .with_category("config")
+            .with_exception(true)
     }
 }
 
