@@ -28,7 +28,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
-use tibba_util::{json_get, new_get_elapsed_ms};
+use tibba_util::{Stopwatch, json_get};
 use tracing::info;
 type Result<T> = std::result::Result<T, Error>;
 
@@ -442,14 +442,14 @@ impl Client {
             }
         }
         // TODO dns tcp tls process
-        let process_done = new_get_elapsed_ms();
+        let process_done = Stopwatch::new();
         let res = req.send().await.map_err(|e| Error::Request {
             service: self.config.service.clone(),
             path: path.to_string(),
             source: e,
         })?;
 
-        stats.processing = process_done();
+        stats.processing = process_done.elapsed_ms();
 
         if let Some(remote_addr) = res.remote_addr() {
             stats.remote_addr = remote_addr.to_string();
@@ -470,13 +470,13 @@ impl Client {
         // }
 
         let status = res.status().as_u16();
-        let transfer_done = new_get_elapsed_ms();
+        let transfer_done = Stopwatch::new();
         let mut full = res.bytes().await.map_err(|e| Error::Request {
             service: self.config.service.clone(),
             path: path.to_string(),
             source: e,
         })?;
-        stats.transfer = transfer_done();
+        stats.transfer = transfer_done.elapsed_ms();
         stats.content_length = full.len();
         stats.status = status;
 
@@ -502,12 +502,12 @@ impl Client {
     ) -> Result<T> {
         let full = self.raw(stats, params).await?;
 
-        let serde_done = new_get_elapsed_ms();
+        let serde_done = Stopwatch::new();
         let data = serde_json::from_slice(&full).map_err(|e| Error::Serde {
             service: self.config.service.clone(),
             source: e,
         })?;
-        stats.serde = serde_done();
+        stats.serde = serde_done.elapsed_ms();
         Ok(data)
     }
 
@@ -520,9 +520,9 @@ impl Client {
         let mut stats = HttpStats {
             ..Default::default()
         };
-        let done = new_get_elapsed_ms();
+        let done = Stopwatch::new();
         let result = self.do_request(&mut stats, params).await;
-        stats.total = done();
+        stats.total = done.elapsed_ms();
         let mut err = None;
         if let Err(ref e) = result {
             err = Some(e)
@@ -550,9 +550,9 @@ impl Client {
         let mut stats = HttpStats {
             ..Default::default()
         };
-        let done = new_get_elapsed_ms();
+        let done = Stopwatch::new();
         let result = self.raw(&mut stats, params).await;
-        stats.total = done();
+        stats.total = done.elapsed_ms();
         let mut err = None;
         if let Err(ref e) = result {
             err = Some(e)

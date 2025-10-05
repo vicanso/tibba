@@ -60,8 +60,17 @@ pub async fn stats(
 
     // Collect request information
     let method = req.method().to_string();
-    let x_forwarded_for = get_header_value(req.headers(), "X-Forwarded-For");
-    let referrer = get_header_value(req.headers(), "Referer");
+    let x_forwarded_for =
+        if let Some(x_forwarded_for) = get_header_value(req.headers(), "X-Forwarded-For") {
+            x_forwarded_for.to_string()
+        } else {
+            "".to_string()
+        };
+    let referrer = if let Some(referrer) = get_header_value(req.headers(), "Referer") {
+        referrer.to_string()
+    } else {
+        "".to_string()
+    };
 
     // Process the request
     let res = next.run(req).await;

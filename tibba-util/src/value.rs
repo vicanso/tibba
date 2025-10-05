@@ -14,6 +14,19 @@
 
 use serde_json::{Map, Value};
 
+fn json_value_to_string(v: &Value) -> String {
+    if let Some(s) = v.as_str() {
+        // if the value is a string, return the content
+        s.to_string()
+    } else if v.is_null() {
+        // if the value is null, return an empty string
+        String::new()
+    } else {
+        // for other types (number, boolean, etc.), use to_string() to convert
+        v.to_string()
+    }
+}
+
 /// Extracts multiple string values from JSON data by keys
 ///
 /// This function provides a safe way to extract multiple string values from JSON with the following features:
@@ -39,27 +52,14 @@ use serde_json::{Map, Value};
 /// assert_eq!(vec!["John", "30", ""], results);
 /// ```
 pub fn json_get_strings(data: &[u8], keys: &[&str]) -> Vec<String> {
-    // Initialize result vector with empty strings matching keys length
-    let mut result = vec!["".to_string(); keys.len()];
-
-    // Try to parse JSON, return empty strings if parsing fails
+    // try to parse JSON, return an empty string Vec if parsing fails
     let Ok(value) = serde_json::from_slice::<Value>(data) else {
-        return result;
+        return vec![String::new(); keys.len()];
     };
 
-    // Process each key and populate result vector
-    for (i, key) in keys.iter().enumerate() {
-        let value = if let Some(value) = value.get(key) {
-            // Convert value to string, handling both string and non-string values
-            value.as_str().map_or(value.to_string(), |s| s.to_string())
-        } else {
-            // Key not found, use empty string
-            "".to_string()
-        };
-        result[i] = value;
-    }
-
-    result
+    keys.iter()
+        .map(|key| get_map_string(value.as_object().unwrap(), key))
+        .collect()
 }
 
 /// Extracts a string value from JSON data by key
@@ -90,7 +90,11 @@ pub fn json_get_strings(data: &[u8], keys: &[&str]) -> Vec<String> {
 /// assert_eq!("", json_get(json, "non_existent"));
 /// ```
 pub fn json_get(data: &[u8], key: &str) -> String {
-    json_get_strings(data, &[key])[0].clone()
+    serde_json::from_slice::<Value>(data)
+        .ok()
+        .as_ref()
+        .and_then(|v| v.get(key))
+        .map_or(String::new(), json_value_to_string)
 }
 
 /// Extracts a string value from a JSON map by key
@@ -109,9 +113,5 @@ pub fn json_get(data: &[u8], key: &str) -> String {
 ///   - Key doesn't exist
 ///   - Value cannot be converted to string
 pub fn get_map_string(data: &Map<String, Value>, key: &str) -> String {
-    if let Some(value) = data.get(key) {
-        value.as_str().map_or(value.to_string(), |s| s.to_string())
-    } else {
-        "".to_string()
-    }
+    data.get(key).map_or(String::new(), json_value_to_string)
 }

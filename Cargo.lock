@@ -5268,6 +5268,7 @@ dependencies = [
  "humantime",
  "lz4_flex",
  "nanoid",
+ "once_cell",
  "pretty_assertions",
  "serde",
  "serde_json",

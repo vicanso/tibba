@@ -17,7 +17,7 @@ use deadpool_redis::redis::{cmd, pipe};
 use redis::AsyncCommands;
 use serde::{Serialize, de::DeserializeOwned};
 use std::time::Duration;
-use tibba_util::{lz4_decode, lz4_encode, zstd_decode, zstd_encode};
+use tibba_util::{Algorithm, compress, decompress};
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -323,7 +323,7 @@ impl RedisCache {
             category: "set_struct_lz4".to_string(),
             message: e.to_string(),
         })?;
-        let buf = lz4_encode(&value);
+        let buf = compress(&value, Algorithm::Lz4).map_err(|e| Error::Compression { source: e })?;
         self.set_value(&self.get_key(key), &buf, ttl).await?;
         Ok(())
     }
@@ -346,7 +346,8 @@ impl RedisCache {
             return Ok(None);
         }
 
-        let buf = lz4_decode(value.as_slice()).map_err(|e| Error::Compression { source: e })?;
+        let buf = decompress(value.as_slice(), Algorithm::Lz4)
+            .map_err(|e| Error::Compression { source: e })?;
 
         let deserializer = &mut serde_json::Deserializer::from_slice(&buf);
         let result = T::deserialize(deserializer).map_err(|e| Error::Common {
@@ -377,7 +378,8 @@ impl RedisCache {
             category: "set_struct_zstd".to_string(),
             message: e.to_string(),
         })?;
-        let buf = zstd_encode(&value).map_err(|e| Error::Compression { source: e })?;
+        let buf =
+            compress(&value, Algorithm::default()).map_err(|e| Error::Compression { source: e })?;
         self.set_value(&self.get_key(key), &buf, ttl).await?;
         Ok(())
     }
@@ -400,7 +402,8 @@ impl RedisCache {
             return Ok(None);
         }
 
-        let buf = zstd_decode(value.as_slice()).map_err(|e| Error::Compression { source: e })?;
+        let buf = decompress(value.as_slice(), Algorithm::default())
+            .map_err(|e| Error::Compression { source: e })?;
 
         let deserializer = &mut serde_json::Deserializer::from_slice(&buf);
         let result = T::deserialize(deserializer).map_err(|e| Error::Common {

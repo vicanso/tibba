@@ -19,8 +19,7 @@ use axum_extra::extract::cookie::{Cookie, CookieJar};
 use cookie::CookieBuilder;
 use http_body_util::BodyExt;
 use nanoid::nanoid;
-use std::collections::HashMap;
-use std::str::FromStr;
+use std::time::Duration;
 
 // Custom Result type using the crate's Error type
 type Result<T> = std::result::Result<T, Error>;
@@ -36,21 +35,25 @@ type Result<T> = std::result::Result<T, Error>;
 ///
 /// # Returns
 /// * `Result<()>` - Success or error if header name/value is invalid
-pub fn insert_header(
+pub fn insert_headers<K, V>(
     headers: &mut HeaderMap<HeaderValue>,
-    values: HashMap<String, String>,
-) -> Result<()> {
+    values: impl IntoIterator<Item = (K, V)>,
+) -> Result<()>
+where
+    K: AsRef<str>,
+    V: AsRef<str>,
+{
     // If it fails, do not set
     for (name, value) in values {
-        // If it is empty, do not process (delete using another method)
+        let name = name.as_ref();
+        let value = value.as_ref();
         if name.is_empty() || value.is_empty() {
             continue;
         }
-        let header_name =
-            HeaderName::from_str(&name).map_err(|e| Error::InvalidHeaderName { source: e })?;
-        let header_value =
-            HeaderValue::from_str(&value).map_err(|e| Error::InvalidHeaderValue { source: e })?;
-        headers.insert(header_name, header_value);
+        headers.insert(
+            HeaderName::try_from(name).map_err(|e| Error::InvalidHeaderName { source: e })?,
+            HeaderValue::try_from(value).map_err(|e| Error::InvalidHeaderValue { source: e })?,
+        );
     }
     Ok(())
 }
@@ -72,8 +75,8 @@ pub fn set_header_if_not_exist(
     if headers.contains_key(name) {
         return Ok(());
     }
-    let values = [(name.to_string(), value.to_string())].into();
-    insert_header(headers, values)
+    let values = [(name.to_string(), value.to_string())];
+    insert_headers(headers, values)
 }
 
 /// Sets Cache-Control: no-cache header if not already set
@@ -97,12 +100,8 @@ pub fn set_no_cache_if_not_exist(headers: &mut HeaderMap<HeaderValue>) {
 ///
 /// # Returns
 /// * String containing header value or empty string
-pub fn get_header_value(headers: &HeaderMap<HeaderValue>, key: &str) -> String {
-    if let Some(value) = headers.get(key) {
-        value.to_str().unwrap_or("").to_string()
-    } else {
-        "".to_string()
-    }
+pub fn get_header_value<'a>(headers: &'a HeaderMap<HeaderValue>, key: &str) -> Option<&'a str> {
+    headers.get(key).and_then(|value| value.to_str().ok())
 }
 
 /// Reads and collects an HTTP body into Bytes
@@ -124,7 +123,8 @@ pub async fn read_http_body(body: Body) -> Result<Bytes> {
 }
 
 // Name of the device ID cookie
-static DEVICE_ID_NAME: &str = "device";
+const DEVICE_ID_NAME: &str = "device";
+const DEVICE_ID_LIFETIME: Duration = Duration::from_secs(365 * 24 * 60 * 60); // ~52 weeks
 
 /// Retrieves device ID from cookies
 ///
@@ -135,11 +135,8 @@ static DEVICE_ID_NAME: &str = "device";
 ///
 /// # Returns
 /// * String containing device ID or empty string
-pub fn get_device_id_from_cookie(jar: &CookieJar) -> String {
-    if let Some(value) = jar.get(DEVICE_ID_NAME) {
-        return value.value().to_string();
-    }
-    "".to_string()
+pub fn get_device_id_from_cookie(jar: &CookieJar) -> Option<&str> {
+    jar.get(DEVICE_ID_NAME).map(|cookie| cookie.value())
 }
 
 /// Generates a new device ID cookie
@@ -152,8 +149,8 @@ pub fn get_device_id_from_cookie(jar: &CookieJar) -> String {
 /// # Returns
 /// * CookieBuilder configured with device ID settings
 pub fn generate_device_id_cookie() -> CookieBuilder<'static> {
-    let expires =
-        cookie::time::OffsetDateTime::now_utc().saturating_add(cookie::time::Duration::weeks(52));
+    let expires = cookie::time::OffsetDateTime::now_utc()
+        .saturating_add(cookie::time::Duration::try_from(DEVICE_ID_LIFETIME).unwrap_or_default());
     Cookie::build((DEVICE_ID_NAME, nanoid!(16)))
         .http_only(true)
         .expires(expires)

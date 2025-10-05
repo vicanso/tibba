@@ -2,6 +2,13 @@
 name = "tibba-util"
 version = "0.1.0"
 edition = "2024"
+authors = ["Tree Xie <tree.xie@outlook.com>"]
+license = "Apache-2.0"
+homepage = "https://github.com/vicanso/tibba"
+repository = "https://github.com/vicanso/tibba"
+keywords = ["tibba", "util"]
+description = "util for tibba"
+
 
 [lib]
 name = "tibba_util"
@@ -17,6 +24,7 @@ humantime = { workspace = true }
 http-body-util = { workspace = true }
 lz4_flex = { workspace = true }
 nanoid = { workspace = true }
+once_cell = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_path_to_error = { workspace = true }

@@ -139,7 +139,7 @@ async fn me(
     session: Session,
 ) -> Result<(CookieJar, Json<UserMeResp>)> {
     let account = session.get_account();
-    if get_device_id_from_cookie(&jar).is_empty() {
+    if get_device_id_from_cookie(&jar).is_none() {
         jar = jar.add(generate_device_id_cookie());
     }
     if !session.is_login() {

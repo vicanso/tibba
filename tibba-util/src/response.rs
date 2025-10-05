@@ -16,6 +16,7 @@ use axum::Json;
 use axum::http::header;
 use axum::response::{IntoResponse, Response};
 use serde::Serialize;
+use std::fmt::Write;
 use std::time::Duration;
 use tibba_error::Error;
 
@@ -23,15 +24,21 @@ type Result<T> = std::result::Result<T, Error>;
 
 pub type JsonResult<T> = Result<Json<T>>;
 
-pub struct CacheJson<T>(Duration, Json<T>);
+const S_MAX_AGE_LIMIT_SECS: u64 = 3600;
+
+pub struct CacheJson<T> {
+    pub duration: Duration,
+    pub data: T,
+}
+
 pub type CacheJsonResult<T> = Result<CacheJson<T>>;
 
-impl<T> From<(Duration, T)> for CacheJson<T>
-where
-    T: Serialize,
-{
-    fn from(arr: (Duration, T)) -> Self {
-        CacheJson(arr.0, Json(arr.1))
+impl<T> From<(Duration, T)> for CacheJson<T> {
+    fn from(value: (Duration, T)) -> Self {
+        Self {
+            duration: value.0,
+            data: value.1,
+        }
     }
 }
 
@@ -40,12 +47,28 @@ where
     T: Serialize,
 {
     fn into_response(self) -> Response {
-        let secs = self.0.as_secs();
-        let mut arr = vec!["public".to_string(), format!("max-age={}", secs)];
-        // If the cache is too long, choose a smaller value to avoid the cache server saving data for too long
-        if secs > 3600 {
-            arr.push("s-maxage=3600".to_string());
+        let secs = self.duration.as_secs();
+
+        // use `write!` macro to build Header string efficiently, avoid multiple memory allocations.
+        // pre-allocate a reasonable capacity to further improve performance.
+        let mut cache_control_value = String::with_capacity(64);
+
+        // `write!` macro can write formatted content directly into String, more efficient than `format!` and `push_str`.
+        // because writing to String will not fail.
+        let _ = write!(&mut cache_control_value, "public, max-age={secs}");
+
+        if secs > S_MAX_AGE_LIMIT_SECS {
+            let _ = write!(
+                &mut cache_control_value,
+                ", s-maxage={S_MAX_AGE_LIMIT_SECS}"
+            );
         }
-        ([(header::CACHE_CONTROL, arr.join(", ").as_str())], self.1).into_response()
+
+        // finally wrap the data into `Json`.
+        (
+            [(header::CACHE_CONTROL, cache_control_value)],
+            Json(self.data),
+        )
+            .into_response()
     }
 }

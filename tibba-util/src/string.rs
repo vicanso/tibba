@@ -22,6 +22,8 @@ use uuid::{NoContext, Timestamp, Uuid};
 
 type Result<T> = std::result::Result<T, Error>;
 
+const SIGNATURE_TTL_SECS: i64 = 5 * 60; // 5 minutes
+
 /// Generates a UUIDv7 string
 ///
 /// Creates a time-based UUID (version 7) using the current system time
@@ -80,13 +82,16 @@ pub fn nanoid(size: usize) -> String {
 /// assert_eq!("1", float_to_fixed(1.123412, 0));
 /// ```
 pub fn float_to_fixed(value: f64, precision: usize) -> String {
-    match precision {
-        0 => format!("{value:.0}"),
-        1 => format!("{value:.1}"),
-        2 => format!("{value:.2}"),
-        3 => format!("{value:.3}"),
-        _ => format!("{value:.4}"), // Default to 4 decimal places
+    let p = precision.min(4);
+    format!("{value:.p$}")
+}
+
+fn sha256_multi(parts: &[&[u8]]) -> String {
+    let mut hasher = Sha256::new();
+    for part in parts {
+        hasher.update(part);
     }
+    encode(hasher.finalize())
 }
 
 /// Computes the SHA-256 hash of the input data
@@ -97,10 +102,7 @@ pub fn float_to_fixed(value: f64, precision: usize) -> String {
 /// # Returns
 /// * String containing the SHA-256 hash
 pub fn sha256(data: &[u8]) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(data);
-    let result = hasher.finalize();
-    encode(result)
+    sha256_multi(&[data])
 }
 
 /// Computes the SHA-256 hash of the input data and signs it with the secret key
@@ -112,7 +114,7 @@ pub fn sha256(data: &[u8]) -> String {
 /// # Returns
 /// * String containing the signed hash
 pub fn sign_hash(value: &str, secret: &str) -> String {
-    sha256(format!("{value}:{secret}").as_bytes())
+    sha256_multi(&[value.as_bytes(), b":", secret.as_bytes()])
 }
 
 /// Computes the SHA-256 hash of the input data and signs it with the secret key
@@ -125,7 +127,14 @@ pub fn sign_hash(value: &str, secret: &str) -> String {
 /// * Tuple containing the timestamp and the signed hash
 pub fn timestamp_hash(value: &str, secret: &str) -> (i64, String) {
     let ts = timestamp();
-    let hash = sign_hash(&format!("{ts}:{value}"), secret);
+    let ts_str = ts.to_string();
+    let hash = sha256_multi(&[
+        ts_str.as_bytes(),
+        b":",
+        value.as_bytes(),
+        b":",
+        secret.as_bytes(),
+    ]);
     (ts, hash)
 }
 
@@ -157,10 +166,22 @@ pub fn validate_sign_hash(value: &str, hash: &str, secret: &str) -> Result<()> {
 /// * Result containing the validation result
 pub fn validate_timestamp_hash(ts: i64, value: &str, hash: &str, secret: &str) -> Result<()> {
     let category = "timestamp_hash";
-    if (timestamp() - ts).abs() > 5 * 60 {
+    if (timestamp() - ts).abs() > SIGNATURE_TTL_SECS {
         return Err(Error::new("signature is expired").with_category(category));
     }
-    validate_sign_hash(&format!("{ts}:{value}"), hash, secret)
+    let ts_str = ts.to_string();
+    let expected_hash = sha256_multi(&[
+        ts_str.as_bytes(),
+        b":",
+        value.as_bytes(),
+        b":",
+        secret.as_bytes(),
+    ]);
+
+    if expected_hash != hash {
+        return Err(Error::new("signature is invalid").with_category(category));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

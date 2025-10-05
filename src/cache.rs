@@ -21,7 +21,7 @@ use tibba_cache::{RedisCache, RedisClient, RedisCmdStat, new_redis_client};
 use tibba_error::Error;
 use tibba_hook::{Task, register_task};
 use tibba_scheduler::{Job, register_job_task};
-use tibba_util::new_get_elapsed_ms;
+use tibba_util::Stopwatch;
 use tracing::{error, info};
 
 type Result<T> = std::result::Result<T, Error>;
@@ -64,11 +64,11 @@ pub fn get_redis_cache() -> &'static RedisCache {
 
 async fn redis_health_check() {
     let category = "redis_health_check";
-    let elapsed = new_get_elapsed_ms();
+    let stopwatch = Stopwatch::new();
     if let Err(e) = get_redis_cache().ping().await {
-        error!(category, elapsed = elapsed(), error = %e, "redis unhealthy");
+        error!(category, elapsed = stopwatch.elapsed_ms(), error = %e, "redis unhealthy");
     } else {
-        info!(category, elapsed = elapsed(), "redis healthy");
+        info!(category, elapsed = stopwatch.elapsed_ms(), "redis healthy");
     }
 }
 

@@ -78,7 +78,7 @@ async fn get_application_info(
 
     let info = ApplicationInfo {
         uptime: uptime_values.join(" "),
-        env: get_env(),
+        env: get_env().to_string(),
         arch: arch.to_string(),
         os,
         commit_id: state.get_commit_id().to_string(),

@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use lz4_flex::block::DecompressError;
+use once_cell::sync::Lazy;
 use snafu::Snafu;
 use std::env;
 use tibba_error::Error as BaseError;
@@ -37,25 +38,25 @@ pub enum Error {
 
 impl From<Error> for BaseError {
     fn from(val: Error) -> Self {
-        let err = match val {
-            Error::Zstd { source } => BaseError::new(source).with_sub_category("zstd"),
-            Error::Lz4Decompress { source } => {
-                BaseError::new(source).with_sub_category("lz4_decompress")
-            }
-            Error::InvalidHeaderName { source } => {
-                BaseError::new(source).with_sub_category("invalid_header_name")
-            }
-            Error::InvalidHeaderValue { source } => {
-                BaseError::new(source).with_sub_category("invalid_header_value")
-            }
-            Error::Axum { source } => BaseError::new(source).with_sub_category("axum"),
+        let sub_category = match val {
+            Error::Zstd { .. } => "zstd",
+            Error::Lz4Decompress { .. } => "lz4_decompress",
+            Error::InvalidHeaderName { .. } => "invalid_header_name",
+            Error::InvalidHeaderValue { .. } => "invalid_header_value",
+            Error::Axum { .. } => "axum",
         };
-        err.with_category("util")
+        // pass `val` to `new`, not the internal `source`.
+        BaseError::new(val)
+            .with_category("util")
+            .with_sub_category(sub_category)
     }
 }
 
-pub fn get_env() -> String {
-    env::var("RUST_ENV").unwrap_or_else(|_| "dev".to_string())
+static RUST_ENV: Lazy<String> =
+    Lazy::new(|| env::var("RUST_ENV").unwrap_or_else(|_| "dev".to_string()));
+
+pub fn get_env() -> &'static str {
+    &RUST_ENV
 }
 
 /// Whether it is a development environment

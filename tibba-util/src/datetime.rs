@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use chrono::{DateTime, Local, offset};
+use chrono::{DateTime, Local, Utc, offset};
 use std::time::{Duration, Instant};
 
 /// Returns the current local time as a formatted string
@@ -27,7 +27,7 @@ pub fn now() -> String {
 ///
 /// Represents seconds elapsed since Unix epoch (1970-01-01 00:00:00 UTC)
 pub fn timestamp() -> i64 {
-    Local::now().timestamp()
+    Utc::now().timestamp()
 }
 
 /// Converts a Unix timestamp to a formatted local datetime string
@@ -47,64 +47,39 @@ pub fn from_timestamp(secs: i64, nsecs: u32) -> String {
     }
 }
 
-/// Creates a closure that measures elapsed time in Duration
-///
-/// Useful for measuring precise time intervals
-///
-/// # Returns
-/// * Closure that returns elapsed Duration when called
-///
-/// # Example
-/// ```
-/// let get_duration = new_get_elapsed();
-/// // ... do some work ...
-/// let elapsed = get_duration(); // get elapsed time
-/// ```
-pub fn new_get_elapsed() -> impl FnOnce() -> Duration {
-    let start = Instant::now();
-    move || -> Duration { start.elapsed() }
+/// A stopwatch structure for measuring elapsed time.
+#[derive(Debug, Clone, Copy)]
+pub struct Stopwatch {
+    start: Instant,
 }
 
-/// Creates a closure that measures elapsed time in milliseconds
-///
-/// Similar to new_get_elapsed but returns milliseconds as u32
-/// Ensures minimum return value of 1ms to avoid default value confusion
-///
-/// # Returns
-/// * Closure that returns elapsed milliseconds when called
-///
-/// # Example
-/// ```
-/// let get_ms = new_get_elapsed_ms();
-/// // ... do some work ...
-/// let elapsed_ms = get_ms(); // get elapsed milliseconds
-/// ```
-pub fn new_get_elapsed_ms() -> impl FnOnce() -> u32 {
-    let start = Instant::now();
-    move || -> u32 {
-        let value = start.elapsed().as_millis() as u32;
-        // Ensure minimum value is 1ms
-        value.max(1)
+impl Stopwatch {
+    /// Create a new stopwatch instance and start timing.
+    pub fn new() -> Self {
+        Self {
+            start: Instant::now(),
+        }
+    }
+
+    /// Return the elapsed time since the stopwatch was created.
+    pub fn elapsed(&self) -> Duration {
+        self.start.elapsed()
+    }
+
+    /// Return the elapsed time in milliseconds since the stopwatch was created.
+    pub fn elapsed_ms(&self) -> u32 {
+        self.elapsed().as_millis().max(1) as u32
+    }
+
+    /// Return a human-readable elapsed time string.
+    pub fn elapsed_human(&self) -> String {
+        humantime::format_duration(self.elapsed()).to_string()
     }
 }
 
-/// Creates a closure that measures elapsed time in human-readable format
-///
-/// Similar to new_get_elapsed but returns a string with human-readable format
-///
-/// # Returns
-/// * Closure that returns elapsed time in human-readable format when called
-///
-/// # Example
-/// ```
-/// let get_human_elapsed = new_get_human_elapsed();
-/// // ... do some work ...
-/// let elapsed = get_human_elapsed(); // get elapsed time
-/// ```
-pub fn new_get_human_elapsed() -> impl FnOnce() -> String {
-    let start = Instant::now();
-    move || -> String {
-        let duration = start.elapsed();
-        humantime::format_duration(duration).to_string()
+/// Implement the Default trait for Stopwatch, allowing it to be created via `Stopwatch::default()`.
+impl Default for Stopwatch {
+    fn default() -> Self {
+        Self::new()
     }
 }
