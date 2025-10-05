@@ -17,6 +17,7 @@ use super::sql::get_db_pool;
 use async_trait::async_trait;
 use ctor::ctor;
 use serde::Deserialize;
+use std::sync::Arc;
 use tibba_error::Error;
 use tibba_headless::{WebPageParams, new_browser, run_web_page_stat_with_browser};
 use tibba_hook::{Task, register_task};
@@ -121,5 +122,5 @@ impl Task for WebPageStatTask {
 }
 #[ctor]
 fn init() {
-    register_task("web_page_stat", Box::new(WebPageStatTask));
+    register_task("web_page_stat", Arc::new(WebPageStatTask));
 }

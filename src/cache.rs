@@ -16,6 +16,7 @@ use super::config::must_get_config;
 use async_trait::async_trait;
 use ctor::ctor;
 use once_cell::sync::OnceCell;
+use std::sync::Arc;
 use std::time::Duration;
 use tibba_cache::{RedisCache, RedisClient, RedisCmdStat, new_redis_client};
 use tibba_error::Error;
@@ -114,5 +115,5 @@ impl Task for RedisTask {
 
 #[ctor]
 fn init() {
-    register_task("redis", Box::new(RedisTask));
+    register_task("redis", Arc::new(RedisTask));
 }

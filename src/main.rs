@@ -23,6 +23,7 @@ use axum::middleware::from_fn_with_state;
 use std::env;
 use std::net::SocketAddr;
 use std::str::FromStr;
+use std::sync::Arc;
 use std::time::Duration;
 use tibba_hook::{Task, register_task, run_after_tasks, run_before_tasks};
 use tibba_middleware::{entry, processing_limit, session, stats};
@@ -139,7 +140,7 @@ impl Task for StopAppTask {
 }
 
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    register_task("stop_app", Box::new(StopAppTask));
+    register_task("stop_app", Arc::new(StopAppTask));
     run_before_tasks().await?;
     run_scheduler_jobs().await?;
 

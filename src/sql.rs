@@ -76,5 +76,5 @@ impl Task for SqlTask {
 
 #[ctor]
 fn init() {
-    register_task("sql", Box::new(SqlTask));
+    register_task("sql", Arc::new(SqlTask));
 }

@@ -15,10 +15,10 @@
 use async_trait::async_trait;
 use dashmap::DashMap;
 use once_cell::sync::Lazy;
+use std::sync::Arc;
 use tibba_error::Error;
 use tracing::info;
 
-// Custom Result type that uses Box<dyn Error> for error handling
 type Result<T> = std::result::Result<T, Error>;
 
 #[async_trait]
@@ -34,59 +34,78 @@ pub trait Task {
     }
 }
 
-static TASKS: Lazy<DashMap<String, Box<dyn Task + Send + Sync>>> = Lazy::new(DashMap::new);
+static TASKS: Lazy<DashMap<String, Arc<dyn Task + Send + Sync>>> = Lazy::new(DashMap::new);
+
+#[derive(Clone, Copy)]
+enum TaskType {
+    Before,
+    After,
+}
+
+impl std::fmt::Display for TaskType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TaskType::Before => write!(f, "before"),
+            TaskType::After => write!(f, "after"),
+        }
+    }
+}
 
 // Internal function to execute a set of tasks in priority order
 // Parameters:
 // - tasks: reference to a DashMap containing the tasks to execute
-async fn run_tasks(task_type: &str) -> Result<()> {
-    // Extract and sort tasks by priority
-    let mut names = vec![];
-    for item in TASKS.iter() {
-        names.push((item.key().clone(), item.value().priority()));
-    }
+async fn run_tasks(task_type: TaskType) -> Result<()> {
+    let mut executable_tasks: Vec<_> = TASKS
+        .iter()
+        .map(|item| {
+            (
+                item.key().clone(),      // Task name
+                item.value().priority(), // Priority for sorting
+                item.value().clone(),    // Cloned Arc to the task
+            )
+        })
+        .collect();
 
-    let is_before = task_type == "before";
-    names.sort_by_key(|k| k.1);
-    if !is_before {
-        names.reverse();
-    }
-
-    // Execute tasks in priority order
-    for (name, _) in names {
-        let Some(item) = TASKS.get(&name) else {
-            continue;
-        };
-        let start = std::time::Instant::now();
-        let executed = if is_before {
-            item.before().await?
-        } else {
-            item.after().await?
-        };
-        if !executed {
-            continue;
+    match task_type {
+        TaskType::Before => {
+            executable_tasks.sort_by_key(|k| k.1);
         }
-        info!(
-            category = "task",
-            task_type,
-            name,
-            elapsed = start.elapsed().as_millis(),
-        );
+        TaskType::After => {
+            executable_tasks.sort_by_key(|k| std::cmp::Reverse(k.1));
+        }
+    }
+
+    // Execute tasks in the sorted order.
+    for (name, _, task) in executable_tasks {
+        let start = std::time::Instant::now();
+        let executed = match task_type {
+            TaskType::Before => task.before().await?,
+            TaskType::After => task.after().await?,
+        };
+
+        if executed {
+            info!(
+                category = "task",
+                task_type = task_type.to_string(),
+                name,
+                elapsed = start.elapsed().as_millis(),
+            );
+        }
     }
 
     Ok(())
 }
 
-pub fn register_task(name: &str, task: Box<dyn Task + Send + Sync>) {
+pub fn register_task(name: &str, task: Arc<dyn Task + Send + Sync>) {
     TASKS.insert(name.to_string(), task);
 }
 
 // Executes all registered "before" tasks in priority order
 pub async fn run_before_tasks() -> Result<()> {
-    run_tasks("before").await
+    run_tasks(TaskType::Before).await
 }
 
 // Executes all registered "after" tasks in priority order
 pub async fn run_after_tasks() -> Result<()> {
-    run_tasks("after").await
+    run_tasks(TaskType::After).await
 }

@@ -766,6 +766,6 @@ impl Task for HttpStatAlarmTask {
 }
 #[ctor]
 fn init() {
-    register_task("http_detector", Box::new(HttpDetectorTask));
-    register_task("http_stat_alarm", Box::new(HttpStatAlarmTask));
+    register_task("http_detector", Arc::new(HttpDetectorTask));
+    register_task("http_stat_alarm", Arc::new(HttpStatAlarmTask));
 }

@@ -16,6 +16,7 @@ use super::config::must_get_basic_config;
 use async_trait::async_trait;
 use ctor::ctor;
 use once_cell::sync::{Lazy, OnceCell};
+use std::sync::Arc;
 use std::time::Duration;
 use tibba_error::Error;
 use tibba_hook::{Task, register_task};
@@ -94,5 +95,5 @@ impl Task for StateTask {
 
 #[ctor]
 fn init() {
-    register_task("state", Box::new(StateTask));
+    register_task("state", Arc::new(StateTask));
 }

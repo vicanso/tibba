@@ -16,6 +16,7 @@ use crate::config::must_get_config;
 use async_trait::async_trait;
 use ctor::ctor;
 use once_cell::sync::OnceCell;
+use std::sync::Arc;
 use tibba_error::Error;
 use tibba_hook::{Task, register_task};
 use tibba_opendal::{Storage, new_opendal_storage};
@@ -57,5 +58,5 @@ impl Task for DalTask {
 
 #[ctor]
 fn init() {
-    register_task("dal", Box::new(DalTask));
+    register_task("dal", Arc::new(DalTask));
 }

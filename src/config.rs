@@ -16,6 +16,7 @@ use async_trait::async_trait;
 use ctor::ctor;
 use once_cell::sync::OnceCell;
 use rust_embed::RustEmbed;
+use std::sync::Arc;
 use std::time::Duration;
 use tibba_config::Config;
 use tibba_error::Error;
@@ -186,5 +187,5 @@ impl Task for ConfigTask {
 // add application init before application start
 #[ctor]
 fn init() {
-    register_task("config", Box::new(ConfigTask));
+    register_task("config", Arc::new(ConfigTask));
 }
