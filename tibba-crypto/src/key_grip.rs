@@ -17,6 +17,7 @@ use super::Error;
 use hex::encode;
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
+use std::sync::Arc;
 use std::sync::RwLock;
 
 /// Custom Result type using the crate's Error type
@@ -25,24 +26,25 @@ type Result<T> = std::result::Result<T, Error>;
 /// Type alias for HMAC-SHA256 implementation
 type HmacSha256 = Hmac<Sha256>;
 
+enum KeyStore {
+    Static(Vec<Vec<u8>>),
+    Shared(Arc<RwLock<Vec<Vec<u8>>>>),
+}
+
 /// KeyGrip struct manages a set of cryptographic keys
 /// Provides both thread-safe (RwLock) and non-thread-safe implementations
 pub struct KeyGrip {
-    /// Non-thread-safe keys storage
-    keys: Option<Vec<Vec<u8>>>,
-    /// Thread-safe keys storage using RwLock
-    lock_keys: Option<RwLock<Vec<Vec<u8>>>>,
+    store: KeyStore,
 }
 
 /// Helper function to create an HMAC-SHA256 signature
 /// Returns the hex-encoded signature string
-fn sign(data: &[u8], key: &[u8]) -> Result<String> {
+fn sign_with_key(data: &[u8], key: &[u8]) -> Result<String> {
     let mut mac = HmacSha256::new_from_slice(key).map_err(|e| Error::HmacSha256 {
         message: e.to_string(),
     })?;
     mac.update(data);
-    let result = mac.finalize();
-    Ok(encode(result.into_bytes()))
+    Ok(encode(mac.finalize().into_bytes()))
 }
 
 impl KeyGrip {
@@ -53,62 +55,70 @@ impl KeyGrip {
             return Err(Error::KeyGripEmpty);
         }
         Ok(KeyGrip {
-            keys: Some(keys),
-            lock_keys: None,
+            store: KeyStore::Static(keys),
         })
     }
 
     /// Creates a new KeyGrip instance with thread-safe key storage using RwLock
     pub fn new_with_lock(keys: Vec<Vec<u8>>) -> Result<Self> {
         Ok(KeyGrip {
-            keys: None,
-            lock_keys: Some(RwLock::new(keys)),
+            store: KeyStore::Shared(Arc::new(RwLock::new(keys))),
         })
+    }
+    fn with_keys<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&[Vec<u8>]) -> R,
+    {
+        match &self.store {
+            KeyStore::Static(keys) => f(keys),
+            KeyStore::Shared(lock_keys) => {
+                // it will not fail
+                if let Ok(keys) = lock_keys.read() {
+                    f(&keys)
+                } else {
+                    f(&[])
+                }
+            }
+        }
     }
 
     /// Updates the keys in the thread-safe storage
     /// No-op if using non-thread-safe storage
     pub fn update_keys(&self, new_keys: Vec<Vec<u8>>) {
-        if let Some(lock_keys) = &self.lock_keys
+        if let KeyStore::Shared(lock_keys) = &self.store
             && let Ok(mut keys) = lock_keys.write()
         {
             *keys = new_keys;
         }
     }
 
-    /// Internal method to retrieve current keys
-    /// Handles both thread-safe and non-thread-safe implementations
-    fn get_keys(&self) -> Vec<Vec<u8>> {
-        if let Some(keys) = &self.lock_keys
-            && let Ok(keys) = keys.read()
-        {
-            return keys.clone();
-        }
-        if let Some(keys) = &self.keys {
-            return keys.clone();
-        }
-        vec![]
-    }
-
     /// Finds the index of the key that was used to create the given digest
     /// Returns -1 if no matching key is found
-    fn index(&self, data: &[u8], digest: &str) -> Result<i64> {
-        for (index, key) in self.get_keys().iter().enumerate() {
-            if sign(data, key)?.eq(digest) {
-                return Ok(index as i64);
+    fn index(&self, data: &[u8], digest: &str) -> Result<Option<usize>> {
+        // no need to clone
+        self.with_keys(|keys| {
+            for (index, key) in keys.iter().enumerate() {
+                // we must handle the error of sign_with_key
+                match sign_with_key(data, key) {
+                    Ok(signature) if signature == digest => return Ok(Some(index)),
+                    // if the signature does not match, continue
+                    Ok(_) => continue,
+                    // if the signature process itself fails (e.g., invalid key), pass the error up
+                    Err(e) => return Err(e),
+                }
             }
-        }
-        Ok(-1)
+            // if the loop ends without finding a match, return Ok(None)
+            Ok(None)
+        })
     }
 
     /// Signs the input data using the first key in the key set
     /// Returns error if no keys are available
     pub fn sign(&self, data: &[u8]) -> Result<String> {
-        let keys = self.get_keys();
-        if keys.is_empty() {
-            return Err(Error::KeyGripEmpty);
-        }
-        sign(data, &keys[0])
+        self.with_keys(|keys| {
+            // new() has already guaranteed that keys is not empty
+            sign_with_key(data, &keys[0])
+        })
     }
 
     /// Verifies a signature (digest) against the input data
@@ -116,7 +126,10 @@ impl KeyGrip {
     /// - is_valid: true if signature matches any key
     /// - is_current: true if signature matches the current (first) key
     pub fn verify(&self, data: &[u8], digest: &str) -> Result<(bool, bool)> {
-        let value = self.index(data, digest)?;
-        Ok((value >= 0, value == 0))
+        match self.index(data, digest)? {
+            Some(0) => Ok((true, true)),  // match the first key, valid and current
+            Some(_) => Ok((true, false)), // match other keys, valid but not current
+            None => Ok((false, false)),   // no match found
+        }
     }
 }
