@@ -17,6 +17,7 @@ use axum::extract::State;
 use axum::middleware::Next;
 use axum::response::Response;
 use scopeguard::defer;
+use std::sync::Arc;
 use tibba_cache::RedisCache;
 use tibba_session::{Session, SessionParams};
 use tracing::debug;
@@ -24,14 +25,14 @@ use tracing::debug;
 type Result<T, E = tibba_error::Error> = std::result::Result<T, E>;
 
 pub async fn session(
-    State((cache, params)): State<(&'static RedisCache, &'static SessionParams)>,
+    State((cache, params)): State<(&'static RedisCache, Arc<SessionParams>)>,
     mut req: Request,
     next: Next,
 ) -> Result<Response> {
     debug!(category = "middleware", "--> session");
     defer!(debug!(category = "middleware", "<-- session"););
 
-    let se = Session::new(cache, params.clone());
+    let se = Session::new(cache, params);
     req.extensions_mut().insert(se);
     let res = next.run(req).await;
     Ok(res)

@@ -31,7 +31,7 @@ type Result<T> = std::result::Result<T, tibba_error::Error>;
 #[derive(Debug, Clone, Default)]
 pub struct WaitParams {
     // Duration to wait in milliseconds
-    pub ms: u64,
+    pub wait: Duration,
     // If true, only wait when an error response occurs (status >= 400)
     pub only_error_occurred: bool,
 }
@@ -41,7 +41,7 @@ impl WaitParams {
     /// and default settings for other parameters
     pub fn new(ms: u64) -> Self {
         Self {
-            ms,
+            wait: Duration::from_millis(ms),
             ..Default::default()
         }
     }
@@ -74,12 +74,12 @@ pub async fn wait(State(params): State<WaitParams>, req: Request, next: Next) ->
     }
 
     // Calculate remaining time to wait
-    let elapsed = CTX.get().elapsed().as_millis();
-    let offset = params.ms - elapsed as u64;
+    let elapsed = CTX.get().elapsed();
+    let remaining_wait = params.wait.saturating_sub(elapsed);
 
     // Only wait if the remaining time is significant (>= 10ms)
-    if offset >= 10 {
-        sleep(Duration::from_millis(offset)).await
+    if remaining_wait.as_millis() >= 10 {
+        sleep(remaining_wait).await
     }
 
     res
@@ -95,8 +95,7 @@ pub async fn wait(State(params): State<WaitParams>, req: Request, next: Next) ->
 ///
 /// # Format
 /// The X-Captcha header should contain a colon-separated string with 3 parts:
-/// `prefix:key:code` where:
-/// - prefix: identifier for the captcha type
+/// `key:code` where:
 /// - key: unique key to look up the stored captcha code
 /// - code: the actual captcha code to validate
 pub async fn validate_captcha(
@@ -121,25 +120,18 @@ pub async fn validate_captcha(
             category: category.to_string(),
         })?;
 
-    // Split the header value into its components
-    let arr: Vec<&str> = value.split(':').collect();
-
-    // Validate the header format
-    if arr.len() != 2 {
-        return Err(Error::Common {
-            message: "captcha parameter is invalid".to_string(),
-            category: category.to_string(),
-        }
-        .into());
-    }
+    let (key, user_code) = value.split_once(':').ok_or_else(|| Error::Common {
+        message: "captcha parameter is invalid, expect 'key:code'".to_string(),
+        category: category.to_string(),
+    })?;
 
     // Check if this is a mock request using the magic code
-    let is_mock = !magic_code.is_empty() && arr[1] == magic_code;
+    let is_mock = !magic_code.is_empty() && user_code == magic_code;
 
     // For non-mock requests, validate the captcha code against cache
     if !is_mock {
         // Retrieve and delete the stored code from cache using the key (arr[1])
-        let code: Option<String> = cache.get_del(arr[0]).await?;
+        let code: Option<String> = cache.get_del(key).await?;
         let Some(code) = code else {
             return Err(Error::Common {
                 message: "captcha is expired".to_string(),
@@ -149,7 +141,7 @@ pub async fn validate_captcha(
         };
 
         // Compare the provided code against the stored code
-        if code != arr[1] {
+        if code != user_code {
             return Err(Error::Common {
                 message: "captcha is invalid".to_string(),
                 category: category.to_string(),

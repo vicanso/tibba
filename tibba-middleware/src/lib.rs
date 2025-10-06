@@ -53,27 +53,37 @@ where
         parts: &mut Parts,
         _state: &S,
     ) -> std::result::Result<Self, Self::Rejection> {
-        if let Some(x_forwarded_for) = parts.headers.get("X-Forwarded-For")
-            && let Some(ip) = x_forwarded_for
-                .to_str()
-                .unwrap_or_default()
-                .split(',')
-                .next()
-            && let Ok(ip) = ip.parse::<IpAddr>()
-        {
-            return Ok(ClientIp(ip));
-        }
-        if let Some(x_real_ip) = parts.headers.get("X-Real-Ip")
-            && let Ok(ip) = x_real_ip.to_str().unwrap().parse::<IpAddr>()
-        {
-            return Ok(ClientIp(ip));
-        }
-        let ip = parts
-            .extensions
-            .get::<ConnectInfo<SocketAddr>>()
-            .map(|ConnectInfo(addr)| addr.ip())
-            .ok_or_else(|| BaseError::new("no connect info"))?;
-        Ok(ClientIp(ip))
+        let client_ip = {
+            // get client ip from X-Forwarded-For
+            parts
+                .headers
+                .get("X-Forwarded-For")
+                .and_then(|header| header.to_str().ok()) // convert to str
+                .and_then(|s| s.split(',').next()) // get first ip
+                .map(|s| s.trim()) // trim space
+                .and_then(|s| s.parse::<IpAddr>().ok()) // parse ip
+                // if above failed, try X-Real-Ip
+                .or_else(|| {
+                    parts
+                        .headers
+                        .get("X-Real-Ip")
+                        .and_then(|header| header.to_str().ok())
+                        .map(|s| s.trim())
+                        .and_then(|s| s.parse::<IpAddr>().ok())
+                })
+                // if above failed, fallback to TCP connection info
+                .or_else(|| {
+                    parts
+                        .extensions
+                        .get::<ConnectInfo<SocketAddr>>()
+                        .map(|ConnectInfo(addr)| addr.ip())
+                })
+        };
+
+        // if all attempts fail (result is None), return error
+        client_ip
+            .map(ClientIp)
+            .ok_or_else(|| BaseError::new("Client IP address could not be determined"))
     }
 }
 

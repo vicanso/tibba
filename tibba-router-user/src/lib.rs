@@ -259,7 +259,10 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
             "/login/token",
             get(login_token)
                 .with_state(params.secret.clone())
-                .layer(from_fn_with_state((name, "login_token"), user_tracker)),
+                .layer(from_fn_with_state(
+                    (name, "login_token").into(),
+                    user_tracker,
+                )),
         )
         .route(
             "/login",
@@ -269,7 +272,7 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
                     (params.magic_code, params.cache),
                     validate_captcha,
                 ))
-                .layer(from_fn_with_state((name, "login"), user_tracker)),
+                .layer(from_fn_with_state((name, "login").into(), user_tracker)),
         )
         .route("/me", get(me).with_state(params.pool))
         .route("/refresh", patch(refresh_session))
@@ -277,11 +280,11 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
             "/register",
             post(register)
                 .with_state(params.pool)
-                .layer(from_fn_with_state((name, "register"), user_tracker)),
+                .layer(from_fn_with_state((name, "register").into(), user_tracker)),
         )
         .route(
             "/logout",
-            delete(logout).layer(from_fn_with_state((name, "logout"), user_tracker)),
+            delete(logout).layer(from_fn_with_state((name, "logout").into(), user_tracker)),
         )
         .route("/profile", patch(update_profile).with_state(params.pool))
 }

@@ -46,21 +46,20 @@ pub async fn entry(jar: CookieJar, mut req: Request, next: Next) -> Response {
     // Extract device ID from cookies for user/device tracking
     let device_id = get_device_id_from_cookie(&jar).unwrap_or_default();
     // Generate unique trace ID for request tracking
-    let trace_id = uuid();
     // Create new context with device and trace information
-    let ctx = Arc::new(Context::new(device_id, &trace_id));
+    let ctx = Arc::new(Context::new(device_id, &uuid()));
 
     req.extensions_mut().insert(ctx.clone());
 
     // Process request within context scope
-    let mut res = CTX.scope(ctx, async { next.run(req).await }).await;
+    let mut res = CTX.scope(ctx.clone(), async { next.run(req).await }).await;
 
     // Add response headers
     let headers = res.headers_mut();
     // Ensure cache control headers are set
     set_no_cache_if_not_exist(headers);
     // Add trace ID header for request tracking
-    let _ = set_header_if_not_exist(headers, "X-Trace-Id", &trace_id);
+    let _ = set_header_if_not_exist(headers, "X-Trace-Id", &ctx.trace_id);
 
     res
 }

@@ -11,9 +11,7 @@ path = "src/lib.rs"
 dashmap = { workspace = true }
 headless_chrome = "1.0.17"
 image = { workspace = true }
-mime = { workspace = true }
 palette = "0.7.6"
 scopeguard = { workspace = true }
 snafu = { workspace = true }
 tibba-error = { path = "../tibba-error" }
-tokio = { workspace = true }

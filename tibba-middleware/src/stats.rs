@@ -18,6 +18,7 @@ use axum::extract::State;
 use axum::middleware::Next;
 use axum::response::Response;
 use scopeguard::defer;
+use std::borrow::Cow;
 use tibba_error::Error;
 use tibba_state::{AppState, CTX};
 use tibba_util::get_header_value;
@@ -53,24 +54,18 @@ pub async fn stats(
     defer!(debug!(category = "middleware", "<-- stats"););
 
     // Decode URI for logging (handles URL-encoded characters)
-    let mut uri = req.uri().to_string();
-    if let Ok(result) = decode(&uri) {
-        uri = result.to_string()
-    }
+    let uri_str = req.uri().to_string();
+    let uri: Cow<str> = decode(&uri_str).unwrap_or(Cow::from(&uri_str));
 
     // Collect request information
-    let method = req.method().to_string();
-    let x_forwarded_for =
-        if let Some(x_forwarded_for) = get_header_value(req.headers(), "X-Forwarded-For") {
-            x_forwarded_for.to_string()
-        } else {
-            "".to_string()
-        };
-    let referrer = if let Some(referrer) = get_header_value(req.headers(), "Referer") {
-        referrer.to_string()
-    } else {
-        "".to_string()
-    };
+    let method = req.method().clone();
+    let headers = req.headers();
+    let x_forwarded_for = get_header_value(headers, "X-Forwarded-For")
+        .unwrap_or("")
+        .to_string();
+    let referrer = get_header_value(headers, "Referer")
+        .unwrap_or("")
+        .to_string();
 
     // Process the request
     let res = next.run(req).await;
@@ -78,12 +73,14 @@ pub async fn stats(
     let ctx = CTX.get();
 
     // Extract error message for 4xx/5xx responses
-    let mut message = None;
-    if status >= 400
-        && let Some(err) = res.extensions().get::<Error>()
-    {
-        message = Some(err.message.clone());
-    }
+    let message = if status >= 400 {
+        // 从 response extensions 中提取错误信息
+        res.extensions()
+            .get::<Error>()
+            .map(|err| err.message.clone())
+    } else {
+        None
+    };
 
     // Log comprehensive request/response information
     info!(
@@ -91,12 +88,12 @@ pub async fn stats(
         device_id = ctx.device_id,           // Device identification
         trace_id = ctx.trace_id,             // Request trace ID
         account = ctx.get_account(),         // Account ID
-        ip = ip.to_string(),                 // Client IP
+        ip = %ip,                 // Client IP
         processing = state.get_processing(), // Current processing count
         x_forwarded_for,                     // Forwarded IP chain
         referrer,                            // Request referrer
-        method,                              // HTTP method
-        uri,                                 // Request URI
+        method = %method,                              // HTTP method
+        uri = uri.as_ref(),                                 // Request URI
         status,                              // Response status code
         elapsed = ctx.elapsed().as_millis(), // Request processing time
         error = message,                     // Error message if any

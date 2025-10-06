@@ -20,6 +20,7 @@ use axum::response::{IntoResponse, Response};
 use axum_extra::extract::cookie::{Key, SignedCookieJar};
 use cookie::CookieBuilder;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use std::time::Duration;
 use tibba_cache::RedisCache;
 use tibba_state::CTX;
@@ -63,7 +64,7 @@ struct SessionData {
 #[derive(Clone)]
 pub struct Session {
     cache: &'static RedisCache,
-    params: SessionParams,
+    params: Arc<SessionParams>,
     data: SessionData,
 }
 
@@ -76,7 +77,7 @@ impl Session {
     ///
     /// # Returns
     /// * `Session` - A new session
-    pub fn new(cache: &'static RedisCache, params: SessionParams) -> Self {
+    pub fn new(cache: &'static RedisCache, params: Arc<SessionParams>) -> Self {
         Self {
             cache,
             params,

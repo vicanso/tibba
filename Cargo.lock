@@ -4945,7 +4945,6 @@ dependencies = [
  "hostname",
  "http",
  "http-stat",
- "humantime",
  "nanoid",
  "num_cpus",
  "once_cell",
@@ -4965,7 +4964,6 @@ dependencies = [
  "tibba-model",
  "tibba-opendal",
  "tibba-performance",
- "tibba-request",
  "tibba-router-common",
  "tibba-router-file",
  "tibba-router-model",
@@ -5046,12 +5044,10 @@ dependencies = [
  "dashmap",
  "headless_chrome",
  "image 0.25.8",
- "mime",
  "palette",
  "scopeguard",
  "snafu",
  "tibba-error",
- "tokio",
 ]
 
 [[package]]
@@ -5072,7 +5068,6 @@ dependencies = [
  "axum",
  "axum-extra",
  "scopeguard",
- "serde_json",
  "snafu",
  "tibba-cache",
  "tibba-error",
@@ -5097,7 +5092,6 @@ dependencies = [
  "sqlx",
  "substring",
  "tibba-error",
- "tibba-util",
  "time",
 ]
 

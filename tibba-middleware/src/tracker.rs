@@ -22,8 +22,20 @@ use tracing::{error, info};
 
 type Result<T> = std::result::Result<T, Error>;
 
+#[derive(Clone, Copy)]
+pub struct TrackerParams {
+    pub name: &'static str,
+    pub step: &'static str,
+}
+
+impl From<(&'static str, &'static str)> for TrackerParams {
+    fn from((name, step): (&'static str, &'static str)) -> Self {
+        TrackerParams { name, step }
+    }
+}
+
 pub async fn user_tracker(
-    State((name, step)): State<(&str, &str)>,
+    State(params): State<TrackerParams>,
     req: Request,
     next: Next,
 ) -> Result<Response> {
@@ -39,9 +51,9 @@ pub async fn user_tracker(
             category,
             device_id,
             trace_id,
-            name,
+            name = params.name,
             account,
-            step = step,
+            step = params.step,
             elapsed,
             result = "success",
         );
@@ -63,9 +75,9 @@ pub async fn user_tracker(
         category = category,
         device_id,
         trace_id,
-        name = name,
+        name = params.name,
         account,
-        step,
+        step = params.step,
         error,
         error_category,
         error_sub_category,

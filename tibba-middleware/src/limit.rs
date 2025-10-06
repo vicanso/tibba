@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use super::{ClientIp, Error};
 use axum::extract::Request;
 use axum::extract::State;
 use axum::middleware::Next;
@@ -21,9 +22,6 @@ use scopeguard::defer;
 use std::net::IpAddr;
 use std::time::Duration;
 use tibba_cache::RedisCache;
-// use tibba_error::{Error, new_error};
-use super::ClientIp;
-use super::Error;
 use tibba_state::AppState;
 use tracing::debug;
 
@@ -125,25 +123,27 @@ impl LimitParams {
 /// Tuple of (cache_key, ttl_duration)
 fn get_limit_params(req: &Request, ip: IpAddr, params: &LimitParams) -> (String, Duration) {
     // Generate key based on limit type (currently only IP-based)
-    let mut key = match &params.limit_type {
-        LimitType::Header(header) => {
-            if let Some(value) = req.headers().get(header) {
-                value.to_str().unwrap_or_default().to_string()
-            } else {
-                "".to_string()
-            }
-        }
+    let identifier = match &params.limit_type {
+        LimitType::Header(header_name) => req
+            .headers()
+            .get(header_name)
+            .and_then(|value| value.to_str().ok())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| ip.to_string()),
         _ => ip.to_string(),
     };
     // Append category to key if specified
-    if !params.category.is_empty() {
-        key = format!("{}:{key}", params.category);
-    }
+    let key = if params.category.is_empty() {
+        identifier
+    } else {
+        format!("{}:{}", params.category, identifier)
+    };
     // Use default TTL of 5 minutes if none specified
-    let mut ttl = params.ttl;
-    if ttl.is_zero() {
-        ttl = Duration::from_secs(5 * 60);
-    }
+    let ttl = if params.ttl.is_zero() {
+        Duration::from_secs(5 * 60)
+    } else {
+        params.ttl
+    };
     (key, ttl)
 }
 
@@ -158,12 +158,11 @@ pub async fn error_limiter(
 ) -> Result<Response> {
     let (key, ttl) = get_limit_params(&req, ip, &params);
     // Check if current error count exceeds limit
-    if let Ok(count) = cache.get::<i64>(&key).await
-        && count > params.max
-    {
+    let current_count = cache.get::<i64>(&key).await.unwrap_or(0);
+    if current_count > params.max {
         return Err(Error::TooManyRequests {
             limit: params.max,
-            current: count,
+            current: current_count,
         }
         .into());
     }
@@ -197,6 +196,5 @@ pub async fn limiter(
         .into());
     }
 
-    let res = next.run(req).await;
-    Ok(res)
+    Ok(next.run(req).await)
 }

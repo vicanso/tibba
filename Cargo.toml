@@ -12,7 +12,6 @@ futures = { workspace = true }
 hostname = { workspace = true }
 http = { workspace = true }
 http-stat = "0.5.14"
-humantime = { workspace = true }
 nanoid = { workspace = true }
 once_cell = { workspace = true }
 quick-js = "0.4.1"
@@ -31,7 +30,6 @@ tibba-hook = { path = "./tibba-hook" }
 tibba-middleware = { path = "./tibba-middleware" }
 tibba-model = { path = "./tibba-model" }
 tibba-opendal = { path = "./tibba-opendal" }
-tibba-request = { path = "./tibba-request" }
 tibba-router-common = { path = "./tibba-router-common" }
 tibba-router-file = { path = "./tibba-router-file" }
 tibba-router-model = { path = "./tibba-router-model" }

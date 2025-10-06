@@ -2,6 +2,12 @@
 name = "tibba-middleware"
 version = "0.1.0"
 edition = "2024"
+authors = ["Tree Xie <tree.xie@outlook.com>"]
+license = "Apache-2.0"
+homepage = "https://github.com/vicanso/tibba"
+repository = "https://github.com/vicanso/tibba"
+keywords = ["tibba", "middleware"]
+description = "middleware for tibba"
 
 
 [lib]
@@ -12,7 +18,6 @@ path = "src/lib.rs"
 axum = { workspace = true }
 axum-extra = { workspace = true }
 scopeguard = { workspace = true }
-serde_json = { workspace = true }
 snafu = { workspace = true }
 tibba-cache = { path = "../tibba-cache" }
 tibba-error = { path = "../tibba-error" }
