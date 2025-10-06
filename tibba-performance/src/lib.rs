@@ -49,11 +49,6 @@ pub struct ProcessSystemInfo {
 /// If any metrics cannot be retrieved, they will contain default values (0).
 #[cached(time = 10, sync_writes = "by_key")]
 pub fn get_process_system_info(pid: usize) -> ProcessSystemInfo {
-    // Initialize info struct with default values
-    let mut info = ProcessSystemInfo {
-        ..Default::default()
-    };
-
     // Initialize system information collector
     let mut sys = System::new();
     let pid = Pid::from(pid);
@@ -61,17 +56,19 @@ pub fn get_process_system_info(pid: usize) -> ProcessSystemInfo {
     sys.refresh_processes(ProcessesToUpdate::Some(&[pid]), false);
 
     // Get CPU usage for current process if available
-    if let Some(process) = sys.process(pid) {
-        info.cpu_usage = process.cpu_usage();
-        info.memory_usage = process.memory();
-        info.cpu_time = process.accumulated_cpu_time();
-        let disk_usage = process.disk_usage();
-        info.total_written_bytes = disk_usage.total_written_bytes;
-        info.written_bytes = disk_usage.written_bytes;
-        info.total_read_bytes = disk_usage.total_read_bytes;
-        info.read_bytes = disk_usage.read_bytes;
-        info.open_files = process.open_files();
-    }
-
-    info
+    sys.process(pid)
+        .map(|process| {
+            let disk_usage = process.disk_usage();
+            ProcessSystemInfo {
+                cpu_usage: process.cpu_usage(),
+                memory_usage: process.memory(),
+                cpu_time: process.accumulated_cpu_time(),
+                open_files: process.open_files(),
+                total_written_bytes: disk_usage.total_written_bytes,
+                written_bytes: disk_usage.written_bytes,
+                total_read_bytes: disk_usage.total_read_bytes,
+                read_bytes: disk_usage.read_bytes,
+            }
+        })
+        .unwrap_or_default()
 }
