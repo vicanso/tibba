@@ -339,7 +339,7 @@ where
                 se.data = data;
                 parts.extensions.insert(se.clone());
                 if se.is_login() {
-                    CTX.get().set_account(&se.get_account());
+                    CTX.get().set_account(se.get_account());
                 }
 
                 return Ok(se);

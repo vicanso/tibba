@@ -87,7 +87,7 @@ pub async fn stats(
         category = "access",
         device_id = ctx.device_id,           // Device identification
         trace_id = ctx.trace_id,             // Request trace ID
-        account = ctx.get_account(),         // Account ID
+        account = %ctx.get_account(),         // Account ID
         ip = %ip,                 // Client IP
         processing = state.get_processing(), // Current processing count
         x_forwarded_for,                     // Forwarded IP chain

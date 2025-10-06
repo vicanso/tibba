@@ -43,12 +43,12 @@ impl Context {
         self.start_time.elapsed()
     }
     /// Get the account
-    pub fn get_account(&self) -> String {
-        self.account.load().to_string()
+    pub fn get_account(&self) -> Arc<String> {
+        self.account.load_full()
     }
     /// Set the account
-    pub fn set_account(&self, account: &str) {
-        self.account.store(Arc::new(account.to_string()));
+    pub fn set_account(&self, account: impl Into<String>) {
+        self.account.store(Arc::new(account.into()));
     }
 }
 

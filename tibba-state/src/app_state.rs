@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::sync::atomic::{AtomicI8, AtomicI32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::time::SystemTime;
 
 /// Application state management structure
@@ -25,7 +25,7 @@ pub struct AppState {
     // Maximum number of concurrent requests allowed
     processing_limit: i32,
     // Current application status (running/stopped)
-    status: AtomicI8,
+    running: AtomicBool,
     // Current number of requests being processed
     processing: AtomicI32,
     // Application start timestamp
@@ -34,16 +34,12 @@ pub struct AppState {
     commit_id: String,
 }
 
-// Application status constants
-const APP_STATUS_STOP: i8 = 0; // Application is stopped
-const APP_STATUS_RUNNING: i8 = 1; // Application is running
-
 impl AppState {
     /// Creates a new AppState instance with specified processing limit
     pub fn new(processing_limit: i32, commit_id: String) -> Self {
         Self {
             processing_limit,
-            status: AtomicI8::new(APP_STATUS_STOP),
+            running: AtomicBool::new(false),
             processing: AtomicI32::new(0),
             started_at: SystemTime::now(),
             commit_id,
@@ -69,7 +65,7 @@ impl AppState {
     /// Atomically decrements the processing counter
     /// Returns the previous value
     pub fn dec_processing(&self) -> i32 {
-        self.processing.fetch_add(-1, Ordering::Relaxed)
+        self.processing.fetch_sub(1, Ordering::Relaxed)
     }
 
     /// Returns the current number of requests being processed
@@ -79,18 +75,17 @@ impl AppState {
 
     /// Checks if the application is currently running
     pub fn is_running(&self) -> bool {
-        let value = self.status.load(Ordering::Relaxed);
-        value == APP_STATUS_RUNNING
+        self.running.load(Ordering::Relaxed)
     }
 
     /// Sets the application status to running
     pub fn run(&self) {
-        self.status.store(APP_STATUS_RUNNING, Ordering::Relaxed)
+        self.running.store(true, Ordering::Relaxed)
     }
 
     /// Sets the application status to stopped
     pub fn stop(&self) {
-        self.status.store(APP_STATUS_STOP, Ordering::Relaxed)
+        self.running.store(false, Ordering::Relaxed)
     }
 
     /// Returns the application start time
