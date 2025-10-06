@@ -45,6 +45,12 @@ impl<'a, Q> ParsedUri<'a, Q> {
             })
             .collect()
     }
+    pub fn endpoint(&self) -> String {
+        if self.hosts.is_empty() {
+            return String::new();
+        }
+        format!("{}://{}", self.schema, self.host_strings()[0])
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -53,7 +59,7 @@ pub struct Host<'a> {
     pub port: Option<u16>,
 }
 
-pub fn parse_multi_host_uri<'a, Q>(uri: &'a str) -> Result<ParsedUri<'a, Q>>
+pub fn parse_uri<'a, Q>(uri: &'a str) -> Result<ParsedUri<'a, Q>>
 where
     Q: DeserializeOwned,
 {
@@ -127,7 +133,7 @@ mod tests {
     fn test_deserialize_to_struct() {
         let uri = "mongodb://user@node1:27017/db?replicaSet=rs0&timeout=5";
 
-        let parsed = parse_multi_host_uri::<TestQuery>(uri).unwrap();
+        let parsed = parse_uri::<TestQuery>(uri).unwrap();
 
         assert_eq!(parsed.schema, "mongodb");
         assert_eq!(parsed.username, Some("user"));
@@ -147,7 +153,7 @@ mod tests {
     #[test]
     fn test_deserialize_to_hashmap() {
         let uri = "kafka://broker:9092?client.id=app-1&retries=3";
-        let parsed = parse_multi_host_uri::<HashMap<String, String>>(uri).unwrap();
+        let parsed = parse_uri::<HashMap<String, String>>(uri).unwrap();
 
         assert_eq!(parsed.query.get("client.id"), Some(&"app-1".to_string()));
         assert_eq!(parsed.query.get("retries"), Some(&"3".to_string()));
@@ -157,7 +163,7 @@ mod tests {
     fn test_deserialization_error() {
         // wrong timeout
         let uri = "schema://host?timeout=five";
-        let err = parse_multi_host_uri::<TestQuery>(uri).unwrap_err();
+        let err = parse_uri::<TestQuery>(uri).unwrap_err();
 
         assert_eq!(err.to_string(), "invalid digit found in string");
     }
