@@ -60,6 +60,15 @@ struct ApplicationInfo {
     total_read_mb: u32,
 }
 
+fn format_uptime_approx(duration: Duration) -> String {
+    humantime::format_duration(duration)
+        .to_string()
+        .split(' ')
+        .take(2)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// Get the application information
 async fn get_application_info(
     State(state): State<&'static AppState>,
@@ -68,16 +77,11 @@ async fn get_application_info(
     let info = os_info::get();
     let os = info.os_type().to_string();
     let arch = info.architecture().unwrap_or_default();
-    let uptime_str = humantime::format_duration(uptime).to_string();
-    let mut uptime_values = uptime_str.split(" ").collect::<Vec<_>>();
-    if uptime_values.len() > 2 {
-        uptime_values.truncate(2);
-    }
     let performance = get_process_system_info(std::process::id() as usize);
     let mb = 1024 * 1024;
 
     let info = ApplicationInfo {
-        uptime: uptime_values.join(" "),
+        uptime: format_uptime_approx(uptime),
         env: get_env().to_string(),
         arch: arch.to_string(),
         os,

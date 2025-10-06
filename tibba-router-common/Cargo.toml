@@ -2,6 +2,12 @@
 name = "tibba-router-common"
 version = "0.1.0"
 edition = "2024"
+authors = ["Tree Xie <tree.xie@outlook.com>"]
+license = "Apache-2.0"
+homepage = "https://github.com/vicanso/tibba"
+repository = "https://github.com/vicanso/tibba"
+keywords = ["tibba", "router", "common"]
+description = "common router for tibba"
 
 
 [lib]
@@ -17,9 +23,9 @@ humantime = { workspace = true }
 image = { workspace = true }
 os_info = { workspace = true }
 serde = { workspace = true }
-tibba-cache = { path = "../tibba-cache" }
-tibba-error = { path = "../tibba-error" }
-tibba-performance = { path = "../tibba-performance" }
+tibba-cache = { path = "../tibba-cache", version = "0.1.0" }
+tibba-error = { path = "../tibba-error", version = "0.1.0" }
+tibba-performance = { path = "../tibba-performance", version = "0.1.0" }
 tibba-state = { path = "../tibba-state", version = "0.1.0" }
-tibba-util = { path = "../tibba-util" }
+tibba-util = { path = "../tibba-util", version = "0.1.2" }
 validator = { workspace = true }
