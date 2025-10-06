@@ -157,6 +157,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         .and(NotForContentType::IMAGES)
         .and(NotForContentType::SSE);
     let state = get_app_state();
+    let session_params = config::get_session_params()?;
     let app = app.layer(
         // service build layer execute by add order
         ServiceBuilder::new()
@@ -166,10 +167,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             .layer(from_fn_with_state(state, entry))
             .layer(from_fn_with_state(state, stats))
             .layer(from_fn_with_state(
-                (
-                    cache::get_redis_cache(),
-                    Arc::new(config::get_session_params().clone()),
-                ),
+                (cache::get_redis_cache(), Arc::new(session_params)),
                 session,
             ))
             .layer(from_fn_with_state(state, processing_limit)),

@@ -40,31 +40,33 @@ pub enum Error {
 impl From<Error> for BaseError {
     fn from(val: Error) -> Self {
         let err = match val {
-            Error::SessionIdEmpty => BaseError::new("session id is empty")
+            // 500 level error
+            e @ (Error::SessionIdEmpty
+            | Error::SessionIdInvalid
+            | Error::SessionCacheNotSet
+            | Error::SessionNotFound) => BaseError::new(e.to_string())
                 .with_status(500)
                 .with_exception(true),
-            Error::SessionIdInvalid => BaseError::new("session id is invalid")
-                .with_status(500)
-                .with_exception(true),
-            Error::SessionCacheNotSet => BaseError::new("session cache is not set")
-                .with_status(500)
-                .with_exception(true),
+
+            // Handle the `Key` error separately because its message comes from `source`.
             Error::Key { source } => BaseError::new(source)
                 .with_sub_category("cookie")
                 .with_status(500)
                 .with_exception(true),
-            Error::SessionNotFound => BaseError::new("session not found")
-                .with_status(500)
-                .with_exception(true),
+
+            // Handle the 401 Unauthorized error.
             Error::UserNotLogin => BaseError::new("user not login")
                 .with_sub_category("user")
                 .with_status(401)
                 .with_exception(false),
+
+            // Handle the 403 Forbidden error.
             Error::UserNotAdmin => BaseError::new("user not admin")
                 .with_sub_category("user")
                 .with_status(403)
                 .with_exception(false),
         };
+        // The common category is applied once at the end.
         err.with_category("session")
     }
 }

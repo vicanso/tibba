@@ -20,10 +20,10 @@ axum-extra = { workspace = true }
 scopeguard = { workspace = true }
 snafu = { workspace = true }
 tibba-cache = { path = "../tibba-cache" }
-tibba-error = { path = "../tibba-error" }
+tibba-error = { path = "../tibba-error", version = "0.1.0" }
 tibba-session = { path = "../tibba-session" }
-tibba-state = { path = "../tibba-state" }
-tibba-util = { path = "../tibba-util" }
+tibba-state = { path = "../tibba-state", version = "0.1.0" }
+tibba-util = { path = "../tibba-util", version = "0.1.1" }
 tokio = { workspace = true }
 tracing = { workspace = true }
 urlencoding = { workspace = true }

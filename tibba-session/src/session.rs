@@ -29,13 +29,28 @@ use tracing::debug;
 
 type Result<T, E = tibba_error::Error> = std::result::Result<T, E>;
 
-static ROLE_ADMIN: &str = "admin";
-static ROLE_SUPER_ADMIN: &str = "su";
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Role {
+    Admin,
+    SuperAdmin,
+    Custom(String),
+}
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+impl From<&str> for Role {
+    fn from(s: &str) -> Self {
+        match s {
+            "admin" => Role::Admin,
+            "su" => Role::SuperAdmin,
+            _ => Role::Custom(s.to_string()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct SessionParams {
     // secret for session cookie
-    pub secret: String,
+    #[serde(skip)]
+    pub key: Key,
     // cookie name
     pub cookie: String,
     // ttl of session
@@ -168,9 +183,9 @@ impl Session {
     /// Get the account
     ///
     /// # Returns
-    /// * `String` - Account
-    pub fn get_account(&self) -> String {
-        self.data.account.clone()
+    /// * `&str` - Account
+    pub fn get_account(&self) -> &str {
+        &self.data.account
     }
     /// Get the user ID
     ///
@@ -246,11 +261,8 @@ impl TryFrom<&Session> for SignedCookieJar {
         if se.data.id.is_empty() {
             c = c.max_age(time::Duration::days(0));
         }
-        let key =
-            Key::try_from(se.params.secret.as_bytes()).map_err(|e| Error::Key { source: e })?;
 
-        let jar = SignedCookieJar::new(key);
-        Ok(jar.add(c))
+        Ok(SignedCookieJar::new(se.params.key.clone()).add(c))
     }
 }
 
@@ -315,9 +327,7 @@ where
         );
         // not fetch
         if se.data.iat == 0 {
-            let key =
-                Key::try_from(se.params.secret.as_bytes()).map_err(|e| Error::Key { source: e })?;
-            let jar = SignedCookieJar::from_headers(&parts.headers, key);
+            let jar = SignedCookieJar::from_headers(&parts.headers, se.params.key.clone());
             let Some(c) = jar.get(&se.params.cookie) else {
                 return Ok(se);
             };
@@ -407,12 +417,10 @@ where
     ) -> std::result::Result<Self, Self::Rejection> {
         let se = Session::from_request_parts(parts, _state).await?;
         se.validate_login()?;
-        if !se
-            .data
-            .roles
-            .iter()
-            .any(|role| role == ROLE_ADMIN || role == ROLE_SUPER_ADMIN)
-        {
+        if !se.data.roles.iter().any(|role| {
+            let r = Role::from(role.as_str());
+            r == Role::Admin || r == Role::SuperAdmin
+        }) {
             return Err(Error::UserNotAdmin.into());
         }
         Ok(AdminSession(se.clone()))

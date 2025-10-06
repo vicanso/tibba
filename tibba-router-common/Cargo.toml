@@ -20,6 +20,6 @@ serde = { workspace = true }
 tibba-cache = { path = "../tibba-cache" }
 tibba-error = { path = "../tibba-error" }
 tibba-performance = { path = "../tibba-performance" }
-tibba-state = { path = "../tibba-state" }
+tibba-state = { path = "../tibba-state", version = "0.1.0" }
 tibba-util = { path = "../tibba-util" }
 validator = { workspace = true }

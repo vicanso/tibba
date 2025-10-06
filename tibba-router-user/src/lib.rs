@@ -146,11 +146,11 @@ async fn me(
         return Ok((jar, Json(UserMeResp::default())));
     }
     let user = UserModel::new()
-        .get_by_account(pool, &account)
+        .get_by_account(pool, account)
         .await?
         .ok_or(Error::new("user not found"))?;
     let info = UserMeResp {
-        account,
+        account: account.to_string(),
         expired_at: session.get_expired_at(),
         issued_at: session.get_issued_at(),
         time: now(),
@@ -239,7 +239,7 @@ async fn update_profile(
         ..Default::default()
     };
     UserModel::new()
-        .update_by_account(pool, &account, params)
+        .update_by_account(pool, account, params)
         .await?;
     Ok(StatusCode::NO_CONTENT)
 }

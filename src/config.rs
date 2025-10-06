@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use async_trait::async_trait;
+use axum_extra::extract::cookie::Key;
 use ctor::ctor;
 use once_cell::sync::OnceCell;
 use rust_embed::RustEmbed;
@@ -27,8 +28,6 @@ use validator::Validate;
 
 type Result<T> = std::result::Result<T, Error>;
 static CONFIGS: OnceCell<Config> = OnceCell::new();
-
-static SESSION_PARAMS: OnceCell<SessionParams> = OnceCell::new();
 
 fn map_error(err: impl ToString) -> Error {
     Error::new(err).with_category("config")
@@ -121,17 +120,16 @@ fn new_session_config(config: &Config) -> Result<SessionConfig> {
     Ok(session_config)
 }
 
-pub fn get_session_params() -> &'static SessionParams {
-    SESSION_PARAMS.get_or_init(|| {
-        // session config is checked in init function
-        let session_config = SESSION_CONFIG.get().unwrap();
+pub fn get_session_params() -> Result<SessionParams> {
+    // session config is checked in init function
+    let session_config = SESSION_CONFIG.get().unwrap();
+    let key = Key::try_from(session_config.secret.as_bytes()).map_err(map_error)?;
 
-        SessionParams {
-            secret: session_config.secret.clone(),
-            cookie: session_config.cookie.clone(),
-            ttl: session_config.ttl_seconds as i64,
-            max_renewal: session_config.max_renewal,
-        }
+    Ok(SessionParams {
+        key,
+        cookie: session_config.cookie.clone(),
+        ttl: session_config.ttl_seconds as i64,
+        max_renewal: session_config.max_renewal,
     })
 }
 

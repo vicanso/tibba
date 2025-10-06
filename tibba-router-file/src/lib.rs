@@ -79,7 +79,7 @@ async fn create_file(
             filename: file.clone(),
             file_size: data.len() as i64,
             content_type: content_type.to_string(),
-            uploader: session.get_account(),
+            uploader: session.get_account().to_string(),
             ..Default::default()
         };
 

@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 async-trait = { workspace = true }
 axum = { workspace = true }
+axum-extra = { workspace = true }
 chrono = { workspace = true }
 ctor = "0.5.0"
 futures = { workspace = true }

@@ -2,6 +2,12 @@
 name = "tibba-session"
 version = "0.1.0"
 edition = "2024"
+authors = ["Tree Xie <tree.xie@outlook.com>"]
+license = "Apache-2.0"
+homepage = "https://github.com/vicanso/tibba"
+repository = "https://github.com/vicanso/tibba"
+keywords = ["tibba", "session"]
+description = "session for tibba"
 
 [lib]
 name = "tibba_session"
@@ -14,9 +20,9 @@ axum-extra = { workspace = true }
 cookie = { workspace = true }
 snafu = { workspace = true }
 serde = { workspace = true }
-tibba-cache = { path = "../tibba-cache" }
-tibba-error = { path = "../tibba-error" }
-tibba-util = { path = "../tibba-util" }
-tibba-state = { path = "../tibba-state" }
+tibba-cache = { path = "../tibba-cache", version = "0.1.0" }
+tibba-error = { path = "../tibba-error", version = "0.1.0" }
+tibba-util = { path = "../tibba-util", version = "0.1.1" }
+tibba-state = { path = "../tibba-state", version = "0.1.0" }
 time = { workspace = true }
 tracing = { workspace = true }
