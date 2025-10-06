@@ -2,6 +2,12 @@
 name = "tibba-request"
 version = "0.1.0"
 edition = "2024"
+authors = ["Tree Xie <tree.xie@outlook.com>"]
+license = "Apache-2.0"
+homepage = "https://github.com/vicanso/tibba"
+repository = "https://github.com/vicanso/tibba"
+keywords = ["tibba", "request"]
+description = "request for tibba"
 
 [lib]
 name = "tibba_request"
@@ -16,8 +22,8 @@ scopeguard = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 snafu = { workspace = true }
-tibba-error = { path = "../tibba-error" }
-tibba-util = { path = "../tibba-util" }
+tibba-error = { path = "../tibba-error", version = "0.1.0" }
+tibba-util = { path = "../tibba-util", version = "0.1.2" }
 tracing = { workspace = true }
 
 [dev-dependencies]

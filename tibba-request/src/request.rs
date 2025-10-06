@@ -32,6 +32,8 @@ use tibba_util::{Stopwatch, json_get};
 use tracing::info;
 type Result<T> = std::result::Result<T, Error>;
 
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 // Default empty query and body parameters
 static EMPTY_QUERY: Option<&[(&str, &str)]> = None;
 static EMPTY_BODY: Option<&[(&str, &str)]> = None;
@@ -134,10 +136,7 @@ impl HttpInterceptor for CommonInterceptor {
         Ok(data)
     }
     async fn on_done(&self, stats: &HttpStats, err: Option<&Error>) -> Result<()> {
-        let mut error = None;
-        if let Some(value) = err {
-            error = Some(value.to_string());
-        }
+        let error = err.map(ToString::to_string);
         info!(
             service = self.service,
             method = stats.method,
@@ -221,11 +220,10 @@ impl ClientBuilder {
     /// # Returns
     /// * `ClientBuilder` - A new client builder
     pub fn with_interceptor(mut self, interceptor: Box<dyn HttpInterceptor>) -> Self {
-        if let Some(interceptors) = &mut self.config.interceptors {
-            interceptors.push(interceptor);
-        } else {
-            self.config.interceptors = Some(vec![interceptor]);
-        }
+        self.config
+            .interceptors
+            .get_or_insert_with(Vec::new)
+            .push(interceptor);
         self
     }
 
@@ -332,14 +330,14 @@ impl ClientBuilder {
     ///
     /// # Returns
     /// * `Result<Client>` - A new client
-    pub fn build(self) -> Result<Client> {
+    pub fn build(mut self) -> Result<Client> {
         let mut builder = ReqwestClient::builder()
-            .user_agent("tibba-request/1.0")
+            .user_agent(format!("tibba-request/{VERSION}"))
             .referer(false);
         if let Some(timeout) = self.config.timeout {
             builder = builder.timeout(timeout);
         }
-        if let Some(headers) = &self.config.headers {
+        if let Some(headers) = self.config.headers.take() {
             builder = builder.default_headers(headers.clone());
         }
         if let Some(read_timeout) = self.config.read_timeout {
@@ -354,9 +352,9 @@ impl ClientBuilder {
         if self.config.pool_max_idle_per_host > 0 {
             builder = builder.pool_max_idle_per_host(self.config.pool_max_idle_per_host);
         }
-        if let Some(dns_overrides) = &self.config.dns_overrides {
+        if let Some(dns_overrides) = self.config.dns_overrides.take() {
             for (host, addrs) in dns_overrides {
-                builder = builder.resolve_to_addrs(host, addrs);
+                builder = builder.resolve_to_addrs(&host, &addrs);
             }
         }
 
@@ -390,13 +388,12 @@ impl Client {
             self.config.base_url.to_string() + url
         }
     }
-
     /// Makes raw HTTP request and returns bytes
-    async fn raw<Q: Serialize + ?Sized, P: Serialize + ?Sized>(
-        &self,
-        stats: &mut HttpStats,
-        params: Params<'_, Q, P>,
-    ) -> Result<Bytes> {
+    async fn raw<Q, P>(&self, stats: &mut HttpStats, params: Params<'_, Q, P>) -> Result<Bytes>
+    where
+        Q: Serialize + ?Sized,
+        P: Serialize + ?Sized,
+    {
         let processing = self.processing.fetch_add(1, Ordering::Relaxed) + 1;
         defer! {
             self.processing.fetch_sub(1, Ordering::Relaxed);
@@ -455,20 +452,6 @@ impl Client {
             stats.remote_addr = remote_addr.to_string();
         }
 
-        // if let Some(value) = res.extensions().get::<HttpInfo>() {
-        //     stats.remote_addr = value.remote_addr().to_string();
-        //     stats.local_addr = value.local_addr().to_string();
-        // }
-        // if let Some(value) = res.extensions().get::<TlsInfo>() {
-        //     if let Ok((_, cert)) =
-        //         X509Certificate::from_der(value.peer_certificate().unwrap_or_default())
-        //     {
-        //         stats.tls_version = cert.version.to_string();
-        //         stats.tls_not_before = cert.validity.not_before.to_string();
-        //         stats.tls_not_after = cert.validity.not_after.to_string();
-        //     }
-        // }
-
         let status = res.status().as_u16();
         let transfer_done = Stopwatch::new();
         let mut full = res.bytes().await.map_err(|e| Error::Request {
@@ -495,11 +478,16 @@ impl Client {
     }
 
     /// Makes HTTP request and deserializes response
-    async fn do_request<Q: Serialize + ?Sized, P: Serialize + ?Sized, T: DeserializeOwned>(
+    async fn do_request<Q, P, T>(
         &self,
         stats: &mut HttpStats,
         params: Params<'_, Q, P>,
-    ) -> Result<T> {
+    ) -> Result<T>
+    where
+        Q: Serialize + ?Sized,
+        P: Serialize + ?Sized,
+        T: DeserializeOwned,
+    {
         let full = self.raw(stats, params).await?;
 
         let serde_done = Stopwatch::new();
@@ -513,10 +501,12 @@ impl Client {
 
     // Public API methods for different HTTP methods
     // GET, POST, etc. with various parameter combinations
-    async fn request<Q: Serialize + ?Sized, P: Serialize + ?Sized, T: DeserializeOwned>(
-        &self,
-        params: Params<'_, Q, P>,
-    ) -> Result<T> {
+    async fn request<Q, P, T>(&self, params: Params<'_, Q, P>) -> Result<T>
+    where
+        Q: Serialize + ?Sized,
+        P: Serialize + ?Sized,
+        T: DeserializeOwned,
+    {
         let mut stats = HttpStats {
             ..Default::default()
         };
@@ -543,10 +533,11 @@ impl Client {
     ///
     /// # Returns
     /// * `Result<Bytes>` - Raw response bytes
-    pub async fn request_raw<Q: Serialize + ?Sized, P: Serialize + ?Sized>(
-        &self,
-        params: Params<'_, Q, P>,
-    ) -> Result<Bytes> {
+    pub async fn request_raw<Q, P>(&self, params: Params<'_, Q, P>) -> Result<Bytes>
+    where
+        Q: Serialize + ?Sized,
+        P: Serialize + ?Sized,
+    {
         let mut stats = HttpStats {
             ..Default::default()
         };
@@ -572,7 +563,10 @@ impl Client {
     ///
     /// # Returns
     /// * `Result<T>` - Deserialized response
-    pub async fn get<T: DeserializeOwned>(&self, url: &str) -> Result<T> {
+    pub async fn get<T>(&self, url: &str) -> Result<T>
+    where
+        T: DeserializeOwned,
+    {
         self.request(Params {
             timeout: None,
             method: Method::GET,
@@ -590,11 +584,11 @@ impl Client {
     ///
     /// # Returns
     /// * `Result<T>` - Deserialized response
-    pub async fn get_with_query<P: Serialize + ?Sized, T: DeserializeOwned>(
-        &self,
-        url: &str,
-        query: &P,
-    ) -> Result<T> {
+    pub async fn get_with_query<P, T>(&self, url: &str, query: &P) -> Result<T>
+    where
+        P: Serialize + ?Sized,
+        T: DeserializeOwned,
+    {
         self.request(Params {
             timeout: None,
             method: Method::GET,
@@ -612,11 +606,11 @@ impl Client {
     ///
     /// # Returns
     /// * `Result<T>` - Deserialized response
-    pub async fn post<P: Serialize + ?Sized, T: DeserializeOwned>(
-        &self,
-        url: &str,
-        json: &P,
-    ) -> Result<T> {
+    pub async fn post<P, T>(&self, url: &str, json: &P) -> Result<T>
+    where
+        P: Serialize + ?Sized,
+        T: DeserializeOwned,
+    {
         self.request(Params {
             timeout: None,
             method: Method::POST,
@@ -635,16 +629,12 @@ impl Client {
     ///
     /// # Returns
     /// * `Result<T>` - Deserialized response
-    pub async fn post_with_query<
+    pub async fn post_with_query<P, Q, T>(&self, url: &str, json: &P, query: &Q) -> Result<T>
+    where
         P: Serialize + ?Sized,
         Q: Serialize + ?Sized,
         T: DeserializeOwned,
-    >(
-        &self,
-        url: &str,
-        json: &P,
-        query: &Q,
-    ) -> Result<T> {
+    {
         self.request(Params {
             timeout: None,
             method: Method::POST,

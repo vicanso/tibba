@@ -45,27 +45,31 @@ pub enum Error {
 
 impl From<Error> for BaseError {
     fn from(val: Error) -> Self {
-        let err = match val {
-            Error::Common { service, message } => {
-                BaseError::new(message).with_sub_category(&service)
-            }
-            Error::Build { service, source } => BaseError::new(source).with_sub_category(&service),
-            Error::Uri { service, source } => BaseError::new(source).with_sub_category(&service),
-            Error::Request {
-                service,
-                path: _,
-                source,
-            } => {
-                let status = source.status().map_or(400, |v| v.as_u16());
-                let exception = source.is_timeout() || source.is_request() || source.is_connect();
-                BaseError::new(source)
-                    .with_sub_category(&service)
-                    .with_status(status)
-                    .with_exception(exception)
-            }
-            Error::Serde { service, source } => BaseError::new(source).with_sub_category(&service),
+        // get service
+        let service = match &val {
+            Error::Common { service, .. } => service,
+            Error::Build { service, .. } => service,
+            Error::Uri { service, .. } => service,
+            Error::Request { service, .. } => service,
+            Error::Serde { service, .. } => service,
         };
-        err.with_category("request")
+
+        // match error
+        let err = match &val {
+            Error::Request { source, .. } => {
+                let status = source.status().map_or(500, |v| v.as_u16());
+                let is_network_exception = source.is_timeout() || source.is_connect();
+                BaseError::new(source)
+                    .with_status(status)
+                    .with_exception(is_network_exception)
+            }
+            Error::Common { message, .. } => BaseError::new(message),
+            Error::Build { source, .. } => BaseError::new(source),
+            Error::Uri { source, .. } => BaseError::new(source),
+            Error::Serde { source, .. } => BaseError::new(source),
+        };
+
+        err.with_sub_category(service).with_category("request")
     }
 }
 
