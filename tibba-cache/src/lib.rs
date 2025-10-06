@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use serde::Deserialize;
 use snafu::Snafu;
 use std::time::Duration;
-use substring::Substring;
 use tibba_config::Config;
 use tibba_error::Error as BaseError;
-use url::Url;
+use tibba_util::parse_multi_host_uri;
 use validator::Validate;
 
 #[derive(Debug, Snafu)]
@@ -70,67 +70,48 @@ pub struct RedisConfig {
     pub password: Option<String>,
 }
 
+fn default_pool_size() -> u32 {
+    10
+}
+
+#[derive(Deserialize, Debug, Clone)]
+struct RedisParams {
+    #[serde(default = "default_pool_size")]
+    pool_size: u32,
+    #[serde(default)]
+    #[serde(with = "humantime_serde")]
+    connection_timeout: Option<Duration>,
+    #[serde(default)]
+    #[serde(with = "humantime_serde")]
+    wait_timeout: Option<Duration>,
+    #[serde(default)]
+    #[serde(with = "humantime_serde")]
+    recycle_timeout: Option<Duration>,
+    password: Option<String>,
+}
+
 // Creates a new RedisConfig instance from the configuration
 // Parses Redis URI and extracts connection parameters
 fn new_redis_config(config: &Config) -> Result<RedisConfig> {
     let uri = config.get_str("uri", "");
-    if uri.is_empty() {
-        return Err(Error::Common {
-            category: "redis".to_string(),
-            message: "uri is empty".to_string(),
-        });
-    }
-    let start = if let Some(index) = uri.find('@') {
-        index + 1
-    } else {
-        uri.find("//").unwrap_or_default() + 2
-    };
-
-    let mut host = uri.substring(start, uri.len());
-    if let Some(end) = host.find('/') {
-        host = host.substring(0, end);
-    }
-    let mut nodes = vec![];
-    for item in host.split(',') {
-        nodes.push(uri.replace(host, item));
-    }
-    let info = Url::parse(&nodes[0]).map_err(|e| Error::Url {
+    let parsed = parse_multi_host_uri::<RedisParams>(&uri).map_err(|e| Error::Common {
         category: "redis".to_string(),
-        source: e,
+        message: e.to_string(),
     })?;
-    let mut redis_config = RedisConfig {
+    let nodes = parsed
+        .host_strings()
+        .iter()
+        .map(|item| format!("redis://{item}"))
+        .collect();
+    let query = parsed.query;
+    let redis_config = RedisConfig {
         nodes,
-        pool_size: 10,
-        connection_timeout: Duration::from_secs(3),
-        wait_timeout: Duration::from_secs(3),
-        recycle_timeout: Duration::from_secs(60),
-        password: info.password().map(|v| v.to_string()),
+        pool_size: query.pool_size,
+        connection_timeout: query.connection_timeout.unwrap_or(Duration::from_secs(3)),
+        wait_timeout: query.wait_timeout.unwrap_or(Duration::from_secs(3)),
+        recycle_timeout: query.recycle_timeout.unwrap_or(Duration::from_secs(60)),
+        password: query.password,
     };
-    for (key, value) in info.query_pairs() {
-        match key.to_string().as_str() {
-            "pool_size" => {
-                if let Ok(num) = value.parse::<u32>() {
-                    redis_config.pool_size = num;
-                }
-            }
-            "connection_timeout" => {
-                if let Ok(value) = humantime::parse_duration(&value) {
-                    redis_config.connection_timeout = value;
-                }
-            }
-            "wait_timeout" => {
-                if let Ok(value) = humantime::parse_duration(&value) {
-                    redis_config.wait_timeout = value;
-                }
-            }
-            "recycle_timeout" => {
-                if let Ok(value) = humantime::parse_duration(&value) {
-                    redis_config.recycle_timeout = value;
-                }
-            }
-            _ => (),
-        }
-    }
     redis_config.validate().map_err(|e| Error::Validate {
         category: "redis".to_string(),
         source: e,

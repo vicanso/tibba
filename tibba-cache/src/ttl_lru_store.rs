@@ -84,8 +84,28 @@ impl<T: Expired + Clone> TtlLruStore<T> {
     /// # Notes
     /// * No-op if key doesn't exist
     /// * Requires mutable access to the store
-    pub async fn del(&mut self, key: &str) {
-        let cache = &mut self.cache.write().await;
+    pub async fn del(&self, key: &str) {
+        let mut cache = self.cache.write().await;
         cache.pop(key);
+    }
+
+    /// This method should be called periodically to free up memory from expired "garbage" data.
+    pub async fn purge_expired(&self) {
+        let mut cache = self.cache.write().await;
+        // LruCache a a limited API for removal during iteration.
+        // The safest way is to collect keys and then remove them.
+        let keys_to_remove: Vec<String> = cache
+            .iter()
+            .filter(|(_, v)| v.is_expired())
+            .map(|(k, _)| k.clone())
+            .collect();
+
+        if keys_to_remove.is_empty() {
+            return;
+        }
+
+        for key in keys_to_remove {
+            cache.pop(&key);
+        }
     }
 }

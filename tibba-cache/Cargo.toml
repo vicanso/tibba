@@ -2,6 +2,12 @@
 name = "tibba-cache"
 version = "0.1.0"
 edition = "2024"
+authors = ["Tree Xie <tree.xie@outlook.com>"]
+license = "Apache-2.0"
+homepage = "https://github.com/vicanso/tibba"
+repository = "https://github.com/vicanso/tibba"
+keywords = ["tibba", "cache"]
+description = "cache for tibba"
 
 [lib]
 name = "tibba_cache"
@@ -11,17 +17,19 @@ path = "src/lib.rs"
 async-trait = { workspace = true }
 chrono = { workspace = true }
 deadpool-redis = { workspace = true }
-humantime = { workspace = true }
+humantime-serde = { workspace = true }
 lru = { workspace = true }
 redis = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 snafu = { workspace = true }
-substring = { workspace = true }
-tibba-config = { path = "../tibba-config" }
-tibba-error = { path = "../tibba-error" }
-tibba-util = { path = "../tibba-util" }
+tibba-config = { path = "../tibba-config", version = "0.1.0" }
+tibba-error = { path = "../tibba-error", version = "0.1.0" }
+tibba-util = { path = "../tibba-util", version = "0.1.1" }
 tokio = { workspace = true }
 tracing = { workspace = true }
 url = { workspace = true }
 validator = { workspace = true }
+
+[package.metadata.cargo-machete]
+ignored = ["humantime-serde"]

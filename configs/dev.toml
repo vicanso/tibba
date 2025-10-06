@@ -1,6 +1,6 @@
 # redis config
 [redis]
-uri = "redis://127.0.0.1"
+uri = "redis://127.0.0.1:6379"
 
 # session config
 [session]

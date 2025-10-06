@@ -14,12 +14,19 @@
 
 use super::{Error, RedisClient, RedisClientConn};
 use deadpool_redis::redis::{cmd, pipe};
-use redis::AsyncCommands;
+use redis::{AsyncCommands, RedisError};
 use serde::{Serialize, de::DeserializeOwned};
-use std::time::Duration;
+use std::{borrow::Cow, time::Duration};
 use tibba_util::{Algorithm, compress, decompress};
 
 type Result<T> = std::result::Result<T, Error>;
+
+fn map_err(category: &str, e: RedisError) -> Error {
+    Error::Redis {
+        category: category.to_string(),
+        source: e,
+    }
+}
 
 /// Redis cache implementation that provides various caching operations
 pub struct RedisCache {
@@ -68,21 +75,24 @@ impl RedisCache {
     /// # Returns
     /// * If prefix is empty: returns the original key
     /// * If prefix exists: returns prefix + key
-    fn get_key(&self, key: &str) -> String {
+    fn get_key<'a>(&'a self, key: &'a str) -> Cow<'a, str> {
         if self.prefix.is_empty() {
-            return key.to_string();
+            Cow::Borrowed(key)
+        } else {
+            Cow::Owned(format!("{}{}", self.prefix, key))
         }
-        self.prefix.to_string() + key
     }
     /// Pings the Redis server to check connection
     /// # Returns
     /// * `Ok(())` - Connection is successful
     /// * `Err(Error)` - Redis operation failed
     pub async fn ping(&self) -> Result<()> {
-        let () = self.conn().await?.ping().await.map_err(|e| Error::Redis {
-            category: "ping".to_string(),
-            source: e,
-        })?;
+        let () = self
+            .conn()
+            .await?
+            .ping()
+            .await
+            .map_err(|e| map_err("ping", e))?;
         Ok(())
     }
     /// Retrieves a raw value from Redis for the given key
@@ -99,10 +109,7 @@ impl RedisCache {
             .await?
             .get(key)
             .await
-            .map_err(|e| Error::Redis {
-                category: "get".to_string(),
-                source: e,
-            })?;
+            .map_err(|e| map_err("get", e))?;
 
         Ok(result)
     }
@@ -125,10 +132,7 @@ impl RedisCache {
             .await?
             .set_ex(key, value, seconds)
             .await
-            .map_err(|e| Error::Redis {
-                category: "set".to_string(),
-                source: e,
-            })?;
+            .map_err(|e| map_err("set", e))?;
         Ok(())
     }
     /// Attempts to acquire a distributed lock using Redis SET NX command
@@ -150,10 +154,7 @@ impl RedisCache {
             .arg(ttl.unwrap_or(self.ttl).as_secs())
             .query_async(&mut conn)
             .await
-            .map_err(|e| Error::Redis {
-                category: "lock".to_string(),
-                source: e,
-            })?;
+            .map_err(|e| map_err("lock", e))?;
         Ok(result)
     }
     /// Removes a key and its value from Redis
@@ -168,10 +169,7 @@ impl RedisCache {
             .await?
             .del(self.get_key(key))
             .await
-            .map_err(|e| Error::Redis {
-                category: "del".to_string(),
-                source: e,
-            })?;
+            .map_err(|e| map_err("del", e))?;
 
         Ok(())
     }
@@ -200,10 +198,7 @@ impl RedisCache {
             .arg(delta)
             .query_async::<(bool, i64)>(&mut conn)
             .await
-            .map_err(|e| Error::Redis {
-                category: "incr".to_string(),
-                source: e,
-            })?;
+            .map_err(|e| map_err("incr", e))?;
         Ok(count)
     }
     /// Sets a value in Redis with an optional TTL
@@ -278,10 +273,7 @@ impl RedisCache {
             .await?
             .ttl(self.get_key(key))
             .await
-            .map_err(|e| Error::Redis {
-                category: "ttl".to_string(),
-                source: e,
-            })?;
+            .map_err(|e| map_err("ttl", e))?;
 
         Ok(result)
     }
@@ -299,12 +291,46 @@ impl RedisCache {
             .await?
             .get_del(self.get_key(key))
             .await
-            .map_err(|e| Error::Redis {
-                category: "get_del".to_string(),
-                source: e,
-            })?;
+            .map_err(|e| map_err("get_del", e))?;
 
         Ok(result)
+    }
+    async fn set_struct_compressed<T>(
+        &self,
+        key: &str,
+        value: &T,
+        ttl: Option<Duration>,
+        algorithm: Algorithm,
+    ) -> Result<()>
+    where
+        T: ?Sized + Serialize,
+    {
+        let value = serde_json::to_vec(value).map_err(|e| Error::Common {
+            category: "serde_json".to_string(),
+            message: e.to_string(),
+        })?;
+        let buf = compress(&value, algorithm).map_err(|e| Error::Compression { source: e })?;
+        self.set_value(&self.get_key(key), &buf, ttl).await
+    }
+
+    async fn get_struct_compressed<T>(&self, key: &str, algorithm: Algorithm) -> Result<Option<T>>
+    where
+        T: DeserializeOwned,
+    {
+        let value: Option<Vec<u8>> = self.get_value(&self.get_key(key)).await?;
+        match value {
+            None => Ok(None),
+            Some(compressed_buf) => {
+                let buf = decompress(&compressed_buf, algorithm)
+                    .map_err(|e| Error::Compression { source: e })?;
+                serde_json::from_slice(&buf)
+                    .map_err(|e| Error::Common {
+                        category: "serde_json".to_string(),
+                        message: e.to_string(),
+                    })
+                    .map(Some)
+            }
+        }
     }
     /// Serializes a struct to JSON, compresses it with LZ4, and stores in Redis
     /// # Type Parameters
@@ -319,13 +345,8 @@ impl RedisCache {
     where
         T: ?Sized + Serialize,
     {
-        let value = serde_json::to_vec(&value).map_err(|e| Error::Common {
-            category: "set_struct_lz4".to_string(),
-            message: e.to_string(),
-        })?;
-        let buf = compress(&value, Algorithm::Lz4).map_err(|e| Error::Compression { source: e })?;
-        self.set_value(&self.get_key(key), &buf, ttl).await?;
-        Ok(())
+        self.set_struct_compressed(key, value, ttl, Algorithm::Lz4)
+            .await
     }
     /// Retrieves, decompresses (LZ4), and deserializes a struct from Redis
     /// # Type Parameters
@@ -340,21 +361,7 @@ impl RedisCache {
     where
         T: DeserializeOwned,
     {
-        let value: Vec<u8> = self.get_value(&self.get_key(key)).await?;
-
-        if value.is_empty() {
-            return Ok(None);
-        }
-
-        let buf = decompress(value.as_slice(), Algorithm::Lz4)
-            .map_err(|e| Error::Compression { source: e })?;
-
-        let deserializer = &mut serde_json::Deserializer::from_slice(&buf);
-        let result = T::deserialize(deserializer).map_err(|e| Error::Common {
-            category: "get_struct_lz4".to_string(),
-            message: e.to_string(),
-        })?;
-        Ok(Some(result))
+        self.get_struct_compressed(key, Algorithm::Lz4).await
     }
     /// Serializes a struct to JSON, compresses it with Zstd, and stores in Redis
     /// # Type Parameters
@@ -374,14 +381,8 @@ impl RedisCache {
     where
         T: ?Sized + Serialize,
     {
-        let value = serde_json::to_vec(&value).map_err(|e| Error::Common {
-            category: "set_struct_zstd".to_string(),
-            message: e.to_string(),
-        })?;
-        let buf =
-            compress(&value, Algorithm::default()).map_err(|e| Error::Compression { source: e })?;
-        self.set_value(&self.get_key(key), &buf, ttl).await?;
-        Ok(())
+        self.set_struct_compressed(key, value, ttl, Algorithm::default())
+            .await
     }
     /// Retrieves, decompresses (Zstd), and deserializes a struct from Redis
     /// # Type Parameters
@@ -396,20 +397,6 @@ impl RedisCache {
     where
         T: DeserializeOwned,
     {
-        let value: Vec<u8> = self.get_value(&self.get_key(key)).await?;
-
-        if value.is_empty() {
-            return Ok(None);
-        }
-
-        let buf = decompress(value.as_slice(), Algorithm::default())
-            .map_err(|e| Error::Compression { source: e })?;
-
-        let deserializer = &mut serde_json::Deserializer::from_slice(&buf);
-        let result = T::deserialize(deserializer).map_err(|e| Error::Common {
-            category: "get_struct_zstd".to_string(),
-            message: e.to_string(),
-        })?;
-        Ok(Some(result))
+        self.get_struct_compressed(key, Algorithm::default()).await
     }
 }
