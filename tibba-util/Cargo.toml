@@ -1,6 +1,6 @@
 [package]
 name = "tibba-util"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 authors = ["Tree Xie <tree.xie@outlook.com>"]
 license = "Apache-2.0"
@@ -27,7 +27,6 @@ nanoid = { workspace = true }
 once_cell = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-serde_path_to_error = { workspace = true }
 serde_urlencoded = { workspace = true }
 sha2 = { workspace = true }
 snafu = { workspace = true }

@@ -34,6 +34,10 @@ pub enum Error {
     },
     #[snafu(display("{source}"))]
     Axum { source: axum::Error },
+    #[snafu(display("{message}"))]
+    Invalid { message: String },
+    #[snafu(display("{source}"))]
+    Deserialize { source: serde_urlencoded::de::Error },
 }
 
 impl From<Error> for BaseError {
@@ -44,6 +48,8 @@ impl From<Error> for BaseError {
             Error::InvalidHeaderName { .. } => "invalid_header_name",
             Error::InvalidHeaderValue { .. } => "invalid_header_value",
             Error::Axum { .. } => "axum",
+            Error::Invalid { .. } => "invalid",
+            Error::Deserialize { .. } => "deserialize",
         };
         // pass `val` to `new`, not the internal `source`.
         BaseError::new(val)
@@ -81,6 +87,7 @@ mod http;
 mod request;
 mod response;
 mod string;
+mod uri;
 mod value;
 
 pub use compression::*;
@@ -89,4 +96,5 @@ pub use http::*;
 pub use request::*;
 pub use response::*;
 pub use string::*;
+pub use uri::*;
 pub use value::*;
