@@ -14,11 +14,11 @@
 
 use opendal::Operator;
 use opendal::layers::MimeGuessLayer;
+use serde::Deserialize;
 use snafu::Snafu;
-use std::collections::HashMap;
 use tibba_config::Config;
 use tibba_error::Error as BaseError;
-use url::Url;
+use tibba_util::parse_uri;
 use validator::Validate;
 
 mod storage;
@@ -48,6 +48,8 @@ pub enum Error {
     ParseUrl { source: url::ParseError },
     #[snafu(display("validate {source}"))]
     Validate { source: validator::ValidationErrors },
+    #[snafu(display("{message}"))]
+    Invalid { message: String },
 }
 
 impl From<Error> for BaseError {
@@ -60,6 +62,7 @@ impl From<Error> for BaseError {
             Error::Validate { source } => BaseError::new(source)
                 .with_sub_category("validate")
                 .with_exception(true),
+            Error::Invalid { message } => BaseError::new(message).with_exception(true),
         };
         err.with_category("open_dal")
     }
@@ -67,52 +70,33 @@ impl From<Error> for BaseError {
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
-struct StorageParams {
-    endpoint: String,
-    path: String,
-    query: HashMap<String, String>,
-}
-
-fn parse_params(url: &str) -> Result<StorageParams> {
-    let info = Url::parse(url).map_err(|e| Error::ParseUrl { source: e })?;
-    let mut endpoint = format!(
-        "{}://{}",
-        info.scheme(),
-        info.host().map(|v| v.to_string()).unwrap_or_default()
-    );
-    if let Some(port) = info.port() {
-        endpoint = format!("{endpoint}:{port}");
-    }
-
-    let mut query = HashMap::new();
-    info.query_pairs().for_each(|(k, v)| {
-        query.insert(k.to_string(), v.to_string());
-    });
-
-    Ok(StorageParams {
-        endpoint,
-        path: info.path().to_string(),
-        query,
-    })
+#[derive(Deserialize, Debug, PartialEq)]
+struct S3Params {
+    bucket: String,
+    region: Option<String>,
+    access_key_id: Option<String>,
+    secret_access_key: Option<String>,
 }
 
 /// Create a new S3 storage.
 fn new_s3_dal(url: &str) -> Result<Storage> {
-    let params = parse_params(url)?;
-    let mut builder = opendal::services::S3::default().endpoint(&params.endpoint);
-    if !params.path.is_empty() {
-        builder = builder.root(&params.path);
+    let parsed = parse_uri::<S3Params>(url).map_err(|e| Error::Invalid {
+        message: e.to_string(),
+    })?;
+    // let params = parse_params(url)?;
+    let mut builder = opendal::services::S3::default().endpoint(&parsed.endpoint());
+    if let Some(path) = parsed.path {
+        builder = builder.root(path);
     }
-    if let Some(bucket) = params.query.get("bucket") {
-        builder = builder.bucket(bucket);
-    }
-    if let Some(region) = params.query.get("region") {
+    let query = parsed.query;
+    builder = builder.bucket(&query.bucket);
+    if let Some(region) = &query.region {
         builder = builder.region(region);
     }
-    if let Some(access_key_id) = params.query.get("access_key_id") {
+    if let Some(access_key_id) = &query.access_key_id {
         builder = builder.access_key_id(access_key_id);
     }
-    if let Some(secret_access_key) = params.query.get("secret_access_key") {
+    if let Some(secret_access_key) = &query.secret_access_key {
         builder = builder.secret_access_key(secret_access_key);
     }
 

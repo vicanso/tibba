@@ -17,7 +17,7 @@ use snafu::Snafu;
 use std::time::Duration;
 use tibba_config::Config;
 use tibba_error::Error as BaseError;
-use tibba_util::parse_multi_host_uri;
+use tibba_util::parse_uri;
 use validator::Validate;
 
 #[derive(Debug, Snafu)]
@@ -94,7 +94,7 @@ struct RedisParams {
 // Parses Redis URI and extracts connection parameters
 fn new_redis_config(config: &Config) -> Result<RedisConfig> {
     let uri = config.get_str("uri", "");
-    let parsed = parse_multi_host_uri::<RedisParams>(&uri).map_err(|e| Error::Common {
+    let parsed = parse_uri::<RedisParams>(&uri).map_err(|e| Error::Common {
         category: "redis".to_string(),
         message: e.to_string(),
     })?;

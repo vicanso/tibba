@@ -2,6 +2,12 @@
 name = "tibba-opendal"
 version = "0.1.0"
 edition = "2024"
+authors = ["Tree Xie <tree.xie@outlook.com>"]
+license = "Apache-2.0"
+homepage = "https://github.com/vicanso/tibba"
+repository = "https://github.com/vicanso/tibba"
+keywords = ["tibba", "opendal"]
+description = "opendal for tibba"
 
 [lib]
 name = "tibba_opendal"
@@ -10,7 +16,9 @@ path = "src/lib.rs"
 [dependencies]
 opendal = { workspace = true }
 snafu = { workspace = true }
-tibba-config = { path = "../tibba-config" }
-tibba-error = { path = "../tibba-error" }
+serde = { workspace = true }
+tibba-config = { path = "../tibba-config", version = "0.1.0" }
+tibba-error = { path = "../tibba-error", version = "0.1.0" }
+tibba-util = { path = "../tibba-util", version = "0.1.2" }
 url = { workspace = true }
 validator = { workspace = true }

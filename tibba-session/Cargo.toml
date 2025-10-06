@@ -22,7 +22,7 @@ snafu = { workspace = true }
 serde = { workspace = true }
 tibba-cache = { path = "../tibba-cache", version = "0.1.0" }
 tibba-error = { path = "../tibba-error", version = "0.1.0" }
-tibba-util = { path = "../tibba-util", version = "0.1.1" }
+tibba-util = { path = "../tibba-util", version = "0.1.2" }
 tibba-state = { path = "../tibba-state", version = "0.1.0" }
 time = { workspace = true }
 tracing = { workspace = true }

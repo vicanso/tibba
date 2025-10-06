@@ -5101,9 +5101,11 @@ name = "tibba-opendal"
 version = "0.1.0"
 dependencies = [
  "opendal",
+ "serde",
  "snafu",
  "tibba-config",
  "tibba-error",
+ "tibba-util",
  "url",
  "validator",
 ]
@@ -5263,7 +5265,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-util"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "axum",
  "axum-extra",
