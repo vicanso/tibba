@@ -2,6 +2,12 @@
 name = "tibba-scheduler"
 version = "0.1.0"
 edition = "2024"
+authors = ["Tree Xie <tree.xie@outlook.com>"]
+license = "Apache-2.0"
+homepage = "https://github.com/vicanso/tibba"
+repository = "https://github.com/vicanso/tibba"
+keywords = ["tibba", "scheduler"]
+description = "scheduler for tibba"
 
 [lib]
 name = "tibba_scheduler"
@@ -11,6 +17,6 @@ path = "src/lib.rs"
 [dependencies]
 dashmap = { workspace = true }
 once_cell = { workspace = true }
-tibba-error = { path = "../tibba-error" }
+tibba-error = { path = "../tibba-error", version = "0.1.0" }
 tokio-cron-scheduler = { workspace = true }
 tracing = { workspace = true }

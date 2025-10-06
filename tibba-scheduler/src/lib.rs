@@ -36,14 +36,9 @@ static JOB_TASKS: Lazy<DashMap<String, JobTask>> = Lazy::new(DashMap::new);
 ///
 /// # Returns
 /// * `JobTask` - Job task
-pub fn register_job_task(name: &str, job: Job) {
-    JOB_TASKS.insert(
-        name.to_string(),
-        JobTask {
-            name: name.to_string(),
-            job,
-        },
-    );
+pub fn register_job_task(name: impl Into<String>, job: Job) {
+    let name = name.into();
+    JOB_TASKS.insert(name.clone(), JobTask { name, job });
 }
 
 /// Run scheduler jobs
