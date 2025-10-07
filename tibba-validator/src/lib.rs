@@ -12,9 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::borrow::Cow;
 use std::env;
 use validator::ValidationError;
+
+type Result<T> = std::result::Result<T, ValidationError>;
 
 mod common;
 mod user;
@@ -23,8 +24,30 @@ fn is_disabled(code: &str) -> bool {
     let key = code.replace("-", "_").to_lowercase();
     env::var(&key).unwrap_or_default() == "*"
 }
-fn new_error(code: &'static str, message: &'static str) -> ValidationError {
-    ValidationError::new(code).with_message(Cow::from(message))
+fn new_error(code: &'static str, message: String) -> ValidationError {
+    ValidationError::new(code).with_message(message.into())
+}
+
+fn validate_ascii_name(
+    name: &str,
+    code: &'static str,
+    max_len: usize,
+    field_name: &str,
+) -> Result<()> {
+    if name.is_empty() {
+        // 修复：直接传递 String，而不是它的引用
+        return Err(new_error(code, format!("{field_name} cannot be empty")));
+    }
+    if !name.is_ascii() {
+        return Err(new_error(code, format!("{field_name} must be ASCII")));
+    }
+    if name.len() > max_len {
+        return Err(new_error(
+            code,
+            format!("{field_name} must be less than {max_len} characters"),
+        ));
+    }
+    Ok(())
 }
 
 // user validate

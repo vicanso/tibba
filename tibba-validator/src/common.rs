@@ -16,7 +16,7 @@ use super::{
     CODE_FILE_GROUP, CODE_FILE_NAME, CODE_IMAGE_FORMAT, CODE_IMAGE_QUALITY, CODE_LISTEN_ADDR,
     CODE_SCHEMA_NAME, CODE_SHA256, CODE_UUID,
 };
-use super::{is_disabled, new_error};
+use super::{is_disabled, new_error, validate_ascii_name};
 use std::net::ToSocketAddrs;
 use std::path::Path;
 use validator::ValidationError;
@@ -32,11 +32,11 @@ pub fn x_listen_addr(addr: &str) -> Result<()> {
         let port = value.parse::<u16>().map_err(|_| {
             new_error(
                 CODE_LISTEN_ADDR,
-                "port must be a number between 1 and 65535",
+                "port must be a number between 1 and 65535".to_string(),
             )
         })?;
         if port == 0 {
-            return Err(new_error(CODE_LISTEN_ADDR, "port cannot be 0"));
+            return Err(new_error(CODE_LISTEN_ADDR, "port cannot be 0".to_string()));
         }
         return Ok(());
     }
@@ -44,9 +44,12 @@ pub fn x_listen_addr(addr: &str) -> Result<()> {
     // validate address to socket addrs
     let addrs = addr
         .to_socket_addrs()
-        .map_err(|_| new_error(CODE_LISTEN_ADDR, "invalid address format"))?;
+        .map_err(|_| new_error(CODE_LISTEN_ADDR, "invalid address format".to_string()))?;
     if addrs.len() == 0 {
-        return Err(new_error(CODE_LISTEN_ADDR, "no valid address found"));
+        return Err(new_error(
+            CODE_LISTEN_ADDR,
+            "no valid address found".to_string(),
+        ));
     }
     Ok(())
 }
@@ -56,7 +59,7 @@ pub fn x_uuid(uuid: &str) -> Result<()> {
         return Ok(());
     }
     if uuid.len() != 36 {
-        return Err(new_error(CODE_UUID, "invalid uuid format"));
+        return Err(new_error(CODE_UUID, "invalid uuid format".to_string()));
     }
     Ok(())
 }
@@ -66,7 +69,7 @@ pub fn x_sha256(sha256: &str) -> Result<()> {
         return Ok(());
     }
     if sha256.len() != 64 {
-        return Err(new_error(CODE_SHA256, "invalid sha256 format"));
+        return Err(new_error(CODE_SHA256, "invalid sha256 format".to_string()));
     }
     Ok(())
 }
@@ -76,12 +79,15 @@ pub fn x_file_name(name: &str) -> Result<()> {
         return Ok(());
     }
     if name.is_empty() {
-        return Err(new_error(CODE_FILE_NAME, "file name cannot be empty"));
+        return Err(new_error(
+            CODE_FILE_NAME,
+            "file name cannot be empty".to_string(),
+        ));
     }
     if Path::new(name).extension().is_none() {
         return Err(new_error(
             CODE_FILE_NAME,
-            "file name must have an extension",
+            "file name must have an extension".to_string(),
         ));
     }
     Ok(())
@@ -91,19 +97,7 @@ pub fn x_file_group(group: &str) -> Result<()> {
     if is_disabled(CODE_FILE_GROUP) {
         return Ok(());
     }
-    if group.is_empty() {
-        return Err(new_error(CODE_FILE_GROUP, "file group cannot be empty"));
-    }
-    if !group.is_ascii() {
-        return Err(new_error(CODE_FILE_GROUP, "file group must be ASCII"));
-    }
-    if group.len() > 100 {
-        return Err(new_error(
-            CODE_FILE_GROUP,
-            "file group must be less than 100 characters",
-        ));
-    }
-    Ok(())
+    validate_ascii_name(group, CODE_FILE_GROUP, 100, "file group")
 }
 
 pub fn x_image_format(format: &str) -> Result<()> {
@@ -111,7 +105,10 @@ pub fn x_image_format(format: &str) -> Result<()> {
         return Ok(());
     }
     if !["avif", "webp", "png", "jpeg"].contains(&format) {
-        return Err(new_error(CODE_IMAGE_FORMAT, "invalid image format"));
+        return Err(new_error(
+            CODE_IMAGE_FORMAT,
+            "invalid image format".to_string(),
+        ));
     }
     Ok(())
 }
@@ -123,7 +120,7 @@ pub fn x_image_quality(quality: u8) -> Result<()> {
     if !(50..=100).contains(&quality) {
         return Err(new_error(
             CODE_IMAGE_QUALITY,
-            "image quality must be between 50 and 100",
+            "image quality must be between 50 and 100".to_string(),
         ));
     }
     Ok(())
@@ -133,17 +130,5 @@ pub fn x_schema_name(name: &str) -> Result<()> {
     if is_disabled(CODE_SCHEMA_NAME) {
         return Ok(());
     }
-    if name.is_empty() {
-        return Err(new_error(CODE_SCHEMA_NAME, "schema name cannot be empty"));
-    }
-    if !name.is_ascii() {
-        return Err(new_error(CODE_SCHEMA_NAME, "schema name must be ASCII"));
-    }
-    if name.len() > 50 {
-        return Err(new_error(
-            CODE_SCHEMA_NAME,
-            "schema name must be less than 50 characters",
-        ));
-    }
-    Ok(())
+    validate_ascii_name(name, CODE_SCHEMA_NAME, 50, "schema name")
 }
