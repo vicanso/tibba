@@ -14,16 +14,19 @@
 
 use super::Error;
 use serde::de::DeserializeOwned;
+use url::Url;
 
 type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct ParsedUri<'a, Q> {
+    pub origin_uri: &'a str,
     pub schema: &'a str,
     pub username: Option<&'a str>,
     pub password: Option<&'a str>,
     pub hosts: Vec<Host<'a>>,
     pub path: Option<&'a str>,
+    pub raw_query: Option<&'a str>,
     pub query: Q,
 }
 
@@ -50,6 +53,19 @@ impl<'a, Q> ParsedUri<'a, Q> {
             return String::new();
         }
         format!("{}://{}", self.schema, self.host_strings()[0])
+    }
+    pub fn url(&self) -> Result<Url> {
+        let url = if self.hosts.len() == 1 {
+            self.origin_uri.to_string()
+        } else {
+            let arr = self.host_strings();
+            let hosts = arr.join(",");
+            self.origin_uri.replace(&hosts, &arr[0]).to_string()
+        };
+
+        Url::parse(&url).map_err(|e| Error::Invalid {
+            message: e.to_string(),
+        })
     }
 }
 
@@ -104,10 +120,17 @@ where
     let query: Q =
         serde_urlencoded::from_str(query_str).map_err(|e| Error::Deserialize { source: e })?;
 
+    let raw_query = if query_str.is_empty() {
+        None
+    } else {
+        Some(query_str)
+    };
     Ok(ParsedUri {
+        origin_uri: uri,
         schema,
         username,
         password,
+        raw_query,
         hosts: hosts?,
         path,
         query,
