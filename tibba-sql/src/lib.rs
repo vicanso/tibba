@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use serde::Deserialize;
 use snafu::Snafu;
 use sqlx::MySqlPool;
 use sqlx::pool::PoolOptions;
@@ -20,8 +21,8 @@ use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
 use tibba_config::Config;
 use tibba_error::Error as BaseError;
+use tibba_util::parse_uri;
 use tracing::info;
-use url::Url;
 use validator::Validate;
 
 #[derive(Debug, Clone, Default, Validate)]
@@ -40,6 +41,31 @@ pub struct DatabaseConfig {
     pub password: Option<String>,
 }
 
+fn default_max_connections() -> u32 {
+    10
+}
+fn default_min_connections() -> u32 {
+    2
+}
+
+#[derive(Deserialize, Debug, Clone)]
+struct DatabaseQuery {
+    #[serde(default = "default_max_connections")]
+    pub max_connections: u32,
+    #[serde(default = "default_min_connections")]
+    pub min_connections: u32,
+    #[serde(default)]
+    #[serde(with = "humantime_serde")]
+    pub connect_timeout: Option<Duration>,
+    #[serde(default)]
+    #[serde(with = "humantime_serde")]
+    pub idle_timeout: Option<Duration>,
+    #[serde(default)]
+    #[serde(with = "humantime_serde")]
+    pub max_lifetime: Option<Duration>,
+    pub test_before_acquire: Option<bool>,
+}
+
 // Creates a new DatabaseConfig instance from the configuration
 fn new_database_config(config: &Config) -> Result<DatabaseConfig> {
     let origin_url = config.get_str("uri", "");
@@ -49,66 +75,31 @@ fn new_database_config(config: &Config) -> Result<DatabaseConfig> {
             message: "uri is empty".to_string(),
         });
     }
-    let mut url = origin_url.clone();
-    let info = Url::parse(&url).unwrap();
+    let url = origin_url.clone();
+    let parsed = parse_uri::<DatabaseQuery>(&url).map_err(|e| Error::Common {
+        category: "config".to_string(),
+        message: e.to_string(),
+    })?;
 
-    let mut max_connections = 10;
-    let mut min_connections = 2;
-    let mut connect_timeout = Duration::from_secs(3);
-    let mut idle_timeout = Duration::from_secs(60);
-    let mut max_lifetime = Duration::from_secs(6 * 60 * 60);
-    let mut test_before_acquire = true;
+    let mut url = parsed.url().map_err(|e| Error::Common {
+        category: "config".to_string(),
+        message: e.to_string(),
+    })?;
+    url.set_query(None);
 
-    if let Some(query) = info.query() {
-        url = url.replace(&format!("?{query}"), "");
-        for (key, value) in info.query_pairs() {
-            match key.to_string().as_str() {
-                "max_connections" => {
-                    let value = value.parse::<u32>().unwrap_or(0);
-                    if value > 0 {
-                        max_connections = value;
-                    }
-                }
-                "min_connections" => {
-                    let value = value.parse::<u32>().unwrap_or(0);
-                    if value > 0 {
-                        min_connections = value;
-                    }
-                }
-                "connect_timeout" => {
-                    if let Ok(value) = humantime::parse_duration(&value) {
-                        connect_timeout = value;
-                    }
-                }
-                "idle_timeout" => {
-                    if let Ok(value) = humantime::parse_duration(&value) {
-                        idle_timeout = value;
-                    }
-                }
-                "max_lifetime" => {
-                    if let Ok(value) = humantime::parse_duration(&value) {
-                        max_lifetime = value;
-                    }
-                }
-                "test_before_acquire" => {
-                    if let Ok(value) = value.parse::<bool>() {
-                        test_before_acquire = value;
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
+    let query = &parsed.query;
     let database_config = DatabaseConfig {
         origin_url,
-        url,
-        max_connections,
-        min_connections,
-        connect_timeout,
-        idle_timeout,
-        max_lifetime,
-        test_before_acquire,
-        password: info.password().map(|v| v.to_string()),
+        url: url.to_string(),
+        max_connections: query.max_connections,
+        min_connections: query.min_connections,
+        connect_timeout: query.connect_timeout.unwrap_or(Duration::from_secs(3)),
+        idle_timeout: query.idle_timeout.unwrap_or(Duration::from_secs(60)),
+        max_lifetime: query
+            .max_lifetime
+            .unwrap_or(Duration::from_secs(6 * 60 * 60)),
+        test_before_acquire: query.test_before_acquire.unwrap_or(true),
+        password: parsed.password.map(|v| v.to_string()),
     };
     database_config
         .validate()
@@ -168,39 +159,38 @@ pub async fn new_mysql_pool(
     let url = database_config.url.replace(&password, "***");
     let category = "sqlx";
     info!(category, url, "connect to database");
-    let after_connect_pool_stat = pool_stat.clone();
-    let before_acquire_pool_stat = pool_stat.clone();
-    let pool = PoolOptions::new()
-        .after_connect(move |_conn, _meta| {
-            Box::pin({
-                let pool_stat = after_connect_pool_stat.clone();
-                async move {
-                    if let Some(pool_stat) = &pool_stat {
-                        pool_stat.connected.fetch_add(1, Ordering::Relaxed);
-                    }
-                    Ok(())
-                }
-            })
-        })
-        .before_acquire(move |_conn, meta| {
-            Box::pin({
-                let pool_stat = before_acquire_pool_stat.clone();
-                async move {
-                    let idle = meta.idle_for.as_secs();
-                    info!(category, age = meta.age.as_secs(), idle, "before acquire");
-                    if let Some(pool_stat) = &pool_stat {
-                        pool_stat.executions.fetch_add(1, Ordering::Relaxed);
-                        pool_stat.idle_for.fetch_add(idle, Ordering::Relaxed);
-                    }
-                    Ok(true)
-                }
-            })
-        })
+
+    let mut options = PoolOptions::new()
         .max_connections(database_config.max_connections)
         .min_connections(database_config.min_connections)
         .idle_timeout(database_config.idle_timeout)
         .max_lifetime(database_config.max_lifetime)
-        .test_before_acquire(database_config.test_before_acquire)
+        .test_before_acquire(database_config.test_before_acquire);
+
+    if let Some(pool_stat) = pool_stat {
+        let after_connect_pool_stat = pool_stat.clone();
+        let before_acquire_pool_stat = pool_stat.clone();
+        options = options
+            .after_connect(move |_conn, _meta| {
+                let stat = after_connect_pool_stat.clone();
+                Box::pin(async move {
+                    stat.connected.fetch_add(1, Ordering::Relaxed);
+                    Ok(())
+                })
+            })
+            .before_acquire(move |_conn, meta| {
+                let stat = before_acquire_pool_stat.clone();
+                Box::pin(async move {
+                    let idle = meta.idle_for.as_secs();
+                    info!(category, age = meta.age.as_secs(), idle, "before acquire");
+                    stat.executions.fetch_add(1, Ordering::Relaxed);
+                    stat.idle_for.fetch_add(idle, Ordering::Relaxed);
+                    Ok(true)
+                })
+            });
+    }
+
+    let pool = options
         .connect(database_config.url.as_str())
         .await
         .map_err(|e| Error::Sqlx { source: e })?;

@@ -23,7 +23,7 @@ tibba-cache = { path = "../tibba-cache", version = "0.1.0" }
 tibba-error = { path = "../tibba-error", version = "0.1.0" }
 tibba-session = { path = "../tibba-session", version = "0.1.0" }
 tibba-state = { path = "../tibba-state", version = "0.1.0" }
-tibba-util = { path = "../tibba-util", version = "0.1.2" }
+tibba-util = { path = "../tibba-util", version = "0.1.3" }
 tokio = { workspace = true }
 tracing = { workspace = true }
 urlencoding = { workspace = true }
