@@ -20,7 +20,7 @@ use axum::http::HeaderValue;
 use axum::http::header;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
-use imageoptimize::ProcessImage;
+use imageoptimize::{ProcessImage, run_with_image};
 use serde::Deserialize;
 use sqlx::MySqlPool;
 use std::collections::HashMap;
@@ -146,7 +146,7 @@ async fn get_file(
         ]);
         tasks.push(vec!["diff".to_string()]);
 
-        let image = imageoptimize::run_with_image(image, tasks)
+        let image = run_with_image(image, tasks)
             .await
             .map_err(|e| Error::new(e).with_category(ERROR_CATEGORY))?;
 

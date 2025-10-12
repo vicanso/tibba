@@ -25,6 +25,11 @@ mod storage;
 
 pub use storage::*;
 
+const MYSQL_PREFIX: &str = "mysql://";
+const FS_PREFIX: &str = "file://";
+const HTTP_PREFIX: &str = "http://";
+const HTTPS_PREFIX: &str = "https://";
+
 #[derive(Debug, Clone, Default, Validate)]
 pub struct OpenDalConfig {
     #[validate(length(min = 10))]
@@ -123,6 +128,34 @@ fn new_mysql_dal(url: &str) -> Result<Storage> {
         .finish();
     Ok(Storage::new(dal))
 }
+fn new_fs_dal(url: &str) -> Result<Storage> {
+    let root = url.strip_prefix(FS_PREFIX).unwrap_or_default();
+    if root.len() < 2 {
+        return Err(Error::Invalid {
+            message: "root is empty".to_string(),
+        });
+    }
+    let builder =
+        opendal::services::Fs::default().root(url.strip_prefix(FS_PREFIX).unwrap_or_default());
+    let dal = Operator::new(builder)
+        .map_err(|e| Error::OpenDal {
+            source: Box::new(e),
+        })?
+        .layer(MimeGuessLayer::default())
+        .finish();
+    Ok(Storage::new(dal))
+}
+
+fn new_http_dal(url: &str) -> Result<Storage> {
+    let builder = opendal::services::Http::default().endpoint(url);
+    let dal = Operator::new(builder)
+        .map_err(|e| Error::OpenDal {
+            source: Box::new(e),
+        })?
+        .layer(MimeGuessLayer::default())
+        .finish();
+    Ok(Storage::new(dal))
+}
 
 /// Create a new storage from config.
 /// If it's a MySQL URL, it will create a MySQL storage.
@@ -130,9 +163,10 @@ fn new_mysql_dal(url: &str) -> Result<Storage> {
 pub fn new_opendal_storage(config: &Config) -> Result<Storage> {
     let opendal_config = new_opendal_config(config)?;
     let url = opendal_config.url.as_str();
-    if url.starts_with("mysql://") {
-        new_mysql_dal(url)
-    } else {
-        new_s3_dal(url)
+    match url {
+        url if url.starts_with(MYSQL_PREFIX) => new_mysql_dal(url),
+        url if url.starts_with(FS_PREFIX) => new_fs_dal(url),
+        url if url.starts_with(HTTP_PREFIX) || url.starts_with(HTTPS_PREFIX) => new_http_dal(url),
+        _ => new_s3_dal(url),
     }
 }

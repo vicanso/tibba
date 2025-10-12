@@ -2356,9 +2356,9 @@ dependencies = [
 
 [[package]]
 name = "imageoptimize"
-version = "0.2.5"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "579e7b82e41b484380faf38994232d1c6df7191117ea26bb9399513be79696f2"
+checksum = "6fb24299e71989720ad25137137bb700f6504240344f83608b5f52520eb4ef98"
 dependencies = [
  "async-trait",
  "avif-decode",
@@ -5098,7 +5098,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-opendal"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "opendal",
  "serde",
