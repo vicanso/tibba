@@ -5064,7 +5064,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-middleware"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "axum",
  "axum-extra",
@@ -5072,7 +5072,6 @@ dependencies = [
  "snafu",
  "tibba-cache",
  "tibba-error",
- "tibba-session",
  "tibba-state",
  "tibba-util",
  "tokio",
@@ -5226,11 +5225,12 @@ dependencies = [
 
 [[package]]
 name = "tibba-session"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "axum",
  "axum-extra",
  "cookie",
+ "scopeguard",
  "serde",
  "snafu",
  "tibba-cache",

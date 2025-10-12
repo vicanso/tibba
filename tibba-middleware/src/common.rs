@@ -24,7 +24,7 @@ use tibba_state::CTX;
 use tokio::time::sleep;
 use tracing::debug;
 
-type Result<T> = std::result::Result<T, tibba_error::Error>;
+type Result<T, E = Error> = std::result::Result<T, E>;
 
 /// Parameters for configuring the wait middleware
 /// Controls the waiting behavior after request processing
@@ -102,7 +102,7 @@ pub async fn validate_captcha(
     State((magic_code, cache)): State<(String, &'static RedisCache)>,
     req: Request,
     next: Next,
-) -> Result<Response> {
+) -> Result<Response, tibba_error::Error> {
     // Category name for error handling
     let category = "captcha";
 

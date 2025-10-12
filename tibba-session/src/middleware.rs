@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use super::{Session, SessionParams};
 use axum::extract::Request;
 use axum::extract::State;
 use axum::middleware::Next;
@@ -19,7 +20,6 @@ use axum::response::Response;
 use scopeguard::defer;
 use std::sync::Arc;
 use tibba_cache::RedisCache;
-use tibba_session::{Session, SessionParams};
 use tracing::debug;
 
 type Result<T, E = tibba_error::Error> = std::result::Result<T, E>;

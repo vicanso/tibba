@@ -15,8 +15,10 @@
 use snafu::Snafu;
 use tibba_error::Error as BaseError;
 
+mod middleware;
 mod session;
 
+pub use middleware::*;
 pub use session::*;
 
 #[derive(Debug, Snafu)]
