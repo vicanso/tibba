@@ -164,17 +164,21 @@ async fn captcha(
 
 pub struct CommonRouterParams {
     pub state: &'static AppState,
-    pub cache: &'static RedisCache,
+    pub cache: Option<&'static RedisCache>,
     pub secret: String,
     pub commit_id: String,
 }
 
 pub fn new_common_router(params: CommonRouterParams) -> Router {
-    Router::new()
+    let r = Router::new()
         .route("/ping", get(ping).with_state(params.state))
         .route(
             "/commons/application",
             get(get_application_info).with_state(params.state),
-        )
-        .route("/commons/captcha", get(captcha).with_state(params.cache))
+        );
+    let Some(cache) = params.cache else {
+        return r;
+    };
+
+    r.route("/commons/captcha", get(captcha).with_state(cache))
 }
