@@ -1,6 +1,6 @@
 [package]
 name = "tibba-opendal"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 authors = ["Tree Xie <tree.xie@outlook.com>"]
 license = "Apache-2.0"
@@ -14,7 +14,9 @@ name = "tibba_opendal"
 path = "src/lib.rs"
 
 [dependencies]
+dirs = { workspace = true }
 opendal = { workspace = true }
+path-absolutize = { workspace = true }
 snafu = { workspace = true }
 serde = { workspace = true }
 tibba-config = { path = "../tibba-config", version = "0.1.0" }

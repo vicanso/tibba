@@ -14,8 +14,10 @@
 
 use opendal::Operator;
 use opendal::layers::MimeGuessLayer;
+use path_absolutize::Absolutize;
 use serde::Deserialize;
 use snafu::Snafu;
+use std::path::PathBuf;
 use tibba_config::Config;
 use tibba_error::Error as BaseError;
 use tibba_util::parse_uri;
@@ -27,18 +29,18 @@ pub use storage::*;
 
 const MYSQL_PREFIX: &str = "mysql://";
 const FS_PREFIX: &str = "file://";
-const HTTP_PREFIX: &str = "http://";
-const HTTPS_PREFIX: &str = "https://";
 
 #[derive(Debug, Clone, Default, Validate)]
 pub struct OpenDalConfig {
     #[validate(length(min = 10))]
     pub url: String,
+    pub schema: String,
 }
 
 fn new_opendal_config(config: &Config) -> Result<OpenDalConfig> {
     let url = config.get_str("url", "");
-    let open_dal_config = OpenDalConfig { url };
+    let schema = config.get_str("schema", "");
+    let open_dal_config = OpenDalConfig { url, schema };
     open_dal_config
         .validate()
         .map_err(|e| Error::Validate { source: e })?;
@@ -128,6 +130,25 @@ fn new_mysql_dal(url: &str) -> Result<Storage> {
         .finish();
     Ok(Storage::new(dal))
 }
+
+fn resolve_path(path_str: &str) -> String {
+    if path_str.is_empty() {
+        return String::new();
+    }
+    let path = if let Some(stripped) = path_str.strip_prefix("~/") {
+        dirs::home_dir()
+            .map(|home| home.join(stripped))
+            .unwrap_or_else(|| PathBuf::from(path_str))
+    } else {
+        PathBuf::from(path_str)
+    };
+
+    path.absolutize().map_or_else(
+        |_| path.to_string_lossy().into_owned(),
+        |p| p.to_string_lossy().into_owned(),
+    )
+}
+
 fn new_fs_dal(url: &str) -> Result<Storage> {
     let root = url.strip_prefix(FS_PREFIX).unwrap_or_default();
     if root.len() < 2 {
@@ -135,8 +156,8 @@ fn new_fs_dal(url: &str) -> Result<Storage> {
             message: "root is empty".to_string(),
         });
     }
-    let builder =
-        opendal::services::Fs::default().root(url.strip_prefix(FS_PREFIX).unwrap_or_default());
+
+    let builder = opendal::services::Fs::default().root(&resolve_path(&root));
     let dal = Operator::new(builder)
         .map_err(|e| Error::OpenDal {
             source: Box::new(e),
@@ -166,7 +187,7 @@ pub fn new_opendal_storage(config: &Config) -> Result<Storage> {
     match url {
         url if url.starts_with(MYSQL_PREFIX) => new_mysql_dal(url),
         url if url.starts_with(FS_PREFIX) => new_fs_dal(url),
-        url if url.starts_with(HTTP_PREFIX) || url.starts_with(HTTPS_PREFIX) => new_http_dal(url),
+        url if &opendal_config.schema == "http" => new_http_dal(url),
         _ => new_s3_dal(url),
     }
 }
