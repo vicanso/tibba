@@ -17,7 +17,8 @@ use async_trait::async_trait;
 use ctor::ctor;
 use once_cell::sync::OnceCell;
 use sqlx::MySqlPool;
-use std::sync::Arc;
+use std::sync::atomic::Ordering;
+use std::sync::{Arc, atomic::AtomicBool};
 use std::time::Duration;
 use tibba_error::Error;
 use tibba_hook::{Task, register_task};
@@ -33,7 +34,9 @@ pub fn get_db_pool() -> &'static MySqlPool {
     DB_POOL.get().unwrap()
 }
 
-struct SqlTask;
+struct SqlTask {
+    running: AtomicBool,
+}
 
 #[async_trait]
 impl Task for SqlTask {
@@ -61,10 +64,14 @@ impl Task for SqlTask {
         })
         .map_err(Error::new)?;
         register_job_task(task, job);
+        self.running.store(true, Ordering::Relaxed);
 
         Ok(true)
     }
     async fn after(&self) -> Result<bool> {
+        if !self.running.load(Ordering::Relaxed) {
+            return Ok(false);
+        }
         let pool = get_db_pool();
         pool.close().await;
         Ok(true)
@@ -76,5 +83,10 @@ impl Task for SqlTask {
 
 #[ctor]
 fn init() {
-    register_task("sql", Arc::new(SqlTask));
+    register_task(
+        "sql",
+        Arc::new(SqlTask {
+            running: AtomicBool::new(false),
+        }),
+    );
 }

@@ -23,6 +23,7 @@ use tibba_hook::{Task, register_task};
 use tibba_performance::get_process_system_info;
 use tibba_scheduler::{Job, register_job_task};
 use tibba_state::AppState;
+use tibba_util::is_production;
 use tokio::sync::RwLock;
 use tracing::info;
 
@@ -93,7 +94,22 @@ impl Task for StateTask {
     }
 }
 
+struct StopAppTask;
+#[async_trait]
+impl Task for StopAppTask {
+    async fn after(&self) -> Result<bool> {
+        if !is_production() {
+            return Ok(false);
+        }
+        // set flag --> wait x seconds
+        get_app_state().stop();
+        tokio::time::sleep(Duration::from_secs(10)).await;
+        Ok(true)
+    }
+}
+
 #[ctor]
 fn init() {
     register_task("state", Arc::new(StateTask));
+    register_task("stop_app", Arc::new(StopAppTask));
 }

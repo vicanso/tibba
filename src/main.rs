@@ -14,7 +14,6 @@
 
 use crate::router::new_router;
 use crate::state::get_app_state;
-use async_trait::async_trait;
 use axum::BoxError;
 use axum::Router;
 use axum::error_handling::HandleErrorLayer;
@@ -24,12 +23,11 @@ use std::env;
 use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::Arc;
-use std::time::Duration;
-use tibba_hook::{Task, register_task, run_after_tasks, run_before_tasks};
+use tibba_hook::{run_after_tasks, run_before_tasks};
 use tibba_middleware::{entry, processing_limit, stats};
 use tibba_scheduler::run_scheduler_jobs;
 use tibba_session::session;
-use tibba_util::{is_development, is_production};
+use tibba_util::is_development;
 use tokio::signal;
 use tower::ServiceBuilder;
 use tower_http::compression::CompressionLayer;
@@ -55,7 +53,8 @@ pub async fn handle_error(
     err: BoxError,  // The error that occurred
 ) -> tibba_error::Error {
     // Log the error with request details
-    error!("method:{}, uri:{}, error:{}", method, uri, err.to_string());
+    error!(method = method.to_string(), uri = uri.to_string(), err,);
+    // error!("method:{}, uri:{}, error:{}", method, uri, err.to_string());
 
     // Special handling for timeout errors
     // Otherwise treats as internal server error (500)
@@ -126,22 +125,7 @@ fn init_logger() {
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 }
 
-struct StopAppTask;
-#[async_trait]
-impl Task for StopAppTask {
-    async fn after(&self) -> Result<bool, tibba_error::Error> {
-        if !is_production() {
-            return Ok(false);
-        }
-        // set flag --> wait x seconds
-        get_app_state().stop();
-        tokio::time::sleep(Duration::from_secs(10)).await;
-        Ok(true)
-    }
-}
-
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    register_task("stop_app", Arc::new(StopAppTask));
     run_before_tasks().await?;
     run_scheduler_jobs().await?;
 

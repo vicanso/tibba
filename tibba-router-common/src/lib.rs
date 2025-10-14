@@ -58,6 +58,7 @@ struct ApplicationInfo {
     open_files: u32,
     total_written_mb: u32,
     total_read_mb: u32,
+    running: bool,
 }
 
 fn format_uptime_approx(duration: Duration) -> String {
@@ -95,6 +96,7 @@ async fn get_application_info(
         open_files: performance.open_files.unwrap_or_default() as u32,
         total_written_mb: (performance.total_written_bytes / mb) as u32,
         total_read_mb: (performance.total_read_bytes / mb) as u32,
+        running: state.is_running(),
     };
     Ok(Json(info))
 }

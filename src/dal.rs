@@ -52,7 +52,7 @@ impl Task for DalTask {
         Ok(true)
     }
     fn priority(&self) -> u8 {
-        16
+        8
     }
 }
 

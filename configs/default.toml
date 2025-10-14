@@ -15,4 +15,4 @@ cookie = "tibba_web"
 ttl = "7d"
 
 [opendal]
-url = "http://n150:9000?bucket=tibba-web&region=default&access_key_id=bpAx0XyPVwvcpiqI6btK&secret_access_key=R45iLopZQmAbl4bvuErQxS9yRhwVux5aQv1beCX9"
+url = "file://~/Downloads"
