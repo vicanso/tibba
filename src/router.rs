@@ -32,7 +32,6 @@ pub fn new_router() -> Result<Router> {
     let cache = get_redis_cache();
     let common_router = new_common_router(CommonRouterParams {
         state: get_app_state(),
-        secret: basic_config.secret.clone(),
         cache: Some(cache),
         commit_id: basic_config.commit_id.clone(),
     });

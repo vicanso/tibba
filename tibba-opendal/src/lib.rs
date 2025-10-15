@@ -157,7 +157,7 @@ fn new_fs_dal(url: &str) -> Result<Storage> {
         });
     }
 
-    let builder = opendal::services::Fs::default().root(&resolve_path(&root));
+    let builder = opendal::services::Fs::default().root(&resolve_path(root));
     let dal = Operator::new(builder)
         .map_err(|e| Error::OpenDal {
             source: Box::new(e),

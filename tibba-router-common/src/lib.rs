@@ -167,7 +167,6 @@ async fn captcha(
 pub struct CommonRouterParams {
     pub state: &'static AppState,
     pub cache: Option<&'static RedisCache>,
-    pub secret: String,
     pub commit_id: String,
 }
 
