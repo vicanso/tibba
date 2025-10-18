@@ -96,7 +96,18 @@ impl Config {
     /// Note: `config` crate can deserialize human-readable strings ("10s", "1h") into `Duration`
     /// if the `humantime` feature is enabled on the `config` crate.
     pub fn get_duration(&self, key: &str, default_value: Duration) -> Duration {
-        self.get(key).unwrap_or(default_value)
+        if let Ok(duration_str) = self.get::<String>(key)
+            && let Ok(duration) = humantime::parse_duration(&duration_str)
+        {
+            return duration;
+        }
+
+        // Fallback: try to parse as u64 seconds
+        if let Ok(seconds) = self.get::<u64>(key) {
+            return Duration::from_secs(seconds);
+        }
+
+        default_value
     }
 
     /// Retrieves a byte size value, returning a default if not found or parsing fails.
@@ -121,5 +132,283 @@ impl Config {
             prefix: new_prefix,
             settings: self.settings.clone(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+    use std::time::Duration;
+
+    fn create_test_config() -> Config {
+        let toml_data = r#"
+            # String values
+            app_name = "test_app"
+            empty_string = ""
+            
+            # Integer values
+            port = 8080
+            negative_number = -42
+            
+            # Boolean values
+            debug = true
+            production = false
+            
+            # Duration values - human readable
+            timeout = "60s"
+            cache_ttl = "5m"
+            session_duration = "2h"
+            cleanup_interval = "1d"
+            
+            # Duration values - numeric (seconds)
+            numeric_timeout = 120
+            
+            # Byte size values
+            max_file_size = "10MB"
+            buffer_size = "1KB"
+            
+            # Nested configuration
+            [database]
+            host = "localhost"
+            port = 5432
+            timeout = "30s"
+            
+            [cache]
+            enabled = true
+            ttl = "10m"
+            max_size = "100MB"
+        "#;
+
+        Config::new(vec![toml_data], Some("TEST")).unwrap()
+    }
+
+    #[test]
+    fn test_config_creation() {
+        let config = create_test_config();
+        assert_eq!(config.env_prefix, "TEST");
+        assert_eq!(config.prefix, "");
+    }
+
+    #[test]
+    fn test_get_str() {
+        let config = create_test_config();
+
+        // Existing values
+        assert_eq!(config.get_str("app_name", "default"), "test_app");
+        assert_eq!(config.get_str("empty_string", "default"), "");
+
+        // Non-existent values should return default
+        assert_eq!(
+            config.get_str("non_existent", "default_value"),
+            "default_value"
+        );
+    }
+
+    #[test]
+    fn test_get_int() {
+        let config = create_test_config();
+
+        // Existing values
+        assert_eq!(config.get_int("port", 0), 8080);
+        assert_eq!(config.get_int("negative_number", 0), -42);
+
+        // Non-existent values should return default
+        assert_eq!(config.get_int("non_existent", 9999), 9999);
+    }
+
+    #[test]
+    fn test_get_bool() {
+        let config = create_test_config();
+
+        // Existing values
+        assert_eq!(config.get_bool("debug", false), true);
+        assert_eq!(config.get_bool("production", true), false);
+
+        // Non-existent values should return default
+        assert_eq!(config.get_bool("non_existent", true), true);
+    }
+
+    #[test]
+    fn test_get_duration_human_readable() {
+        let config = create_test_config();
+
+        // Test various human-readable duration formats
+        assert_eq!(
+            config.get_duration("timeout", Duration::from_secs(0)),
+            Duration::from_secs(60)
+        );
+        assert_eq!(
+            config.get_duration("cache_ttl", Duration::from_secs(0)),
+            Duration::from_secs(300)
+        ); // 5 minutes
+        assert_eq!(
+            config.get_duration("session_duration", Duration::from_secs(0)),
+            Duration::from_secs(7200)
+        ); // 2 hours
+        assert_eq!(
+            config.get_duration("cleanup_interval", Duration::from_secs(0)),
+            Duration::from_secs(86400)
+        ); // 1 day
+    }
+
+    #[test]
+    fn test_get_duration_numeric() {
+        let config = create_test_config();
+
+        // Test numeric duration (seconds)
+        assert_eq!(
+            config.get_duration("numeric_timeout", Duration::from_secs(0)),
+            Duration::from_secs(120)
+        );
+    }
+
+    #[test]
+    fn test_get_duration_default() {
+        let config = create_test_config();
+
+        // Non-existent key should return default
+        let default_duration = Duration::from_secs(42);
+        assert_eq!(
+            config.get_duration("non_existent_duration", default_duration),
+            default_duration
+        );
+    }
+
+    #[test]
+    fn test_get_byte_size() {
+        let config = create_test_config();
+
+        // Test byte size parsing
+        assert_eq!(config.get_byte_size("max_file_size", 0), 10_000_000); // 10MB
+        assert_eq!(config.get_byte_size("buffer_size", 0), 1_000); // 1KB
+
+        // Non-existent values should return default
+        assert_eq!(config.get_byte_size("non_existent", 1024), 1024);
+    }
+
+    #[test]
+    fn test_sub_config() {
+        let config = create_test_config();
+
+        // Test database sub-config
+        let db_config = config.sub_config("database");
+        assert_eq!(db_config.prefix, "database");
+        assert_eq!(db_config.get_str("host", ""), "localhost");
+        assert_eq!(db_config.get_int("port", 0), 5432);
+        assert_eq!(
+            db_config.get_duration("timeout", Duration::from_secs(0)),
+            Duration::from_secs(30)
+        );
+
+        // Test cache sub-config
+        let cache_config = config.sub_config("cache");
+        assert_eq!(cache_config.prefix, "cache");
+        assert_eq!(cache_config.get_bool("enabled", false), true);
+        assert_eq!(
+            cache_config.get_duration("ttl", Duration::from_secs(0)),
+            Duration::from_secs(600)
+        ); // 10 minutes
+        assert_eq!(cache_config.get_byte_size("max_size", 0), 100_000_000); // 100MB
+    }
+
+    #[test]
+    fn test_nested_sub_config() {
+        let config = create_test_config();
+
+        // Test nested sub-config
+        let db_config = config.sub_config("database");
+        let nested_config = db_config.sub_config("connection");
+        assert_eq!(nested_config.prefix, "database.connection");
+    }
+
+    #[test]
+    fn test_get_generic() {
+        let config = create_test_config();
+
+        // Test generic get method with different types
+        assert_eq!(config.get::<String>("app_name").unwrap(), "test_app");
+        assert_eq!(config.get::<i64>("port").unwrap(), 8080);
+        assert_eq!(config.get::<bool>("debug").unwrap(), true);
+
+        // Test error case
+        assert!(config.get::<String>("non_existent").is_err());
+    }
+
+    #[test]
+    fn test_empty_config() {
+        let config = Config::new(vec![""], None).unwrap();
+
+        // All methods should return defaults for empty config
+        assert_eq!(config.get_str("any_key", "default"), "default");
+        assert_eq!(config.get_int("any_key", 42), 42);
+        assert_eq!(config.get_bool("any_key", true), true);
+        assert_eq!(
+            config.get_duration("any_key", Duration::from_secs(60)),
+            Duration::from_secs(60)
+        );
+        assert_eq!(config.get_byte_size("any_key", 1024), 1024);
+    }
+
+    #[test]
+    fn test_invalid_duration_formats() {
+        let toml_data = r#"
+            invalid_duration = "invalid"
+            empty_duration = ""
+        "#;
+
+        let config = Config::new(vec![toml_data], None).unwrap();
+        let default_duration = Duration::from_secs(30);
+
+        // Invalid duration strings should return default
+        assert_eq!(
+            config.get_duration("invalid_duration", default_duration),
+            default_duration
+        );
+        assert_eq!(
+            config.get_duration("empty_duration", default_duration),
+            default_duration
+        );
+    }
+
+    #[test]
+    fn test_invalid_byte_size_formats() {
+        let toml_data = r#"
+            invalid_size = "invalid"
+            empty_size = ""
+        "#;
+
+        let config = Config::new(vec![toml_data], None).unwrap();
+
+        // Invalid byte size strings should return default
+        assert_eq!(config.get_byte_size("invalid_size", 1024), 1024);
+        assert_eq!(config.get_byte_size("empty_size", 1024), 1024);
+    }
+
+    #[test]
+    fn test_environment_variable_override() {
+        // This test would require setting environment variables
+        // For now, we'll just test that the config can be created with env prefix
+        let config = Config::new(vec![""], Some("MYAPP")).unwrap();
+        assert_eq!(config.env_prefix, "MYAPP");
+    }
+
+    #[test]
+    fn test_multiple_config_sources() {
+        let config1 = r#"
+            app_name = "config1"
+            port = 8080
+        "#;
+
+        let config2 = r#"
+            app_name = "config2"
+            debug = true
+        "#;
+
+        // Later configs should override earlier ones
+        let config = Config::new(vec![config1, config2], None).unwrap();
+        assert_eq!(config.get_str("app_name", ""), "config2"); // Overridden
+        assert_eq!(config.get_int("port", 0), 8080); // From config1
+        assert_eq!(config.get_bool("debug", false), true); // From config2
     }
 }

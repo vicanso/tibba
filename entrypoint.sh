@@ -1,8 +1,13 @@
-#!/bin/bash
+#!/bin/sh
 set -e
 
-if [ "${1:0:1}" = '-' ]; then
-    set -- tibba "$@"
-fi
+case "$1" in
+    # 如果 $1 以 - 开头
+    -*)
+        # 将 "程序" 插入到参数列表的开头
+        set -- tibba "$@"
+        ;;
+esac
 
+# 执行最终的命令
 exec "$@"
