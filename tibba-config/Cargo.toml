@@ -1,6 +1,6 @@
 [package]
 name = "tibba-config"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 authors = ["Tree Xie <tree.xie@outlook.com>"]
 license = "Apache-2.0"
@@ -14,9 +14,11 @@ name = "tibba_config"
 path = "src/lib.rs"
 
 [dependencies]
-bytesize = { workspace = true }
+bytesize-serde = { workspace = true }
 config = { workspace = true }
 humantime = { workspace = true }
+humantime-serde = { workspace = true }
+parse-size = { workspace = true }
 serde = { workspace = true }
 snafu = { workspace = true }
 tibba-error = { path = "../tibba-error", version = "0.1.0" }

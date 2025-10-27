@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use super::Error;
-use bytesize::ByteSize;
-use config::{Config as RawConfig, Environment, File, FileFormat};
+use config::{Config as RawConfig, ConfigError, Environment, File, FileFormat};
+use parse_size::parse_size;
 use serde::Deserialize;
 use std::time::Duration;
 
@@ -29,6 +29,13 @@ pub struct Config {
     /// Prefix for configuration keys, used for sub-configs.
     prefix: String,
     settings: RawConfig,
+}
+
+fn map_err(e: ConfigError) -> Error {
+    Error::Config {
+        category: "config".to_string(),
+        source: e,
+    }
 }
 
 impl Config {
@@ -64,63 +71,84 @@ impl Config {
         })
     }
 
+    fn get_key(&self, key: &str) -> String {
+        if self.prefix.is_empty() {
+            return key.to_string();
+        }
+        if key.is_empty() {
+            return self.prefix.clone();
+        }
+
+        format!("{}.{}", self.prefix, key)
+    }
+
+    /// Try to deserialize the entire configuration into the requested type.
+    pub fn try_deserialize<'de, T: Deserialize<'de>>(&self) -> Result<T> {
+        let key = &self.get_key("");
+        self.settings.get(key).map_err(map_err)
+    }
+
     /// Retrieves a value, returning a default if not found or type mismatch.
     pub fn get<'de, T: Deserialize<'de>>(&self, key: &str) -> Result<T> {
-        let full_key = if self.prefix.is_empty() {
-            key.to_string()
-        } else {
-            format!("{}.{}", self.prefix, key)
-        };
-        self.settings.get(&full_key).map_err(|e| Error::Config {
-            category: "config".to_string(),
-            source: e,
-        })
+        let key = &self.get_key(key);
+        self.settings.get(key).map_err(map_err)
     }
 
     /// Retrieves a string value, returning a default if not found or type mismatch.
-    pub fn get_str(&self, key: &str, default_value: &str) -> String {
-        self.get(key).unwrap_or_else(|_| default_value.to_string())
+    pub fn get_string(&self, key: &str) -> Result<String> {
+        let key = &self.get_key(key);
+        self.settings.get_string(key).map_err(map_err)
     }
 
     /// Retrieves an integer value, returning a default if not found or type mismatch.
-    pub fn get_int(&self, key: &str, default_value: i64) -> i64 {
-        self.get(key).unwrap_or(default_value)
+    pub fn get_int(&self, key: &str) -> Result<i64> {
+        let key = &self.get_key(key);
+        self.settings.get_int(key).map_err(map_err)
+    }
+
+    pub fn get_float(&self, key: &str) -> Result<f64> {
+        let key = &self.get_key(key);
+        self.settings.get_float(key).map_err(map_err)
     }
 
     /// Retrieves a boolean value, returning a default if not found or type mismatch.
-    pub fn get_bool(&self, key: &str, default_value: bool) -> bool {
-        self.get(key).unwrap_or(default_value)
+    pub fn get_bool(&self, key: &str) -> Result<bool> {
+        let key = &self.get_key(key);
+        self.settings.get_bool(key).map_err(map_err)
     }
 
     /// Retrieves a Duration value, returning a default if not found or parsing fails.
     /// Note: `config` crate can deserialize human-readable strings ("10s", "1h") into `Duration`
     /// if the `humantime` feature is enabled on the `config` crate.
-    pub fn get_duration(&self, key: &str, default_value: Duration) -> Duration {
-        if let Ok(duration_str) = self.get::<String>(key)
+    pub fn get_duration(&self, key: &str) -> Result<Duration> {
+        let key = &self.get_key(key);
+        if let Ok(duration_str) = self.settings.get_string(key)
             && let Ok(duration) = humantime::parse_duration(&duration_str)
         {
-            return duration;
+            return Ok(duration);
         }
 
         // Fallback: try to parse as u64 seconds
-        if let Ok(seconds) = self.get::<u64>(key) {
-            return Duration::from_secs(seconds);
-        }
-
-        default_value
+        let seconds = self.settings.get_int(key).map_err(map_err)?;
+        Ok(Duration::from_secs(seconds as u64))
     }
 
     /// Retrieves a byte size value, returning a default if not found or parsing fails.
-    pub fn get_byte_size(&self, key: &str, default_value: usize) -> usize {
-        self.get::<String>(key)
-            .ok()
-            .and_then(|s| s.parse::<ByteSize>().ok())
-            .map(|bs| bs.as_u64() as usize)
-            .unwrap_or(default_value)
+    pub fn get_byte_size(&self, key: &str) -> Result<usize> {
+        let key = &self.get_key(key);
+        let value = self.settings.get_string(key).map_err(map_err)?;
+        let size = parse_size(value).map_err(|e| Error::ParseSize {
+            category: "config".to_string(),
+            source: e,
+        })?;
+        Ok(size as usize)
     }
 
     /// Create a new sub-config with a given prefix.
     pub fn sub_config(&self, prefix: &str) -> Config {
+        if prefix.is_empty() {
+            return self.clone();
+        }
         let new_prefix = if self.prefix.is_empty() {
             prefix.to_string()
         } else {
@@ -139,6 +167,7 @@ impl Config {
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+    use serde::Deserialize;
     use std::time::Duration;
 
     fn create_test_config() -> Config {
@@ -195,14 +224,7 @@ mod tests {
         let config = create_test_config();
 
         // Existing values
-        assert_eq!(config.get_str("app_name", "default"), "test_app");
-        assert_eq!(config.get_str("empty_string", "default"), "");
-
-        // Non-existent values should return default
-        assert_eq!(
-            config.get_str("non_existent", "default_value"),
-            "default_value"
-        );
+        assert_eq!(config.get_string("app_name").unwrap(), "test_app");
     }
 
     #[test]
@@ -210,11 +232,8 @@ mod tests {
         let config = create_test_config();
 
         // Existing values
-        assert_eq!(config.get_int("port", 0), 8080);
-        assert_eq!(config.get_int("negative_number", 0), -42);
-
-        // Non-existent values should return default
-        assert_eq!(config.get_int("non_existent", 9999), 9999);
+        assert_eq!(config.get_int("port").unwrap(), 8080);
+        assert_eq!(config.get_int("negative_number").unwrap(), -42);
     }
 
     #[test]
@@ -222,11 +241,8 @@ mod tests {
         let config = create_test_config();
 
         // Existing values
-        assert_eq!(config.get_bool("debug", false), true);
-        assert_eq!(config.get_bool("production", true), false);
-
-        // Non-existent values should return default
-        assert_eq!(config.get_bool("non_existent", true), true);
+        assert_eq!(config.get_bool("debug").unwrap(), true);
+        assert_eq!(config.get_bool("production").unwrap(), false);
     }
 
     #[test]
@@ -235,19 +251,19 @@ mod tests {
 
         // Test various human-readable duration formats
         assert_eq!(
-            config.get_duration("timeout", Duration::from_secs(0)),
+            config.get_duration("timeout").unwrap(),
             Duration::from_secs(60)
         );
         assert_eq!(
-            config.get_duration("cache_ttl", Duration::from_secs(0)),
+            config.get_duration("cache_ttl").unwrap(),
             Duration::from_secs(300)
         ); // 5 minutes
         assert_eq!(
-            config.get_duration("session_duration", Duration::from_secs(0)),
+            config.get_duration("session_duration").unwrap(),
             Duration::from_secs(7200)
         ); // 2 hours
         assert_eq!(
-            config.get_duration("cleanup_interval", Duration::from_secs(0)),
+            config.get_duration("cleanup_interval").unwrap(),
             Duration::from_secs(86400)
         ); // 1 day
     }
@@ -258,58 +274,54 @@ mod tests {
 
         // Test numeric duration (seconds)
         assert_eq!(
-            config.get_duration("numeric_timeout", Duration::from_secs(0)),
+            config.get_duration("numeric_timeout").unwrap(),
             Duration::from_secs(120)
         );
     }
-
-    #[test]
-    fn test_get_duration_default() {
-        let config = create_test_config();
-
-        // Non-existent key should return default
-        let default_duration = Duration::from_secs(42);
-        assert_eq!(
-            config.get_duration("non_existent_duration", default_duration),
-            default_duration
-        );
-    }
-
     #[test]
     fn test_get_byte_size() {
         let config = create_test_config();
 
         // Test byte size parsing
-        assert_eq!(config.get_byte_size("max_file_size", 0), 10_000_000); // 10MB
-        assert_eq!(config.get_byte_size("buffer_size", 0), 1_000); // 1KB
-
-        // Non-existent values should return default
-        assert_eq!(config.get_byte_size("non_existent", 1024), 1024);
+        assert_eq!(config.get_byte_size("max_file_size").unwrap(), 10_000_000); // 10MB
+        assert_eq!(config.get_byte_size("buffer_size").unwrap(), 1_000); // 1KB
     }
 
     #[test]
     fn test_sub_config() {
         let config = create_test_config();
 
+        #[derive(Deserialize)]
+        struct DatabaseConfig {
+            host: String,
+            port: i64,
+            #[serde(with = "humantime_serde")]
+            timeout: Duration,
+        }
+        let database_config = config.get::<DatabaseConfig>("database").unwrap();
+        assert_eq!(database_config.host, "localhost");
+        assert_eq!(database_config.port, 5432);
+        assert_eq!(database_config.timeout, Duration::from_secs(30));
+
         // Test database sub-config
         let db_config = config.sub_config("database");
         assert_eq!(db_config.prefix, "database");
-        assert_eq!(db_config.get_str("host", ""), "localhost");
-        assert_eq!(db_config.get_int("port", 0), 5432);
+        assert_eq!(db_config.get_string("host").unwrap(), "localhost");
+        assert_eq!(db_config.get_int("port").unwrap(), 5432);
         assert_eq!(
-            db_config.get_duration("timeout", Duration::from_secs(0)),
+            db_config.get_duration("timeout").unwrap(),
             Duration::from_secs(30)
         );
 
         // Test cache sub-config
         let cache_config = config.sub_config("cache");
         assert_eq!(cache_config.prefix, "cache");
-        assert_eq!(cache_config.get_bool("enabled", false), true);
+        assert_eq!(cache_config.get_bool("enabled").unwrap(), true);
         assert_eq!(
-            cache_config.get_duration("ttl", Duration::from_secs(0)),
+            cache_config.get_duration("ttl").unwrap(),
             Duration::from_secs(600)
         ); // 10 minutes
-        assert_eq!(cache_config.get_byte_size("max_size", 0), 100_000_000); // 100MB
+        assert_eq!(cache_config.get_byte_size("max_size").unwrap(), 100_000_000); // 100MB
     }
 
     #[test]
@@ -340,49 +352,13 @@ mod tests {
         let config = Config::new(vec![""], None).unwrap();
 
         // All methods should return defaults for empty config
-        assert_eq!(config.get_str("any_key", "default"), "default");
-        assert_eq!(config.get_int("any_key", 42), 42);
-        assert_eq!(config.get_bool("any_key", true), true);
+        assert_eq!(config.get_int("any_key").unwrap(), 42);
+        assert_eq!(config.get_bool("any_key").unwrap(), true);
         assert_eq!(
-            config.get_duration("any_key", Duration::from_secs(60)),
+            config.get_duration("any_key").unwrap(),
             Duration::from_secs(60)
         );
-        assert_eq!(config.get_byte_size("any_key", 1024), 1024);
-    }
-
-    #[test]
-    fn test_invalid_duration_formats() {
-        let toml_data = r#"
-            invalid_duration = "invalid"
-            empty_duration = ""
-        "#;
-
-        let config = Config::new(vec![toml_data], None).unwrap();
-        let default_duration = Duration::from_secs(30);
-
-        // Invalid duration strings should return default
-        assert_eq!(
-            config.get_duration("invalid_duration", default_duration),
-            default_duration
-        );
-        assert_eq!(
-            config.get_duration("empty_duration", default_duration),
-            default_duration
-        );
-    }
-
-    #[test]
-    fn test_invalid_byte_size_formats() {
-        let toml_data = r#"
-            invalid_size = "invalid"
-            empty_size = ""
-        "#;
-
-        let config = Config::new(vec![toml_data], None).unwrap();
-
-        // Invalid byte size strings should return default
-        assert_eq!(config.get_byte_size("invalid_size", 1024), 1024);
-        assert_eq!(config.get_byte_size("empty_size", 1024), 1024);
+        assert_eq!(config.get_byte_size("any_key").unwrap(), 1024);
     }
 
     #[test]
@@ -407,8 +383,8 @@ mod tests {
 
         // Later configs should override earlier ones
         let config = Config::new(vec![config1, config2], None).unwrap();
-        assert_eq!(config.get_str("app_name", ""), "config2"); // Overridden
-        assert_eq!(config.get_int("port", 0), 8080); // From config1
-        assert_eq!(config.get_bool("debug", false), true); // From config2
+        assert_eq!(config.get_string("app_name").unwrap(), "config2"); // Overridden
+        assert_eq!(config.get_int("port").unwrap(), 8080); // From config1
+        assert_eq!(config.get_bool("debug").unwrap(), true); // From config2
     }
 }

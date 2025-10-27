@@ -34,6 +34,11 @@ pub enum Error {
         category: String,
         source: humantime::DurationError,
     },
+    #[snafu(display("{category}, parse size error {source}"))]
+    ParseSize {
+        category: String,
+        source: parse_size::Error,
+    },
 }
 
 impl From<Error> for BaseError {
@@ -42,6 +47,7 @@ impl From<Error> for BaseError {
             Error::Url { category, source } => (category, source.to_string()),
             Error::Config { category, source } => (category, source.to_string()),
             Error::ParseDuration { category, source } => (category, source.to_string()),
+            Error::ParseSize { category, source } => (category, source.to_string()),
         };
 
         BaseError::new(err)
@@ -52,3 +58,5 @@ impl From<Error> for BaseError {
 }
 
 pub use app_config::*;
+pub use bytesize_serde;
+pub use humantime_serde;
