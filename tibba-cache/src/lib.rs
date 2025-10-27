@@ -93,7 +93,10 @@ struct RedisParams {
 // Creates a new RedisConfig instance from the configuration
 // Parses Redis URI and extracts connection parameters
 fn new_redis_config(config: &Config) -> Result<RedisConfig> {
-    let uri = config.get_str("uri", "");
+    let uri = config.get_string("uri").map_err(|e| Error::Common {
+        category: "config".to_string(),
+        message: e.to_string(),
+    })?;
     let parsed = parse_uri::<RedisParams>(&uri).map_err(|e| Error::Common {
         category: "redis".to_string(),
         message: e.to_string(),
