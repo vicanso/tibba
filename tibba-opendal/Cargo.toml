@@ -1,6 +1,6 @@
 [package]
 name = "tibba-opendal"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2024"
 authors = ["Tree Xie <tree.xie@outlook.com>"]
 license = "Apache-2.0"
@@ -19,7 +19,7 @@ opendal = { workspace = true }
 path-absolutize = { workspace = true }
 snafu = { workspace = true }
 serde = { workspace = true }
-tibba-config = { path = "../tibba-config", version = "0.1.0" }
+tibba-config = { path = "../tibba-config", version = "0.1.2" }
 tibba-error = { path = "../tibba-error", version = "0.1.0" }
 tibba-util = { path = "../tibba-util", version = "0.1.3" }
 url = { workspace = true }

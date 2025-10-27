@@ -30,17 +30,21 @@ pub use storage::*;
 const MYSQL_PREFIX: &str = "mysql://";
 const FS_PREFIX: &str = "file://";
 
-#[derive(Debug, Clone, Default, Validate)]
+#[derive(Debug, Clone, Validate, Deserialize, Default)]
 pub struct OpenDalConfig {
     #[validate(length(min = 10))]
     pub url: String,
+    #[serde(default)]
     pub schema: String,
 }
 
 fn new_opendal_config(config: &Config) -> Result<OpenDalConfig> {
-    let url = config.get_str("url", "");
-    let schema = config.get_str("schema", "");
-    let open_dal_config = OpenDalConfig { url, schema };
+    let open_dal_config =
+        config
+            .try_deserialize::<OpenDalConfig>()
+            .map_err(|e| Error::Invalid {
+                message: e.to_string(),
+            })?;
     open_dal_config
         .validate()
         .map_err(|e| Error::Validate { source: e })?;
