@@ -68,13 +68,10 @@ struct DatabaseQuery {
 
 // Creates a new DatabaseConfig instance from the configuration
 fn new_database_config(config: &Config) -> Result<DatabaseConfig> {
-    let origin_url = config.get_str("uri", "");
-    if origin_url.is_empty() {
-        return Err(Error::Common {
-            category: "config".to_string(),
-            message: "uri is empty".to_string(),
-        });
-    }
+    let origin_url = config.get_string("uri").map_err(|e| Error::Common {
+        category: "config".to_string(),
+        message: e.to_string(),
+    })?;
     let url = origin_url.clone();
     let parsed = parse_uri::<DatabaseQuery>(&url).map_err(|e| Error::Common {
         category: "config".to_string(),
