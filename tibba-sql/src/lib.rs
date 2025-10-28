@@ -48,40 +48,55 @@ fn default_min_connections() -> u32 {
     2
 }
 
+fn default_connect_timeout() -> Duration {
+    Duration::from_secs(3)
+}
+
+fn default_idle_timeout() -> Duration {
+    Duration::from_secs(60)
+}
+
+fn default_max_lifetime() -> Duration {
+    Duration::from_secs(6 * 60 * 60)
+}
+
+fn default_test_before_acquire() -> bool {
+    true
+}
+
 #[derive(Deserialize, Debug, Clone)]
 struct DatabaseQuery {
     #[serde(default = "default_max_connections")]
     pub max_connections: u32,
     #[serde(default = "default_min_connections")]
     pub min_connections: u32,
-    #[serde(default)]
+    #[serde(default = "default_connect_timeout")]
     #[serde(with = "humantime_serde")]
-    pub connect_timeout: Option<Duration>,
-    #[serde(default)]
+    pub connect_timeout: Duration,
+    #[serde(default = "default_idle_timeout")]
     #[serde(with = "humantime_serde")]
-    pub idle_timeout: Option<Duration>,
-    #[serde(default)]
+    pub idle_timeout: Duration,
+    #[serde(default = "default_max_lifetime")]
     #[serde(with = "humantime_serde")]
-    pub max_lifetime: Option<Duration>,
-    pub test_before_acquire: Option<bool>,
+    pub max_lifetime: Duration,
+    #[serde(default = "default_test_before_acquire")]
+    pub test_before_acquire: bool,
+}
+
+fn map_err(e: impl ToString) -> Error {
+    Error::Common {
+        category: "config".to_string(),
+        message: e.to_string(),
+    }
 }
 
 // Creates a new DatabaseConfig instance from the configuration
 fn new_database_config(config: &Config) -> Result<DatabaseConfig> {
-    let origin_url = config.get_string("uri").map_err(|e| Error::Common {
-        category: "config".to_string(),
-        message: e.to_string(),
-    })?;
+    let origin_url = config.get_string("uri").map_err(map_err)?;
     let url = origin_url.clone();
-    let parsed = parse_uri::<DatabaseQuery>(&url).map_err(|e| Error::Common {
-        category: "config".to_string(),
-        message: e.to_string(),
-    })?;
+    let parsed = parse_uri::<DatabaseQuery>(&url).map_err(map_err)?;
 
-    let mut url = parsed.url().map_err(|e| Error::Common {
-        category: "config".to_string(),
-        message: e.to_string(),
-    })?;
+    let mut url = parsed.url().map_err(map_err)?;
     url.set_query(None);
 
     let query = &parsed.query;
@@ -90,12 +105,10 @@ fn new_database_config(config: &Config) -> Result<DatabaseConfig> {
         url: url.to_string(),
         max_connections: query.max_connections,
         min_connections: query.min_connections,
-        connect_timeout: query.connect_timeout.unwrap_or(Duration::from_secs(3)),
-        idle_timeout: query.idle_timeout.unwrap_or(Duration::from_secs(60)),
-        max_lifetime: query
-            .max_lifetime
-            .unwrap_or(Duration::from_secs(6 * 60 * 60)),
-        test_before_acquire: query.test_before_acquire.unwrap_or(true),
+        connect_timeout: query.connect_timeout,
+        idle_timeout: query.idle_timeout,
+        max_lifetime: query.max_lifetime,
+        test_before_acquire: query.test_before_acquire,
         password: parsed.password.map(|v| v.to_string()),
     };
     database_config
