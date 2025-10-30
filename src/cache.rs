@@ -58,7 +58,8 @@ pub fn get_redis_cache() -> &'static RedisCache {
     REDIS_CACHE.get_or_init(|| {
         // get redis pool is checked in init function
         // so it can be unwrap here
-        let pool = get_redis_client().unwrap();
+        let pool =
+            get_redis_client().unwrap_or_else(|e| panic!("redis client not initialized: {e:?}"));
         RedisCache::new(pool)
     })
 }

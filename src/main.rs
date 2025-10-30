@@ -112,7 +112,7 @@ fn init_logger() {
 
     let timer = tracing_subscriber::fmt::time::OffsetTime::local_rfc_3339().unwrap_or_else(|_| {
         tracing_subscriber::fmt::time::OffsetTime::new(
-            time::UtcOffset::from_hms(0, 0, 0).unwrap(),
+            time::UtcOffset::from_hms(0, 0, 0).unwrap_or(time::UtcOffset::UTC),
             time::format_description::well_known::Rfc3339,
         )
     });
@@ -131,10 +131,10 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // config is validated in init function
     let basic_config = config::must_get_basic_config();
-    let app = if basic_config.prefix.is_empty() {
-        new_router()?
+    let app = if let Some(prefix) = &basic_config.prefix {
+        Router::new().nest(prefix, new_router()?)
     } else {
-        Router::new().nest(&basic_config.prefix, new_router()?)
+        new_router()?
     };
 
     let predicate = SizeAbove::new(1024)
@@ -160,26 +160,23 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     state.run();
 
     info!("listening on http://{}/", basic_config.listen);
-    let listener = tokio::net::TcpListener::bind(basic_config.listen.clone())
-        .await
-        .unwrap();
+    let listener = tokio::net::TcpListener::bind(basic_config.listen.clone()).await?;
     axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
     .with_graceful_shutdown(shutdown_signal())
-    .await
-    .unwrap();
+    .await?;
     Ok(())
 }
 
 async fn start() {
     // only use unwrap in run function
     if let Err(e) = run().await {
-        error!(category = "launch_app", message = e.to_string())
+        error!(category = "launch_app", message = ?e)
     }
     if let Err(e) = run_after_tasks().await {
-        error!(category = "run_after_tasks", message = e.to_string(),);
+        error!(category = "run_after_tasks", message = ?e,);
     }
 }
 
@@ -199,6 +196,6 @@ fn main() {
         .enable_all()
         .worker_threads(cpus)
         .build()
-        .unwrap()
+        .unwrap_or_else(|e| panic!("failed to build tokio runtime: {}", e))
         .block_on(start());
 }

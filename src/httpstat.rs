@@ -167,7 +167,7 @@ async fn do_request(
                 .headers
                 .unwrap_or_default()
                 .iter()
-                .map(|(k, v)| (k.to_string(), v.to_str().unwrap().to_string()))
+                .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or_default().to_string()))
                 .collect(),
         };
         let stat = JsStat {

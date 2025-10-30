@@ -31,7 +31,9 @@ static DB_POOL: OnceCell<MySqlPool> = OnceCell::new();
 
 pub fn get_db_pool() -> &'static MySqlPool {
     // init db pool is checked in init function
-    DB_POOL.get().unwrap()
+    DB_POOL
+        .get()
+        .unwrap_or_else(|| panic!("db pool not initialized"))
 }
 
 struct SqlTask {
