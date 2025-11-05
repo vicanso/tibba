@@ -94,7 +94,8 @@ pub struct WebPageParams {
     pub user_agent: Option<String>,
     pub accept_language: Option<String>,
     pub platform: Option<String>,
-    pub wait_for_element: Option<String>,
+    pub wait_for_elements: Option<String>,
+    pub wait: Option<Duration>,
     pub device_scale_factor: Option<f64>,
     pub timeout: Option<Duration>,
     pub capture_screenshot: bool,
@@ -107,6 +108,7 @@ pub struct WebPageStat {
     pub fcp_time: u32,
     pub dcl_time: u32,
     pub load_time: u32,
+    pub html: String,
     pub exceptions: Vec<String>,
     pub resources: Vec<WebPageResource>,
     pub screenshot: Option<Screenshot>,
@@ -211,7 +213,7 @@ fn analyze_web_page_screenshot(tab: Arc<Tab>, params: &WebPageParams) -> Result<
     })
 }
 
-pub fn run_web_page_stat_with_browser(
+pub async fn run_web_page_stat_with_browser(
     browser: &Browser,
     params: &WebPageParams,
 ) -> Result<WebPageStat> {
@@ -363,8 +365,8 @@ pub fn run_web_page_stat_with_browser(
         .map_err(|e| Error::HeadlessChrome {
             message: e.to_string(),
         })?;
-    if let Some(wait_for_element) = &params.wait_for_element {
-        tab.wait_for_element(wait_for_element)
+    if let Some(wait_for_elements) = &params.wait_for_elements {
+        tab.wait_for_elements(wait_for_elements)
             .map_err(|e| Error::HeadlessChrome {
                 message: e.to_string(),
             })?;
@@ -380,6 +382,9 @@ pub fn run_web_page_stat_with_browser(
             .map_err(|e| Error::HeadlessChrome {
                 message: e.to_string(),
             })?;
+    }
+    if let Some(wait) = params.wait {
+        tokio::time::sleep(wait).await;
     }
 
     let mut stat = WebPageStat {
@@ -406,6 +411,10 @@ pub fn run_web_page_stat_with_browser(
         if lifecycle.init_time > 0.0 && lifecycle.load_time > 0.0 {
             stat.load_time = (1000.0 * (lifecycle.load_time - lifecycle.init_time)) as u32;
         }
+    }
+
+    if let Ok(document) = tab.get_content() {
+        stat.html = document;
     }
 
     if params.capture_screenshot

@@ -9,9 +9,10 @@ path = "src/lib.rs"
 
 [dependencies]
 dashmap = { workspace = true }
-headless_chrome = "1.0.17"
+headless_chrome = "1.0.18"
 image = { workspace = true }
 palette = "0.7.6"
 scopeguard = { workspace = true }
 snafu = { workspace = true }
 tibba-error = { path = "../tibba-error" }
+tokio = { workspace = true }
