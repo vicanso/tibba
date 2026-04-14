@@ -16,6 +16,5 @@ path = "src/lib.rs"
 [dependencies]
 async-trait = { workspace = true }
 dashmap = { workspace = true }
-once_cell = { workspace = true }
 tibba-error = { path = "../tibba-error", version = "0.1.0" }
 tracing = { workspace = true }

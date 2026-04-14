@@ -14,8 +14,8 @@
 
 use async_trait::async_trait;
 use dashmap::DashMap;
-use once_cell::sync::Lazy;
 use std::sync::Arc;
+use std::sync::LazyLock;
 use tibba_error::Error;
 use tracing::info;
 
@@ -34,7 +34,7 @@ pub trait Task {
     }
 }
 
-static TASKS: Lazy<DashMap<String, Arc<dyn Task + Send + Sync>>> = Lazy::new(DashMap::new);
+static TASKS: LazyLock<DashMap<String, Arc<dyn Task + Send + Sync>>> = LazyLock::new(DashMap::new);
 
 #[derive(Clone, Copy)]
 enum TaskType {
@@ -86,7 +86,7 @@ async fn run_tasks(task_type: TaskType) -> Result<()> {
         if executed {
             info!(
                 category = "task",
-                task_type = task_type.to_string(),
+                task_type = %task_type,
                 name,
                 elapsed = start.elapsed().as_millis(),
             );

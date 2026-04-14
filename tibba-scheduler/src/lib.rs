@@ -13,59 +13,75 @@
 // limitations under the License.
 
 use dashmap::DashMap;
-use once_cell::sync::Lazy;
-use tibba_error::Error;
-use tokio_cron_scheduler::JobScheduler;
-use tracing::info;
-type Result<T> = std::result::Result<T, Error>;
-
+use snafu::Snafu;
+use std::sync::LazyLock;
+use tibba_error::Error as BaseError;
 pub use tokio_cron_scheduler::Job;
+use tokio_cron_scheduler::{JobScheduler, JobSchedulerError};
+use tracing::info;
 
-pub struct JobTask {
-    name: String,
-    job: Job,
+type Result<T> = std::result::Result<T, BaseError>;
+
+#[derive(Debug, Snafu)]
+enum Error {
+    #[snafu(display("create scheduler failed: {source}"))]
+    Create { source: JobSchedulerError },
+
+    #[snafu(display("add job {name} failed: {source}"))]
+    AddJob {
+        name: String,
+        source: JobSchedulerError,
+    },
+
+    #[snafu(display("start scheduler failed: {source}"))]
+    Start { source: JobSchedulerError },
 }
 
-static JOB_TASKS: Lazy<DashMap<String, JobTask>> = Lazy::new(DashMap::new);
+impl From<Error> for BaseError {
+    fn from(val: Error) -> Self {
+        let message = val.to_string();
+        let base = BaseError::new(message).with_category("scheduler");
+        match val {
+            Error::AddJob { name, .. } => base.with_sub_category(name),
+            _ => base,
+        }
+    }
+}
 
-/// Register a job task
+// name → Job; name is already the key, no need to store it twice in a wrapper struct.
+static JOB_TASKS: LazyLock<DashMap<String, Job>> = LazyLock::new(DashMap::new);
+
+/// Register a job task.
 ///
 /// # Arguments
-/// * `name` - Job name
-/// * `job` - Job
-///
-/// # Returns
-/// * `JobTask` - Job task
+/// * `name` - Unique job name used for logging and error reporting
+/// * `job`  - The cron job to register
 pub fn register_job_task(name: impl Into<String>, job: Job) {
-    let name = name.into();
-    JOB_TASKS.insert(name.clone(), JobTask { name, job });
+    JOB_TASKS.insert(name.into(), job);
 }
 
-/// Run scheduler jobs
+/// Start the scheduler and add all registered jobs.
 ///
 /// # Returns
-/// * `JobScheduler` - Job scheduler
+/// A running [`JobScheduler`] handle.
 pub async fn run_scheduler_jobs() -> Result<JobScheduler> {
-    let category = "scheduler";
-    let scheduler = JobScheduler::new()
-        .await
-        .map_err(|e| Error::new(e).with_category(category))?;
-    for job in JOB_TASKS.iter() {
-        let value = job.value();
-        scheduler.add(value.job.clone()).await.map_err(|e| {
-            Error::new(e)
-                .with_category(category)
-                .with_sub_category(&value.name)
-        })?;
-        info!(category, name = value.name, "add job success");
-    }
-    scheduler.shutdown_on_ctrl_c();
-    scheduler
-        .start()
-        .await
-        .map_err(|err| Error::new(err).with_category(category))?;
+    use snafu::ResultExt;
 
-    info!(category, "scheduler started");
+    let scheduler = JobScheduler::new().await.context(CreateSnafu)?;
+
+    for item in JOB_TASKS.iter() {
+        let (name, job) = item.pair();
+        scheduler
+            .add(job.clone())
+            .await
+            .context(AddJobSnafu { name: name.clone() })?;
+        info!(category = "scheduler", name, "add job success");
+    }
+
+    scheduler.shutdown_on_ctrl_c();
+    scheduler.start().await.context(StartSnafu)?;
+
+    info!(category = "scheduler", "scheduler started");
 
     Ok(scheduler)
 }

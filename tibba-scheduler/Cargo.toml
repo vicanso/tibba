@@ -16,7 +16,7 @@ path = "src/lib.rs"
 
 [dependencies]
 dashmap = { workspace = true }
-once_cell = { workspace = true }
+snafu = { workspace = true }
 tibba-error = { path = "../tibba-error", version = "0.1.0" }
 tokio-cron-scheduler = { workspace = true }
 tracing = { workspace = true }
