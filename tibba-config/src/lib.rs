@@ -19,20 +19,10 @@ mod app_config;
 // Error enum for handling various error types in the configuration
 #[derive(Debug, Snafu)]
 pub enum Error {
-    #[snafu(display("{category}, url parse error {source}"))]
-    Url {
-        category: String,
-        source: url::ParseError,
-    },
     #[snafu(display("{category}, config error {source}"))]
     Config {
         category: String,
         source: config::ConfigError,
-    },
-    #[snafu(display("{category}, parse duration error {source}"))]
-    ParseDuration {
-        category: String,
-        source: humantime::DurationError,
     },
     #[snafu(display("{category}, parse size error {source}"))]
     ParseSize {
@@ -43,15 +33,12 @@ pub enum Error {
 
 impl From<Error> for BaseError {
     fn from(val: Error) -> Self {
-        let (category, err) = match val {
-            Error::Url { category, source } => (category, source.to_string()),
-            Error::Config { category, source } => (category, source.to_string()),
-            Error::ParseDuration { category, source } => (category, source.to_string()),
-            Error::ParseSize { category, source } => (category, source.to_string()),
+        let message = val.to_string();
+        let sub_category = match &val {
+            Error::Config { category, .. } | Error::ParseSize { category, .. } => category.as_str(),
         };
-
-        BaseError::new(err)
-            .with_sub_category(&category)
+        BaseError::new(message)
+            .with_sub_category(sub_category)
             .with_category("config")
             .with_exception(true)
     }

@@ -22,7 +22,6 @@ parse-size = { workspace = true }
 serde = { workspace = true }
 snafu = { workspace = true }
 tibba-error = { path = "../tibba-error", version = "0.1.0" }
-url = { workspace = true }
 
 [dev-dependencies]
 pretty_assertions = "1.4.1"

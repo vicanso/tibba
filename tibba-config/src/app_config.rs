@@ -39,7 +39,7 @@ fn map_err(e: ConfigError) -> Error {
 }
 
 impl Config {
-    pub fn new(data: Vec<&str>, env_prefix: Option<&str>) -> Result<Self> {
+    pub fn new(data: &[&str], env_prefix: Option<&str>) -> Result<Self> {
         let env_prefix_str = env_prefix.unwrap_or_default();
 
         let mut builder = RawConfig::builder();
@@ -67,7 +67,7 @@ impl Config {
         Ok(Self {
             env_prefix: env_prefix_str.to_string(),
             settings,
-            prefix: "".to_string(),
+            prefix: String::new(),
         })
     }
 
@@ -106,6 +106,7 @@ impl Config {
         self.settings.get_int(key).map_err(map_err)
     }
 
+    /// Retrieves a float value, returning an error if not found or type mismatch.
     pub fn get_float(&self, key: &str) -> Result<f64> {
         let key = &self.get_key(key);
         self.settings.get_float(key).map_err(map_err)
@@ -209,7 +210,7 @@ mod tests {
             max_size = "100MB"
         "#;
 
-        Config::new(vec![toml_data], Some("TEST")).unwrap()
+        Config::new(&[toml_data], Some("TEST")).unwrap()
     }
 
     #[test]
@@ -349,23 +350,20 @@ mod tests {
 
     #[test]
     fn test_empty_config() {
-        let config = Config::new(vec![""], None).unwrap();
+        let config = Config::new(&[""], None).unwrap();
 
-        // All methods should return defaults for empty config
-        assert_eq!(config.get_int("any_key").unwrap(), 42);
-        assert_eq!(config.get_bool("any_key").unwrap(), true);
-        assert_eq!(
-            config.get_duration("any_key").unwrap(),
-            Duration::from_secs(60)
-        );
-        assert_eq!(config.get_byte_size("any_key").unwrap(), 1024);
+        // Missing keys should return errors, not phantom defaults.
+        assert!(config.get_int("any_key").is_err());
+        assert!(config.get_bool("any_key").is_err());
+        assert!(config.get_duration("any_key").is_err());
+        assert!(config.get_byte_size("any_key").is_err());
     }
 
     #[test]
     fn test_environment_variable_override() {
         // This test would require setting environment variables
         // For now, we'll just test that the config can be created with env prefix
-        let config = Config::new(vec![""], Some("MYAPP")).unwrap();
+        let config = Config::new(&[""], Some("MYAPP")).unwrap();
         assert_eq!(config.env_prefix, "MYAPP");
     }
 
@@ -382,7 +380,7 @@ mod tests {
         "#;
 
         // Later configs should override earlier ones
-        let config = Config::new(vec![config1, config2], None).unwrap();
+        let config = Config::new(&[config1, config2], None).unwrap();
         assert_eq!(config.get_string("app_name").unwrap(), "config2"); // Overridden
         assert_eq!(config.get_int("port").unwrap(), 8080); // From config1
         assert_eq!(config.get_bool("debug").unwrap(), true); // From config2

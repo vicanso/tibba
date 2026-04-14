@@ -112,7 +112,7 @@ bytesize-serde = "0.2.1"
 cached = "0.56.0"
 captcha = "1.0.0"
 chrono = "0.4.44"
-config = "0.15.18"
+config = "0.15.22"
 cookie = "0.18.1"
 dashmap = "6.1.0"
 deadpool-redis = { version = "0.22.0", features = ["cluster", "rt_tokio_1"] }

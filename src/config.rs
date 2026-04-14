@@ -149,8 +149,8 @@ fn new_config() -> Result<&'static Config> {
             arr.push(std::string::String::from_utf8_lossy(&data).to_string());
         }
 
-        let config =
-            tibba_config::Config::new(arr.iter().map(|s| s.as_str()).collect(), Some("TIBBA_WEB"))?;
+        let data: Vec<&str> = arr.iter().map(|s| s.as_str()).collect();
+        let config = tibba_config::Config::new(&data, Some("TIBBA_WEB"))?;
         Ok(config)
     })
 }
