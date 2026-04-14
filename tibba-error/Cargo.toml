@@ -16,4 +16,3 @@ path = "src/lib.rs"
 [dependencies]
 axum = { workspace = true }
 serde = { workspace = true }
-snafu = { workspace = true }

@@ -2,7 +2,13 @@
 name = "tibba"
 version = "0.1.0"
 edition = "2024"
-
+authors = ["Tree Xie <tree.xie@outlook.com>"]
+license = "Apache-2.0"
+homepage = "https://github.com/vicanso/tibba"
+repository = "https://github.com/vicanso/tibba"
+keywords = ["tibba"]
+description = "tibba is a framework for building web applications"
+default-run = "tibba"
 
 [lints.clippy]
 # Set the unwrap_used lint level to deny
@@ -58,6 +64,10 @@ tracing = { workspace = true }
 tracing-subscriber = { version = "0.3.20", features = ["local-time"] }
 validator = { workspace = true }
 num_cpus = "1.17.0"
+regex = "1.12.3"
+glob = "0.3.3"
+substring.workspace = true
+toml = "1.1.2"
 
 [profile.release]
 codegen-units = 1

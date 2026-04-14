@@ -68,13 +68,9 @@ pub async fn handle_error(
         (err.to_string(), "exception".to_string(), 500)
     };
 
-    // Create and return appropriate HttpError
-    tibba_error::Error {
-        message,
-        category,
-        status,
-        ..Default::default()
-    }
+    tibba_error::Error::new(message)
+        .with_category(category)
+        .with_status(status)
 }
 
 async fn shutdown_signal() {
@@ -112,7 +108,7 @@ fn init_logger() {
 
     let timer = tracing_subscriber::fmt::time::OffsetTime::local_rfc_3339().unwrap_or_else(|_| {
         tracing_subscriber::fmt::time::OffsetTime::new(
-            time::UtcOffset::from_hms(0, 0, 0).unwrap_or(time::UtcOffset::UTC),
+            time::UtcOffset::UTC,
             time::format_description::well_known::Rfc3339,
         )
     });

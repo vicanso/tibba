@@ -64,7 +64,7 @@ async fn run_web_page_stat() -> Result<()> {
         if !detector.user_agent.is_empty() {
             params.user_agent = Some(detector.user_agent);
         }
-        let stat = run_web_page_stat_with_browser(&browser, &params)?;
+        let stat = run_web_page_stat_with_browser(&browser, &params).await?;
 
         if let Some(screenshot) = stat.screenshot {
             let file = format!("{}.png", uuid());

@@ -7,6 +7,8 @@ fmt:
 dev:
 	bacon run
 
+mermaid:
+	cargo run --bin generate-mermaid
 
 release:
 	cargo build --release 

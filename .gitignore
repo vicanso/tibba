@@ -24,3 +24,4 @@ report.*
 Secrets*.toml
 tmp.png
 Cargo.lock
+.claude
