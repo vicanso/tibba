@@ -13,10 +13,11 @@
 // limitations under the License.
 
 // Import necessary dependencies for cryptographic operations and error handling
-use super::Error;
+use super::{Error, HmacSha256Snafu};
 use hex::encode;
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
+use snafu::ResultExt;
 use std::sync::Arc;
 use std::sync::RwLock;
 
@@ -40,9 +41,7 @@ pub struct KeyGrip {
 /// Helper function to create an HMAC-SHA256 signature
 /// Returns the hex-encoded signature string
 fn sign_with_key(data: &[u8], key: &[u8]) -> Result<String> {
-    let mut mac = HmacSha256::new_from_slice(key).map_err(|e| Error::HmacSha256 {
-        message: e.to_string(),
-    })?;
+    let mut mac = HmacSha256::new_from_slice(key).context(HmacSha256Snafu)?;
     mac.update(data);
     Ok(encode(mac.finalize().into_bytes()))
 }
@@ -61,6 +60,9 @@ impl KeyGrip {
 
     /// Creates a new KeyGrip instance with thread-safe key storage using RwLock
     pub fn new_with_lock(keys: Vec<Vec<u8>>) -> Result<Self> {
+        if keys.is_empty() {
+            return Err(Error::KeyGripEmpty);
+        }
         Ok(KeyGrip {
             store: KeyStore::Shared(Arc::new(RwLock::new(keys))),
         })
@@ -116,8 +118,8 @@ impl KeyGrip {
     /// Returns error if no keys are available
     pub fn sign(&self, data: &[u8]) -> Result<String> {
         self.with_keys(|keys| {
-            // new() has already guaranteed that keys is not empty
-            sign_with_key(data, &keys[0])
+            let key = keys.first().ok_or(Error::KeyGripEmpty)?;
+            sign_with_key(data, key)
         })
     }
 

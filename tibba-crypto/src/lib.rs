@@ -17,24 +17,30 @@ use tibba_error::Error as BaseError;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
-    #[snafu(display("hmac sha256 error {message}"))]
-    HmacSha256 { message: String },
+    /// Wraps the original `InvalidLength` from the hmac crate so callers can
+    /// use `.context(HmacSha256Snafu)` instead of manual `map_err`.
+    #[snafu(display("hmac sha256 error: {source}"))]
+    HmacSha256 { source: hmac::digest::InvalidLength },
+
     #[snafu(display("key grip empty"))]
     KeyGripEmpty,
 }
 
 impl From<Error> for BaseError {
     fn from(val: Error) -> Self {
-        let err = match val {
-            Error::HmacSha256 { message } => {
-                BaseError::new(&message).with_sub_category("hmac_sha256")
-            }
-            Error::KeyGripEmpty => BaseError::new("key grip empty")
+        // val.to_string() uses Snafu's Display, e.g. "hmac sha256 error: invalid length",
+        // which is more informative than extracting source.to_string() directly.
+        let message = val.to_string();
+        match val {
+            Error::HmacSha256 { .. } => BaseError::new(message)
+                .with_category("crypto")
+                .with_sub_category("hmac_sha256"),
+            Error::KeyGripEmpty => BaseError::new(message)
+                .with_category("crypto")
                 .with_sub_category("key_grip")
                 .with_status(500)
                 .with_exception(true),
-        };
-        err.with_category("crypto")
+        }
     }
 }
 
