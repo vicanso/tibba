@@ -57,9 +57,9 @@ pub fn json_get_strings(data: &[u8], keys: &[&str]) -> Vec<String> {
         return vec![String::new(); keys.len()];
     };
 
-    keys.iter()
-        .map(|key| get_map_string(value.as_object().unwrap(), key))
-        .collect()
+    let empty = serde_json::Map::new();
+    let map = value.as_object().unwrap_or(&empty);
+    keys.iter().map(|key| get_map_string(map, key)).collect()
 }
 
 /// Extracts a string value from JSON data by key

@@ -13,9 +13,9 @@
 // limitations under the License.
 
 use lz4_flex::block::DecompressError;
-use once_cell::sync::Lazy;
 use snafu::Snafu;
 use std::env;
+use std::sync::LazyLock;
 use tibba_error::Error as BaseError;
 
 #[derive(Snafu, Debug)]
@@ -42,7 +42,8 @@ pub enum Error {
 
 impl From<Error> for BaseError {
     fn from(val: Error) -> Self {
-        let sub_category = match val {
+        let message = val.to_string();
+        let sub_category = match &val {
             Error::Zstd { .. } => "zstd",
             Error::Lz4Decompress { .. } => "lz4_decompress",
             Error::InvalidHeaderName { .. } => "invalid_header_name",
@@ -51,15 +52,14 @@ impl From<Error> for BaseError {
             Error::Invalid { .. } => "invalid",
             Error::Deserialize { .. } => "deserialize",
         };
-        // pass `val` to `new`, not the internal `source`.
-        BaseError::new(val)
+        BaseError::new(message)
             .with_category("util")
             .with_sub_category(sub_category)
     }
 }
 
-static RUST_ENV: Lazy<String> =
-    Lazy::new(|| env::var("RUST_ENV").unwrap_or_else(|_| "dev".to_string()));
+static RUST_ENV: LazyLock<String> =
+    LazyLock::new(|| env::var("RUST_ENV").unwrap_or_else(|_| "dev".to_string()));
 
 pub fn get_env() -> &'static str {
     &RUST_ENV

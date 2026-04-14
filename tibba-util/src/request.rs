@@ -53,19 +53,10 @@ where
 }
 
 fn json_content_type(headers: &HeaderMap) -> bool {
-    let content_type = if let Some(content_type) = headers.get(header::CONTENT_TYPE) {
-        content_type
-    } else {
-        return false;
-    };
-
-    let content_type = if let Ok(content_type) = content_type.to_str() {
-        content_type
-    } else {
-        return false;
-    };
-
-    content_type.contains("application/json")
+    headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.contains("application/json"))
 }
 
 #[derive(Debug, Clone, Copy, Default)]

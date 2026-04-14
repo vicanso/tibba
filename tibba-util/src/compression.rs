@@ -12,8 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::Error;
+use super::{Error, Lz4DecompressSnafu, ZstdSnafu};
 use lz4_flex::block::{compress_prepend_size, decompress_size_prepended};
+use snafu::ResultExt;
 
 // Custom Result type using the crate's Error type
 type Result<T> = std::result::Result<T, Error>;
@@ -51,7 +52,7 @@ pub fn compress(data: &[u8], algorithm: Algorithm) -> Result<Vec<u8>> {
         }
         Algorithm::Zstd(level) => {
             // Optimization: use zstd::encode_all, code is more concise.
-            zstd::encode_all(data, level).map_err(|e| Error::Zstd { source: e })
+            zstd::encode_all(data, level).context(ZstdSnafu)
         }
     }
 }
@@ -66,13 +67,11 @@ pub fn compress(data: &[u8], algorithm: Algorithm) -> Result<Vec<u8>> {
 /// * `Result<Vec<u8>>` - Decompressed data or error.
 pub fn decompress(data: &[u8], algorithm: Algorithm) -> Result<Vec<u8>> {
     match algorithm {
-        Algorithm::Lz4 => {
-            decompress_size_prepended(data).map_err(|e| Error::Lz4Decompress { source: e })
-        }
+        Algorithm::Lz4 => decompress_size_prepended(data).context(Lz4DecompressSnafu),
         // Decompression does not require compression level, so ignore the level parameter of Zstd.
         Algorithm::Zstd(_) => {
             // Optimization: use zstd::decode_all, code is more concise.
-            zstd::decode_all(data).map_err(|e| Error::Zstd { source: e })
+            zstd::decode_all(data).context(ZstdSnafu)
         }
     }
 }

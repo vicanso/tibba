@@ -43,7 +43,7 @@ pub fn from_timestamp(secs: i64, nsecs: u32) -> String {
     if let Some(value) = DateTime::from_timestamp(secs, nsecs) {
         value.with_timezone(&offset::Local).to_string()
     } else {
-        "".to_string()
+        String::new()
     }
 }
 

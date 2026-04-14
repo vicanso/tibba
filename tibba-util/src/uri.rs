@@ -12,8 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::Error;
+use super::{DeserializeSnafu, Error};
 use serde::de::DeserializeOwned;
+use snafu::ResultExt;
 use url::Url;
 
 type Result<T> = std::result::Result<T, Error>;
@@ -117,8 +118,7 @@ where
         })
         .collect();
 
-    let query: Q =
-        serde_urlencoded::from_str(query_str).map_err(|e| Error::Deserialize { source: e })?;
+    let query: Q = serde_urlencoded::from_str(query_str).context(DeserializeSnafu)?;
 
     let raw_query = if query_str.is_empty() {
         None

@@ -12,13 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::Error;
+use super::{AxumSnafu, Error, InvalidHeaderNameSnafu, InvalidHeaderValueSnafu};
 use axum::body::{Body, Bytes};
 use axum::http::{HeaderMap, HeaderValue, header, header::HeaderName};
 use axum_extra::extract::cookie::{Cookie, CookieJar};
 use cookie::CookieBuilder;
 use http_body_util::BodyExt;
 use nanoid::nanoid;
+use snafu::ResultExt;
 use std::time::Duration;
 
 // Custom Result type using the crate's Error type
@@ -51,8 +52,8 @@ where
             continue;
         }
         headers.insert(
-            HeaderName::try_from(name).map_err(|e| Error::InvalidHeaderName { source: e })?,
-            HeaderValue::try_from(value).map_err(|e| Error::InvalidHeaderValue { source: e })?,
+            HeaderName::try_from(name).context(InvalidHeaderNameSnafu)?,
+            HeaderValue::try_from(value).context(InvalidHeaderValueSnafu)?,
         );
     }
     Ok(())
@@ -114,11 +115,7 @@ pub fn get_header_value<'a>(headers: &'a HeaderMap<HeaderValue>, key: &str) -> O
 /// # Returns
 /// * `Result<Bytes>` - Collected body bytes or error
 pub async fn read_http_body(body: Body) -> Result<Bytes> {
-    let bytes = body
-        .collect()
-        .await
-        .map_err(|e| Error::Axum { source: e })?
-        .to_bytes();
+    let bytes = body.collect().await.context(AxumSnafu)?.to_bytes();
     Ok(bytes)
 }
 
