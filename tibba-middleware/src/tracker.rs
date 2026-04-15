@@ -59,17 +59,19 @@ pub async fn user_tracker(
         );
         return Ok(res);
     }
-    let mut error = None;
-    let mut error_category = None;
-    let mut error_sub_category = None;
-    // it should get error success, otherwise it should be exception error
-    let mut error_exception = true;
-    if let Some(err) = res.extensions().get::<Error>() {
-        error = Some(err.message.clone());
-        error_category = Some(err.category.clone());
-        error_sub_category = err.sub_category.clone();
-        error_exception = err.exception.unwrap_or_default();
-    }
+    let (error, error_category, error_sub_category, error_exception) = res
+        .extensions()
+        .get::<Error>()
+        .map(|err| {
+            (
+                Some(err.message.clone()),
+                Some(err.category.clone()),
+                err.sub_category.clone(),
+                err.exception.unwrap_or_default(),
+            )
+        })
+        // it should get error success, otherwise it should be exception error
+        .unwrap_or((None, None, None, true));
     // TODO add tracker
     error!(
         category = category,

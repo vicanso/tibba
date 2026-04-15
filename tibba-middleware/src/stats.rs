@@ -61,10 +61,10 @@ pub async fn stats(
     let method = req.method().clone();
     let headers = req.headers();
     let x_forwarded_for = get_header_value(headers, "X-Forwarded-For")
-        .unwrap_or("")
+        .unwrap_or_default()
         .to_string();
     let referrer = get_header_value(headers, "Referer")
-        .unwrap_or("")
+        .unwrap_or_default()
         .to_string();
 
     // Process the request

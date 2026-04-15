@@ -32,9 +32,11 @@ impl From<Error> for BaseError {
             Error::Common { message, category } => {
                 BaseError::new(&message).with_sub_category(&category)
             }
-            Error::TooManyRequests { .. } => BaseError::new(val.to_string())
-                .with_sub_category("too_many_requests")
-                .with_status(429),
+            Error::TooManyRequests { limit, current } => {
+                BaseError::new(format!("too many requests, limit: {limit}, current: {current}"))
+                    .with_sub_category("too_many_requests")
+                    .with_status(429)
+            }
         };
         err.with_category("middleware")
     }
@@ -53,32 +55,27 @@ where
         parts: &mut Parts,
         _state: &S,
     ) -> std::result::Result<Self, Self::Rejection> {
-        let client_ip = {
-            // get client ip from X-Forwarded-For
-            parts
-                .headers
-                .get("X-Forwarded-For")
-                .and_then(|header| header.to_str().ok()) // convert to str
-                .and_then(|s| s.split(',').next()) // get first ip
-                .map(|s| s.trim()) // trim space
-                .and_then(|s| s.parse::<IpAddr>().ok()) // parse ip
-                // if above failed, try X-Real-Ip
-                .or_else(|| {
-                    parts
-                        .headers
-                        .get("X-Real-Ip")
-                        .and_then(|header| header.to_str().ok())
-                        .map(|s| s.trim())
-                        .and_then(|s| s.parse::<IpAddr>().ok())
-                })
-                // if above failed, fallback to TCP connection info
-                .or_else(|| {
-                    parts
-                        .extensions
-                        .get::<ConnectInfo<SocketAddr>>()
-                        .map(|ConnectInfo(addr)| addr.ip())
-                })
-        };
+        let client_ip = parts
+            .headers
+            .get("X-Forwarded-For")
+            .and_then(|header| header.to_str().ok())
+            .and_then(|s| s.split(',').next())
+            .map(|s| s.trim())
+            .and_then(|s| s.parse::<IpAddr>().ok())
+            .or_else(|| {
+                parts
+                    .headers
+                    .get("X-Real-Ip")
+                    .and_then(|header| header.to_str().ok())
+                    .map(|s| s.trim())
+                    .and_then(|s| s.parse::<IpAddr>().ok())
+            })
+            .or_else(|| {
+                parts
+                    .extensions
+                    .get::<ConnectInfo<SocketAddr>>()
+                    .map(|ConnectInfo(addr)| addr.ip())
+            });
 
         // if all attempts fail (result is None), return error
         client_ip

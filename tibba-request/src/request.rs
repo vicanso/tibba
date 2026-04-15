@@ -12,8 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Import necessary dependencies
-use super::Error;
+use super::{BuildSnafu, Error, RequestSnafu, SerdeSnafu, UriSnafu};
 use async_trait::async_trait;
 use axum::http::Method;
 use axum::http::header::HeaderMap;
@@ -24,6 +23,7 @@ use reqwest::RequestBuilder;
 use scopeguard::defer;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+use snafu::ResultExt;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -97,7 +97,7 @@ pub trait HttpInterceptor: Send + Sync {
 }
 
 /// Common error handling for HTTP responses
-pub async fn handle_fail(service: &str, status: u16, data: &Bytes) -> Result<()> {
+pub fn handle_fail(service: &str, status: u16, data: &Bytes) -> Result<()> {
     if status >= 400 {
         let mut message = json_get(data, "message");
         if message.is_empty() {
@@ -117,8 +117,8 @@ pub struct CommonInterceptor {
 }
 
 impl CommonInterceptor {
-    pub fn new(service: &str) -> CommonInterceptor {
-        CommonInterceptor {
+    pub fn new(service: &str) -> Self {
+        Self {
             service: service.to_string(),
         }
     }
@@ -127,13 +127,7 @@ impl CommonInterceptor {
 #[async_trait]
 impl HttpInterceptor for CommonInterceptor {
     async fn fail(&self, status: u16, data: &Bytes) -> Result<()> {
-        handle_fail(&self.service, status, data).await
-    }
-    async fn request(&self, req: RequestBuilder) -> Result<RequestBuilder> {
-        Ok(req)
-    }
-    async fn response(&self, data: Bytes) -> Result<Bytes> {
-        Ok(data)
+        handle_fail(&self.service, status, data)
     }
     async fn on_done(&self, stats: &HttpStats, err: Option<&Error>) -> Result<()> {
         let error = err.map(ToString::to_string);
@@ -186,7 +180,7 @@ impl ClientBuilder {
         Self {
             config: ClientConfig {
                 service: service.to_string(),
-                base_url: "".to_string(),
+                base_url: String::new(),
                 read_timeout: None,
                 timeout: None,
                 connect_timeout: None,
@@ -311,6 +305,12 @@ impl ClientBuilder {
         self
     }
 
+    /// Set the max concurrent requests
+    pub fn with_max_processing(mut self, max_processing: u32) -> Self {
+        self.config.max_processing = Some(max_processing);
+        self
+    }
+
     /// Set the DNS overrides for requests
     ///
     /// # Arguments
@@ -338,7 +338,7 @@ impl ClientBuilder {
             builder = builder.timeout(timeout);
         }
         if let Some(headers) = self.config.headers.take() {
-            builder = builder.default_headers(headers.clone());
+            builder = builder.default_headers(headers);
         }
         if let Some(read_timeout) = self.config.read_timeout {
             builder = builder.read_timeout(read_timeout);
@@ -360,9 +360,8 @@ impl ClientBuilder {
 
         builder = builder.tls_info(true);
 
-        let client = builder.build().map_err(|e| Error::Build {
+        let client = builder.build().context(BuildSnafu {
             service: self.config.service.clone(),
-            source: e,
         })?;
         Ok(Client {
             client,
@@ -408,12 +407,10 @@ impl Client {
         }
 
         let url = self.get_url(params.url);
-        let uri = url.parse::<Uri>().map_err(|e| Error::Uri {
+        let uri = url.parse::<Uri>().context(UriSnafu {
             service: self.config.service.clone(),
-            source: e,
         })?;
-        let path = uri.path();
-        stats.path = path.to_string();
+        stats.path = uri.path().to_string();
         stats.method = params.method.to_string();
 
         let mut req = match params.method {
@@ -426,7 +423,6 @@ impl Client {
         if let Some(value) = params.timeout {
             req = req.timeout(value);
         }
-
         if let Some(value) = params.query {
             req = req.query(value);
         }
@@ -438,12 +434,10 @@ impl Client {
                 req = interceptor.request(req).await?;
             }
         }
-        // TODO dns tcp tls process
         let process_done = Stopwatch::new();
-        let res = req.send().await.map_err(|e| Error::Request {
+        let res = req.send().await.context(RequestSnafu {
             service: self.config.service.clone(),
-            path: path.to_string(),
-            source: e,
+            path: stats.path.clone(),
         })?;
 
         stats.processing = process_done.elapsed_ms();
@@ -454,10 +448,9 @@ impl Client {
 
         let status = res.status().as_u16();
         let transfer_done = Stopwatch::new();
-        let mut full = res.bytes().await.map_err(|e| Error::Request {
+        let mut full = res.bytes().await.context(RequestSnafu {
             service: self.config.service.clone(),
-            path: path.to_string(),
-            source: e,
+            path: stats.path.clone(),
         })?;
         stats.transfer = transfer_done.elapsed_ms();
         stats.content_length = full.len();
@@ -491,9 +484,8 @@ impl Client {
         let full = self.raw(stats, params).await?;
 
         let serde_done = Stopwatch::new();
-        let data = serde_json::from_slice(&full).map_err(|e| Error::Serde {
+        let data = serde_json::from_slice(&full).context(SerdeSnafu {
             service: self.config.service.clone(),
-            source: e,
         })?;
         stats.serde = serde_done.elapsed_ms();
         Ok(data)
@@ -507,22 +499,16 @@ impl Client {
         P: Serialize + ?Sized,
         T: DeserializeOwned,
     {
-        let mut stats = HttpStats {
-            ..Default::default()
-        };
+        let mut stats = HttpStats::default();
         let done = Stopwatch::new();
         let result = self.do_request(&mut stats, params).await;
         stats.total = done.elapsed_ms();
-        let mut err = None;
-        if let Err(ref e) = result {
-            err = Some(e)
-        }
+        let err = result.as_ref().err();
         if let Some(interceptors) = &self.config.interceptors {
             for interceptor in interceptors {
                 interceptor.on_done(&stats, err).await?;
             }
         }
-
         result
     }
 
@@ -538,22 +524,16 @@ impl Client {
         Q: Serialize + ?Sized,
         P: Serialize + ?Sized,
     {
-        let mut stats = HttpStats {
-            ..Default::default()
-        };
+        let mut stats = HttpStats::default();
         let done = Stopwatch::new();
         let result = self.raw(&mut stats, params).await;
         stats.total = done.elapsed_ms();
-        let mut err = None;
-        if let Err(ref e) = result {
-            err = Some(e)
-        }
+        let err = result.as_ref().err();
         if let Some(interceptors) = &self.config.interceptors {
             for interceptor in interceptors {
                 interceptor.on_done(&stats, err).await?;
             }
         }
-
         result
     }
     /// Makes GET request and deserializes response
@@ -644,10 +624,54 @@ impl Client {
         })
         .await
     }
+    /// Makes PUT request with JSON body and deserializes response
+    pub async fn put<P, T>(&self, url: &str, json: &P) -> Result<T>
+    where
+        P: Serialize + ?Sized,
+        T: DeserializeOwned,
+    {
+        self.request(Params {
+            timeout: None,
+            method: Method::PUT,
+            url,
+            query: EMPTY_QUERY,
+            body: Some(json),
+        })
+        .await
+    }
+
+    /// Makes PATCH request with JSON body and deserializes response
+    pub async fn patch<P, T>(&self, url: &str, json: &P) -> Result<T>
+    where
+        P: Serialize + ?Sized,
+        T: DeserializeOwned,
+    {
+        self.request(Params {
+            timeout: None,
+            method: Method::PATCH,
+            url,
+            query: EMPTY_QUERY,
+            body: Some(json),
+        })
+        .await
+    }
+
+    /// Makes DELETE request and deserializes response
+    pub async fn delete<T>(&self, url: &str) -> Result<T>
+    where
+        T: DeserializeOwned,
+    {
+        self.request(Params {
+            timeout: None,
+            method: Method::DELETE,
+            url,
+            query: EMPTY_QUERY,
+            body: EMPTY_BODY,
+        })
+        .await
+    }
+
     /// Gets the current processing count
-    ///
-    /// # Returns
-    /// * `u32` - Current processing count
     pub fn get_processing(&self) -> u32 {
         self.processing.load(Ordering::Relaxed)
     }

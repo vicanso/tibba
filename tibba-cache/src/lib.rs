@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use serde::Deserialize;
-use snafu::Snafu;
+use snafu::{ResultExt, Snafu};
 use std::time::Duration;
 use tibba_config::Config;
 use tibba_error::Error as BaseError;
@@ -24,6 +24,13 @@ use validator::Validate;
 pub enum Error {
     #[snafu(display("category: {category}, {message}"))]
     Common { category: String, message: String },
+    #[snafu(display("config error: {source}"))]
+    Config {
+        #[snafu(source(from(tibba_config::Error, Box::new)))]
+        source: Box<tibba_config::Error>,
+    },
+    #[snafu(display("parse uri error: {source}"))]
+    ParseUri { source: tibba_util::Error },
     #[snafu(display("{source}"))]
     SingleBuild { source: deadpool_redis::BuildError },
     #[snafu(display("{source}"))]
@@ -37,6 +44,8 @@ pub enum Error {
     },
     #[snafu(display("{source}"))]
     Compression { source: tibba_util::Error },
+    #[snafu(display("{source}"))]
+    SerdeJson { source: serde_json::Error },
     #[snafu(display("category: {category}, {source}"))]
     Url {
         category: String,
@@ -93,14 +102,8 @@ struct RedisParams {
 // Creates a new RedisConfig instance from the configuration
 // Parses Redis URI and extracts connection parameters
 fn new_redis_config(config: &Config) -> Result<RedisConfig> {
-    let uri = config.get_string("uri").map_err(|e| Error::Common {
-        category: "config".to_string(),
-        message: e.to_string(),
-    })?;
-    let parsed = parse_uri::<RedisParams>(&uri).map_err(|e| Error::Common {
-        category: "redis".to_string(),
-        message: e.to_string(),
-    })?;
+    let uri = config.get_string("uri").context(ConfigSnafu)?;
+    let parsed = parse_uri::<RedisParams>(&uri).context(ParseUriSnafu)?;
     let nodes = parsed
         .host_strings()
         .iter()
@@ -115,10 +118,9 @@ fn new_redis_config(config: &Config) -> Result<RedisConfig> {
         recycle_timeout: query.recycle_timeout.unwrap_or(Duration::from_secs(60)),
         password: query.password,
     };
-    redis_config.validate().map_err(|e| Error::Validate {
-        category: "redis".to_string(),
-        source: e,
-    })?;
+    redis_config
+        .validate()
+        .context(ValidateSnafu { category: "redis" })?;
     Ok(redis_config)
 }
 
@@ -128,6 +130,8 @@ impl From<Error> for BaseError {
             Error::Common { category, message } => {
                 BaseError::new(message).with_sub_category(&category)
             }
+            Error::Config { source } => BaseError::new(*source).with_sub_category("config"),
+            Error::ParseUri { source } => BaseError::new(source).with_sub_category("parse_uri"),
             Error::SingleBuild { source } => BaseError::new(source)
                 .with_sub_category("single_build")
                 .with_status(500)
@@ -142,6 +146,9 @@ impl From<Error> for BaseError {
                 .with_exception(true),
             Error::Compression { source } => BaseError::new(source)
                 .with_sub_category("compression")
+                .with_exception(true),
+            Error::SerdeJson { source } => BaseError::new(source)
+                .with_sub_category("serde_json")
                 .with_exception(true),
             Error::Url { category, source } => BaseError::new(source)
                 .with_sub_category(&category)

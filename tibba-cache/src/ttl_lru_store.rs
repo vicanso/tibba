@@ -41,9 +41,8 @@ impl<T: Expired + Clone> TtlLruStore<T> {
     /// # Returns
     /// * A new TtlLruStore instance
     pub fn new(size: NonZeroUsize) -> Self {
-        let cache: LruCache<String, T> = LruCache::new(size);
         TtlLruStore {
-            cache: RwLock::new(cache),
+            cache: RwLock::new(LruCache::new(size)),
         }
     }
 
@@ -55,7 +54,7 @@ impl<T: Expired + Clone> TtlLruStore<T> {
     /// * If the cache is at capacity, the least recently used item will be removed
     /// * If the key already exists, the value will be updated
     pub async fn set(&self, key: &str, value: T) {
-        let cache = &mut self.cache.write().await;
+        let mut cache = self.cache.write().await;
         cache.put(key.to_string(), value);
     }
 
@@ -71,11 +70,7 @@ impl<T: Expired + Clone> TtlLruStore<T> {
     pub async fn get(&self, key: &str) -> Option<T> {
         let cache = self.cache.read().await;
         // better performance use peek to avoid moving the data to the front of the cache
-        let v = cache.peek(key)?;
-        if !v.is_expired() {
-            return Some(v.clone());
-        }
-        None
+        cache.peek(key).filter(|v| !v.is_expired()).cloned()
     }
 
     /// Removes a value from the cache
@@ -92,19 +87,14 @@ impl<T: Expired + Clone> TtlLruStore<T> {
     /// This method should be called periodically to free up memory from expired "garbage" data.
     pub async fn purge_expired(&self) {
         let mut cache = self.cache.write().await;
-        // LruCache a a limited API for removal during iteration.
-        // The safest way is to collect keys and then remove them.
-        let keys_to_remove: Vec<String> = cache
+        // LruCache has a limited API for removal during iteration.
+        // The safest way is to collect expired keys first, then remove them.
+        let keys: Vec<String> = cache
             .iter()
             .filter(|(_, v)| v.is_expired())
             .map(|(k, _)| k.clone())
             .collect();
-
-        if keys_to_remove.is_empty() {
-            return;
-        }
-
-        for key in keys_to_remove {
+        for key in keys {
             cache.pop(&key);
         }
     }

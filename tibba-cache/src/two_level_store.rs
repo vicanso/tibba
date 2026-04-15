@@ -13,12 +13,19 @@
 // limitations under the License.
 
 use super::{Error, Expired, RedisCache, TtlLruStore};
-use chrono::Utc;
 use serde::{Serialize, de::DeserializeOwned};
 use std::num::NonZeroUsize;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 type Result<T> = std::result::Result<T, Error>;
+
+#[inline]
+fn now_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
 
 /// Calculates TTL (Time-To-Live) aligned to interval boundaries
 /// # Arguments
@@ -28,22 +35,19 @@ type Result<T> = std::result::Result<T, Error>;
 /// # Notes
 /// * If remaining time is less than 1/10 of unit, extends to next interval
 /// * Helps prevent cache stampede by aligning expiration times
+#[inline]
 fn get_ttl_by_unit(unit: Duration) -> Duration {
-    let now = Utc::now();
-    // Calculate the remaining time until next interval
-    let seconds = unit.as_secs() - (now.timestamp() as u64 % unit.as_secs());
-    // If less than 1/10 of the unit, extend to next interval
-    if seconds < unit.as_secs() / 10 {
-        return Duration::from_secs(unit.as_secs() + seconds);
+    let secs = unit.as_secs();
+    if secs == 0 {
+        return Duration::ZERO;
     }
-    Duration::from_secs(seconds)
-}
-
-/// Gets current timestamp in seconds
-/// # Returns
-/// * `i64` - Current Unix timestamp
-fn now_utc() -> i64 {
-    Utc::now().timestamp()
+    // Calculate the remaining time until next interval
+    let remaining = secs - (now_secs() % secs);
+    // If less than 1/10 of the unit, extend to next interval
+    if remaining < secs / 10 {
+        return Duration::from_secs(secs + remaining);
+    }
+    Duration::from_secs(remaining)
 }
 /// Wrapper struct that adds expiration time to cached data
 /// # Type Parameters
@@ -52,17 +56,17 @@ fn now_utc() -> i64 {
 struct ExpiredCache<T> {
     /// The actual cached data
     data: T,
-    /// Unix timestamp when this cache entry expires
-    expired_at: i64,
+    /// Unix timestamp (seconds) when this cache entry expires
+    expired_at: u64,
 }
 
 impl<T> Expired for ExpiredCache<T> {
     /// Checks if the cached data has expired
     /// # Returns
-    /// * `true` - Cache entry has not expired yet
-    /// * `false` - Cache entry has expired
+    /// * `true` - Cache entry has expired
+    /// * `false` - Cache entry is still valid
     fn is_expired(&self) -> bool {
-        now_utc() >= self.expired_at
+        now_secs() >= self.expired_at
     }
 }
 
@@ -86,23 +90,26 @@ impl<T: Clone + Serialize + DeserializeOwned> TwoLevelStore<T> {
     /// * `ttl` - Default time-to-live for cache entries
     /// # Returns
     /// * New TwoLevelStore instance
-    pub fn new(cache: RedisCache, size: NonZeroUsize, ttl: Duration) -> Self {
+    pub fn new(redis: RedisCache, size: NonZeroUsize, ttl: Duration) -> Self {
         TwoLevelStore {
             lru: TtlLruStore::new(size),
             ttl,
-            redis: cache,
+            redis,
         }
     }
     async fn fill_lru(&self, key: &str, value: T, ttl: Duration) {
         if ttl.is_zero() {
             return;
         }
-        let expired_at = now_utc() + ttl.as_secs() as i64;
-        let data = ExpiredCache {
-            data: value,
-            expired_at,
-        };
-        self.lru.set(key, data).await;
+        self.lru
+            .set(
+                key,
+                ExpiredCache {
+                    data: value,
+                    expired_at: now_secs() + ttl.as_secs(),
+                },
+            )
+            .await;
     }
 
     /// Stores a value in both cache levels
@@ -145,7 +152,7 @@ impl<T: Clone + Serialize + DeserializeOwned> TwoLevelStore<T> {
         // Try Redis if not in LRU
         let result: Option<T> = self.redis.get_struct(key).await?;
         // If found in Redis, potentially update LRU
-        if let Some(ref value) = result {
+        if let Some(value) = &result {
             let ttl = get_ttl_by_unit(self.ttl);
             // Only cache in LRU if TTL is within expected range
             // Prevents caching nearly-expired values
@@ -154,5 +161,24 @@ impl<T: Clone + Serialize + DeserializeOwned> TwoLevelStore<T> {
             }
         }
         Ok(result)
+    }
+
+    /// Removes a value from both cache levels
+    /// # Arguments
+    /// * `key` - The key to invalidate
+    /// # Returns
+    /// * `Ok(())` - Successfully removed from both caches
+    /// * `Err(Error)` - Redis operation failed
+    pub async fn del(&self, key: &str) -> Result<()> {
+        self.lru.del(key).await;
+        self.redis.del(key).await
+    }
+
+    /// Purges expired entries from the in-memory LRU cache
+    /// # Notes
+    /// * Should be called periodically to reclaim memory
+    /// * Does not affect Redis entries (Redis handles its own TTL expiry)
+    pub async fn purge_expired(&self) {
+        self.lru.purge_expired().await;
     }
 }

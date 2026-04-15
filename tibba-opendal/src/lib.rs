@@ -16,7 +16,7 @@ use opendal::Operator;
 use opendal::layers::MimeGuessLayer;
 use path_absolutize::Absolutize;
 use serde::Deserialize;
-use snafu::Snafu;
+use snafu::{ResultExt, Snafu};
 use std::path::PathBuf;
 use tibba_config::Config;
 use tibba_error::Error as BaseError;
@@ -39,36 +39,42 @@ pub struct OpenDalConfig {
 }
 
 fn new_opendal_config(config: &Config) -> Result<OpenDalConfig> {
-    let open_dal_config =
-        config
-            .try_deserialize::<OpenDalConfig>()
-            .map_err(|e| Error::Invalid {
-                message: e.to_string(),
-            })?;
-    open_dal_config
-        .validate()
-        .map_err(|e| Error::Validate { source: e })?;
+    let open_dal_config = config
+        .try_deserialize::<OpenDalConfig>()
+        .context(ConfigSnafu)?;
+    open_dal_config.validate().context(ValidateSnafu)?;
     Ok(open_dal_config)
 }
 
 #[derive(Debug, Snafu)]
 pub enum Error {
     #[snafu(display("open dal {source}"))]
-    OpenDal { source: Box<opendal::Error> },
-    #[snafu(display("parse url {source}"))]
-    ParseUrl { source: url::ParseError },
+    OpenDal {
+        #[snafu(source(from(opendal::Error, Box::new)))]
+        source: Box<opendal::Error>,
+    },
+    #[snafu(display("config error: {source}"))]
+    Config {
+        #[snafu(source(from(tibba_config::Error, Box::new)))]
+        source: Box<tibba_config::Error>,
+    },
+    #[snafu(display("parse uri error: {source}"))]
+    ParseUri { source: tibba_util::Error },
     #[snafu(display("validate {source}"))]
     Validate { source: validator::ValidationErrors },
     #[snafu(display("{message}"))]
     Invalid { message: String },
 }
 
+type Result<T, E = Error> = std::result::Result<T, E>;
+
 impl From<Error> for BaseError {
-    fn from(source: Error) -> Self {
-        let err = match source {
+    fn from(val: Error) -> Self {
+        let err = match val {
             Error::OpenDal { source } => BaseError::new(source).with_exception(true),
-            Error::ParseUrl { source } => BaseError::new(source)
-                .with_sub_category("parse_url")
+            Error::Config { source } => BaseError::new(*source).with_sub_category("config"),
+            Error::ParseUri { source } => BaseError::new(source)
+                .with_sub_category("parse_uri")
                 .with_exception(true),
             Error::Validate { source } => BaseError::new(source)
                 .with_sub_category("validate")
@@ -78,8 +84,6 @@ impl From<Error> for BaseError {
         err.with_category("open_dal")
     }
 }
-
-type Result<T, E = Error> = std::result::Result<T, E>;
 
 #[derive(Deserialize, Debug, PartialEq)]
 struct S3Params {
@@ -91,10 +95,7 @@ struct S3Params {
 
 /// Create a new S3 storage.
 fn new_s3_dal(url: &str) -> Result<Storage> {
-    let parsed = parse_uri::<S3Params>(url).map_err(|e| Error::Invalid {
-        message: e.to_string(),
-    })?;
-    // let params = parse_params(url)?;
+    let parsed = parse_uri::<S3Params>(url).context(ParseUriSnafu)?;
     let mut builder = opendal::services::S3::default().endpoint(&parsed.endpoint());
     if let Some(path) = parsed.path {
         builder = builder.root(path);
@@ -110,11 +111,8 @@ fn new_s3_dal(url: &str) -> Result<Storage> {
     if let Some(secret_access_key) = &query.secret_access_key {
         builder = builder.secret_access_key(secret_access_key);
     }
-
     let dal = opendal::Operator::new(builder)
-        .map_err(|e| Error::OpenDal {
-            source: Box::new(e),
-        })?
+        .context(OpenDalSnafu)?
         .layer(MimeGuessLayer::default())
         .finish();
     Ok(Storage::new(dal))
@@ -125,16 +123,14 @@ fn new_mysql_dal(url: &str) -> Result<Storage> {
     let builder = opendal::services::Mysql::default()
         .connection_string(url)
         .table("objects");
-
     let dal = Operator::new(builder)
-        .map_err(|e| Error::OpenDal {
-            source: Box::new(e),
-        })?
+        .context(OpenDalSnafu)?
         .layer(MimeGuessLayer::default())
         .finish();
     Ok(Storage::new(dal))
 }
 
+#[inline]
 fn resolve_path(path_str: &str) -> String {
     if path_str.is_empty() {
         return String::new();
@@ -160,12 +156,9 @@ fn new_fs_dal(url: &str) -> Result<Storage> {
             message: "root is empty".to_string(),
         });
     }
-
     let builder = opendal::services::Fs::default().root(&resolve_path(root));
     let dal = Operator::new(builder)
-        .map_err(|e| Error::OpenDal {
-            source: Box::new(e),
-        })?
+        .context(OpenDalSnafu)?
         .layer(MimeGuessLayer::default())
         .finish();
     Ok(Storage::new(dal))
@@ -174,9 +167,7 @@ fn new_fs_dal(url: &str) -> Result<Storage> {
 fn new_http_dal(url: &str) -> Result<Storage> {
     let builder = opendal::services::Http::default().endpoint(url);
     let dal = Operator::new(builder)
-        .map_err(|e| Error::OpenDal {
-            source: Box::new(e),
-        })?
+        .context(OpenDalSnafu)?
         .layer(MimeGuessLayer::default())
         .finish();
     Ok(Storage::new(dal))

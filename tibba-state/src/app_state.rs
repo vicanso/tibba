@@ -36,13 +36,13 @@ pub struct AppState {
 
 impl AppState {
     /// Creates a new AppState instance with specified processing limit
-    pub fn new(processing_limit: i32, commit_id: String) -> Self {
+    pub fn new(processing_limit: i32, commit_id: impl Into<String>) -> Self {
         Self {
             processing_limit,
             running: AtomicBool::new(false),
             processing: AtomicI32::new(0),
             started_at: SystemTime::now(),
-            commit_id,
+            commit_id: commit_id.into(),
         }
     }
 
@@ -57,15 +57,15 @@ impl AppState {
     }
 
     /// Atomically increments the processing counter
-    /// Returns the previous value
+    /// Returns the new value after increment
     pub fn inc_processing(&self) -> i32 {
-        self.processing.fetch_add(1, Ordering::Relaxed)
+        self.processing.fetch_add(1, Ordering::Relaxed) + 1
     }
 
     /// Atomically decrements the processing counter
-    /// Returns the previous value
+    /// Returns the new value after decrement
     pub fn dec_processing(&self) -> i32 {
-        self.processing.fetch_sub(1, Ordering::Relaxed)
+        self.processing.fetch_sub(1, Ordering::Relaxed) - 1
     }
 
     /// Returns the current number of requests being processed

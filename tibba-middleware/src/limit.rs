@@ -59,8 +59,7 @@ pub async fn processing_limit(
         return Ok(res);
     }
 
-    // Increment processing counter and get new count
-    let count = state.inc_processing() + 1;
+    let count = state.inc_processing();
     defer!(state.dec_processing(););
 
     // Check if processing limit has been exceeded
@@ -104,7 +103,7 @@ impl LimitParams {
     /// * `secs` - Duration in seconds for the rate limit window
     /// * `category` - Category identifier for the limit
     pub fn new(max: i64, secs: u64, category: &str) -> Self {
-        LimitParams {
+        Self {
             limit_type: LimitType::Ip,
             category: category.to_string(),
             max,

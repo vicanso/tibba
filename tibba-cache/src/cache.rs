@@ -12,21 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, RedisClient, RedisClientConn};
+use super::{CompressionSnafu, Error, RedisClient, RedisClientConn, RedisSnafu, SerdeJsonSnafu};
 use deadpool_redis::redis::{cmd, pipe};
-use redis::{AsyncCommands, RedisError};
+use redis::AsyncCommands;
 use serde::{Serialize, de::DeserializeOwned};
+use snafu::ResultExt;
 use std::{borrow::Cow, time::Duration};
 use tibba_util::{Algorithm, compress, decompress};
 
-type Result<T> = std::result::Result<T, Error>;
+const DEFAULT_ZSTD: Algorithm = Algorithm::Zstd(3);
 
-fn map_err(category: &str, e: RedisError) -> Error {
-    Error::Redis {
-        category: category.to_string(),
-        source: e,
-    }
-}
+type Result<T> = std::result::Result<T, Error>;
 
 /// Redis cache implementation that provides various caching operations
 pub struct RedisCache {
@@ -50,7 +46,7 @@ impl RedisCache {
     pub fn new(client: &'static RedisClient) -> Self {
         Self {
             ttl: Duration::from_secs(10 * 60),
-            prefix: "".to_string(),
+            prefix: String::new(),
             client,
         }
     }
@@ -64,8 +60,8 @@ impl RedisCache {
 
     /// Sets the prefix for all cache keys
     /// Returns self for method chaining
-    pub fn with_prefix(mut self, prefix: String) -> Self {
-        self.prefix = prefix;
+    pub fn with_prefix(mut self, prefix: impl Into<String>) -> Self {
+        self.prefix = prefix.into();
         self
     }
 
@@ -92,7 +88,7 @@ impl RedisCache {
             .await?
             .ping()
             .await
-            .map_err(|e| map_err("ping", e))?;
+            .context(RedisSnafu { category: "ping" })?;
         Ok(())
     }
     /// Retrieves a raw value from Redis for the given key
@@ -109,7 +105,7 @@ impl RedisCache {
             .await?
             .get(key)
             .await
-            .map_err(|e| map_err("get", e))?;
+            .context(RedisSnafu { category: "get" })?;
 
         Ok(result)
     }
@@ -120,7 +116,7 @@ impl RedisCache {
     /// * `key` - The key under which to store the value
     /// * `value` - The value to store
     /// * `ttl` - Optional time-to-live duration (uses instance default if None)
-    async fn set_value<T: redis::ToRedisArgs + Send + Sync>(
+    async fn set_value<T: redis::ToSingleRedisArg + Send + Sync>(
         &self,
         key: &str,
         value: T,
@@ -132,7 +128,7 @@ impl RedisCache {
             .await?
             .set_ex(key, value, seconds)
             .await
-            .map_err(|e| map_err("set", e))?;
+            .context(RedisSnafu { category: "set" })?;
         Ok(())
     }
     /// Attempts to acquire a distributed lock using Redis SET NX command
@@ -154,7 +150,7 @@ impl RedisCache {
             .arg(ttl.unwrap_or(self.ttl).as_secs())
             .query_async(&mut conn)
             .await
-            .map_err(|e| map_err("lock", e))?;
+            .context(RedisSnafu { category: "lock" })?;
         Ok(result)
     }
     /// Removes a key and its value from Redis
@@ -169,7 +165,7 @@ impl RedisCache {
             .await?
             .del(self.get_key(key))
             .await
-            .map_err(|e| map_err("del", e))?;
+            .context(RedisSnafu { category: "del" })?;
 
         Ok(())
     }
@@ -198,14 +194,14 @@ impl RedisCache {
             .arg(delta)
             .query_async::<(bool, i64)>(&mut conn)
             .await
-            .map_err(|e| map_err("incr", e))?;
+            .context(RedisSnafu { category: "incr" })?;
         Ok(count)
     }
     /// Sets a value in Redis with an optional TTL
     /// - If TTL is None, uses the default TTL configured for this cache
     /// - Value type must implement ToRedisArgs trait
     /// - Key will be automatically prefixed if a prefix is configured
-    pub async fn set<T: redis::ToRedisArgs + Send + Sync>(
+    pub async fn set<T: redis::ToSingleRedisArg + Send + Sync>(
         &self,
         key: &str,
         value: T,
@@ -228,10 +224,7 @@ impl RedisCache {
     where
         T: ?Sized + Serialize,
     {
-        let value = serde_json::to_vec(&value).map_err(|e| Error::Common {
-            category: "set_struct".to_string(),
-            message: e.to_string(),
-        })?;
+        let value = serde_json::to_vec(&value).context(SerdeJsonSnafu)?;
         self.set_value(&self.get_key(key), &value, ttl).await?;
         Ok(())
     }
@@ -244,19 +237,11 @@ impl RedisCache {
     where
         T: DeserializeOwned,
     {
-        let buf: Vec<u8> = self.get_value(&self.get_key(key)).await?;
-
-        if buf.is_empty() {
-            return Ok(None);
+        let buf: Option<Vec<u8>> = self.get_value(&self.get_key(key)).await?;
+        match buf {
+            None => Ok(None),
+            Some(b) => serde_json::from_slice(&b).context(SerdeJsonSnafu).map(Some),
         }
-
-        let deserializer = &mut serde_json::Deserializer::from_slice(&buf);
-        let result = T::deserialize(deserializer).map_err(|e| Error::Common {
-            category: "get_struct".to_string(),
-            message: e.to_string(),
-        })?;
-
-        Ok(Some(result))
     }
     /// Gets the remaining time-to-live for a key
     /// # Arguments
@@ -273,7 +258,7 @@ impl RedisCache {
             .await?
             .ttl(self.get_key(key))
             .await
-            .map_err(|e| map_err("ttl", e))?;
+            .context(RedisSnafu { category: "ttl" })?;
 
         Ok(result)
     }
@@ -291,8 +276,44 @@ impl RedisCache {
             .await?
             .get_del(self.get_key(key))
             .await
-            .map_err(|e| map_err("get_del", e))?;
+            .context(RedisSnafu {
+                category: "get_del",
+            })?;
 
+        Ok(result)
+    }
+    /// Checks whether a key exists in Redis
+    /// # Arguments
+    /// * `key` - The key to check
+    /// # Returns
+    /// * `Ok(true)` - Key exists
+    /// * `Ok(false)` - Key does not exist
+    /// * `Err(Error)` - Redis operation failed
+    pub async fn exists(&self, key: &str) -> Result<bool> {
+        let result = self
+            .conn()
+            .await?
+            .exists(self.get_key(key))
+            .await
+            .context(RedisSnafu { category: "exists" })?;
+        Ok(result)
+    }
+    /// Updates the TTL of an existing key without changing its value
+    /// # Arguments
+    /// * `key` - The key whose TTL to update
+    /// * `ttl` - Optional duration (uses instance default if None)
+    /// # Returns
+    /// * `Ok(true)` - TTL was successfully updated
+    /// * `Ok(false)` - Key does not exist
+    /// * `Err(Error)` - Redis operation failed
+    pub async fn expire(&self, key: &str, ttl: Option<Duration>) -> Result<bool> {
+        let seconds = ttl.unwrap_or(self.ttl).as_secs();
+        let result = self
+            .conn()
+            .await?
+            .expire(self.get_key(key), seconds as i64)
+            .await
+            .context(RedisSnafu { category: "expire" })?;
         Ok(result)
     }
     async fn set_struct_compressed<T>(
@@ -305,11 +326,8 @@ impl RedisCache {
     where
         T: ?Sized + Serialize,
     {
-        let value = serde_json::to_vec(value).map_err(|e| Error::Common {
-            category: "serde_json".to_string(),
-            message: e.to_string(),
-        })?;
-        let buf = compress(&value, algorithm).map_err(|e| Error::Compression { source: e })?;
+        let value = serde_json::to_vec(value).context(SerdeJsonSnafu)?;
+        let buf = compress(&value, algorithm).context(CompressionSnafu)?;
         self.set_value(&self.get_key(key), &buf, ttl).await
     }
 
@@ -321,13 +339,9 @@ impl RedisCache {
         match value {
             None => Ok(None),
             Some(compressed_buf) => {
-                let buf = decompress(&compressed_buf, algorithm)
-                    .map_err(|e| Error::Compression { source: e })?;
+                let buf = decompress(&compressed_buf, algorithm).context(CompressionSnafu)?;
                 serde_json::from_slice(&buf)
-                    .map_err(|e| Error::Common {
-                        category: "serde_json".to_string(),
-                        message: e.to_string(),
-                    })
+                    .context(SerdeJsonSnafu)
                     .map(Some)
             }
         }
@@ -381,7 +395,7 @@ impl RedisCache {
     where
         T: ?Sized + Serialize,
     {
-        self.set_struct_compressed(key, value, ttl, Algorithm::default())
+        self.set_struct_compressed(key, value, ttl, DEFAULT_ZSTD)
             .await
     }
     /// Retrieves, decompresses (Zstd), and deserializes a struct from Redis
@@ -397,6 +411,6 @@ impl RedisCache {
     where
         T: DeserializeOwned,
     {
-        self.get_struct_compressed(key, Algorithm::default()).await
+        self.get_struct_compressed(key, DEFAULT_ZSTD).await
     }
 }

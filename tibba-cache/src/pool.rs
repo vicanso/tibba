@@ -12,16 +12,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, new_redis_config};
-use async_trait::async_trait;
+use super::{ClusterBuildSnafu, Error, RedisSnafu, SingleBuildSnafu, new_redis_config};
 use deadpool_redis::{PoolConfig, Status, Timeouts};
 use redis::aio::ConnectionLike;
 use redis::{Arg, Cmd, Pipeline, RedisFuture, Value};
+use snafu::ResultExt;
+use std::borrow::Cow;
 use std::time::Duration;
 use tibba_config::Config;
 use tracing::info;
 
 type Result<T> = std::result::Result<T, Error>;
+
+#[inline]
+fn connection_err(e: impl std::fmt::Display) -> Error {
+    Error::Common {
+        category: "connection".to_string(),
+        message: e.to_string(),
+    }
+}
 
 #[derive(Debug, Default)]
 pub struct RedisCmdStat {
@@ -33,6 +42,7 @@ pub struct RedisCmdStat {
 pub type RedisCmdStatCallback = dyn Fn(RedisCmdStat) + Send + Sync;
 
 /// Redis connection pool enum that supports both single node and cluster configurations
+#[derive(Clone)]
 enum RedisPool {
     /// Single Redis node connection pool
     Single(deadpool_redis::Pool),
@@ -40,6 +50,7 @@ enum RedisPool {
     Cluster(deadpool_redis::cluster::Pool),
 }
 
+#[derive(Clone)]
 pub struct RedisClient {
     pool: RedisPool,
     stat_callback: Option<&'static RedisCmdStatCallback>,
@@ -57,14 +68,8 @@ impl RedisClient {
     #[inline]
     pub async fn conn(&self) -> Result<RedisClientConn> {
         let conn: Box<dyn ConnectionLike + Send + Sync> = match &self.pool {
-            RedisPool::Single(p) => Box::new(p.get().await.map_err(|e| Error::Common {
-                category: "connection".to_string(),
-                message: e.to_string(),
-            })?),
-            RedisPool::Cluster(p) => Box::new(p.get().await.map_err(|e| Error::Common {
-                category: "connection".to_string(),
-                message: e.to_string(),
-            })?),
+            RedisPool::Single(p) => Box::new(p.get().await.map_err(connection_err)?),
+            RedisPool::Cluster(p) => Box::new(p.get().await.map_err(connection_err)?),
         };
 
         Ok(RedisClientConn {
@@ -93,21 +98,25 @@ impl RedisClient {
             RedisPool::Cluster(p) => p.close(),
         }
     }
+    /// Returns true if connected to a Redis cluster, false for single-node
+    pub fn is_cluster(&self) -> bool {
+        matches!(self.pool, RedisPool::Cluster(_))
+    }
 }
 
 #[inline]
-fn get_command_name(cmd: &Cmd) -> String {
+fn get_command_name(cmd: &Cmd) -> &str {
     if let Some(Arg::Simple(val)) = cmd.args_iter().next()
         && let Ok(s) = std::str::from_utf8(val)
     {
-        return s.to_string();
+        return s;
     }
-    "unknown".to_string()
+    "unknown"
 }
 
 #[inline]
 fn wrap_with_stat<'a, 'cb, T>(
-    name: String,
+    name: Cow<'static, str>,
     fut: RedisFuture<'a, T>,
     callback: &'cb RedisCmdStatCallback,
 ) -> RedisFuture<'a, T>
@@ -120,7 +129,7 @@ where
         let res = fut.await;
         let elapsed = start.elapsed();
         let mut stat = RedisCmdStat {
-            cmd: name,
+            cmd: name.into_owned(),
             elapsed,
             ..Default::default()
         };
@@ -132,7 +141,6 @@ where
     })
 }
 
-#[async_trait]
 impl ConnectionLike for RedisClientConn {
     /// Executes a packed Redis command
     /// # Arguments
@@ -141,7 +149,7 @@ impl ConnectionLike for RedisClientConn {
     /// * `RedisFuture<Value>` - Future that resolves to the command result
     fn req_packed_command<'a>(&'a mut self, cmd: &'a Cmd) -> RedisFuture<'a, Value> {
         if let Some(cb) = self.stat_callback {
-            let name = get_command_name(cmd);
+            let name = Cow::Owned(get_command_name(cmd).to_owned());
             let fut = self.conn.req_packed_command(cmd);
             wrap_with_stat(name, fut, cb)
         } else {
@@ -164,7 +172,7 @@ impl ConnectionLike for RedisClientConn {
     ) -> RedisFuture<'a, Vec<Value>> {
         if let Some(cb) = self.stat_callback {
             let fut = self.conn.req_packed_commands(cmd, offset, count);
-            wrap_with_stat("pipeline".to_string(), fut, cb)
+            wrap_with_stat(Cow::Borrowed("pipeline"), fut, cb)
         } else {
             self.conn.req_packed_commands(cmd, offset, count)
         }
@@ -206,32 +214,29 @@ pub fn new_redis_client(config: &Config) -> Result<RedisClient> {
     let redis_config = new_redis_config(config)?;
     let pool_config = make_pool_config(&redis_config);
 
-    let password = redis_config.password.clone().unwrap_or_default();
+    let password = redis_config.password.as_deref().unwrap_or_default();
     let nodes: Vec<_> = redis_config
         .nodes
-        .clone()
         .iter()
         .map(|v| {
             if password.is_empty() {
                 return v.to_string();
             }
-            v.replace(&password, "***")
+            v.replace(password, "***")
         })
         .collect();
 
     let pool = if redis_config.nodes.len() <= 1 {
         // Single node configuration
-        let mgr = deadpool_redis::Manager::new(redis_config.nodes[0].as_str()).map_err(|e| {
-            Error::Redis {
-                category: "new_pool".to_string(),
-                source: e,
-            }
-        })?;
+        let mgr =
+            deadpool_redis::Manager::new(redis_config.nodes[0].as_str()).context(RedisSnafu {
+                category: "new_pool",
+            })?;
         let pool = deadpool_redis::Pool::builder(mgr)
             .config(pool_config)
             .runtime(deadpool_redis::Runtime::Tokio1)
             .build()
-            .map_err(|e| Error::SingleBuild { source: e })?;
+            .context(SingleBuildSnafu)?;
         RedisPool::Single(pool)
     } else {
         // Cluster configuration
@@ -239,7 +244,7 @@ pub fn new_redis_client(config: &Config) -> Result<RedisClient> {
         cfg.pool = Some(pool_config);
         let pool = cfg
             .create_pool(Some(deadpool_redis::cluster::Runtime::Tokio1))
-            .map_err(|e| Error::ClusterBuild { source: e })?;
+            .context(ClusterBuildSnafu)?;
         RedisPool::Cluster(pool)
     };
     info!(

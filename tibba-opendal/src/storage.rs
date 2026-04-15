@@ -12,8 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::Error;
+use super::{Error, OpenDalSnafu};
 use opendal::{Buffer, Metadata, OperatorInfo};
+use snafu::ResultExt;
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -28,10 +29,7 @@ impl Storage {
     }
     /// Write data to the storage.
     pub async fn write(&self, path: &str, bs: impl Into<Buffer>) -> Result<Metadata> {
-        let metadata = self.dal.write(path, bs).await.map_err(|e| Error::OpenDal {
-            source: Box::new(e),
-        })?;
-        Ok(metadata)
+        self.dal.write(path, bs).await.context(OpenDalSnafu)
     }
     /// Write data to the storage with user metadata.
     pub async fn write_with(
@@ -45,30 +43,17 @@ impl Storage {
             .writer_with(path)
             .user_metadata(user_metadata)
             .await
-            .map_err(|e| Error::OpenDal {
-                source: Box::new(e),
-            })?;
-        writer.write(bs.into()).await.map_err(|e| Error::OpenDal {
-            source: Box::new(e),
-        })?;
-        let metadata = writer.close().await.map_err(|e| Error::OpenDal {
-            source: Box::new(e),
-        })?;
-        Ok(metadata)
+            .context(OpenDalSnafu)?;
+        writer.write(bs.into()).await.context(OpenDalSnafu)?;
+        writer.close().await.context(OpenDalSnafu)
     }
     /// Read data from the storage.
     pub async fn read(&self, path: &str) -> Result<Buffer> {
-        let bs = self.dal.read(path).await.map_err(|e| Error::OpenDal {
-            source: Box::new(e),
-        })?;
-        Ok(bs)
+        self.dal.read(path).await.context(OpenDalSnafu)
     }
     /// Get metadata of the storage.
     pub async fn stat(&self, path: &str) -> Result<Metadata> {
-        let metadata = self.dal.stat(path).await.map_err(|e| Error::OpenDal {
-            source: Box::new(e),
-        })?;
-        Ok(metadata)
+        self.dal.stat(path).await.context(OpenDalSnafu)
     }
     /// Get info of the storage.
     pub fn info(&self) -> OperatorInfo {

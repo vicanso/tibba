@@ -15,7 +15,6 @@ path = "src/lib.rs"
 
 [dependencies]
 async-trait = { workspace = true }
-chrono = { workspace = true }
 deadpool-redis = { workspace = true }
 humantime-serde = { workspace = true }
 lru = { workspace = true }

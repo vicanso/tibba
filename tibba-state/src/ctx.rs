@@ -35,7 +35,7 @@ impl Context {
             device_id: device_id.to_string(),
             trace_id: trace_id.to_string(),
             start_time: Instant::now(),
-            account: ArcSwap::new(Arc::new("".to_string())),
+            account: ArcSwap::new(Arc::new(String::new())),
         }
     }
     /// Get the elapsed time since the start of the request
