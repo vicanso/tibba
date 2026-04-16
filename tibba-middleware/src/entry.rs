@@ -47,7 +47,7 @@ pub async fn entry(jar: CookieJar, mut req: Request, next: Next) -> Response {
     let device_id = get_device_id_from_cookie(&jar).unwrap_or_default();
     // Generate unique trace ID for request tracking
     // Create new context with device and trace information
-    let ctx = Arc::new(Context::new(device_id, &uuid()));
+    let ctx = Arc::new(Context::new(device_id, uuid()));
 
     req.extensions_mut().insert(ctx.clone());
 

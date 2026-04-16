@@ -128,13 +128,10 @@ pub fn get_session_params() -> Result<SessionParams> {
         .get()
         .unwrap_or_else(|| panic!("session config not initialized"));
     let key = Key::try_from(session_config.secret.as_bytes()).map_err(map_err)?;
-
-    Ok(SessionParams {
-        key,
-        cookie: session_config.cookie.clone(),
-        ttl: session_config.ttl.as_secs() as i64,
-        max_renewal: session_config.max_renewal,
-    })
+    Ok(SessionParams::new(key)
+        .with_cookie(session_config.cookie.clone())
+        .with_ttl(session_config.ttl.as_secs() as i64)
+        .with_max_renewal(session_config.max_renewal))
 }
 
 fn new_config() -> Result<&'static Config> {

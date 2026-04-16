@@ -66,6 +66,9 @@ pub async fn stats(
     let referrer = get_header_value(headers, "Referer")
         .unwrap_or_default()
         .to_string();
+    let user_agent = get_header_value(headers, "User-Agent")
+        .unwrap_or_default()
+        .to_string();
 
     // Process the request
     let res = next.run(req).await;
@@ -90,13 +93,14 @@ pub async fn stats(
         account = %ctx.get_account(),         // Account ID
         ip = %ip,                 // Client IP
         processing = state.get_processing(), // Current processing count
-        x_forwarded_for,                     // Forwarded IP chain
-        referrer,                            // Request referrer
-        method = %method,                              // HTTP method
-        uri = uri.as_ref(),                                 // Request URI
-        status,                              // Response status code
-        elapsed = ctx.elapsed().as_millis(), // Request processing time
-        error = message,                     // Error message if any
+        x_forwarded_for,                      // Forwarded IP chain
+        referrer,                             // Request referrer
+        user_agent,                           // Client user agent
+        method = %method,                     // HTTP method
+        uri = uri.as_ref(),                   // Request URI
+        status,                               // Response status code
+        elapsed = ctx.elapsed_ms(),           // Request processing time (ms)
+        error = message,                      // Error message if any
     );
 
     Ok(res)

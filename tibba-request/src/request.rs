@@ -169,13 +169,7 @@ pub struct ClientBuilder {
 }
 
 impl ClientBuilder {
-    /// Create a new client builder
-    ///
-    /// # Arguments
-    /// * `service` - Service name
-    ///
-    /// # Returns
-    /// * `ClientBuilder` - A new client builder
+    /// Creates a new client builder for the given service name.
     pub fn new(service: &str) -> Self {
         Self {
             config: ClientConfig {
@@ -194,25 +188,15 @@ impl ClientBuilder {
         }
     }
 
-    /// Set the base URL for requests
-    ///
-    /// # Arguments
-    /// * `base_url` - Base URL for requests
-    ///
-    /// # Returns
-    /// * `ClientBuilder` - A new client builder
-    pub fn with_base_url(mut self, base_url: &str) -> Self {
-        self.config.base_url = base_url.to_string();
+    /// Sets the base URL prepended to relative request paths.
+    #[must_use]
+    pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
+        self.config.base_url = base_url.into();
         self
     }
 
-    /// Set the interceptor for requests
-    ///
-    /// # Arguments
-    /// * `interceptor` - Interceptor for requests
-    ///
-    /// # Returns
-    /// * `ClientBuilder` - A new client builder
+    /// Appends a request interceptor.
+    #[must_use]
     pub fn with_interceptor(mut self, interceptor: Box<dyn HttpInterceptor>) -> Self {
         self.config
             .interceptors
@@ -221,115 +205,70 @@ impl ClientBuilder {
         self
     }
 
-    /// Set the timeout for requests
-    ///
-    /// # Arguments
-    /// * `timeout` - Timeout for requests
-    ///
-    /// # Returns
-    /// * `ClientBuilder` - A new client builder
+    /// Sets the overall request timeout.
+    #[must_use]
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.config.timeout = Some(timeout);
         self
     }
 
-    /// Set the read timeout for requests
-    ///
-    /// # Arguments
-    /// * `read_timeout` - Read timeout for requests
-    ///
-    /// # Returns
-    /// * `ClientBuilder` - A new client builder
+    /// Sets the response read timeout.
+    #[must_use]
     pub fn with_read_timeout(mut self, read_timeout: Duration) -> Self {
         self.config.read_timeout = Some(read_timeout);
         self
     }
 
-    /// Set the connect timeout for requests
-    ///
-    /// # Arguments
-    /// * `connect_timeout` - Connect timeout for requests
-    ///
-    /// # Returns
-    /// * `ClientBuilder` - A new client builder
+    /// Sets the TCP connection timeout.
+    #[must_use]
     pub fn with_connect_timeout(mut self, connect_timeout: Duration) -> Self {
         self.config.connect_timeout = Some(connect_timeout);
         self
     }
 
-    /// Set the pool idle timeout for requests
-    ///
-    /// # Arguments
-    /// * `pool_idle_timeout` - Pool idle timeout for requests
-    ///
-    /// # Returns
-    /// * `ClientBuilder` - A new client builder
+    /// Sets the idle connection pool timeout.
+    #[must_use]
     pub fn with_pool_idle_timeout(mut self, pool_idle_timeout: Duration) -> Self {
         self.config.pool_idle_timeout = Some(pool_idle_timeout);
         self
     }
 
-    /// Set the headers for requests
-    ///
-    /// # Arguments
-    /// * `headers` - Headers for requests
-    ///
-    /// # Returns
-    /// * `ClientBuilder` - A new client builder
+    /// Sets default headers sent with every request.
+    #[must_use]
     pub fn with_headers(mut self, headers: HeaderMap) -> Self {
         self.config.headers = Some(headers);
         self
     }
 
-    /// Set the common interceptor for requests
-    ///
-    /// # Arguments
-    /// * `self` - Client builder
-    ///
-    /// # Returns
-    /// * `ClientBuilder` - A new client builder
+    /// Appends the common logging interceptor for this service.
+    #[must_use]
     pub fn with_common_interceptor(self) -> Self {
         let service = self.config.service.clone();
         self.with_interceptor(Box::new(CommonInterceptor::new(&service)))
     }
 
-    /// Set the pool max idle per host for requests
-    ///
-    /// # Arguments
-    /// * `pool_max_idle_per_host` - Pool max idle per host for requests
-    ///
-    /// # Returns
-    /// * `ClientBuilder` - A new client builder
+    /// Sets the maximum number of idle connections per host.
+    #[must_use]
     pub fn with_pool_max_idle_per_host(mut self, pool_max_idle_per_host: usize) -> Self {
         self.config.pool_max_idle_per_host = pool_max_idle_per_host;
         self
     }
 
-    /// Set the max concurrent requests
+    /// Sets the maximum number of concurrent in-flight requests.
+    #[must_use]
     pub fn with_max_processing(mut self, max_processing: u32) -> Self {
         self.config.max_processing = Some(max_processing);
         self
     }
 
-    /// Set the DNS overrides for requests
-    ///
-    /// # Arguments
-    /// * `dns_overrides` - DNS overrides for requests
-    ///
-    /// # Returns
-    /// * `ClientBuilder` - A new client builder
+    /// Sets per-host DNS overrides.
+    #[must_use]
     pub fn with_dns_overrides(mut self, dns_overrides: HashMap<String, Vec<SocketAddr>>) -> Self {
         self.config.dns_overrides = Some(dns_overrides);
         self
     }
 
-    /// Build the client
-    ///
-    /// # Arguments
-    /// * `self` - Client builder
-    ///
-    /// # Returns
-    /// * `Result<Client>` - A new client
+    /// Builds the HTTP client.
     pub fn build(mut self) -> Result<Client> {
         let mut builder = ReqwestClient::builder()
             .user_agent(format!("tibba-request/{VERSION}"))

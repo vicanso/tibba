@@ -32,11 +32,11 @@ impl From<Error> for BaseError {
             Error::Common { message, category } => {
                 BaseError::new(&message).with_sub_category(&category)
             }
-            Error::TooManyRequests { limit, current } => {
-                BaseError::new(format!("too many requests, limit: {limit}, current: {current}"))
-                    .with_sub_category("too_many_requests")
-                    .with_status(429)
-            }
+            Error::TooManyRequests { limit, current } => BaseError::new(format!(
+                "too many requests, limit: {limit}, current: {current}"
+            ))
+            .with_sub_category("too_many_requests")
+            .with_status(429),
         };
         err.with_category("middleware")
     }

@@ -30,23 +30,31 @@ pub struct Context {
 }
 
 impl Context {
-    pub fn new(device_id: &str, trace_id: &str) -> Self {
+    pub fn new(device_id: impl Into<String>, trace_id: impl Into<String>) -> Self {
         Self {
-            device_id: device_id.to_string(),
-            trace_id: trace_id.to_string(),
+            device_id: device_id.into(),
+            trace_id: trace_id.into(),
             start_time: Instant::now(),
             account: ArcSwap::new(Arc::new(String::new())),
         }
     }
-    /// Get the elapsed time since the start of the request
+
+    /// Returns the elapsed time since the request started.
     pub fn elapsed(&self) -> Duration {
         self.start_time.elapsed()
     }
-    /// Get the account
+
+    /// Returns elapsed milliseconds since the request started.
+    pub fn elapsed_ms(&self) -> u64 {
+        self.start_time.elapsed().as_millis() as u64
+    }
+
+    /// Returns the current account associated with this context.
     pub fn get_account(&self) -> Arc<String> {
         self.account.load_full()
     }
-    /// Set the account
+
+    /// Sets the account for this context.
     pub fn set_account(&self, account: impl Into<String>) {
         self.account.store(Arc::new(account.into()));
     }

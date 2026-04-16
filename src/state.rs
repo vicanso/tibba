@@ -50,6 +50,8 @@ pub fn get_app_state() -> &'static AppState {
             basic_config.processing_limit,
             basic_config.commit_id.clone(),
         )
+        .with_name("tibba")
+        .with_version(env!("CARGO_PKG_VERSION"))
     })
 }
 

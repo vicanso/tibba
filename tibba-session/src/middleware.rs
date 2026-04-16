@@ -32,8 +32,6 @@ pub async fn session(
     debug!(category = "middleware", "--> session");
     defer!(debug!(category = "middleware", "<-- session"););
 
-    let se = Session::new(cache, params);
-    req.extensions_mut().insert(se);
-    let res = next.run(req).await;
-    Ok(res)
+    req.extensions_mut().insert(Session::new(cache, params));
+    Ok(next.run(req).await)
 }

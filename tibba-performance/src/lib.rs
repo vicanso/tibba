@@ -14,49 +14,55 @@
 
 use cached::proc_macro::cached;
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
 use sysinfo::{Pid, ProcessesToUpdate, System};
 
-/// Represents system resource usage information for a process
+/// System resource usage snapshot for a single process.
+///
+/// All byte values are in bytes; `cpu_usage` is a percentage in `[0, 100]`.
 #[derive(Debug, Default, Serialize, Deserialize, Clone)]
 pub struct ProcessSystemInfo {
     /// Memory usage in bytes
     pub memory_usage: u64,
-    /// CPU usage as a percentage (0-100)
+    /// CPU usage as a percentage (0–100)
     pub cpu_usage: f32,
-    /// CPU time in milliseconds
+    /// Accumulated CPU time in milliseconds
     pub cpu_time: u64,
-    /// Open files
+    /// Number of open file descriptors, if available
     pub open_files: Option<usize>,
-    /// Total number of written bytes.
+    /// Total bytes written to disk since process start
     pub total_written_bytes: u64,
-    /// Number of written bytes since the last refresh.
+    /// Bytes written to disk since the last refresh
     pub written_bytes: u64,
-    /// Total number of read bytes.
+    /// Total bytes read from disk since process start
     pub total_read_bytes: u64,
-    /// Number of read bytes since the last refresh.
+    /// Bytes read from disk since the last refresh
     pub read_bytes: u64,
 }
 
-/// Retrieves current system resource usage information for this process
+/// Returns resource usage for the current process.
 ///
-/// Collects information about:
+/// Delegates to [`get_process_system_info`] using the current PID.
+pub fn current_process_system_info() -> ProcessSystemInfo {
+    get_process_system_info(std::process::id() as usize)
+}
+
+/// Returns resource usage for the process identified by `pid`.
+///
+/// Results are cached for 10 seconds per PID (`sync_writes = "by_key"`
+/// ensures only one thread refreshes a given PID at a time).
+///
+/// Collected metrics:
 /// - Memory usage
-/// - CPU usage percentage
-///
-/// # Returns
-/// Returns a `ProcessSystemInfo` struct containing the resource usage metrics.
-/// If any metrics cannot be retrieved, they will contain default values (0).
+/// - CPU usage percentage and accumulated CPU time
+/// - Open file descriptor count (platform-dependent)
+/// - Disk read / write bytes (delta and total)
 #[cached(time = 10, sync_writes = "by_key")]
 pub fn get_process_system_info(pid: usize) -> ProcessSystemInfo {
-    // Initialize system information collector
     let mut sys = System::new();
-    let pid = Pid::from(pid);
-    // Refresh CPU usage statistics
-    sys.refresh_processes(ProcessesToUpdate::Some(&[pid]), false);
+    let sysinfo_pid = Pid::from(pid);
+    sys.refresh_processes(ProcessesToUpdate::Some(&[sysinfo_pid]), false);
 
-    // Get CPU usage for current process if available
-    sys.process(pid)
+    sys.process(sysinfo_pid)
         .map(|process| {
             let disk_usage = process.disk_usage();
             ProcessSystemInfo {

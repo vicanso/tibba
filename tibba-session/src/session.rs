@@ -50,13 +50,46 @@ impl From<&str> for Role {
 pub struct SessionParams {
     // secret for session cookie
     #[serde(skip)]
-    pub key: Key,
+    key: Key,
     // cookie name
-    pub cookie: String,
+    cookie: String,
     // ttl of session
-    pub ttl: i64,
+    ttl: i64,
     // max renewal count
-    pub max_renewal: u8,
+    max_renewal: u8,
+}
+
+impl SessionParams {
+    /// Creates a new SessionParams with the given signing key.
+    pub fn new(key: Key) -> Self {
+        Self {
+            key,
+            cookie: String::new(),
+            ttl: 24 * 60 * 60,
+            max_renewal: 0,
+        }
+    }
+
+    /// Sets the cookie name used to store the session ID.
+    #[must_use]
+    pub fn with_cookie(mut self, cookie: impl Into<String>) -> Self {
+        self.cookie = cookie.into();
+        self
+    }
+
+    /// Sets the session TTL in seconds.
+    #[must_use]
+    pub fn with_ttl(mut self, ttl: i64) -> Self {
+        self.ttl = ttl;
+        self
+    }
+
+    /// Sets the maximum number of session renewals allowed.
+    #[must_use]
+    pub fn with_max_renewal(mut self, max_renewal: u8) -> Self {
+        self.max_renewal = max_renewal;
+        self
+    }
 }
 
 #[derive(Serialize, Deserialize, Default, Clone)]
@@ -84,14 +117,7 @@ pub struct Session {
 }
 
 impl Session {
-    /// Create a new session
-    ///
-    /// # Arguments
-    /// * `cache` - Redis cache
-    /// * `params` - Session parameters
-    ///
-    /// # Returns
-    /// * `Session` - A new session
+    /// Creates a new session backed by the given cache and parameters.
     pub fn new(cache: &'static RedisCache, params: Arc<SessionParams>) -> Self {
         Self {
             cache,
@@ -99,141 +125,97 @@ impl Session {
             data: SessionData::default(),
         }
     }
-    /// Get the session key
-    ///
-    /// # Arguments
-    /// * `id` - Session ID
-    ///
-    /// # Returns
-    /// * `String` - Session key
     fn get_key(id: &str) -> String {
         format!("ss:{id}")
     }
-    /// Validate the login
-    ///
-    /// # Returns
-    /// * `Result<()>` - Result of the validation
+
     fn validate_login(&self) -> Result<()> {
         if !self.is_login() {
             return Err(Error::UserNotLogin.into());
         }
         Ok(())
     }
-    /// Check if the session is logged in
-    ///
-    /// # Returns
-    /// * `bool` - True if the session is logged in
+
+    /// Returns true if the session has an authenticated account.
     pub fn is_login(&self) -> bool {
         !self.data.account.is_empty()
     }
-    /// Check if the session can be renewed
-    ///
-    /// # Returns
-    /// * `bool` - True if the session can be renewed
+
+    /// Returns true if the session has not yet reached the renewal limit.
     pub fn can_renew(&self) -> bool {
         self.data.renewal_count < self.params.max_renewal
     }
-    /// Set the account and user ID for the session
-    ///
-    /// # Arguments
-    /// * `account` - Account
-    /// * `user_id` - User ID
-    ///
-    /// # Returns
-    /// * `Session` - A new session
-    pub fn with_account(mut self, account: &str, user_id: u64) -> Self {
+
+    /// Sets the account and user ID, generating a new session ID when the account changes.
+    #[must_use]
+    pub fn with_account(mut self, account: impl Into<String>, user_id: u64) -> Self {
+        let account = account.into();
         if self.data.id.is_empty() || self.data.account != account {
             self.data.id = uuid();
         }
-        self.data.account = account.to_string();
+        self.data.account = account;
         self.data.user_id = user_id;
         self.data.iat = timestamp();
         self
     }
-    /// Set the roles for the session
-    ///
-    /// # Arguments
-    /// * `roles` - Roles
-    ///
-    /// # Returns
-    /// * `Session` - A new session
+
+    /// Sets the roles for this session.
+    #[must_use]
     pub fn with_roles(mut self, roles: Vec<String>) -> Self {
         self.data.roles = roles;
         self
     }
-    /// Set the groups for the session
-    ///
-    /// # Arguments
-    /// * `groups` - Groups
-    ///
-    /// # Returns
-    /// * `Session` - A new session
+
+    /// Sets the groups for this session.
+    #[must_use]
     pub fn with_groups(mut self, groups: Vec<String>) -> Self {
         self.data.groups = groups;
         self
     }
-    /// Refresh the session
-    ///
-    /// # Returns
-    /// * `Session` - A new session
+
+    /// Increments the renewal counter and updates the issued-at timestamp.
     pub fn refresh(&mut self) {
         self.data.renewal_count += 1;
         self.data.iat = timestamp();
     }
-    /// Get the account
-    ///
-    /// # Returns
-    /// * `&str` - Account
+
+    /// Returns the authenticated account name.
     pub fn get_account(&self) -> &str {
         &self.data.account
     }
-    /// Get the user ID
-    ///
-    /// # Returns
-    /// * `u64` - User ID
+
+    /// Returns the authenticated user ID.
     pub fn get_user_id(&self) -> u64 {
         self.data.user_id
     }
-    /// Get the expired at
-    ///
-    /// # Returns
-    /// * `String` - Expired at
+
+    /// Returns the session expiry time as a formatted string.
     pub fn get_expired_at(&self) -> String {
         from_timestamp(self.data.iat + self.params.ttl, 0)
     }
-    /// Check if the session will expire in the next hour
-    ///
-    /// # Returns
-    /// * `bool` - True if the session will expire in the next hour
+
+    /// Returns true if the session will expire within the next hour.
     pub fn is_will_expired(&self) -> bool {
         self.data.iat + self.params.ttl - timestamp() < 3600
     }
-    /// Get the issued at
-    ///
-    /// # Returns
-    /// * `String` - Issued at
+
+    /// Returns the session issue time as a formatted string.
     pub fn get_issued_at(&self) -> String {
         from_timestamp(self.data.iat, 0)
     }
-    /// Check if the session is expired
-    ///
-    /// # Returns
-    /// * `bool` - True if the session is expired
+
+    /// Returns true if the session has passed its TTL.
     pub fn is_expired(&self) -> bool {
         self.data.iat + self.params.ttl < timestamp()
     }
-    /// Reset the session
-    ///
-    /// # Returns
-    /// * `Session` - A new session
+
+    /// Clears the session ID and account, effectively logging out.
     pub fn reset(&mut self) {
-        self.data.id = "".to_string();
-        self.data.account = "".to_string();
+        self.data.id = String::new();
+        self.data.account = String::new();
     }
-    /// Save the session
-    ///
-    /// # Returns
-    /// * `Result<()>` - Result of the save
+
+    /// Persists the session data to Redis.
     pub async fn save(&self) -> Result<()> {
         if self.data.id.is_empty() {
             return Err(Error::SessionIdEmpty.into());
@@ -379,7 +361,7 @@ where
     ) -> std::result::Result<Self, Self::Rejection> {
         let se = Session::from_request_parts(parts, _state).await?;
         se.validate_login()?;
-        Ok(UserSession(se.clone()))
+        Ok(UserSession(se))
     }
 }
 
@@ -423,7 +405,7 @@ where
         }) {
             return Err(Error::UserNotAdmin.into());
         }
-        Ok(AdminSession(se.clone()))
+        Ok(AdminSession(se))
     }
 }
 

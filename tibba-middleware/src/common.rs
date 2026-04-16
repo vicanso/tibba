@@ -31,19 +31,25 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 #[derive(Debug, Clone, Default)]
 pub struct WaitParams {
     // Duration to wait in milliseconds
-    pub wait: Duration,
+    wait: Duration,
     // If true, only wait when an error response occurs (status >= 400)
-    pub only_error_occurred: bool,
+    only_error_occurred: bool,
 }
 
 impl WaitParams {
-    /// Creates a new WaitParams instance with specified wait duration
-    /// and default settings for other parameters
+    /// Creates a new WaitParams with the specified wait duration in milliseconds.
     pub fn new(ms: u64) -> Self {
         Self {
             wait: Duration::from_millis(ms),
             ..Default::default()
         }
+    }
+
+    /// Only wait when the response status is >= 400.
+    #[must_use]
+    pub fn only_on_error(mut self) -> Self {
+        self.only_error_occurred = true;
+        self
     }
 }
 
@@ -126,28 +132,27 @@ pub async fn validate_captcha(
     })?;
 
     // Check if this is a mock request using the magic code
-    let is_mock = !magic_code.is_empty() && user_code == magic_code;
+    if !magic_code.is_empty() && user_code == magic_code {
+        return Ok(next.run(req).await);
+    }
 
-    // For non-mock requests, validate the captcha code against cache
-    if !is_mock {
-        // Retrieve and delete the stored code from cache using the key (arr[1])
-        let code: Option<String> = cache.get_del(key).await?;
-        let Some(code) = code else {
-            return Err(Error::Common {
-                message: "captcha is expired".to_string(),
-                category: category.to_string(),
-            }
-            .into());
-        };
-
-        // Compare the provided code against the stored code
-        if code != user_code {
-            return Err(Error::Common {
-                message: "captcha is invalid".to_string(),
-                category: category.to_string(),
-            }
-            .into());
+    // Retrieve and delete the stored code from cache using the key (arr[1])
+    let code: Option<String> = cache.get_del(key).await?;
+    let Some(code) = code else {
+        return Err(Error::Common {
+            message: "captcha is expired".to_string(),
+            category: category.to_string(),
         }
+        .into());
+    };
+
+    // Compare the provided code against the stored code
+    if code != user_code {
+        return Err(Error::Common {
+            message: "captcha is invalid".to_string(),
+            category: category.to_string(),
+        }
+        .into());
     }
 
     Ok(next.run(req).await)

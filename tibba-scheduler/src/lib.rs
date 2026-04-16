@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use dashmap::DashMap;
-use snafu::Snafu;
+use snafu::{ResultExt, Snafu};
 use std::sync::LazyLock;
 use tibba_error::Error as BaseError;
 pub use tokio_cron_scheduler::Job;
@@ -40,10 +40,11 @@ enum Error {
 impl From<Error> for BaseError {
     fn from(val: Error) -> Self {
         let message = val.to_string();
-        let base = BaseError::new(message).with_category("scheduler");
         match val {
-            Error::AddJob { name, .. } => base.with_sub_category(name),
-            _ => base,
+            Error::AddJob { name, .. } => BaseError::new(message)
+                .with_category("scheduler")
+                .with_sub_category(name),
+            _ => BaseError::new(message).with_category("scheduler"),
         }
     }
 }
@@ -65,8 +66,6 @@ pub fn register_job_task(name: impl Into<String>, job: Job) {
 /// # Returns
 /// A running [`JobScheduler`] handle.
 pub async fn run_scheduler_jobs() -> Result<JobScheduler> {
-    use snafu::ResultExt;
-
     let scheduler = JobScheduler::new().await.context(CreateSnafu)?;
 
     for item in JOB_TASKS.iter() {

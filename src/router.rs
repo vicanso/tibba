@@ -33,7 +33,6 @@ pub fn new_router() -> Result<Router> {
     let common_router = new_common_router(CommonRouterParams {
         state: get_app_state(),
         cache: Some(cache),
-        commit_id: basic_config.commit_id.clone(),
     });
     let mut magic_code = "".to_string();
     // only for test

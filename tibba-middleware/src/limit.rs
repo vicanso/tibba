@@ -22,7 +22,7 @@ use scopeguard::defer;
 use std::net::IpAddr;
 use std::time::Duration;
 use tibba_cache::RedisCache;
-use tibba_state::AppState;
+use tibba_state::{AppState, CTX};
 use tracing::debug;
 
 // Custom Result type that uses the application's Error type
@@ -56,6 +56,9 @@ pub async fn processing_limit(
     // If limit is negative, processing is unlimited
     if limit < 0 {
         let res = next.run(req).await;
+        if res.status().as_u16() >= 400 {
+            state.inc_error_requests();
+        }
         return Ok(res);
     }
 
@@ -64,6 +67,7 @@ pub async fn processing_limit(
 
     // Check if processing limit has been exceeded
     if count > limit {
+        state.inc_error_requests();
         // Return 429 Too Many Requests error
         return Err(Error::TooManyRequests {
             limit: limit as i64,
@@ -72,9 +76,10 @@ pub async fn processing_limit(
         .into());
     }
 
-    // Process the request
     let res = next.run(req).await;
-
+    if res.status().as_u16() >= 400 {
+        state.inc_error_requests();
+    }
     Ok(res)
 }
 
@@ -84,31 +89,49 @@ pub enum LimitType {
     #[default]
     Ip, // Rate limit based on IP address
     Header(String), // Rate limit based on header value
+    Account,        // Rate limit based on authenticated account (falls back to IP if not logged in)
 }
 
 /// Configuration parameters for rate limiting middleware
 #[derive(Debug, Clone, Default)]
 pub struct LimitParams {
-    pub limit_type: LimitType, // Type of rate limiting to apply
-    pub category: String,      // Category identifier for the limit
-    pub max: i64,              // Maximum number of requests allowed
-    pub ttl: Duration,         // Time-to-live for the rate limit counter
+    limit_type: LimitType, // Type of rate limiting to apply
+    category: String,      // Category identifier for the limit
+    max: i64,              // Maximum number of requests allowed
+    ttl: Duration,         // Time-to-live for the rate limit counter
 }
 
 impl LimitParams {
-    /// Creates a new LimitParams instance with specified parameters
-    ///
-    /// # Arguments
-    /// * `max` - Maximum number of requests allowed
-    /// * `secs` - Duration in seconds for the rate limit window
-    /// * `category` - Category identifier for the limit
-    pub fn new(max: i64, secs: u64, category: &str) -> Self {
+    /// Creates a new LimitParams with the maximum number of requests allowed.
+    /// Defaults to IP-based limiting with no category and a 5-minute TTL.
+    pub fn new(max: i64) -> Self {
         Self {
             limit_type: LimitType::Ip,
-            category: category.to_string(),
             max,
-            ttl: Duration::from_secs(secs),
+            ttl: Duration::from_secs(5 * 60),
+            ..Default::default()
         }
+    }
+
+    /// Sets the category identifier used as a prefix in the cache key.
+    #[must_use]
+    pub fn with_category(mut self, category: impl Into<String>) -> Self {
+        self.category = category.into();
+        self
+    }
+
+    /// Sets the TTL for the rate limit counter window.
+    #[must_use]
+    pub fn with_ttl(mut self, ttl: Duration) -> Self {
+        self.ttl = ttl;
+        self
+    }
+
+    /// Sets the limit type (IP-based or header-based).
+    #[must_use]
+    pub fn with_limit_type(mut self, limit_type: LimitType) -> Self {
+        self.limit_type = limit_type;
+        self
     }
 }
 
@@ -121,7 +144,6 @@ impl LimitParams {
 /// # Returns
 /// Tuple of (cache_key, ttl_duration)
 fn get_limit_params(req: &Request, ip: IpAddr, params: &LimitParams) -> (String, Duration) {
-    // Generate key based on limit type (currently only IP-based)
     let identifier = match &params.limit_type {
         LimitType::Header(header_name) => req
             .headers()
@@ -129,7 +151,15 @@ fn get_limit_params(req: &Request, ip: IpAddr, params: &LimitParams) -> (String,
             .and_then(|value| value.to_str().ok())
             .map(|s| s.to_string())
             .unwrap_or_else(|| ip.to_string()),
-        _ => ip.to_string(),
+        LimitType::Account => {
+            let account = CTX.get().get_account();
+            if account.is_empty() {
+                ip.to_string()
+            } else {
+                account.to_string()
+            }
+        }
+        LimitType::Ip => ip.to_string(),
     };
     // Append category to key if specified
     let key = if params.category.is_empty() {
