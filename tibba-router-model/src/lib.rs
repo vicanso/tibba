@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 use strum::EnumString;
 use tibba_model::{
     ConfigurationModel, DetectorGroupModel, DetectorGroupUserModel, FileModel, HttpDetectorModel,
@@ -34,15 +34,17 @@ enum CmsModel {
     DetectorGroupUser,
 }
 
-pub static USER_MODEL: Lazy<UserModel> = Lazy::new(UserModel::new);
-pub static CONFIGURATION_MODEL: Lazy<ConfigurationModel> = Lazy::new(ConfigurationModel::new);
-pub static FILE_MODEL: Lazy<FileModel> = Lazy::new(FileModel::new);
-pub static HTTP_DETECTOR_MODEL: Lazy<HttpDetectorModel> = Lazy::new(HttpDetectorModel::new);
-pub static HTTP_STAT_MODEL: Lazy<HttpStatModel> = Lazy::new(HttpStatModel::new);
-pub static WEB_PAGE_DETECTOR_MODEL: Lazy<WebPageDetectorModel> =
-    Lazy::new(WebPageDetectorModel::new);
-pub static DETECTOR_GROUP_MODEL: Lazy<DetectorGroupModel> = Lazy::new(DetectorGroupModel::new);
-pub static DETECTOR_GROUP_USER_MODEL: Lazy<DetectorGroupUserModel> =
-    Lazy::new(DetectorGroupUserModel::new);
+pub static USER_MODEL: LazyLock<UserModel> = LazyLock::new(UserModel::new);
+pub static CONFIGURATION_MODEL: LazyLock<ConfigurationModel> =
+    LazyLock::new(ConfigurationModel::new);
+pub static FILE_MODEL: LazyLock<FileModel> = LazyLock::new(FileModel::new);
+pub static HTTP_DETECTOR_MODEL: LazyLock<HttpDetectorModel> = LazyLock::new(HttpDetectorModel::new);
+pub static HTTP_STAT_MODEL: LazyLock<HttpStatModel> = LazyLock::new(HttpStatModel::new);
+pub static WEB_PAGE_DETECTOR_MODEL: LazyLock<WebPageDetectorModel> =
+    LazyLock::new(WebPageDetectorModel::new);
+pub static DETECTOR_GROUP_MODEL: LazyLock<DetectorGroupModel> =
+    LazyLock::new(DetectorGroupModel::new);
+pub static DETECTOR_GROUP_USER_MODEL: LazyLock<DetectorGroupUserModel> =
+    LazyLock::new(DetectorGroupUserModel::new);
 
 pub use router::*;

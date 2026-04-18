@@ -73,7 +73,7 @@ async fn create_file(
             .bytes()
             .await
             .map_err(|e| Error::new(e).with_category(ERROR_CATEGORY))?;
-        let content_type = mime_guess::from_path(&file_name).first_or_octet_stream();
+        let content_type = mime_guess2::from_path(&file_name).first_or_octet_stream();
         let mut params = FileInsertParams {
             group: create_file_params.group.clone(),
             filename: file.clone(),
@@ -158,7 +158,7 @@ async fn get_file(
             .get_buffer()
             .map_err(|e| Error::new(e).with_category(ERROR_CATEGORY))?
             .into();
-        if let Some(mime_type) = mime_guess::from_ext(format.as_str()).first() {
+        if let Some(mime_type) = mime_guess2::from_ext(format.as_str()).first() {
             content_type = mime_type.to_string();
         }
     }

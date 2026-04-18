@@ -27,9 +27,9 @@ use tibba_middleware::{user_tracker, validate_captcha};
 use tibba_model::{Model, ROLE_SUPER_ADMIN, UserModel, UserUpdateParams};
 use tibba_session::{Session, SessionResponse, UserSession};
 use tibba_util::{
-    JsonParams, JsonResult, is_development, is_test, now, sha256, timestamp, timestamp_hash, uuid,
+    JsonParams, JsonResult, generate_device_id_cookie, get_device_id_from_cookie, is_development,
+    is_test, now, sha256, timestamp, timestamp_hash, uuid, validate_timestamp_hash,
 };
-use tibba_util::{generate_device_id_cookie, get_device_id_from_cookie, validate_timestamp_hash};
 use tibba_validator::*;
 use validator::Validate;
 
@@ -182,18 +182,13 @@ async fn register(
     State(pool): State<&'static MySqlPool>,
     JsonParams(params): JsonParams<RegisterParams>,
 ) -> JsonResult<RegisterResp> {
-    let id = UserModel::new()
+    let model = UserModel::new();
+    let id = model
         .register(pool, &params.account, &params.password)
         .await?;
     if id == 1 {
-        UserModel::new()
-            .update_by_id(
-                pool,
-                id,
-                json!({
-                    "roles": [ROLE_SUPER_ADMIN.to_string()],
-                }),
-            )
+        model
+            .update_by_id(pool, id, json!({ "roles": [ROLE_SUPER_ADMIN] }))
             .await?;
     }
     Ok(Json(RegisterResp {

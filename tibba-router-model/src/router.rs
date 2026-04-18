@@ -12,10 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::DETECTOR_GROUP_USER_MODEL;
 use crate::{
-    CONFIGURATION_MODEL, CmsModel, DETECTOR_GROUP_MODEL, FILE_MODEL, HTTP_DETECTOR_MODEL,
-    HTTP_STAT_MODEL, USER_MODEL, WEB_PAGE_DETECTOR_MODEL,
+    CONFIGURATION_MODEL, CmsModel, DETECTOR_GROUP_MODEL, DETECTOR_GROUP_USER_MODEL, FILE_MODEL,
+    HTTP_DETECTOR_MODEL, HTTP_STAT_MODEL, USER_MODEL, WEB_PAGE_DETECTOR_MODEL,
 };
 use axum::Json;
 use axum::Router;
@@ -33,13 +32,14 @@ use tibba_util::{JsonParams, JsonResult, QueryParams};
 use tibba_validator::x_schema_name;
 use validator::Validate;
 
+type Result<T> = std::result::Result<T, Error>;
 #[derive(Debug, Deserialize, Clone, Validate)]
 struct GetSchemaParams {
     #[validate(custom(function = "x_schema_name"))]
     name: String,
 }
 
-fn get_model(name: &str) -> Result<CmsModel, Error> {
+fn get_model(name: &str) -> Result<CmsModel> {
     CmsModel::from_str(name).map_err(|_| Error::new("The model is not supported"))
 }
 
@@ -193,7 +193,7 @@ async fn delete_model(
     State(pool): State<&'static MySqlPool>,
     _session: AdminSession,
     QueryParams(params): QueryParams<DeleteModelParams>,
-) -> Result<StatusCode, tibba_error::Error> {
+) -> Result<StatusCode> {
     let model = get_model(&params.model)?;
     match model {
         CmsModel::User => {
@@ -239,7 +239,7 @@ async fn update_model(
     State(pool): State<&'static MySqlPool>,
     _session: AdminSession,
     JsonParams(params): JsonParams<UpdateModelParams>,
-) -> Result<StatusCode, tibba_error::Error> {
+) -> Result<StatusCode> {
     let model = get_model(&params.model)?;
     match model {
         CmsModel::User => {

@@ -17,9 +17,9 @@ use dashmap::DashMap;
 use headless_chrome::Browser;
 use headless_chrome::Tab;
 use headless_chrome::protocol::cdp::Network::ResourceTiming;
+use headless_chrome::protocol::cdp::Page;
 use headless_chrome::protocol::cdp::Target::CreateTarget;
 use headless_chrome::protocol::cdp::types::Event;
-use headless_chrome::protocol::cdp::{Network, Page};
 use headless_chrome::util::Wait;
 use palette::{IntoColor, Luv, Srgb};
 use scopeguard::defer;
@@ -227,6 +227,10 @@ pub async fn run_web_page_stat_with_browser(
             new_window: Some(true),
             background: None,
             for_tab: None,
+            left: None,
+            top: None,
+            window_state: None,
+            hidden: None,
         })
         .map_err(|e| Error::HeadlessChrome {
             message: e.to_string(),
@@ -266,14 +270,14 @@ pub async fn run_web_page_stat_with_browser(
         .map_err(|e| Error::HeadlessChrome {
             message: e.to_string(),
         })?;
-    tab.call_method(Network::Enable {
-        max_total_buffer_size: None,
-        max_resource_buffer_size: None,
-        max_post_data_size: None,
-    })
-    .map_err(|e| Error::HeadlessChrome {
-        message: e.to_string(),
-    })?;
+    // tab.call_method(Network::Enable {
+    //     max_total_buffer_size: None,
+    //     max_resource_buffer_size: None,
+    //     max_post_data_size: None,
+    // })
+    // .map_err(|e| Error::HeadlessChrome {
+    //     message: e.to_string(),
+    // })?;
     let web_page_resources = Arc::new(DashMap::<String, WebPageResource>::new());
     let web_page_resources_clone = web_page_resources.clone();
     let exceptions = Arc::new(Mutex::new(Vec::new()));

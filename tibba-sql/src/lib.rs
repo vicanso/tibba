@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use serde::Deserialize;
-use snafu::Snafu;
+use snafu::{ResultExt, Snafu};
 use sqlx::MySqlPool;
 use sqlx::pool::PoolOptions;
 use std::sync::Arc;
@@ -24,6 +24,49 @@ use tibba_error::Error as BaseError;
 use tibba_util::parse_uri;
 use tracing::info;
 use validator::Validate;
+
+#[derive(Debug, Snafu)]
+pub enum Error {
+    #[snafu(display("sqlx error: {source}"))]
+    Sqlx {
+        #[snafu(source(from(sqlx::Error, Box::new)))]
+        source: Box<sqlx::Error>,
+    },
+
+    #[snafu(display("validate error: {source}"))]
+    Validate {
+        #[snafu(source(from(validator::ValidationErrors, Box::new)))]
+        source: Box<validator::ValidationErrors>,
+    },
+
+    #[snafu(display("config error: {source}"))]
+    Config {
+        #[snafu(source(from(tibba_config::Error, Box::new)))]
+        source: Box<tibba_config::Error>,
+    },
+
+    #[snafu(display("parse uri error: {source}"))]
+    ParseUri {
+        #[snafu(source(from(tibba_util::Error, Box::new)))]
+        source: Box<tibba_util::Error>,
+    },
+}
+
+impl From<Error> for BaseError {
+    fn from(val: Error) -> Self {
+        let err = match val {
+            Error::Sqlx { source } => BaseError::new(source)
+                .with_sub_category("sqlx")
+                .with_exception(true),
+            Error::Validate { source } => BaseError::new(source).with_sub_category("validate"),
+            Error::Config { source } => BaseError::new(source).with_sub_category("config"),
+            Error::ParseUri { source } => BaseError::new(source).with_sub_category("parse_uri"),
+        };
+        err.with_category("sql")
+    }
+}
+
+type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, Clone, Default, Validate)]
 pub struct DatabaseConfig {
@@ -47,19 +90,15 @@ fn default_max_connections() -> u32 {
 fn default_min_connections() -> u32 {
     2
 }
-
 fn default_connect_timeout() -> Duration {
     Duration::from_secs(3)
 }
-
 fn default_idle_timeout() -> Duration {
     Duration::from_secs(60)
 }
-
 fn default_max_lifetime() -> Duration {
     Duration::from_secs(6 * 60 * 60)
 }
-
 fn default_test_before_acquire() -> bool {
     true
 }
@@ -83,73 +122,23 @@ struct DatabaseQuery {
     pub test_before_acquire: bool,
 }
 
-fn map_err(e: impl ToString) -> Error {
-    Error::Common {
-        category: "config".to_string(),
-        message: e.to_string(),
-    }
-}
-
-// Creates a new DatabaseConfig instance from the configuration
-fn new_database_config(config: &Config) -> Result<DatabaseConfig> {
-    let origin_url = config.get_string("uri").map_err(map_err)?;
-    let url = origin_url.clone();
-    let parsed = parse_uri::<DatabaseQuery>(&url).map_err(map_err)?;
-
-    let mut url = parsed.url().map_err(map_err)?;
-    url.set_query(None);
-
-    let query = &parsed.query;
-    let database_config = DatabaseConfig {
-        origin_url,
-        url: url.to_string(),
-        max_connections: query.max_connections,
-        min_connections: query.min_connections,
-        connect_timeout: query.connect_timeout,
-        idle_timeout: query.idle_timeout,
-        max_lifetime: query.max_lifetime,
-        test_before_acquire: query.test_before_acquire,
-        password: parsed.password.map(|v| v.to_string()),
-    };
-    database_config
-        .validate()
-        .map_err(|e| Error::Validate { source: e })?;
-    Ok(database_config)
-}
-
-#[derive(Debug, Snafu)]
-pub enum Error {
-    #[snafu(display("sqlx error: {source}"))]
-    Sqlx { source: sqlx::Error },
-    #[snafu(display("validate error: {source}"))]
-    Validate { source: validator::ValidationErrors },
-    #[snafu(display("category: {category}, error: {message}"))]
-    Common { category: String, message: String },
-}
-
-impl From<Error> for BaseError {
-    fn from(source: Error) -> Self {
-        let err = match source {
-            Error::Sqlx { source } => BaseError::new(source)
-                .with_sub_category("sqlx")
-                .with_exception(true),
-            Error::Validate { source } => BaseError::new(source)
-                .with_sub_category("validate")
-                .with_exception(true),
-            Error::Common { message, .. } => BaseError::new(message).with_exception(true),
-        };
-        err.with_category("sql")
-    }
-}
-
+/// Tracks per-pool connection and execution statistics.
+///
+/// All counters are atomically reset to zero on each call to [`PoolStat::stat`].
 #[derive(Debug, Default)]
 pub struct PoolStat {
+    /// Number of new connections established since the last stat read.
     connected: AtomicU32,
+    /// Number of connection acquisitions since the last stat read.
     executions: AtomicUsize,
+    /// Accumulated idle time (seconds) across all acquisitions since the last stat read.
     idle_for: AtomicU64,
 }
 
 impl PoolStat {
+    /// Atomically reads and resets all counters.
+    ///
+    /// Returns `(connected, executions, idle_for_secs)`.
     pub fn stat(&self) -> (u32, usize, u64) {
         let connected = self.connected.swap(0, Ordering::Relaxed);
         let executions = self.executions.swap(0, Ordering::Relaxed);
@@ -158,8 +147,35 @@ impl PoolStat {
     }
 }
 
-type Result<T> = std::result::Result<T, Error>;
+/// Parses and validates a `DatabaseConfig` from the application config.
+fn new_database_config(config: &Config) -> Result<DatabaseConfig> {
+    let origin_url = config.get_string("uri").context(ConfigSnafu)?;
+    // `ParsedUri` borrows the string, so clone before moving `origin_url` into the struct.
+    let url_str = origin_url.clone();
+    let parsed = parse_uri::<DatabaseQuery>(&url_str).context(ParseUriSnafu)?;
 
+    let mut url = parsed.url().context(ParseUriSnafu)?;
+    url.set_query(None);
+
+    let query = &parsed.query;
+    let database_config = DatabaseConfig {
+        url: url.to_string(),
+        origin_url,
+        max_connections: query.max_connections,
+        min_connections: query.min_connections,
+        connect_timeout: query.connect_timeout,
+        idle_timeout: query.idle_timeout,
+        max_lifetime: query.max_lifetime,
+        test_before_acquire: query.test_before_acquire,
+        password: parsed.password.map(|v| v.to_string()),
+    };
+    database_config.validate().context(ValidateSnafu)?;
+    Ok(database_config)
+}
+
+/// Creates and connects a MySQL connection pool.
+///
+/// When `pool_stat` is provided, connection and acquisition events are tracked.
 pub async fn new_mysql_pool(
     config: &Config,
     pool_stat: Option<Arc<PoolStat>>,
@@ -167,8 +183,7 @@ pub async fn new_mysql_pool(
     let database_config = new_database_config(config)?;
     let password = database_config.password.clone().unwrap_or_default();
     let url = database_config.url.replace(&password, "***");
-    let category = "sqlx";
-    info!(category, url, "connect to database");
+    info!(category = "sqlx", url, "connect to database");
 
     let mut options = PoolOptions::new()
         .max_connections(database_config.max_connections)
@@ -192,7 +207,12 @@ pub async fn new_mysql_pool(
                 let stat = before_acquire_pool_stat.clone();
                 Box::pin(async move {
                     let idle = meta.idle_for.as_secs();
-                    info!(category, age = meta.age.as_secs(), idle, "before acquire");
+                    info!(
+                        category = "sqlx",
+                        age = meta.age.as_secs(),
+                        idle,
+                        "before acquire"
+                    );
                     stat.executions.fetch_add(1, Ordering::Relaxed);
                     stat.idle_for.fetch_add(idle, Ordering::Relaxed);
                     Ok(true)
@@ -200,9 +220,8 @@ pub async fn new_mysql_pool(
             });
     }
 
-    let pool = options
+    options
         .connect(database_config.url.as_str())
         .await
-        .map_err(|e| Error::Sqlx { source: e })?;
-    Ok(pool)
+        .context(SqlxSnafu)
 }
