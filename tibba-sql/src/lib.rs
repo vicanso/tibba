@@ -25,6 +25,10 @@ use tibba_util::parse_uri;
 use tracing::info;
 use validator::Validate;
 
+/// Tracing target for all log events in this crate.
+/// Use `RUST_LOG=tibba:sql=info` (or `debug`) to filter these logs.
+const LOG_TARGET: &str = "tibba:sql";
+
 #[derive(Debug, Snafu)]
 pub enum Error {
     #[snafu(display("sqlx error: {source}"))]
@@ -183,7 +187,7 @@ pub async fn new_mysql_pool(
     let database_config = new_database_config(config)?;
     let password = database_config.password.clone().unwrap_or_default();
     let url = database_config.url.replace(&password, "***");
-    info!(category = "sqlx", url, "connect to database");
+    info!(target: LOG_TARGET, url, "connect to database");
 
     let mut options = PoolOptions::new()
         .max_connections(database_config.max_connections)
@@ -208,7 +212,7 @@ pub async fn new_mysql_pool(
                 Box::pin(async move {
                     let idle = meta.idle_for.as_secs();
                     info!(
-                        category = "sqlx",
+                        target: LOG_TARGET,
                         age = meta.age.as_secs(),
                         idle,
                         "before acquire"

@@ -15,6 +15,10 @@
 use snafu::Snafu;
 use tibba_error::Error as BaseError;
 
+/// Tracing target for all log events in this crate.
+/// Use `RUST_LOG=tibba:session=info` (or `debug`) to filter these logs.
+pub(crate) const LOG_TARGET: &str = "tibba:session";
+
 mod middleware;
 mod session;
 

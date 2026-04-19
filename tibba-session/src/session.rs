@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::Error;
+use super::{Error, LOG_TARGET};
 use axum::Json;
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
@@ -302,9 +302,9 @@ where
             .ok_or::<Error>(Error::SessionNotFound)?
             .clone();
         debug!(
+            target: LOG_TARGET,
             id = se.data.id,
             iat = se.data.iat,
-            category = "session",
             "from_request_parts"
         );
         // not fetch
@@ -323,9 +323,9 @@ where
                 .await?
             {
                 debug!(
+                    target: LOG_TARGET,
                     id = data.id,
                     iat = data.iat,
-                    category = "session",
                     "load from cache"
                 );
                 se.data = data;

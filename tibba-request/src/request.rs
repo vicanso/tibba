@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{BuildSnafu, Error, RequestSnafu, SerdeSnafu, UriSnafu};
+use super::{BuildSnafu, Error, LOG_TARGET, RequestSnafu, SerdeSnafu, UriSnafu};
 use async_trait::async_trait;
 use axum::http::Method;
 use axum::http::header::HeaderMap;
@@ -35,8 +35,8 @@ type Result<T> = std::result::Result<T, Error>;
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 // Default empty query and body parameters
-static EMPTY_QUERY: Option<&[(&str, &str)]> = None;
-static EMPTY_BODY: Option<&[(&str, &str)]> = None;
+const EMPTY_QUERY: Option<&[(&str, &str)]> = None;
+const EMPTY_BODY: Option<&[(&str, &str)]> = None;
 
 /// Request parameters structure
 /// Generic over query (Q) and body (P) types that must be serializable
@@ -132,6 +132,7 @@ impl HttpInterceptor for CommonInterceptor {
     async fn on_done(&self, stats: &HttpStats, err: Option<&Error>) -> Result<()> {
         let error = err.map(ToString::to_string);
         info!(
+            target: LOG_TARGET,
             service = self.service,
             method = stats.method,
             path = stats.path,

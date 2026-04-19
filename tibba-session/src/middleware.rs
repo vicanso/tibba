@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Session, SessionParams};
+use super::{LOG_TARGET, Session, SessionParams};
 use axum::extract::Request;
 use axum::extract::State;
 use axum::middleware::Next;
@@ -29,8 +29,8 @@ pub async fn session(
     mut req: Request,
     next: Next,
 ) -> Result<Response> {
-    debug!(category = "middleware", "--> session");
-    defer!(debug!(category = "middleware", "<-- session"););
+    debug!(target: LOG_TARGET, "--> session");
+    defer!(debug!(target: LOG_TARGET, "<-- session"););
 
     req.extensions_mut().insert(Session::new(cache, params));
     Ok(next.run(req).await)

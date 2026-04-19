@@ -20,6 +20,10 @@ pub use tokio_cron_scheduler::Job;
 use tokio_cron_scheduler::{JobScheduler, JobSchedulerError};
 use tracing::info;
 
+/// Tracing target for all log events in this crate.
+/// Use `RUST_LOG=tibba:scheduler=info` (or `debug`) to filter these logs.
+const LOG_TARGET: &str = "tibba:scheduler";
+
 type Result<T> = std::result::Result<T, BaseError>;
 
 #[derive(Debug, Snafu)]
@@ -39,13 +43,12 @@ enum Error {
 
 impl From<Error> for BaseError {
     fn from(val: Error) -> Self {
-        let message = val.to_string();
-        match val {
-            Error::AddJob { name, .. } => BaseError::new(message)
-                .with_category("scheduler")
-                .with_sub_category(name),
-            _ => BaseError::new(message).with_category("scheduler"),
-        }
+        let err = match val {
+            Error::Create { source } => BaseError::new(source),
+            Error::AddJob { name, source } => BaseError::new(source).with_sub_category(name),
+            Error::Start { source } => BaseError::new(source),
+        };
+        err.with_category("scheduler")
     }
 }
 
@@ -74,13 +77,13 @@ pub async fn run_scheduler_jobs() -> Result<JobScheduler> {
             .add(job.clone())
             .await
             .context(AddJobSnafu { name: name.clone() })?;
-        info!(category = "scheduler", name, "add job success");
+        info!(target: LOG_TARGET, name, "add job success");
     }
 
     scheduler.shutdown_on_ctrl_c();
     scheduler.start().await.context(StartSnafu)?;
 
-    info!(category = "scheduler", "scheduler started");
+    info!(target: LOG_TARGET, "scheduler started");
 
     Ok(scheduler)
 }
