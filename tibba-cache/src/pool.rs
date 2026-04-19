@@ -12,8 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{ClusterBuildSnafu, Error, RedisSnafu, SingleBuildSnafu, new_redis_config};
-use deadpool_redis::{PoolConfig, Status, Timeouts};
+use super::{
+    ClusterBuildSnafu, ClusterConnectSnafu, Error, RedisSnafu, SingleBuildSnafu,
+    SingleConnectSnafu, new_redis_config,
+};
+use deadpool_redis::{Hook, PoolConfig, Status, Timeouts};
 use redis::aio::ConnectionLike;
 use redis::{Arg, Cmd, Pipeline, RedisFuture, Value};
 use snafu::ResultExt;
@@ -23,14 +26,6 @@ use tibba_config::Config;
 use tracing::info;
 
 type Result<T> = std::result::Result<T, Error>;
-
-#[inline]
-fn connection_err(e: impl std::fmt::Display) -> Error {
-    Error::Common {
-        category: "connection".to_string(),
-        message: e.to_string(),
-    }
-}
 
 #[derive(Debug, Default)]
 pub struct RedisCmdStat {
@@ -68,8 +63,8 @@ impl RedisClient {
     #[inline]
     pub async fn conn(&self) -> Result<RedisClientConn> {
         let conn: Box<dyn ConnectionLike + Send + Sync> = match &self.pool {
-            RedisPool::Single(p) => Box::new(p.get().await.map_err(connection_err)?),
-            RedisPool::Cluster(p) => Box::new(p.get().await.map_err(connection_err)?),
+            RedisPool::Single(p) => Box::new(p.get().await.context(SingleConnectSnafu)?),
+            RedisPool::Cluster(p) => Box::new(p.get().await.context(ClusterConnectSnafu)?),
         };
 
         Ok(RedisClientConn {
@@ -77,8 +72,10 @@ impl RedisClient {
             stat_callback: self.stat_callback,
         })
     }
-    pub fn with_stat_callback(&mut self, callback: &'static RedisCmdStatCallback) {
+    #[must_use]
+    pub fn with_stat_callback(mut self, callback: &'static RedisCmdStatCallback) -> Self {
         self.stat_callback = Some(callback);
+        self
     }
     /// Gets the status of the pool
     /// # Returns
@@ -235,6 +232,28 @@ pub fn new_redis_client(config: &Config) -> Result<RedisClient> {
         let pool = deadpool_redis::Pool::builder(mgr)
             .config(pool_config)
             .runtime(deadpool_redis::Runtime::Tokio1)
+            .post_create(Hook::sync_fn(move |_conn, _metrics| {
+                info!(category = "redis", "connect to redis");
+                Ok(())
+            }))
+            .pre_recycle(Hook::sync_fn(move |_conn, metrics| {
+                // 后续可根据age、last_used决定是否复用连接
+                info!(
+                    category = "redis",
+                    age = metrics.age().as_secs(),
+                    "pre recycle redis connection"
+                );
+                Ok(())
+            }))
+            .post_recycle(Hook::sync_fn(move |_conn, metrics| {
+                info!(
+                    category = "redis",
+                    age = metrics.age().as_secs(),
+                    idle = metrics.last_used().as_secs(),
+                    "recycle redis connection"
+                );
+                Ok(())
+            }))
             .build()
             .context(SingleBuildSnafu)?;
         RedisPool::Single(pool)

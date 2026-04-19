@@ -91,7 +91,7 @@ impl<T: Clone + Serialize + DeserializeOwned> TwoLevelStore<T> {
     /// # Returns
     /// * New TwoLevelStore instance
     pub fn new(redis: RedisCache, size: NonZeroUsize, ttl: Duration) -> Self {
-        TwoLevelStore {
+        Self {
             lru: TtlLruStore::new(size),
             ttl,
             redis,

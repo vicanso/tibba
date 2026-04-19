@@ -48,9 +48,8 @@ fn cmd_stat(stat: RedisCmdStat) {
 
 fn get_redis_client() -> Result<&'static RedisClient> {
     REDIS_CLIENT.get_or_try_init(|| {
-        let mut client = new_redis_client(&must_get_config().sub_config("redis"))?;
-        client.with_stat_callback(&cmd_stat);
-        Ok(client)
+        let client = new_redis_client(&must_get_config().sub_config("redis"))?;
+        Ok(client.with_stat_callback(&cmd_stat))
     })
 }
 

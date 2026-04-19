@@ -53,6 +53,7 @@ impl RedisCache {
 
     /// Sets the time-to-live duration for cache entries
     /// Returns self for method chaining
+    #[must_use]
     pub fn with_ttl(mut self, ttl: Duration) -> Self {
         self.ttl = ttl;
         self
@@ -60,9 +61,15 @@ impl RedisCache {
 
     /// Sets the prefix for all cache keys
     /// Returns self for method chaining
+    #[must_use]
     pub fn with_prefix(mut self, prefix: impl Into<String>) -> Self {
         self.prefix = prefix.into();
         self
+    }
+
+    #[inline]
+    fn get_ttl(&self, ttl: Option<Duration>) -> u64 {
+        ttl.unwrap_or(self.ttl).as_secs()
     }
 
     /// Generates the full cache key by combining prefix (if any) with the provided key
@@ -71,6 +78,7 @@ impl RedisCache {
     /// # Returns
     /// * If prefix is empty: returns the original key
     /// * If prefix exists: returns prefix + key
+    #[inline]
     fn get_key<'a>(&'a self, key: &'a str) -> Cow<'a, str> {
         if self.prefix.is_empty() {
             Cow::Borrowed(key)
@@ -120,13 +128,12 @@ impl RedisCache {
         &self,
         key: &str,
         value: T,
-        ttl: Option<Duration>,
+        ttl: u64,
     ) -> Result<()> {
-        let seconds = ttl.unwrap_or(self.ttl).as_secs();
         let () = self
             .conn()
             .await?
-            .set_ex(key, value, seconds)
+            .set_ex(key, value, ttl)
             .await
             .context(RedisSnafu { category: "set" })?;
         Ok(())
@@ -147,7 +154,7 @@ impl RedisCache {
             .arg(true)
             .arg("NX")
             .arg("EX")
-            .arg(ttl.unwrap_or(self.ttl).as_secs())
+            .arg(self.get_ttl(ttl))
             .query_async(&mut conn)
             .await
             .context(RedisSnafu { category: "lock" })?;
@@ -188,7 +195,7 @@ impl RedisCache {
             .arg(0)
             .arg("NX")
             .arg("EX")
-            .arg(ttl.unwrap_or(self.ttl).as_secs())
+            .arg(self.get_ttl(ttl))
             .cmd("INCRBY")
             .arg(&k)
             .arg(delta)
@@ -207,7 +214,8 @@ impl RedisCache {
         value: T,
         ttl: Option<Duration>,
     ) -> Result<()> {
-        self.set_value(&self.get_key(key), value, ttl).await
+        self.set_value(&self.get_key(key), value, self.get_ttl(ttl))
+            .await
     }
     /// Retrieves a value from Redis
     /// - Value type must implement FromRedisValue trait
@@ -225,7 +233,8 @@ impl RedisCache {
         T: ?Sized + Serialize,
     {
         let value = serde_json::to_vec(&value).context(SerdeJsonSnafu)?;
-        self.set_value(&self.get_key(key), &value, ttl).await?;
+        self.set_value(&self.get_key(key), &value, self.get_ttl(ttl))
+            .await?;
         Ok(())
     }
     /// Retrieves and deserializes a struct from Redis
@@ -307,11 +316,10 @@ impl RedisCache {
     /// * `Ok(false)` - Key does not exist
     /// * `Err(Error)` - Redis operation failed
     pub async fn expire(&self, key: &str, ttl: Option<Duration>) -> Result<bool> {
-        let seconds = ttl.unwrap_or(self.ttl).as_secs();
         let result = self
             .conn()
             .await?
-            .expire(self.get_key(key), seconds as i64)
+            .expire(self.get_key(key), self.get_ttl(ttl) as i64)
             .await
             .context(RedisSnafu { category: "expire" })?;
         Ok(result)
@@ -320,7 +328,7 @@ impl RedisCache {
         &self,
         key: &str,
         value: &T,
-        ttl: Option<Duration>,
+        ttl: u64,
         algorithm: Algorithm,
     ) -> Result<()>
     where
@@ -328,7 +336,7 @@ impl RedisCache {
     {
         let value = serde_json::to_vec(value).context(SerdeJsonSnafu)?;
         let buf = compress(&value, algorithm).context(CompressionSnafu)?;
-        self.set_value(&self.get_key(key), &buf, ttl).await
+        self.set_value(key, &buf, ttl).await
     }
 
     async fn get_struct_compressed<T>(&self, key: &str, algorithm: Algorithm) -> Result<Option<T>>
@@ -359,7 +367,7 @@ impl RedisCache {
     where
         T: ?Sized + Serialize,
     {
-        self.set_struct_compressed(key, value, ttl, Algorithm::Lz4)
+        self.set_struct_compressed(&self.get_key(key), value, self.get_ttl(ttl), Algorithm::Lz4)
             .await
     }
     /// Retrieves, decompresses (LZ4), and deserializes a struct from Redis
@@ -395,7 +403,7 @@ impl RedisCache {
     where
         T: ?Sized + Serialize,
     {
-        self.set_struct_compressed(key, value, ttl, DEFAULT_ZSTD)
+        self.set_struct_compressed(&self.get_key(key), value, self.get_ttl(ttl), DEFAULT_ZSTD)
             .await
     }
     /// Retrieves, decompresses (Zstd), and deserializes a struct from Redis

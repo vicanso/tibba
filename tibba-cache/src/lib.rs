@@ -22,15 +22,22 @@ use validator::Validate;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
-    #[snafu(display("category: {category}, {message}"))]
-    Common { category: String, message: String },
     #[snafu(display("config error: {source}"))]
     Config {
         #[snafu(source(from(tibba_config::Error, Box::new)))]
         source: Box<tibba_config::Error>,
     },
     #[snafu(display("parse uri error: {source}"))]
-    ParseUri { source: tibba_util::Error },
+    ParseUri {
+        #[snafu(source(from(tibba_util::Error, Box::new)))]
+        source: Box<tibba_util::Error>,
+    },
+    #[snafu(display("single connect error: {source}"))]
+    SingleConnect { source: deadpool_redis::PoolError },
+    #[snafu(display("cluster connect error: {source}"))]
+    ClusterConnect {
+        source: deadpool_redis::cluster::PoolError,
+    },
     #[snafu(display("{source}"))]
     SingleBuild { source: deadpool_redis::BuildError },
     #[snafu(display("{source}"))]
@@ -54,7 +61,8 @@ pub enum Error {
     #[snafu(display("category: {category}, {source}"))]
     Validate {
         category: String,
-        source: validator::ValidationErrors,
+        #[snafu(source(from(validator::ValidationErrors, Box::new)))]
+        source: Box<validator::ValidationErrors>,
     },
 }
 
@@ -115,7 +123,8 @@ fn new_redis_config(config: &Config) -> Result<RedisConfig> {
         pool_size: query.pool_size,
         connection_timeout: query.connection_timeout.unwrap_or(Duration::from_secs(3)),
         wait_timeout: query.wait_timeout.unwrap_or(Duration::from_secs(3)),
-        recycle_timeout: query.recycle_timeout.unwrap_or(Duration::from_secs(60)),
+        // 检测请求是否可用的超时时间，默认300ms
+        recycle_timeout: query.recycle_timeout.unwrap_or(Duration::from_millis(300)),
         password: query.password,
     };
     redis_config
@@ -126,36 +135,39 @@ fn new_redis_config(config: &Config) -> Result<RedisConfig> {
 
 impl From<Error> for BaseError {
     fn from(val: Error) -> Self {
+        // Infrastructure errors: unreachable Redis → 500 + exception
+        fn infra(err: BaseError) -> BaseError {
+            err.with_status(500).with_exception(true)
+        }
         let err = match val {
-            Error::Common { category, message } => {
-                BaseError::new(message).with_sub_category(&category)
-            }
             Error::Config { source } => BaseError::new(*source).with_sub_category("config"),
-            Error::ParseUri { source } => BaseError::new(source).with_sub_category("parse_uri"),
-            Error::SingleBuild { source } => BaseError::new(source)
-                .with_sub_category("single_build")
-                .with_status(500)
-                .with_exception(true),
-            Error::ClusterBuild { source } => BaseError::new(source)
-                .with_sub_category("cluster_build")
-                .with_status(500)
-                .with_exception(true),
-            Error::Redis { category, source } => BaseError::new(source)
-                .with_sub_category(&category)
-                .with_status(500)
-                .with_exception(true),
+            Error::ParseUri { source } => BaseError::new(*source).with_sub_category("parse_uri"),
+            Error::SingleConnect { source } => {
+                infra(BaseError::new(source).with_sub_category("single_connect"))
+            }
+            Error::ClusterConnect { source } => {
+                infra(BaseError::new(source).with_sub_category("cluster_connect"))
+            }
+            Error::SingleBuild { source } => {
+                infra(BaseError::new(source).with_sub_category("single_build"))
+            }
+            Error::ClusterBuild { source } => {
+                infra(BaseError::new(source).with_sub_category("cluster_build"))
+            }
+            Error::Redis { category, source } => {
+                infra(BaseError::new(source).with_sub_category(&category))
+            }
             Error::Compression { source } => BaseError::new(source)
                 .with_sub_category("compression")
                 .with_exception(true),
             Error::SerdeJson { source } => BaseError::new(source)
                 .with_sub_category("serde_json")
                 .with_exception(true),
-            Error::Url { category, source } => BaseError::new(source)
-                .with_sub_category(&category)
-                .with_status(500)
-                .with_exception(true),
+            Error::Url { category, source } => {
+                infra(BaseError::new(source).with_sub_category(&category))
+            }
             Error::Validate { category, source } => {
-                BaseError::new(source).with_sub_category(&category)
+                BaseError::new(*source).with_sub_category(&category)
             }
         };
         err.with_category("cache")

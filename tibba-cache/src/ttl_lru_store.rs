@@ -41,7 +41,7 @@ impl<T: Expired + Clone> TtlLruStore<T> {
     /// # Returns
     /// * A new TtlLruStore instance
     pub fn new(size: NonZeroUsize) -> Self {
-        TtlLruStore {
+        Self {
             cache: RwLock::new(LruCache::new(size)),
         }
     }
