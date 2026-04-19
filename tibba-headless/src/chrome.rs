@@ -12,10 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::Error;
+use super::{Error, HeadlessChromeSnafu};
 use dashmap::DashMap;
 use headless_chrome::Browser;
 use headless_chrome::Tab;
+use headless_chrome::protocol::cdp::Network;
 use headless_chrome::protocol::cdp::Network::ResourceTiming;
 use headless_chrome::protocol::cdp::Page;
 use headless_chrome::protocol::cdp::Target::CreateTarget;
@@ -23,6 +24,7 @@ use headless_chrome::protocol::cdp::types::Event;
 use headless_chrome::util::Wait;
 use palette::{IntoColor, Luv, Srgb};
 use scopeguard::defer;
+use snafu::ResultExt;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -144,13 +146,9 @@ pub struct Screenshot {
 fn analyze_web_page_screenshot(tab: Arc<Tab>, params: &WebPageParams) -> Result<Screenshot> {
     let image_data = if let Some(capture_element) = &params.capture_element {
         tab.wait_for_element(capture_element)
-            .map_err(|e| Error::HeadlessChrome {
-                message: e.to_string(),
-            })?
+            .context(HeadlessChromeSnafu)?
             .capture_screenshot(Page::CaptureScreenshotFormatOption::Png)
-            .map_err(|e| Error::HeadlessChrome {
-                message: e.to_string(),
-            })?
+            .context(HeadlessChromeSnafu)?
     } else {
         tab.capture_screenshot(
             Page::CaptureScreenshotFormatOption::Png,
@@ -164,17 +162,12 @@ fn analyze_web_page_screenshot(tab: Arc<Tab>, params: &WebPageParams) -> Result<
             }),
             true,
         )
-        .map_err(|e| Error::HeadlessChrome {
-            message: e.to_string(),
-        })?
+        .context(HeadlessChromeSnafu)?
     };
 
-    let img =
-        image::load_from_memory_with_format(&image_data, image::ImageFormat::Png).map_err(|e| {
-            Error::HeadlessChrome {
-                message: e.to_string(),
-            }
-        })?;
+    let img = image::load_from_memory_with_format(&image_data, image::ImageFormat::Png)
+        .map_err(anyhow::Error::from)
+        .context(HeadlessChromeSnafu)?;
     let width = img.width();
     let height = img.height();
     let mut color_percents = vec![];
@@ -232,9 +225,7 @@ pub async fn run_web_page_stat_with_browser(
             window_state: None,
             hidden: None,
         })
-        .map_err(|e| Error::HeadlessChrome {
-            message: e.to_string(),
-        })?;
+        .context(HeadlessChromeSnafu)?;
     defer!(let _ = tab.close_with_unload(););
     if let Some(user_agent) = &params.user_agent {
         tab.set_user_agent(
@@ -242,9 +233,7 @@ pub async fn run_web_page_stat_with_browser(
             params.accept_language.as_deref(),
             params.platform.as_deref(),
         )
-        .map_err(|e| Error::HeadlessChrome {
-            message: e.to_string(),
-        })?;
+        .context(HeadlessChromeSnafu)?;
     }
     tab.call_method(Page::SetDeviceMetricsOverride {
         width: params.width,
@@ -260,24 +249,17 @@ pub async fn run_web_page_stat_with_browser(
         screen_orientation: None,
         viewport: None,
     })
-    .map_err(|e| Error::HeadlessChrome {
-        message: e.to_string(),
-    })?;
-    tab.enable_runtime().map_err(|e| Error::HeadlessChrome {
-        message: e.to_string(),
-    })?;
-    tab.enable_fetch(None, None)
-        .map_err(|e| Error::HeadlessChrome {
-            message: e.to_string(),
-        })?;
-    // tab.call_method(Network::Enable {
-    //     max_total_buffer_size: None,
-    //     max_resource_buffer_size: None,
-    //     max_post_data_size: None,
-    // })
-    // .map_err(|e| Error::HeadlessChrome {
-    //     message: e.to_string(),
-    // })?;
+    .context(HeadlessChromeSnafu)?;
+    tab.enable_runtime().context(HeadlessChromeSnafu)?;
+    tab.enable_fetch(None, None).context(HeadlessChromeSnafu)?;
+    tab.call_method(Network::Enable {
+        max_total_buffer_size: None,
+        max_resource_buffer_size: None,
+        max_post_data_size: None,
+        enable_durable_messages: None,
+        report_direct_socket_traffic: None,
+    })
+    .context(HeadlessChromeSnafu)?;
     let web_page_resources = Arc::new(DashMap::<String, WebPageResource>::new());
     let web_page_resources_clone = web_page_resources.clone();
     let exceptions = Arc::new(Mutex::new(Vec::new()));
@@ -348,7 +330,7 @@ pub async fn run_web_page_stat_with_browser(
         }
         if let Event::RuntimeExceptionThrown(exception) = event {
             let details = &exception.params.exception_details;
-            let mut description = "".to_string();
+            let mut description = String::new();
             if let Some(exception) = &details.exception {
                 description = exception.description.clone().unwrap_or_default();
             }
@@ -362,18 +344,11 @@ pub async fn run_web_page_stat_with_browser(
         }
     });
     tab.add_event_listener(listener)
-        .map_err(|e| Error::HeadlessChrome {
-            message: e.to_string(),
-        })?;
-    tab.navigate_to(&params.url)
-        .map_err(|e| Error::HeadlessChrome {
-            message: e.to_string(),
-        })?;
+        .context(HeadlessChromeSnafu)?;
+    tab.navigate_to(&params.url).context(HeadlessChromeSnafu)?;
     if let Some(wait_for_elements) = &params.wait_for_elements {
         tab.wait_for_elements(wait_for_elements)
-            .map_err(|e| Error::HeadlessChrome {
-                message: e.to_string(),
-            })?;
+            .context(HeadlessChromeSnafu)?;
     } else {
         Wait::with_timeout(Duration::from_secs(60))
             .until(|| {
@@ -383,17 +358,14 @@ pub async fn run_web_page_stat_with_browser(
                     None
                 }
             })
-            .map_err(|e| Error::HeadlessChrome {
-                message: e.to_string(),
-            })?;
+            .map_err(anyhow::Error::from)
+            .context(HeadlessChromeSnafu)?;
     }
     if let Some(wait) = params.wait {
         tokio::time::sleep(wait).await;
     }
 
-    let mut stat = WebPageStat {
-        ..Default::default()
-    };
+    let mut stat = WebPageStat::default();
 
     if let Ok(exceptions) = exceptions.lock() {
         stat.exceptions = exceptions.clone();
@@ -433,8 +405,6 @@ pub async fn run_web_page_stat_with_browser(
 pub fn new_browser(cdp: &str, timeout: Option<Duration>) -> Result<Browser> {
     let browser =
         Browser::connect_with_timeout(cdp.to_string(), timeout.unwrap_or(Duration::from_secs(120)))
-            .map_err(|e| Error::HeadlessChrome {
-                message: e.to_string(),
-            })?;
+            .context(HeadlessChromeSnafu)?;
     Ok(browser)
 }

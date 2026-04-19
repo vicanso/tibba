@@ -17,16 +17,19 @@ use tibba_error::Error as BaseError;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
-    #[snafu(display("{message}"))]
-    HeadlessChrome { message: String },
+    #[snafu(display("{source}"))]
+    HeadlessChrome { source: anyhow::Error },
 }
+
 impl From<Error> for BaseError {
-    fn from(error: Error) -> Self {
-        match error {
-            Error::HeadlessChrome { message } => {
-                BaseError::new(message).with_category("headless_chrome")
-            }
-        }
+    fn from(val: Error) -> Self {
+        let err = match val {
+            Error::HeadlessChrome { source } => BaseError::new(source.to_string())
+                .with_sub_category("headless_chrome")
+                .with_status(500)
+                .with_exception(true),
+        };
+        err.with_category("headless")
     }
 }
 

@@ -33,14 +33,15 @@ pub enum Error {
 
 impl From<Error> for BaseError {
     fn from(val: Error) -> Self {
-        let message = val.to_string();
-        let sub_category = match &val {
-            Error::Config { category, .. } | Error::ParseSize { category, .. } => category.as_str(),
+        let err = match val {
+            Error::Config { category, source } => {
+                BaseError::new(source).with_sub_category(&category)
+            }
+            Error::ParseSize { category, source } => {
+                BaseError::new(source).with_sub_category(&category)
+            }
         };
-        BaseError::new(message)
-            .with_sub_category(sub_category)
-            .with_category("config")
-            .with_exception(true)
+        err.with_category("config").with_exception(true)
     }
 }
 

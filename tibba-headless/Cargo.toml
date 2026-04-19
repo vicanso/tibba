@@ -8,8 +8,9 @@ name = "tibba_headless"
 path = "src/lib.rs"
 
 [dependencies]
+anyhow = { workspace = true }
 dashmap = { workspace = true }
-headless_chrome = "1.0.18"
+headless_chrome = "1.0.21"
 image = { workspace = true }
 palette = "0.7.6"
 scopeguard = { workspace = true }

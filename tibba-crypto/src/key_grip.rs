@@ -53,7 +53,7 @@ impl KeyGrip {
         if keys.is_empty() {
             return Err(Error::KeyGripEmpty);
         }
-        Ok(KeyGrip {
+        Ok(Self {
             store: KeyStore::Static(keys),
         })
     }
@@ -63,7 +63,7 @@ impl KeyGrip {
         if keys.is_empty() {
             return Err(Error::KeyGripEmpty);
         }
-        Ok(KeyGrip {
+        Ok(Self {
             store: KeyStore::Shared(Arc::new(RwLock::new(keys))),
         })
     }

@@ -12,10 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::Error;
-use config::{Config as RawConfig, ConfigError, Environment, File, FileFormat};
+use super::{ConfigSnafu, Error, ParseSizeSnafu};
+use config::{Config as RawConfig, Environment, File, FileFormat};
 use parse_size::parse_size;
 use serde::Deserialize;
+use snafu::ResultExt;
 use std::time::Duration;
 
 type Result<T> = std::result::Result<T, Error>;
@@ -29,13 +30,6 @@ pub struct Config {
     /// Prefix for configuration keys, used for sub-configs.
     prefix: String,
     settings: RawConfig,
-}
-
-fn map_err(e: ConfigError) -> Error {
-    Error::Config {
-        category: "config".to_string(),
-        source: e,
-    }
 }
 
 impl Config {
@@ -59,9 +53,8 @@ impl Config {
                 .separator("_"), // use `_` as the separator, for example `APP_DATABASE_HOST`
         );
 
-        let settings = builder.build().map_err(|e| Error::Config {
-            category: "builder".to_string(),
-            source: e,
+        let settings = builder.build().context(ConfigSnafu {
+            category: "builder",
         })?;
 
         Ok(Self {
@@ -84,38 +77,44 @@ impl Config {
 
     /// Try to deserialize the entire configuration into the requested type.
     pub fn try_deserialize<'de, T: Deserialize<'de>>(&self) -> Result<T> {
-        let key = &self.get_key("");
-        self.settings.get(key).map_err(map_err)
+        self.settings
+            .get(&self.get_key(""))
+            .context(ConfigSnafu { category: "config" })
     }
 
     /// Retrieves a value, returning a default if not found or type mismatch.
     pub fn get<'de, T: Deserialize<'de>>(&self, key: &str) -> Result<T> {
-        let key = &self.get_key(key);
-        self.settings.get(key).map_err(map_err)
+        self.settings
+            .get(&self.get_key(key))
+            .context(ConfigSnafu { category: "config" })
     }
 
     /// Retrieves a string value, returning a default if not found or type mismatch.
     pub fn get_string(&self, key: &str) -> Result<String> {
-        let key = &self.get_key(key);
-        self.settings.get_string(key).map_err(map_err)
+        self.settings
+            .get_string(&self.get_key(key))
+            .context(ConfigSnafu { category: "config" })
     }
 
     /// Retrieves an integer value, returning a default if not found or type mismatch.
     pub fn get_int(&self, key: &str) -> Result<i64> {
-        let key = &self.get_key(key);
-        self.settings.get_int(key).map_err(map_err)
+        self.settings
+            .get_int(&self.get_key(key))
+            .context(ConfigSnafu { category: "config" })
     }
 
     /// Retrieves a float value, returning an error if not found or type mismatch.
     pub fn get_float(&self, key: &str) -> Result<f64> {
-        let key = &self.get_key(key);
-        self.settings.get_float(key).map_err(map_err)
+        self.settings
+            .get_float(&self.get_key(key))
+            .context(ConfigSnafu { category: "config" })
     }
 
     /// Retrieves a boolean value, returning a default if not found or type mismatch.
     pub fn get_bool(&self, key: &str) -> Result<bool> {
-        let key = &self.get_key(key);
-        self.settings.get_bool(key).map_err(map_err)
+        self.settings
+            .get_bool(&self.get_key(key))
+            .context(ConfigSnafu { category: "config" })
     }
 
     /// Retrieves a Duration value, returning a default if not found or parsing fails.
@@ -130,18 +129,20 @@ impl Config {
         }
 
         // Fallback: try to parse as u64 seconds
-        let seconds = self.settings.get_int(key).map_err(map_err)?;
+        let seconds = self
+            .settings
+            .get_int(key)
+            .context(ConfigSnafu { category: "config" })?;
         Ok(Duration::from_secs(seconds as u64))
     }
 
     /// Retrieves a byte size value, returning a default if not found or parsing fails.
     pub fn get_byte_size(&self, key: &str) -> Result<usize> {
-        let key = &self.get_key(key);
-        let value = self.settings.get_string(key).map_err(map_err)?;
-        let size = parse_size(value).map_err(|e| Error::ParseSize {
-            category: "config".to_string(),
-            source: e,
-        })?;
+        let value = self
+            .settings
+            .get_string(&self.get_key(key))
+            .context(ConfigSnafu { category: "config" })?;
+        let size = parse_size(value).context(ParseSizeSnafu { category: "config" })?;
         Ok(size as usize)
     }
 

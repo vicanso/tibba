@@ -28,19 +28,14 @@ pub enum Error {
 
 impl From<Error> for BaseError {
     fn from(val: Error) -> Self {
-        // val.to_string() uses Snafu's Display, e.g. "hmac sha256 error: invalid length",
-        // which is more informative than extracting source.to_string() directly.
-        let message = val.to_string();
-        match val {
-            Error::HmacSha256 { .. } => BaseError::new(message)
-                .with_category("crypto")
-                .with_sub_category("hmac_sha256"),
-            Error::KeyGripEmpty => BaseError::new(message)
-                .with_category("crypto")
+        let err = match val {
+            Error::HmacSha256 { source } => BaseError::new(source).with_sub_category("hmac_sha256"),
+            Error::KeyGripEmpty => BaseError::new("key grip empty")
                 .with_sub_category("key_grip")
                 .with_status(500)
                 .with_exception(true),
-        }
+        };
+        err.with_category("crypto")
     }
 }
 

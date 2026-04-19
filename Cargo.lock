@@ -5523,6 +5523,7 @@ dependencies = [
 name = "tibba-headless"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "dashmap",
  "headless_chrome",
  "image 0.25.10",
