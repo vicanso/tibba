@@ -12,12 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::Error;
+use super::{Error, HeaderValueSnafu, LOG_TARGET};
 use axum::extract::Request;
 use axum::extract::State;
 use axum::middleware::Next;
 use axum::response::Response;
 use scopeguard::defer;
+use snafu::ResultExt;
 use std::time::Duration;
 use tibba_cache::RedisCache;
 use tibba_state::CTX;
@@ -67,9 +68,9 @@ impl WaitParams {
 /// * `next` - The next middleware in the chain
 pub async fn wait(State(params): State<WaitParams>, req: Request, next: Next) -> Response {
     // Log middleware entry
-    debug!(category = "middleware", "--> wait");
+    debug!(target: LOG_TARGET, "--> wait");
     // Ensure exit logging happens even if processing panics
-    defer!(debug!(category = "middleware", "<-- wait"););
+    defer!(debug!(target: LOG_TARGET, "<-- wait"););
 
     // Process the request through the middleware chain
     let res = next.run(req).await;
@@ -121,10 +122,7 @@ pub async fn validate_captcha(
             category: category.to_string(),
         })?
         .to_str()
-        .map_err(|err| Error::Common {
-            message: err.to_string(),
-            category: category.to_string(),
-        })?;
+        .context(HeaderValueSnafu)?;
 
     let (key, user_code) = value.split_once(':').ok_or_else(|| Error::Common {
         message: "captcha parameter is invalid, expect 'key:code'".to_string(),

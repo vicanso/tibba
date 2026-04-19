@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{ClientIp, Error};
+use super::{ClientIp, Error, LOG_TARGET};
 use axum::extract::Request;
 use axum::extract::State;
 use axum::middleware::Next;
@@ -46,9 +46,9 @@ pub async fn processing_limit(
     next: Next,
 ) -> Result<impl IntoResponse> {
     // Log middleware entry
-    debug!(category = "middleware", "--> processing_limit");
+    debug!(target: LOG_TARGET, "--> processing_limit");
     // Ensure exit logging happens even if processing panics
-    defer!(debug!(category = "middleware", "<-- processing_limit"););
+    defer!(debug!(target: LOG_TARGET, "<-- processing_limit"););
 
     // Get configured processing limit from app state
     let limit = state.get_processing_limit();

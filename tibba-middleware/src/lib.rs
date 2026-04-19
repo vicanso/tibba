@@ -18,12 +18,20 @@ use snafu::Snafu;
 use std::net::{IpAddr, SocketAddr};
 use tibba_error::Error as BaseError;
 
+/// Tracing target for all log events in this crate.
+/// Use `RUST_LOG=tibba-middleware=info` (or `debug`) to filter these logs.
+pub(crate) const LOG_TARGET: &str = "tibba:middleware";
+
 #[derive(Debug, Snafu)]
 pub enum Error {
     #[snafu(display("{message}"))]
     Common { message: String, category: String },
     #[snafu(display("too many requests, limit: {limit}, current: {current}"))]
     TooManyRequests { limit: i64, current: i64 },
+    #[snafu(display("{source}"))]
+    HeaderValue {
+        source: axum::http::header::ToStrError,
+    },
 }
 
 impl From<Error> for BaseError {
@@ -37,6 +45,9 @@ impl From<Error> for BaseError {
             ))
             .with_sub_category("too_many_requests")
             .with_status(429),
+            Error::HeaderValue { source } => {
+                BaseError::new(source).with_sub_category("header_value")
+            }
         };
         err.with_category("middleware")
     }

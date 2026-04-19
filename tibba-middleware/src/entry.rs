@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use super::LOG_TARGET;
 use axum::extract::Request;
 use axum::middleware::Next;
 use axum::response::Response;
@@ -39,9 +40,9 @@ use tracing::debug;
 /// - Request-scoped context
 pub async fn entry(jar: CookieJar, mut req: Request, next: Next) -> Response {
     // Log middleware entry
-    debug!(category = "middleware", "--> entry");
+    debug!(target: LOG_TARGET, "--> entry");
     // Ensure exit logging happens even if processing panics
-    defer!(debug!(category = "middleware", "<-- entry"););
+    defer!(debug!(target: LOG_TARGET, "<-- entry"););
 
     // Extract device ID from cookies for user/device tracking
     let device_id = get_device_id_from_cookie(&jar).unwrap_or_default();

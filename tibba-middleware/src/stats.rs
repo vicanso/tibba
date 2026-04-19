@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::ClientIp;
+use super::{ClientIp, LOG_TARGET};
 use axum::extract::Request;
 use axum::extract::State;
 use axum::middleware::Next;
@@ -49,9 +49,9 @@ pub async fn stats(
     next: Next,
 ) -> Result<Response> {
     // Log middleware entry
-    debug!(category = "middleware", "--> stats");
+    debug!(target: LOG_TARGET, "--> stats");
     // Ensure exit logging happens even if processing panics
-    defer!(debug!(category = "middleware", "<-- stats"););
+    defer!(debug!(target: LOG_TARGET, "<-- stats"););
 
     // Decode URI for logging (handles URL-encoded characters)
     let uri_str = req.uri().to_string();
@@ -87,7 +87,7 @@ pub async fn stats(
 
     // Log comprehensive request/response information
     info!(
-        category = "access",
+        target: LOG_TARGET,
         device_id = ctx.device_id,           // Device identification
         trace_id = ctx.trace_id,             // Request trace ID
         account = %ctx.get_account(),         // Account ID

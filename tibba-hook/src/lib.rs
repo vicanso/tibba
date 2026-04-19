@@ -19,6 +19,10 @@ use std::sync::LazyLock;
 use tibba_error::Error;
 use tracing::info;
 
+/// Tracing target for all log events in this crate.
+/// Use `RUST_LOG=tibba-hook=info` (or `debug`) to filter these logs.
+const LOG_TARGET: &str = "tibba:hook";
+
 type Result<T> = std::result::Result<T, Error>;
 
 #[async_trait]
@@ -85,7 +89,7 @@ async fn run_tasks(task_type: TaskType) -> Result<()> {
 
         if executed {
             info!(
-                category = "task",
+                target: LOG_TARGET,
                 task_type = %task_type,
                 name,
                 elapsed = start.elapsed().as_millis(),

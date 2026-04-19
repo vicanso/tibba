@@ -188,8 +188,8 @@ impl From<Error> for BaseError {
 }
 
 /// Tracing target for all log events in this crate.
-/// Use `RUST_LOG=tibba_cache=info` (or `debug`) to filter these logs.
-pub(crate) const LOG_TARGET: &str = "tibba_cache";
+/// Use `RUST_LOG=tibba:cache=info` (or `debug`) to filter these logs.
+pub(crate) const LOG_TARGET: &str = "tibba:cache";
 
 mod cache;
 mod pool;

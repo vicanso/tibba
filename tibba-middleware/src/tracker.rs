@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use super::LOG_TARGET;
 use axum::extract::Request;
 use axum::extract::State;
 use axum::middleware::Next;
@@ -30,7 +31,7 @@ pub struct TrackerParams {
 
 impl From<(&'static str, &'static str)> for TrackerParams {
     fn from((name, step): (&'static str, &'static str)) -> Self {
-        TrackerParams { name, step }
+        Self { name, step }
     }
 }
 
@@ -47,9 +48,6 @@ pub async fn user_tracker(
     req: Request,
     next: Next,
 ) -> Result<Response> {
-    // Fixed category used to filter tracker events in log aggregation
-    let category = "tracker";
-
     let res = next.run(req).await;
 
     let ctx = CTX.get();
@@ -64,7 +62,7 @@ pub async fn user_tracker(
 
     if status < 400 {
         info!(
-            category,
+            target: LOG_TARGET,
             device_id,
             trace_id,
             name = params.name,   // Logical operation name (e.g. "user_login")
@@ -73,6 +71,7 @@ pub async fn user_tracker(
             status,
             elapsed,
             result = "success",
+            "user tracker",
         );
         return Ok(res);
     }
@@ -96,7 +95,7 @@ pub async fn user_tracker(
         .unwrap_or((None, None, None, true));
 
     error!(
-        category,
+        target: LOG_TARGET,
         device_id,
         trace_id,
         name = params.name,
@@ -110,6 +109,7 @@ pub async fn user_tracker(
         error_exception,
         elapsed,
         result = "failure",
+        "user tracker",
     );
     Ok(res)
 }
