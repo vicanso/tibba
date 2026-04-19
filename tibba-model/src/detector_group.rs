@@ -13,11 +13,12 @@
 // limitations under the License.
 
 use super::{
-    Error, Model, ModelListParams, Schema, SchemaAllowCreate, SchemaAllowEdit, SchemaType,
-    SchemaView, format_datetime,
+    Error, JsonSnafu, Model, ModelListParams, Schema, SchemaAllowCreate, SchemaAllowEdit,
+    SchemaType, SchemaView, SqlxSnafu, format_datetime,
 };
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use snafu::ResultExt;
 use sqlx::FromRow;
 use sqlx::{MySql, Pool};
 use std::collections::HashMap;
@@ -95,7 +96,7 @@ impl DetectorGroupModel {
         )
         .fetch_all(pool)
         .await
-        .map_err(|e| Error::Sqlx { source: e })?;
+        .context(SqlxSnafu)?;
 
         Ok(groups.into_iter().map(|schema| schema.into()).collect())
     }
@@ -160,7 +161,7 @@ impl Model for DetectorGroupModel {
 
     async fn insert(&self, pool: &Pool<MySql>, params: serde_json::Value) -> Result<u64> {
         let params: DetectorGroupInsertParams =
-            serde_json::from_value(params).map_err(|e| Error::Json { source: e })?;
+            serde_json::from_value(params).context(JsonSnafu)?;
         let result = sqlx::query(
             r#"INSERT INTO detector_groups (name, code, owner_id, created_by, status, remark) VALUES (?, ?, ?, ?, ?, ?)"#,
         )
@@ -172,7 +173,7 @@ impl Model for DetectorGroupModel {
         .bind(params.remark)
         .execute(pool)
         .await
-        .map_err(|e| Error::Sqlx { source: e })?;
+        .context(SqlxSnafu)?;
 
         Ok(result.last_insert_id())
     }
@@ -184,7 +185,7 @@ impl Model for DetectorGroupModel {
         .bind(id)
         .fetch_optional(pool)
         .await
-        .map_err(|e| Error::Sqlx { source: e })?;
+        .context(SqlxSnafu)?;
 
         Ok(result.map(|schema| schema.into()))
     }
@@ -194,7 +195,7 @@ impl Model for DetectorGroupModel {
             .bind(id)
             .execute(pool)
             .await
-            .map_err(|e| Error::Sqlx { source: e })?;
+            .context(SqlxSnafu)?;
 
         Ok(())
     }
@@ -206,7 +207,7 @@ impl Model for DetectorGroupModel {
         params: serde_json::Value,
     ) -> Result<()> {
         let params: DetectorGroupUpdateParams =
-            serde_json::from_value(params).map_err(|e| Error::Json { source: e })?;
+            serde_json::from_value(params).context(JsonSnafu)?;
 
         let _ = sqlx::query(
             r#"UPDATE detector_groups SET name = COALESCE(?, name), owner_id = COALESCE(?, owner_id), status = COALESCE(?, status), remark = COALESCE(?, remark) WHERE id = ? AND deleted_at IS NULL"#,
@@ -218,7 +219,7 @@ impl Model for DetectorGroupModel {
         .bind(id)
         .execute(pool)
         .await
-        .map_err(|e| Error::Sqlx { source: e })?;
+        .context(SqlxSnafu)?;
 
         Ok(())
     }
@@ -229,7 +230,7 @@ impl Model for DetectorGroupModel {
         let count = sqlx::query_scalar::<_, i64>(&sql)
             .fetch_one(pool)
             .await
-            .map_err(|e| Error::Sqlx { source: e })?;
+            .context(SqlxSnafu)?;
 
         Ok(count)
     }
@@ -256,7 +257,7 @@ impl Model for DetectorGroupModel {
         let groups = sqlx::query_as::<_, DetectorGroupSchema>(&sql)
             .fetch_all(pool)
             .await
-            .map_err(|e| Error::Sqlx { source: e })?;
+            .context(SqlxSnafu)?;
 
         Ok(groups.into_iter().map(|schema| schema.into()).collect())
     }

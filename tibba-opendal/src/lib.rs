@@ -59,9 +59,15 @@ pub enum Error {
         source: Box<tibba_config::Error>,
     },
     #[snafu(display("parse uri error: {source}"))]
-    ParseUri { source: tibba_util::Error },
+    ParseUri {
+        #[snafu(source(from(tibba_util::Error, Box::new)))]
+        source: Box<tibba_util::Error>,
+    },
     #[snafu(display("validate {source}"))]
-    Validate { source: validator::ValidationErrors },
+    Validate {
+        #[snafu(source(from(validator::ValidationErrors, Box::new)))]
+        source: Box<validator::ValidationErrors>,
+    },
     #[snafu(display("{message}"))]
     Invalid { message: String },
 }
@@ -73,10 +79,10 @@ impl From<Error> for BaseError {
         let err = match val {
             Error::OpenDal { source } => BaseError::new(source).with_exception(true),
             Error::Config { source } => BaseError::new(*source).with_sub_category("config"),
-            Error::ParseUri { source } => BaseError::new(source)
+            Error::ParseUri { source } => BaseError::new(*source)
                 .with_sub_category("parse_uri")
                 .with_exception(true),
-            Error::Validate { source } => BaseError::new(source)
+            Error::Validate { source } => BaseError::new(*source)
                 .with_sub_category("validate")
                 .with_exception(true),
             Error::Invalid { message } => BaseError::new(message).with_exception(true),

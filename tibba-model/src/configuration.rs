@@ -15,13 +15,14 @@
 use super::Model;
 use super::user::{ROLE_ADMIN, ROLE_SUPER_ADMIN};
 use super::{
-    Error, ModelListParams, Schema, SchemaAllowCreate, SchemaAllowEdit, SchemaType, SchemaView,
-    Status, format_datetime, new_schema_options,
+    Error, JsonSnafu, ModelListParams, Schema, SchemaAllowCreate, SchemaAllowEdit, SchemaType,
+    SchemaView, SqlxSnafu, Status, format_datetime, new_schema_options,
 };
 use async_trait::async_trait;
 use http::header::{HeaderMap, HeaderName, HeaderValue};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use snafu::ResultExt;
 use sqlx::FromRow;
 use sqlx::types::Json;
 use sqlx::{MySql, Pool};
@@ -62,7 +63,7 @@ pub struct Configuration {
 
 impl From<ConfigurationSchema> for Configuration {
     fn from(schema: ConfigurationSchema) -> Self {
-        Configuration {
+        Self {
             id: schema.id,
             status: schema.status,
             category: schema.category,
@@ -190,8 +191,7 @@ impl Model for ConfigurationModel {
         (!conditions.is_empty()).then_some(conditions)
     }
     async fn insert(&self, pool: &Pool<MySql>, data: serde_json::Value) -> Result<u64> {
-        let params: ConfigurationInsertParams =
-            serde_json::from_value(data).map_err(|e| Error::Json { source: e })?;
+        let params: ConfigurationInsertParams = serde_json::from_value(data).context(JsonSnafu)?;
         let id = sqlx::query(
             r#"
             INSERT INTO configurations (category, name, data, description, status, effective_start_time, effective_end_time) VALUES (?, ?, ?, ?, ?, ?, ?)"#,
@@ -205,7 +205,7 @@ impl Model for ConfigurationModel {
         .bind(params.effective_end_time)
         .execute(pool)
         .await
-        .map_err(|e| Error::Sqlx { source: e })?;
+        .context(SqlxSnafu)?;
 
         Ok(id.last_insert_id())
     }
@@ -217,7 +217,7 @@ impl Model for ConfigurationModel {
         .bind(id)
         .fetch_optional(pool)
         .await
-        .map_err(|e| Error::Sqlx { source: e })?;
+        .context(SqlxSnafu)?;
 
         Ok(result.map(|schema| schema.into()))
     }
@@ -229,7 +229,7 @@ impl Model for ConfigurationModel {
         .bind(id)
         .execute(pool)
         .await
-        .map_err(|e| Error::Sqlx { source: e })?;
+        .context(SqlxSnafu)?;
 
         Ok(())
     }
@@ -240,8 +240,7 @@ impl Model for ConfigurationModel {
         id: u64,
         data: serde_json::Value,
     ) -> Result<()> {
-        let params: ConfigurationUpdateParams =
-            serde_json::from_value(data).map_err(|e| Error::Json { source: e })?;
+        let params: ConfigurationUpdateParams = serde_json::from_value(data).context(JsonSnafu)?;
         let _ = sqlx::query(
             r#"UPDATE configurations SET data = COALESCE(?, data), description = COALESCE(?, description), status = COALESCE(?, status), effective_start_time = COALESCE(?, effective_start_time), effective_end_time = COALESCE(?, effective_end_time) WHERE id = ? AND deleted_at IS NULL"#,
         )
@@ -253,7 +252,7 @@ impl Model for ConfigurationModel {
         .bind(id)
         .execute(pool)
         .await
-        .map_err(|e| Error::Sqlx { source: e })?;
+        .context(SqlxSnafu)?;
 
         Ok(())
     }
@@ -264,7 +263,7 @@ impl Model for ConfigurationModel {
         let count = sqlx::query_scalar::<_, i64>(&sql)
             .fetch_one(pool)
             .await
-            .map_err(|e| Error::Sqlx { source: e })?;
+            .context(SqlxSnafu)?;
 
         Ok(count)
     }
@@ -291,7 +290,7 @@ impl Model for ConfigurationModel {
         let configurations = sqlx::query_as::<_, ConfigurationSchema>(&sql)
             .fetch_all(pool)
             .await
-            .map_err(|e| Error::Sqlx { source: e })?;
+            .context(SqlxSnafu)?;
 
         Ok(configurations
             .into_iter()
@@ -322,7 +321,7 @@ impl ConfigurationModel {
         .bind(now)
         .fetch_all(pool)
         .await
-        .map_err(|e| Error::Sqlx { source: e })?;
+        .context(SqlxSnafu)?;
 
         let mut headers = HeaderMap::new();
 
@@ -367,14 +366,14 @@ impl ConfigurationModel {
         .bind(now)
         .fetch_one(pool)
         .await
-        .map_err(|e| Error::Sqlx { source: e })?;
+        .context(SqlxSnafu)?;
 
         let data = configuration.data;
         let Some(data) = data.as_object() else {
             return Err(Error::NotFound);
         };
-        let data: T = serde_json::from_value(serde_json::Value::Object(data.clone()))
-            .map_err(|e| Error::Json { source: e })?;
+        let data: T =
+            serde_json::from_value(serde_json::Value::Object(data.clone())).context(JsonSnafu)?;
         Ok(data)
     }
 }

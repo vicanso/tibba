@@ -13,11 +13,12 @@
 // limitations under the License.
 
 use super::{
-    Error, Model, ModelListParams, Schema, SchemaAllowEdit, SchemaType, SchemaView, Status,
-    format_datetime, new_schema_options,
+    Error, JsonSnafu, Model, ModelListParams, Schema, SchemaAllowEdit, SchemaType, SchemaView,
+    SqlxSnafu, Status, format_datetime, new_schema_options,
 };
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use snafu::ResultExt;
 use sqlx::FromRow;
 use sqlx::types::Json;
 use sqlx::{MySql, Pool};
@@ -26,8 +27,8 @@ use substring::Substring;
 use time::OffsetDateTime;
 type Result<T> = std::result::Result<T, Error>;
 
-pub static ROLE_ADMIN: &str = "admin";
-pub static ROLE_SUPER_ADMIN: &str = "su";
+pub const ROLE_ADMIN: &str = "admin";
+pub const ROLE_SUPER_ADMIN: &str = "su";
 
 #[derive(FromRow)]
 struct UserSchema {
@@ -62,7 +63,7 @@ pub struct User {
 
 impl From<UserSchema> for User {
     fn from(user: UserSchema) -> Self {
-        User {
+        Self {
             id: user.id,
             status: user.status,
             created: format_datetime(user.created),
@@ -141,7 +142,7 @@ impl Model for UserModel {
         .bind(id)
         .fetch_optional(pool)
         .await
-        .map_err(|e| Error::Sqlx { source: e })?;
+        .context(SqlxSnafu)?;
 
         Ok(result.map(|user| user.into()))
     }
@@ -152,7 +153,7 @@ impl Model for UserModel {
             .bind(id)
             .execute(pool)
             .await
-            .map_err(|e| Error::Sqlx { source: e })?;
+            .context(SqlxSnafu)?;
         Ok(())
     }
     async fn update_by_id(
@@ -161,8 +162,7 @@ impl Model for UserModel {
         id: u64,
         data: serde_json::Value,
     ) -> Result<()> {
-        let params: UserUpdateParams =
-            serde_json::from_value(data).map_err(|e| Error::Json { source: e })?;
+        let params: UserUpdateParams = serde_json::from_value(data).context(JsonSnafu)?;
         let _ = sqlx::query(
             r#"
             UPDATE users SET 
@@ -182,7 +182,7 @@ impl Model for UserModel {
         .bind(id)
         .execute(pool)
         .await
-        .map_err(|e| Error::Sqlx { source: e })?;
+        .context(SqlxSnafu)?;
 
         Ok(())
     }
@@ -206,7 +206,7 @@ impl Model for UserModel {
         let count = sqlx::query_scalar::<_, i64>(&sql)
             .fetch_one(pool)
             .await
-            .map_err(|e| Error::Sqlx { source: e })?;
+            .context(SqlxSnafu)?;
         Ok(count)
     }
 
@@ -235,7 +235,7 @@ impl Model for UserModel {
         let result = sqlx::query_as::<_, UserSchema>(&sql)
             .fetch_all(pool)
             .await
-            .map_err(|e| Error::Sqlx { source: e })?;
+            .context(SqlxSnafu)?;
 
         Ok(result.into_iter().map(|user| user.into()).collect())
     }
@@ -260,7 +260,7 @@ impl UserModel {
         .bind(password)
         .execute(pool)
         .await
-        .map_err(|e| Error::Sqlx { source: e })?;
+        .context(SqlxSnafu)?;
 
         Ok(result.last_insert_id())
     }
@@ -272,7 +272,7 @@ impl UserModel {
         .bind(account)
         .fetch_optional(pool)
         .await
-        .map_err(|e| Error::Sqlx { source: e })?;
+        .context(SqlxSnafu)?;
 
         Ok(result.map(|user| user.into()))
     }
@@ -296,7 +296,7 @@ impl UserModel {
         .bind(account)
         .execute(pool)
         .await
-        .map_err(|e| Error::Sqlx { source: e })?;
+        .context(SqlxSnafu)?;
         Ok(())
     }
 }

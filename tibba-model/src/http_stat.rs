@@ -14,10 +14,12 @@
 
 use super::{
     Error, HttpDetectorModel, Model, ModelListParams, ResultValue, Schema, SchemaAllowCreate,
-    SchemaAllowEdit, SchemaOption, SchemaOptionValue, SchemaType, SchemaView, format_datetime,
+    SchemaAllowEdit, SchemaOption, SchemaOptionValue, SchemaType, SchemaView, SqlxSnafu,
+    format_datetime,
 };
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use snafu::ResultExt;
 use sqlx::FromRow;
 use sqlx::{MySql, Pool};
 use std::collections::HashMap;
@@ -193,7 +195,7 @@ impl HttpStatModel {
         .bind(params.remark)
         .execute(pool)
         .await
-        .map_err(|e| Error::Sqlx { source: e })?;
+        .context(SqlxSnafu)?;
 
         Ok(result.last_insert_id())
     }
@@ -209,7 +211,7 @@ impl HttpStatModel {
         .bind(created_range.1)
         .fetch_all(pool)
         .await
-        .map_err(|e| Error::Sqlx { source: e })?;
+        .context(SqlxSnafu)?;
         Ok(detectors.into_iter().map(|schema| schema.into()).collect())
     }
 }
@@ -466,7 +468,7 @@ impl Model for HttpStatModel {
         let detectors = sqlx::query_as::<_, HttpStatSchema>(&sql)
             .fetch_all(pool)
             .await
-            .map_err(|e| Error::Sqlx { source: e })?;
+            .context(SqlxSnafu)?;
 
         Ok(detectors.into_iter().map(|schema| schema.into()).collect())
     }
@@ -476,7 +478,7 @@ impl Model for HttpStatModel {
         let count = sqlx::query_scalar::<_, i64>(&sql)
             .fetch_one(pool)
             .await
-            .map_err(|e| Error::Sqlx { source: e })?;
+            .context(SqlxSnafu)?;
         Ok(count)
     }
     async fn get_by_id(&self, pool: &Pool<MySql>, id: u64) -> Result<Option<Self::Output>> {
@@ -484,7 +486,7 @@ impl Model for HttpStatModel {
             .bind(id)
             .fetch_optional(pool)
             .await
-            .map_err(|e| Error::Sqlx { source: e })?;
+            .context(SqlxSnafu)?;
         Ok(stat.map(|schema| schema.into()))
     }
 }

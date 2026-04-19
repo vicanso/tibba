@@ -13,12 +13,14 @@
 // limitations under the License.
 
 use super::{
-    Error, Model, ModelListParams, ROLE_ADMIN, ROLE_SUPER_ADMIN, Schema, SchemaAllowCreate,
-    SchemaAllowEdit, SchemaOption, SchemaOptionValue, SchemaType, SchemaView, format_datetime,
+    Error, JsonSnafu, Model, ModelListParams, ROLE_ADMIN, ROLE_SUPER_ADMIN, Schema,
+    SchemaAllowCreate, SchemaAllowEdit, SchemaOption, SchemaOptionValue, SchemaType, SchemaView,
+    SqlxSnafu, format_datetime,
 };
 use async_trait::async_trait;
 use http::header::{HeaderMap, HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
+use snafu::ResultExt;
 use sqlx::FromRow;
 use sqlx::types::Json;
 use sqlx::{MySql, Pool};
@@ -149,7 +151,7 @@ impl FileModel {
         .bind(params.uploader)
         .execute(pool)
         .await
-        .map_err(|e| Error::Sqlx { source: e })?;
+        .context(SqlxSnafu)?;
 
         Ok(id.last_insert_id())
     }
@@ -160,7 +162,7 @@ impl FileModel {
         .bind(name)
         .fetch_optional(pool)
         .await
-        .map_err(|e| Error::Sqlx { source: e })?;
+        .context(SqlxSnafu)?;
 
         Ok(result.map(|file| file.into()))
     }
@@ -289,7 +291,7 @@ impl Model for FileModel {
         .bind(id)
         .fetch_optional(pool)
         .await
-        .map_err(|e| Error::Sqlx { source: e })?;
+        .context(SqlxSnafu)?;
 
         Ok(result.map(|file| file.into()))
     }
@@ -301,7 +303,7 @@ impl Model for FileModel {
             .bind(id)
             .execute(pool)
             .await
-            .map_err(|e| Error::Sqlx { source: e })?;
+            .context(SqlxSnafu)?;
         Ok(())
     }
 
@@ -311,8 +313,7 @@ impl Model for FileModel {
         id: u64,
         data: serde_json::Value,
     ) -> Result<()> {
-        let params: FileUpdateParams =
-            serde_json::from_value(data).map_err(|e| Error::Json { source: e })?;
+        let params: FileUpdateParams = serde_json::from_value(data).context(JsonSnafu)?;
         let _ = sqlx::query(
             r#"UPDATE files SET metadata = COALESCE(?, metadata), `group` = COALESCE(?, `group`) WHERE id = ? AND deleted_at IS NULL"#,
         )
@@ -321,7 +322,7 @@ impl Model for FileModel {
             .bind(id)
             .execute(pool)
             .await
-            .map_err(|e| Error::Sqlx { source: e })?;
+            .context(SqlxSnafu)?;
         Ok(())
     }
 
@@ -331,7 +332,7 @@ impl Model for FileModel {
         let count = sqlx::query_scalar::<_, i64>(&sql)
             .fetch_one(pool)
             .await
-            .map_err(|e| Error::Sqlx { source: e })?;
+            .context(SqlxSnafu)?;
         Ok(count)
     }
 
@@ -358,7 +359,7 @@ impl Model for FileModel {
         let files = sqlx::query_as::<_, FileSchema>(&sql)
             .fetch_all(pool)
             .await
-            .map_err(|e| Error::Sqlx { source: e })?;
+            .context(SqlxSnafu)?;
 
         Ok(files.into_iter().map(|file| file.into()).collect())
     }

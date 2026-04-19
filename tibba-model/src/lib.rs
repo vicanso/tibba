@@ -32,7 +32,7 @@ fn format_datetime(datetime: OffsetDateTime) -> String {
     if let Some(value) = DateTime::from_timestamp(datetime.unix_timestamp(), 0) {
         value.with_timezone(&offset::Local).to_string()
     } else {
-        "".to_string()
+        String::new()
     }
 }
 
@@ -49,8 +49,8 @@ pub enum Error {
 }
 
 impl From<Error> for BaseError {
-    fn from(source: Error) -> Self {
-        let err = match source {
+    fn from(val: Error) -> Self {
+        let err = match val {
             Error::Sqlx { source } => BaseError::new(source)
                 .with_sub_category("sqlx")
                 .with_exception(true),

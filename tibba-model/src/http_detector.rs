@@ -13,12 +13,14 @@
 // limitations under the License.
 
 use super::{
-    DetectorGroupModel, Error, Model, ModelListParams, Schema, SchemaAllowCreate, SchemaAllowEdit,
-    SchemaOption, SchemaOptionValue, SchemaType, SchemaView, format_datetime, new_schema_options,
+    DetectorGroupModel, Error, JsonSnafu, Model, ModelListParams, Schema, SchemaAllowCreate,
+    SchemaAllowEdit, SchemaOption, SchemaOptionValue, SchemaType, SchemaView, SqlxSnafu,
+    format_datetime, new_schema_options,
 };
 use super::{REGION_ALIYUN, REGION_ANY, REGION_GZ, REGION_TX};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use snafu::ResultExt;
 use sqlx::FromRow;
 use sqlx::types::Json;
 use sqlx::{MySql, Pool};
@@ -181,7 +183,7 @@ impl HttpDetectorModel {
         )
         .fetch_all(pool)
         .await
-        .map_err(|e| Error::Sqlx { source: e })?;
+        .context(SqlxSnafu)?;
 
         Ok(detectors.into_iter().map(|schema| schema.into()).collect())
     }
@@ -202,7 +204,7 @@ impl HttpDetectorModel {
         .bind(offset)
         .fetch_all(pool)
         .await
-        .map_err(|e| Error::Sqlx { source: e })?;
+        .context(SqlxSnafu)?;
 
         Ok(detectors.into_iter().map(|schema| schema.into()).collect())
     }
@@ -385,8 +387,7 @@ impl Model for HttpDetectorModel {
         (!conditions.is_empty()).then_some(conditions)
     }
     async fn insert(&self, pool: &Pool<MySql>, params: serde_json::Value) -> Result<u64> {
-        let params: HttpDetectorInsertParams =
-            serde_json::from_value(params).map_err(|e| Error::Json { source: e })?;
+        let params: HttpDetectorInsertParams = serde_json::from_value(params).context(JsonSnafu)?;
         let result = sqlx::query(
             r#"INSERT INTO http_detectors (status, name, group_id, url, method, alpn_protocols, resolves, headers, ip_version, skip_verify, body, `interval`, script, alarm_url, random_querystring, alarm_on_change, retries, failure_threshold, verbose, regions, created_by, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
         )
@@ -414,7 +415,7 @@ impl Model for HttpDetectorModel {
         .bind(params.remark)
         .execute(pool)
         .await
-        .map_err(|e| Error::Sqlx { source: e })?;
+        .context(SqlxSnafu)?;
 
         Ok(result.last_insert_id())
     }
@@ -425,7 +426,7 @@ impl Model for HttpDetectorModel {
         .bind(id)
         .fetch_optional(pool)
         .await
-        .map_err(|e| Error::Sqlx { source: e })?;
+        .context(SqlxSnafu)?;
 
         Ok(result.map(|schema| schema.into()))
     }
@@ -436,7 +437,7 @@ impl Model for HttpDetectorModel {
         .bind(id)
         .execute(pool)
         .await
-        .map_err(|e| Error::Sqlx { source: e })?;
+        .context(SqlxSnafu)?;
 
         Ok(())
     }
@@ -446,8 +447,7 @@ impl Model for HttpDetectorModel {
         id: u64,
         params: serde_json::Value,
     ) -> Result<()> {
-        let params: HttpDetectorUpdateParams =
-            serde_json::from_value(params).map_err(|e| Error::Json { source: e })?;
+        let params: HttpDetectorUpdateParams = serde_json::from_value(params).context(JsonSnafu)?;
 
         let _ = sqlx::query(
             r#"UPDATE http_detectors SET status = COALESCE(?, status), name = COALESCE(?, name), group_id = COALESCE(?, group_id), url = COALESCE(?, url), method = COALESCE(?, method), alpn_protocols = COALESCE(?, alpn_protocols), resolves = COALESCE(?, resolves), headers = COALESCE(?, headers), ip_version = COALESCE(?, ip_version), skip_verify = COALESCE(?, skip_verify), body = COALESCE(?, body), `interval` = COALESCE(?, `interval`), script = COALESCE(?, script), alarm_url = COALESCE(?, alarm_url), random_querystring = COALESCE(?, random_querystring), alarm_on_change = COALESCE(?, alarm_on_change), retries = COALESCE(?, retries), failure_threshold = COALESCE(?, failure_threshold), verbose = COALESCE(?, verbose), regions = COALESCE(?, regions), remark = COALESCE(?, remark) WHERE id = ? AND deleted_at IS NULL"#,
@@ -476,7 +476,7 @@ impl Model for HttpDetectorModel {
         .bind(id)
         .execute(pool)
         .await
-        .map_err(|e| Error::Sqlx { source: e })?;
+        .context(SqlxSnafu)?;
 
         Ok(())
     }
@@ -486,7 +486,7 @@ impl Model for HttpDetectorModel {
         let count = sqlx::query_scalar::<_, i64>(&sql)
             .fetch_one(pool)
             .await
-            .map_err(|e| Error::Sqlx { source: e })?;
+            .context(SqlxSnafu)?;
 
         Ok(count)
     }
@@ -513,7 +513,7 @@ impl Model for HttpDetectorModel {
         let detectors = sqlx::query_as::<_, HttpDetectorSchema>(&sql)
             .fetch_all(pool)
             .await
-            .map_err(|e| Error::Sqlx { source: e })?;
+            .context(SqlxSnafu)?;
 
         Ok(detectors.into_iter().map(|schema| schema.into()).collect())
     }

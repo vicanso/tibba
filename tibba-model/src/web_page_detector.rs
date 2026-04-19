@@ -13,12 +13,13 @@
 // limitations under the License.
 
 use super::{
-    Error, Model, ModelListParams, Schema, SchemaAllowCreate, SchemaAllowEdit, SchemaType,
-    SchemaView, format_datetime, new_schema_options,
+    Error, JsonSnafu, Model, ModelListParams, Schema, SchemaAllowCreate, SchemaAllowEdit,
+    SchemaType, SchemaView, SqlxSnafu, format_datetime, new_schema_options,
 };
 use super::{REGION_ALIYUN, REGION_ANY, REGION_GZ, REGION_TX};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use snafu::ResultExt;
 use sqlx::FromRow;
 use sqlx::types::Json;
 use sqlx::{MySql, Pool};
@@ -243,7 +244,7 @@ impl Model for WebPageDetectorModel {
     }
     async fn insert(&self, pool: &Pool<MySql>, params: serde_json::Value) -> Result<u64> {
         let params: WebPageDetectorInsertParams =
-            serde_json::from_value(params).map_err(|e| Error::Json { source: e })?;
+            serde_json::from_value(params).context(JsonSnafu)?;
         let result = sqlx::query(
             r#"INSERT INTO web_page_detectors (name, `interval`, url, width, height, user_agent, accept_language, platform, wait_for_element, device_scale_factor, timeout, capture_screenshot, capture_element, remark, regions, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
         )
@@ -265,7 +266,7 @@ impl Model for WebPageDetectorModel {
         .bind(params.created_by)
         .execute(pool)
         .await
-        .map_err(|e| Error::Sqlx { source: e })?;
+        .context(SqlxSnafu)?;
 
         Ok(result.last_insert_id())
     }
@@ -275,7 +276,7 @@ impl Model for WebPageDetectorModel {
         let count = sqlx::query_scalar::<_, i64>(&sql)
             .fetch_one(pool)
             .await
-            .map_err(|e| Error::Sqlx { source: e })?;
+            .context(SqlxSnafu)?;
 
         Ok(count)
     }
@@ -307,7 +308,7 @@ impl Model for WebPageDetectorModel {
         let detectors = sqlx::query_as::<_, WebPageDetectorSchema>(&sql)
             .fetch_all(pool)
             .await
-            .map_err(|e| Error::Sqlx { source: e })?;
+            .context(SqlxSnafu)?;
 
         Ok(detectors.into_iter().map(|schema| schema.into()).collect())
     }
@@ -331,7 +332,7 @@ impl WebPageDetectorModel {
         .bind(offset)
         .fetch_all(pool)
         .await
-        .map_err(|e| Error::Sqlx { source: e })?;
+        .context(SqlxSnafu)?;
 
         Ok(detectors.into_iter().map(|schema| schema.into()).collect())
     }
