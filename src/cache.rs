@@ -88,18 +88,20 @@ impl Task for RedisTask {
 
         let job = Job::new_repeated(Duration::from_secs(60), |_, _| {
             if let Ok(client) = get_redis_client() {
-                let status = client.status();
+                let stat = client.stat();
                 info!(
-                    category = "redis_client_status",
-                    max_size = status.max_size,
-                    size = status.size,
-                    available = status.available,
-                    waiting = status.waiting,
+                    category = "redis_client_stat",
+                    pool_max_size = stat.pool_max_size,
+                    pool_size = stat.pool_size,
+                    pool_available = stat.pool_available,
+                    pool_waiting = stat.pool_waiting,
+                    conn_created = stat.conn_created,
+                    conn_recycled = stat.conn_recycled,
                 );
             }
         })
         .map_err(Error::new)?;
-        register_job_task("redis_client_status", job);
+        register_job_task("redis_client_stat", job);
         Ok(true)
     }
     async fn after(&self) -> Result<bool> {

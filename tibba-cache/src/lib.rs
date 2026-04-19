@@ -83,8 +83,12 @@ pub struct RedisConfig {
     pub wait_timeout: Duration,
     // recycle timeout
     pub recycle_timeout: Duration,
+    // idle timeout
+    pub idle_timeout: Duration,
     // password
     pub password: Option<String>,
+    // max connection age
+    pub max_conn_age: Duration,
 }
 
 fn default_pool_size() -> u32 {
@@ -104,6 +108,12 @@ struct RedisParams {
     #[serde(default)]
     #[serde(with = "humantime_serde")]
     recycle_timeout: Option<Duration>,
+    #[serde(default)]
+    #[serde(with = "humantime_serde")]
+    max_conn_age: Option<Duration>,
+    #[serde(default)]
+    #[serde(with = "humantime_serde")]
+    idle_timeout: Option<Duration>,
     password: Option<String>,
 }
 
@@ -125,6 +135,9 @@ fn new_redis_config(config: &Config) -> Result<RedisConfig> {
         wait_timeout: query.wait_timeout.unwrap_or(Duration::from_secs(3)),
         // 检测请求是否可用的超时时间，默认300ms
         recycle_timeout: query.recycle_timeout.unwrap_or(Duration::from_millis(300)),
+        max_conn_age: query.max_conn_age.unwrap_or(Duration::from_secs(24 * 3600)),
+        // 由于pool本身没有idle timeout处理，因此现在的模块在复用前判断，需要根据redis server设置调整，默认10分钟
+        idle_timeout: query.idle_timeout.unwrap_or(Duration::from_secs(10 * 60)),
         password: query.password,
     };
     redis_config
@@ -173,6 +186,10 @@ impl From<Error> for BaseError {
         err.with_category("cache")
     }
 }
+
+/// Tracing target for all log events in this crate.
+/// Use `RUST_LOG=tibba_cache=info` (or `debug`) to filter these logs.
+pub(crate) const LOG_TARGET: &str = "tibba_cache";
 
 mod cache;
 mod pool;

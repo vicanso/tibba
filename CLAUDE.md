@@ -139,6 +139,30 @@
 | `RedisCache` | `tibba-cache/src/cache.rs` | `with_ttl` / `with_prefix` |
 | `Session` | `tibba-session/src/session.rs` | `with_account` / `with_roles` / `with_groups` |
 
+## tracing 日志规范
+
+所有 `tibba-*` 模块的日志输出必须使用 tracing 原生的 `target:` 机制，禁止通过自定义结构化字段（如 `category = "redis"`）来标识来源模块。
+
+### 规则
+
+1. **每个模块定义 `LOG_TARGET` 常量**，值为该模块的逻辑分类名，定义在lib.rs中：
+   ```rust
+   /// Tracing target for all log events in this module.
+   /// Filter with `RUST_LOG=tibba_cache=info` (or `debug`).
+   pub(crate) const LOG_TARGET: &str = "tibba_cache";
+   ```
+
+2. **日志调用使用 `target:` 语法**：
+   ```rust
+   // 禁止：自定义字段，无法被 RUST_LOG 过滤
+   info!(category = LOG_TARGET, label = self.label, "new connection");
+
+   // 正确：tracing 原生 target，支持 RUST_LOG=tibba_cache=info 过滤
+   info!(target: LOG_TARGET, label = self.label, "new connection");
+   ```
+
+3. **过滤方式**：`RUST_LOG=tibba_cache=info` 即可隔离该模块所有日志，无需 grep 或额外字段匹配。
+
 ## 其他约定
 
 - 字符串初始化用 `String::new()` 而非 `"".to_string()`
