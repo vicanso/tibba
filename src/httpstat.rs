@@ -24,7 +24,7 @@ use http::{HeaderMap, HeaderName, HeaderValue};
 use http_stat::{HttpRequest, request};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
-use sqlx::MySqlPool;
+use sqlx::PgPool;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI32, Ordering};
@@ -102,11 +102,7 @@ fn run_js_detect(resp: &JsResponse, stat: &JsStat, detect_script: &str) -> Resul
     Ok(())
 }
 
-async fn do_request(
-    pool: &MySqlPool,
-    detector: &HttpDetector,
-    mut params: HttpRequest,
-) -> Result<()> {
+async fn do_request(pool: &PgPool, detector: &HttpDetector, mut params: HttpRequest) -> Result<()> {
     if detector.random_querystring {
         let id = nanoid::nanoid!(8);
         let uri = params.uri.to_string();
@@ -215,7 +211,7 @@ async fn do_request(
         content_transfer: stat.content_transfer.map(|d| d.as_millis() as i32),
         total: stat.total.map(|d| d.as_millis() as i32),
         addr: stat.addr.unwrap_or_default(),
-        status_code: stat.status.map(|s| s.as_u16()),
+        status_code: stat.status.map(|s| s.as_u16() as i16),
         tls: stat.tls,
         alpn: Some(stat.alpn.unwrap_or(http_stat::ALPN_HTTP1.to_string())),
         subject: stat.subject,
@@ -226,7 +222,7 @@ async fn do_request(
         cert_domains: stat.cert_domains.map(|d| d.join(",")),
         body_size: stat.body_size.map(|d| d as i32),
         error: err,
-        result: result as u8,
+        result: result as i16,
         remark: remarks.join("; "),
         region: region.clone(),
     };
@@ -234,7 +230,7 @@ async fn do_request(
     Ok(())
 }
 
-async fn run_http_detector(pool: &MySqlPool, detector: HttpDetector) -> Result<()> {
+async fn run_http_detector(pool: &PgPool, detector: HttpDetector) -> Result<()> {
     let Ok(mut params) = HttpRequest::try_from(detector.url.as_str()) else {
         HttpStatModel::new()
             .add_stat(
@@ -243,7 +239,7 @@ async fn run_http_detector(pool: &MySqlPool, detector: HttpDetector) -> Result<(
                     target_id: detector.id,
                     target_name: detector.name.clone(),
                     url: detector.url.clone(),
-                    result: ResultValue::Failed as u8,
+                    result: ResultValue::Failed as i16,
                     error: Some("url parse error".to_string()),
                     ..Default::default()
                 },
@@ -403,7 +399,7 @@ async fn run_detector_stat() -> Result<(i32, i32, i32)> {
 
 #[derive(Serialize, Deserialize, Default, Clone)]
 struct FailedTarget {
-    target_id: u64,
+    target_id: i64,
     alarm_time: i64,
     alarm_count: i32,
 }
@@ -425,7 +421,7 @@ impl StatAlarmParam {
     fn to_wecom_markdown(&self) -> String {
         let mut arr = vec![];
         let stat = &self.stat;
-        let is_failed = stat.result == ResultValue::Failed as u8;
+        let is_failed = stat.result == ResultValue::Failed as i16;
         if is_failed {
             arr.push(format!("# {}：检测失败", stat.target_name));
             arr.push(format!("*出错原因: {}*", stat.error));
@@ -561,9 +557,9 @@ async fn run_stat_alarm() -> Result<(i32, i32)> {
 
     // 因为相同的target id有可能会有多个http stat
     // 因此需要target id去重，若有失败的优先使用
-    let mut stat_map: HashMap<u64, HttpStat> = HashMap::new();
+    let mut stat_map: HashMap<i64, HttpStat> = HashMap::new();
     for stat in stats {
-        let is_failed = stat.result == ResultValue::Failed as u8;
+        let is_failed = stat.result == ResultValue::Failed as i16;
         let target_id = stat.target_id;
         if let Some(value) = stat_map.get_mut(&target_id)
             && is_failed
@@ -592,7 +588,7 @@ async fn run_stat_alarm() -> Result<(i32, i32)> {
         .cloned()
         .collect::<Vec<_>>();
     for (target_id, stat) in stat_map.iter() {
-        let is_failed = stat.result == ResultValue::Failed as u8;
+        let is_failed = stat.result == ResultValue::Failed as i16;
         // 如果失败
         if is_failed {
             // 如果原有记录中存在，则直接使用
@@ -638,7 +634,10 @@ async fn run_stat_alarm() -> Result<(i32, i32)> {
             fail_target.alarm_count += 1;
         }
 
-        let Ok(Some(detector)) = HttpDetectorModel::new().get_by_id(pool, *target_id).await else {
+        let Ok(Some(detector)) = HttpDetectorModel::new()
+            .get_by_id(pool, *target_id as u64)
+            .await
+        else {
             continue;
         };
         // 如果已触发过

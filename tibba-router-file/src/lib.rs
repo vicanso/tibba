@@ -22,7 +22,7 @@ use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use imageoptimize::{ProcessImage, run_with_image};
 use serde::Deserialize;
-use sqlx::MySqlPool;
+use sqlx::PgPool;
 use std::collections::HashMap;
 use std::path::Path;
 use tibba_error::Error;
@@ -45,7 +45,7 @@ struct CreateFileParams {
 
 async fn create_file(
     QueryParams(create_file_params): QueryParams<CreateFileParams>,
-    State((storage, pool)): State<(&'static Storage, &'static MySqlPool)>,
+    State((storage, pool)): State<(&'static Storage, &'static PgPool)>,
     session: UserSession,
     mut multipart: Multipart,
 ) -> JsonResult<HashMap<String, String>> {
@@ -115,7 +115,7 @@ struct GetFileParams {
 }
 
 async fn get_file(
-    State((storage, pool)): State<(&'static Storage, &'static MySqlPool)>,
+    State((storage, pool)): State<(&'static Storage, &'static PgPool)>,
     QueryParams(params): QueryParams<GetFileParams>,
 ) -> Result<impl IntoResponse> {
     let file = FileModel::new()
@@ -186,7 +186,7 @@ async fn get_file(
 
 pub struct FileRouterParams {
     pub storage: &'static Storage,
-    pub pool: &'static MySqlPool,
+    pub pool: &'static PgPool,
 }
 
 pub fn new_file_router(params: FileRouterParams) -> Router {

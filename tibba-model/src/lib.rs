@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use snafu::ResultExt;
 use snafu::Snafu;
-use sqlx::{MySql, Pool};
+use sqlx::{Pool, Postgres};
 use std::collections::HashMap;
 use tibba_error::Error as BaseError;
 use time::OffsetDateTime;
@@ -76,7 +76,7 @@ type Result<T> = std::result::Result<T, Error>;
 pub trait Model {
     type Output: Serialize;
     fn new() -> Self;
-    async fn schema_view(&self, _pool: &Pool<MySql>) -> SchemaView;
+    async fn schema_view(&self, _pool: &Pool<Postgres>) -> SchemaView;
     fn keyword(&self) -> String {
         "name".to_string()
     }
@@ -111,24 +111,24 @@ pub trait Model {
 
         Ok(format!(" WHERE {}", where_conditions.join(" AND ")))
     }
-    async fn insert(&self, _pool: &Pool<MySql>, _params: serde_json::Value) -> Result<u64> {
+    async fn insert(&self, _pool: &Pool<Postgres>, _params: serde_json::Value) -> Result<u64> {
         Err(Error::NotSupported {
             name: "insert".to_string(),
         })
     }
-    async fn get_by_id(&self, _pool: &Pool<MySql>, _id: u64) -> Result<Option<Self::Output>> {
+    async fn get_by_id(&self, _pool: &Pool<Postgres>, _id: u64) -> Result<Option<Self::Output>> {
         Err(Error::NotSupported {
             name: "get_by_id".to_string(),
         })
     }
-    async fn delete_by_id(&self, _pool: &Pool<MySql>, _id: u64) -> Result<()> {
+    async fn delete_by_id(&self, _pool: &Pool<Postgres>, _id: u64) -> Result<()> {
         Err(Error::NotSupported {
             name: "delete_by_id".to_string(),
         })
     }
     async fn update_by_id(
         &self,
-        _pool: &Pool<MySql>,
+        _pool: &Pool<Postgres>,
         _id: u64,
         _params: serde_json::Value,
     ) -> Result<()> {
@@ -136,14 +136,14 @@ pub trait Model {
             name: "update_by_id".to_string(),
         })
     }
-    async fn count(&self, _pool: &Pool<MySql>, _params: &ModelListParams) -> Result<i64> {
+    async fn count(&self, _pool: &Pool<Postgres>, _params: &ModelListParams) -> Result<i64> {
         Err(Error::NotSupported {
             name: "count".to_string(),
         })
     }
     async fn list(
         &self,
-        _pool: &Pool<MySql>,
+        _pool: &Pool<Postgres>,
         _params: &ModelListParams,
     ) -> Result<Vec<Self::Output>> {
         Err(Error::NotSupported {
@@ -152,7 +152,7 @@ pub trait Model {
     }
     async fn list_and_count(
         &self,
-        pool: &Pool<MySql>,
+        pool: &Pool<Postgres>,
         count: bool,
         params: &ModelListParams,
     ) -> Result<serde_json::Value> {

@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use snafu::ResultExt;
 use sqlx::FromRow;
 use sqlx::types::Json;
-use sqlx::{MySql, Pool};
+use sqlx::{Pool, Postgres};
 use std::str::FromStr;
 use substring::Substring;
 use time::OffsetDateTime;
@@ -32,7 +32,7 @@ type Result<T> = std::result::Result<T, Error>;
 
 #[derive(FromRow)]
 struct FileSchema {
-    id: u64,
+    id: i64,
     filename: String,
     file_size: i64,
     content_type: String,
@@ -47,7 +47,7 @@ struct FileSchema {
 
 #[derive(Deserialize, Serialize)]
 pub struct File {
-    pub id: u64,
+    pub id: i64,
     pub filename: String,
     pub file_size: i64,
     pub content_type: String,
@@ -132,13 +132,17 @@ impl From<serde_json::Value> for FileUpdateParams {
 pub struct FileModel {}
 
 impl FileModel {
-    pub async fn insert_file(&self, pool: &Pool<MySql>, params: FileInsertParams) -> Result<u64> {
-        let id = sqlx::query(
+    pub async fn insert_file(
+        &self,
+        pool: &Pool<Postgres>,
+        params: FileInsertParams,
+    ) -> Result<u64> {
+        let row: (i64,) = sqlx::query_as(
             r#"
             INSERT INTO files (
-                `group`, filename, file_size, content_type,
+                "group", filename, file_size, content_type,
                 image_width, image_height, metadata, uploader
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id
             "#,
         )
         .bind(params.group)
@@ -149,15 +153,15 @@ impl FileModel {
         .bind(params.height.unwrap_or(-1))
         .bind(params.metadata.unwrap_or(serde_json::json!({})))
         .bind(params.uploader)
-        .execute(pool)
+        .fetch_one(pool)
         .await
         .context(SqlxSnafu)?;
 
-        Ok(id.last_insert_id())
+        Ok(row.0 as u64)
     }
-    pub async fn get_by_name(&self, pool: &Pool<MySql>, name: &str) -> Result<Option<File>> {
+    pub async fn get_by_name(&self, pool: &Pool<Postgres>, name: &str) -> Result<Option<File>> {
         let result = sqlx::query_as::<_, FileSchema>(
-            r#"SELECT * FROM files WHERE filename = ? AND deleted_at IS NULL"#,
+            r#"SELECT * FROM files WHERE filename = $1 AND deleted_at IS NULL"#,
         )
         .bind(name)
         .fetch_optional(pool)
@@ -174,7 +178,7 @@ impl Model for FileModel {
     fn new() -> Self {
         Self::default()
     }
-    async fn schema_view(&self, _pool: &Pool<MySql>) -> SchemaView {
+    async fn schema_view(&self, _pool: &Pool<Postgres>) -> SchemaView {
         let group_options = vec![
             SchemaOption {
                 label: "Tibba".to_string(),
@@ -274,7 +278,7 @@ impl Model for FileModel {
 
         if let Some(filters) = params.parse_filters()? {
             if let Some(group) = filters.get("group") {
-                where_conditions.push(format!("`group` = '{group}'"));
+                where_conditions.push(format!("\"group\" = '{group}'"));
             }
             if let Some(uploader) = filters.get("uploader") {
                 where_conditions.push(format!("uploader = '{uploader}'"));
@@ -284,11 +288,11 @@ impl Model for FileModel {
         Ok(format!(" WHERE {}", where_conditions.join(" AND ")))
     }
 
-    async fn get_by_id(&self, pool: &Pool<MySql>, id: u64) -> Result<Option<Self::Output>> {
+    async fn get_by_id(&self, pool: &Pool<Postgres>, id: u64) -> Result<Option<Self::Output>> {
         let result = sqlx::query_as::<_, FileSchema>(
-            r#"SELECT * FROM files WHERE id = ? AND deleted_at IS NULL"#,
+            r#"SELECT * FROM files WHERE id = $1 AND deleted_at IS NULL"#,
         )
-        .bind(id)
+        .bind(id as i64)
         .fetch_optional(pool)
         .await
         .context(SqlxSnafu)?;
@@ -296,11 +300,11 @@ impl Model for FileModel {
         Ok(result.map(|file| file.into()))
     }
 
-    async fn delete_by_id(&self, pool: &Pool<MySql>, id: u64) -> Result<()> {
+    async fn delete_by_id(&self, pool: &Pool<Postgres>, id: u64) -> Result<()> {
         sqlx::query(
-            r#"UPDATE files SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL"#
+            r#"UPDATE files SET deleted_at = CURRENT_TIMESTAMP WHERE id = $1 AND deleted_at IS NULL"#
         )
-            .bind(id)
+            .bind(id as i64)
             .execute(pool)
             .await
             .context(SqlxSnafu)?;
@@ -309,24 +313,24 @@ impl Model for FileModel {
 
     async fn update_by_id(
         &self,
-        pool: &Pool<MySql>,
+        pool: &Pool<Postgres>,
         id: u64,
         data: serde_json::Value,
     ) -> Result<()> {
         let params: FileUpdateParams = serde_json::from_value(data).context(JsonSnafu)?;
         let _ = sqlx::query(
-            r#"UPDATE files SET metadata = COALESCE(?, metadata), `group` = COALESCE(?, `group`) WHERE id = ? AND deleted_at IS NULL"#,
+            r#"UPDATE files SET metadata = COALESCE($1, metadata), "group" = COALESCE($2, "group") WHERE id = $3 AND deleted_at IS NULL"#,
         )
             .bind(params.metadata)
             .bind(params.group)
-            .bind(id)
+            .bind(id as i64)
             .execute(pool)
             .await
             .context(SqlxSnafu)?;
         Ok(())
     }
 
-    async fn count(&self, pool: &Pool<MySql>, params: &ModelListParams) -> Result<i64> {
+    async fn count(&self, pool: &Pool<Postgres>, params: &ModelListParams) -> Result<i64> {
         let mut sql = String::from("SELECT COUNT(*) FROM files");
         sql.push_str(&self.condition_sql(params)?);
         let count = sqlx::query_scalar::<_, i64>(&sql)
@@ -338,7 +342,7 @@ impl Model for FileModel {
 
     async fn list(
         &self,
-        pool: &Pool<MySql>,
+        pool: &Pool<Postgres>,
         params: &ModelListParams,
     ) -> Result<Vec<Self::Output>> {
         let limit = params.limit.min(200);

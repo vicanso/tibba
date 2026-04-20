@@ -21,7 +21,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use snafu::ResultExt;
 use sqlx::FromRow;
-use sqlx::{MySql, Pool};
+use sqlx::{Pool, Postgres};
 use std::collections::HashMap;
 use substring::Substring;
 use time::OffsetDateTime;
@@ -30,8 +30,8 @@ type Result<T> = std::result::Result<T, Error>;
 
 #[derive(FromRow)]
 struct HttpStatSchema {
-    id: u64,
-    target_id: u64,
+    id: i64,
+    target_id: i64,
     target_name: String,
     url: String,
     dns_lookup: i32,
@@ -42,7 +42,7 @@ struct HttpStatSchema {
     content_transfer: i32,
     total: i32,
     addr: String,
-    status_code: u16,
+    status_code: i32,
     tls: String,
     alpn: String,
     subject: String,
@@ -53,7 +53,7 @@ struct HttpStatSchema {
     cert_domains: String,
     body_size: i32,
     error: String,
-    result: u8,
+    result: i16,
     remark: String,
     region: String,
     created: OffsetDateTime,
@@ -62,8 +62,8 @@ struct HttpStatSchema {
 
 #[derive(Default, Deserialize, Serialize, Debug, Clone)]
 pub struct HttpStat {
-    pub id: u64,
-    pub target_id: u64,
+    pub id: i64,
+    pub target_id: i64,
     pub target_name: String,
     pub url: String,
     pub dns_lookup: i32,
@@ -74,7 +74,7 @@ pub struct HttpStat {
     pub content_transfer: i32,
     pub total: i32,
     pub addr: String,
-    pub status_code: u16,
+    pub status_code: i32,
     pub tls: String,
     pub alpn: String,
     pub subject: String,
@@ -86,7 +86,7 @@ pub struct HttpStat {
     pub body_size: i32,
     pub region: String,
     pub error: String,
-    pub result: u8,
+    pub result: i16,
     pub remark: String,
     pub created: String,
     pub modified: String,
@@ -134,7 +134,7 @@ impl From<HttpStatSchema> for HttpStat {
 #[derive(Debug, Deserialize, Serialize, Default)]
 
 pub struct HttpStatInsertParams {
-    pub target_id: u64,
+    pub target_id: i64,
     pub target_name: String,
     pub url: String,
     pub dns_lookup: Option<i32>,
@@ -145,7 +145,7 @@ pub struct HttpStatInsertParams {
     pub content_transfer: Option<i32>,
     pub total: Option<i32>,
     pub addr: String,
-    pub status_code: Option<u16>,
+    pub status_code: Option<i16>,
     pub tls: Option<String>,
     pub alpn: Option<String>,
     pub subject: Option<String>,
@@ -157,16 +157,20 @@ pub struct HttpStatInsertParams {
     pub body_size: Option<i32>,
     pub region: String,
     pub error: Option<String>,
-    pub result: u8,
+    pub result: i16,
     pub remark: String,
 }
 
 pub struct HttpStatModel {}
 
 impl HttpStatModel {
-    pub async fn add_stat(&self, pool: &Pool<MySql>, params: HttpStatInsertParams) -> Result<u64> {
-        let result = sqlx::query(
-            r#"INSERT INTO http_stats (target_id, target_name, url, dns_lookup, quic_connect, tcp_connect, tls_handshake, server_processing, content_transfer, total, addr, status_code, tls, alpn, subject, issuer, cert_not_before, cert_not_after, cert_cipher, cert_domains, body_size, region, error, result, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+    pub async fn add_stat(
+        &self,
+        pool: &Pool<Postgres>,
+        params: HttpStatInsertParams,
+    ) -> Result<u64> {
+        let row: (i64,) = sqlx::query_as(
+            r#"INSERT INTO http_stats (target_id, target_name, url, dns_lookup, quic_connect, tcp_connect, tls_handshake, server_processing, content_transfer, total, addr, status_code, tls, alpn, subject, issuer, cert_not_before, cert_not_after, cert_cipher, cert_domains, body_size, region, error, result, remark) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25) RETURNING id"#,
         )
         .bind(params.target_id)
         .bind(params.target_name)
@@ -193,19 +197,19 @@ impl HttpStatModel {
         .bind(params.error.unwrap_or_default())
         .bind(params.result)
         .bind(params.remark)
-        .execute(pool)
+        .fetch_one(pool)
         .await
         .context(SqlxSnafu)?;
 
-        Ok(result.last_insert_id())
+        Ok(row.0 as u64)
     }
     pub async fn list_by_created(
         &self,
-        pool: &Pool<MySql>,
+        pool: &Pool<Postgres>,
         created_range: (&str, &str),
     ) -> Result<Vec<HttpStat>> {
         let detectors = sqlx::query_as::<_, HttpStatSchema>(
-            r#"SELECT * FROM http_stats WHERE created >= ? AND created <= ?"#,
+            r#"SELECT * FROM http_stats WHERE created >= $1 AND created <= $2"#,
         )
         .bind(created_range.0)
         .bind(created_range.1)
@@ -225,7 +229,7 @@ impl Model for HttpStatModel {
     fn keyword(&self) -> String {
         "target_name".to_string()
     }
-    async fn schema_view(&self, pool: &Pool<MySql>) -> SchemaView {
+    async fn schema_view(&self, pool: &Pool<Postgres>) -> SchemaView {
         let mut detector_options = vec![];
         let detector_model = HttpDetectorModel {};
         if let Ok(detectors) = detector_model.list_enabled(pool).await {
@@ -448,7 +452,7 @@ impl Model for HttpStatModel {
 
     async fn list(
         &self,
-        pool: &Pool<MySql>,
+        pool: &Pool<Postgres>,
         params: &ModelListParams,
     ) -> Result<Vec<Self::Output>> {
         let limit = params.limit.min(200);
@@ -472,7 +476,7 @@ impl Model for HttpStatModel {
 
         Ok(detectors.into_iter().map(|schema| schema.into()).collect())
     }
-    async fn count(&self, pool: &Pool<MySql>, params: &ModelListParams) -> Result<i64> {
+    async fn count(&self, pool: &Pool<Postgres>, params: &ModelListParams) -> Result<i64> {
         let mut sql = String::from("SELECT COUNT(*) FROM http_stats");
         sql.push_str(&self.condition_sql(params)?);
         let count = sqlx::query_scalar::<_, i64>(&sql)
@@ -481,9 +485,9 @@ impl Model for HttpStatModel {
             .context(SqlxSnafu)?;
         Ok(count)
     }
-    async fn get_by_id(&self, pool: &Pool<MySql>, id: u64) -> Result<Option<Self::Output>> {
-        let stat = sqlx::query_as::<_, HttpStatSchema>(r#"SELECT * FROM http_stats WHERE id = ?"#)
-            .bind(id)
+    async fn get_by_id(&self, pool: &Pool<Postgres>, id: u64) -> Result<Option<Self::Output>> {
+        let stat = sqlx::query_as::<_, HttpStatSchema>(r#"SELECT * FROM http_stats WHERE id = $1"#)
+            .bind(id as i64)
             .fetch_optional(pool)
             .await
             .context(SqlxSnafu)?;

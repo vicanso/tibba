@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use snafu::ResultExt;
 use sqlx::FromRow;
 use sqlx::types::Json;
-use sqlx::{MySql, Pool};
+use sqlx::{Pool, Postgres};
 use std::collections::HashMap;
 use substring::Substring;
 use time::OffsetDateTime;
@@ -32,7 +32,7 @@ pub const ROLE_SUPER_ADMIN: &str = "su";
 
 #[derive(FromRow)]
 struct UserSchema {
-    id: u64,
+    id: i64,
     status: i8,
     created: OffsetDateTime,
     modified: OffsetDateTime,
@@ -47,7 +47,7 @@ struct UserSchema {
 
 #[derive(Deserialize, Serialize)]
 pub struct User {
-    pub id: u64,
+    pub id: i64,
     pub status: i8,
     pub created: String,
     pub modified: String,
@@ -99,7 +99,7 @@ impl Model for UserModel {
     fn keyword(&self) -> String {
         "account".to_string()
     }
-    async fn schema_view(&self, _pool: &Pool<MySql>) -> SchemaView {
+    async fn schema_view(&self, _pool: &Pool<Postgres>) -> SchemaView {
         SchemaView {
             schemas: vec![
                 Schema::new_id(),
@@ -135,22 +135,22 @@ impl Model for UserModel {
             ..Default::default()
         }
     }
-    async fn get_by_id(&self, pool: &Pool<MySql>, id: u64) -> Result<Option<Self::Output>> {
+    async fn get_by_id(&self, pool: &Pool<Postgres>, id: u64) -> Result<Option<Self::Output>> {
         let result = sqlx::query_as::<_, UserSchema>(
-            r#"SELECT * FROM users WHERE id = ? AND deleted_at IS NULL"#,
+            r#"SELECT * FROM users WHERE id = $1 AND deleted_at IS NULL"#,
         )
-        .bind(id)
+        .bind(id as i64)
         .fetch_optional(pool)
         .await
         .context(SqlxSnafu)?;
 
         Ok(result.map(|user| user.into()))
     }
-    async fn delete_by_id(&self, pool: &Pool<MySql>, id: u64) -> Result<()> {
+    async fn delete_by_id(&self, pool: &Pool<Postgres>, id: u64) -> Result<()> {
         sqlx::query(
-            r#"UPDATE users SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL"#
+            r#"UPDATE users SET deleted_at = CURRENT_TIMESTAMP WHERE id = $1 AND deleted_at IS NULL"#
         )
-            .bind(id)
+            .bind(id as i64)
             .execute(pool)
             .await
             .context(SqlxSnafu)?;
@@ -158,20 +158,20 @@ impl Model for UserModel {
     }
     async fn update_by_id(
         &self,
-        pool: &Pool<MySql>,
+        pool: &Pool<Postgres>,
         id: u64,
         data: serde_json::Value,
     ) -> Result<()> {
         let params: UserUpdateParams = serde_json::from_value(data).context(JsonSnafu)?;
         let _ = sqlx::query(
             r#"
-            UPDATE users SET 
-                email = COALESCE(?, email),
-                avatar = COALESCE(?, avatar),
-                roles = COALESCE(?, roles),
-                `groups` = COALESCE(?, `groups`),
-                status = COALESCE(?, status)
-            WHERE id = ? AND deleted_at IS NULL
+            UPDATE users SET
+                email = COALESCE($1, email),
+                avatar = COALESCE($2, avatar),
+                roles = COALESCE($3, roles),
+                groups = COALESCE($4, groups),
+                status = COALESCE($5, status)
+            WHERE id = $6 AND deleted_at IS NULL
             "#,
         )
         .bind(params.email.as_deref())
@@ -179,7 +179,7 @@ impl Model for UserModel {
         .bind(params.roles.map(Json))
         .bind(params.groups.map(Json))
         .bind(params.status)
-        .bind(id)
+        .bind(id as i64)
         .execute(pool)
         .await
         .context(SqlxSnafu)?;
@@ -192,15 +192,15 @@ impl Model for UserModel {
             conditions.push(format!("status = {status}"));
         }
         if let Some(role) = filters.get("role") {
-            conditions.push(format!("JSON_CONTAINS(roles, JSON_ARRAY('{role}'))"));
+            conditions.push(format!("roles @> '[\"{role}\"]'::jsonb"));
         }
         if let Some(group) = filters.get("group") {
-            conditions.push(format!("JSON_CONTAINS(groups, JSON_ARRAY('{group}'))"));
+            conditions.push(format!("groups @> '[\"{group}\"]'::jsonb"));
         }
         (!conditions.is_empty()).then_some(conditions)
     }
 
-    async fn count(&self, pool: &Pool<MySql>, params: &ModelListParams) -> Result<i64> {
+    async fn count(&self, pool: &Pool<Postgres>, params: &ModelListParams) -> Result<i64> {
         let mut sql = String::from("SELECT COUNT(*) FROM users");
         sql.push_str(&self.condition_sql(params)?);
         let count = sqlx::query_scalar::<_, i64>(&sql)
@@ -212,7 +212,7 @@ impl Model for UserModel {
 
     async fn list(
         &self,
-        pool: &Pool<MySql>,
+        pool: &Pool<Postgres>,
         params: &ModelListParams,
     ) -> Result<Vec<Self::Output>> {
         let limit = params.limit.min(200);
@@ -242,32 +242,41 @@ impl Model for UserModel {
 }
 
 impl UserModel {
-    pub async fn register(&self, pool: &Pool<MySql>, account: &str, password: &str) -> Result<u64> {
+    pub async fn register(
+        &self,
+        pool: &Pool<Postgres>,
+        account: &str,
+        password: &str,
+    ) -> Result<u64> {
         // Get current time for created_at and updated_at
 
         // Insert user and return the last insert ID
-        let result = sqlx::query(
+        let row: (i64,) = sqlx::query_as(
             r#"
             INSERT INTO users (
                 status, account, password
             ) VALUES (
-                ?, ?, ?
-            )
+                $1, $2, $3
+            ) RETURNING id
             "#,
         )
         .bind(Status::Enabled as i8)
         .bind(account)
         .bind(password)
-        .execute(pool)
+        .fetch_one(pool)
         .await
         .context(SqlxSnafu)?;
 
-        Ok(result.last_insert_id())
+        Ok(row.0 as u64)
     }
 
-    pub async fn get_by_account(&self, pool: &Pool<MySql>, account: &str) -> Result<Option<User>> {
+    pub async fn get_by_account(
+        &self,
+        pool: &Pool<Postgres>,
+        account: &str,
+    ) -> Result<Option<User>> {
         let result = sqlx::query_as::<_, UserSchema>(
-            r#"SELECT * FROM users WHERE account = ? AND deleted_at IS NULL"#,
+            r#"SELECT * FROM users WHERE account = $1 AND deleted_at IS NULL"#,
         )
         .bind(account)
         .fetch_optional(pool)
@@ -279,16 +288,16 @@ impl UserModel {
 
     pub async fn update_by_account(
         &self,
-        pool: &Pool<MySql>,
+        pool: &Pool<Postgres>,
         account: &str,
         params: UserUpdateParams,
     ) -> Result<()> {
         let _ = sqlx::query(
             r#"
-            UPDATE users SET 
-                email = COALESCE(?, email),
-                avatar = COALESCE(?, avatar)
-            WHERE account = ? AND deleted_at IS NULL
+            UPDATE users SET
+                email = COALESCE($1, email),
+                avatar = COALESCE($2, avatar)
+            WHERE account = $3 AND deleted_at IS NULL
             "#,
         )
         .bind(params.email.as_deref())

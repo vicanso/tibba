@@ -14,8 +14,8 @@
 
 use serde::Deserialize;
 use snafu::{ResultExt, Snafu};
-use sqlx::MySqlPool;
-use sqlx::pool::PoolOptions;
+use sqlx::PgPool;
+use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
@@ -177,19 +177,16 @@ fn new_database_config(config: &Config) -> Result<DatabaseConfig> {
     Ok(database_config)
 }
 
-/// Creates and connects a MySQL connection pool.
+/// Creates and connects a PostgreSQL connection pool.
 ///
 /// When `pool_stat` is provided, connection and acquisition events are tracked.
-pub async fn new_mysql_pool(
-    config: &Config,
-    pool_stat: Option<Arc<PoolStat>>,
-) -> Result<MySqlPool> {
+pub async fn new_pg_pool(config: &Config, pool_stat: Option<Arc<PoolStat>>) -> Result<PgPool> {
     let database_config = new_database_config(config)?;
     let password = database_config.password.clone().unwrap_or_default();
     let url = database_config.url.replace(&password, "***");
     info!(target: LOG_TARGET, url, "connect to database");
 
-    let mut options = PoolOptions::new()
+    let mut options = PgPoolOptions::new()
         .max_connections(database_config.max_connections)
         .min_connections(database_config.min_connections)
         .idle_timeout(database_config.idle_timeout)
@@ -203,7 +200,12 @@ pub async fn new_mysql_pool(
             .after_connect(move |_conn, _meta| {
                 let stat = after_connect_pool_stat.clone();
                 Box::pin(async move {
-                    stat.connected.fetch_add(1, Ordering::Relaxed);
+                    let connected = stat.connected.fetch_add(1, Ordering::Relaxed) + 1;
+                    info!(
+                        target: LOG_TARGET,
+                        connected,
+                        "after connect"
+                    );
                     Ok(())
                 })
             })

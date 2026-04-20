@@ -297,12 +297,6 @@ impl HookStat {
             );
             return Err(HookError::message("drop"));
         }
-        info!(
-            target: LOG_TARGET,
-            label = self.label,
-            age = age.as_secs(),
-            "pre recycle connection"
-        );
         Ok(())
     }
     /// Called after a connection has been successfully recycled.

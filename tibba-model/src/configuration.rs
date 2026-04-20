@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use snafu::ResultExt;
 use sqlx::FromRow;
 use sqlx::types::Json;
-use sqlx::{MySql, Pool};
+use sqlx::{Pool, Postgres};
 use std::collections::HashMap;
 use std::str::FromStr;
 use substring::Substring;
@@ -35,7 +35,7 @@ type Result<T> = std::result::Result<T, Error>;
 
 #[derive(FromRow)]
 struct ConfigurationSchema {
-    id: u64,
+    id: i64,
     status: i8,
     category: String,
     name: String,
@@ -49,7 +49,7 @@ struct ConfigurationSchema {
 
 #[derive(Deserialize, Serialize)]
 pub struct Configuration {
-    pub id: u64,
+    pub id: i64,
     pub status: i8,
     pub category: String,
     pub name: String,
@@ -113,7 +113,7 @@ impl Model for ConfigurationModel {
     fn new() -> Self {
         Self::default()
     }
-    async fn schema_view(&self, _pool: &Pool<MySql>) -> SchemaView {
+    async fn schema_view(&self, _pool: &Pool<Postgres>) -> SchemaView {
         SchemaView {
             schemas: vec![
                 Schema::new_id(),
@@ -190,11 +190,11 @@ impl Model for ConfigurationModel {
         }
         (!conditions.is_empty()).then_some(conditions)
     }
-    async fn insert(&self, pool: &Pool<MySql>, data: serde_json::Value) -> Result<u64> {
+    async fn insert(&self, pool: &Pool<Postgres>, data: serde_json::Value) -> Result<u64> {
         let params: ConfigurationInsertParams = serde_json::from_value(data).context(JsonSnafu)?;
-        let id = sqlx::query(
+        let row: (i64,) = sqlx::query_as(
             r#"
-            INSERT INTO configurations (category, name, data, description, status, effective_start_time, effective_end_time) VALUES (?, ?, ?, ?, ?, ?, ?)"#,
+            INSERT INTO configurations (category, name, data, description, status, effective_start_time, effective_end_time) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id"#,
         )
         .bind(params.category)
         .bind(params.name)
@@ -203,18 +203,18 @@ impl Model for ConfigurationModel {
         .bind(params.status)
         .bind(params.effective_start_time)
         .bind(params.effective_end_time)
-        .execute(pool)
+        .fetch_one(pool)
         .await
         .context(SqlxSnafu)?;
 
-        Ok(id.last_insert_id())
+        Ok(row.0 as u64)
     }
 
-    async fn get_by_id(&self, pool: &Pool<MySql>, id: u64) -> Result<Option<Self::Output>> {
+    async fn get_by_id(&self, pool: &Pool<Postgres>, id: u64) -> Result<Option<Self::Output>> {
         let result = sqlx::query_as::<_, ConfigurationSchema>(
-            r#"SELECT * FROM configurations WHERE id = ? AND deleted_at IS NULL"#,
+            r#"SELECT * FROM configurations WHERE id = $1 AND deleted_at IS NULL"#,
         )
-        .bind(id)
+        .bind(id as i64)
         .fetch_optional(pool)
         .await
         .context(SqlxSnafu)?;
@@ -222,11 +222,11 @@ impl Model for ConfigurationModel {
         Ok(result.map(|schema| schema.into()))
     }
 
-    async fn delete_by_id(&self, pool: &Pool<MySql>, id: u64) -> Result<()> {
+    async fn delete_by_id(&self, pool: &Pool<Postgres>, id: u64) -> Result<()> {
         sqlx::query(
-            r#"UPDATE configurations SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL"#,
+            r#"UPDATE configurations SET deleted_at = CURRENT_TIMESTAMP WHERE id = $1 AND deleted_at IS NULL"#,
         )
-        .bind(id)
+        .bind(id as i64)
         .execute(pool)
         .await
         .context(SqlxSnafu)?;
@@ -236,20 +236,20 @@ impl Model for ConfigurationModel {
 
     async fn update_by_id(
         &self,
-        pool: &Pool<MySql>,
+        pool: &Pool<Postgres>,
         id: u64,
         data: serde_json::Value,
     ) -> Result<()> {
         let params: ConfigurationUpdateParams = serde_json::from_value(data).context(JsonSnafu)?;
         let _ = sqlx::query(
-            r#"UPDATE configurations SET data = COALESCE(?, data), description = COALESCE(?, description), status = COALESCE(?, status), effective_start_time = COALESCE(?, effective_start_time), effective_end_time = COALESCE(?, effective_end_time) WHERE id = ? AND deleted_at IS NULL"#,
+            r#"UPDATE configurations SET data = COALESCE($1, data), description = COALESCE($2, description), status = COALESCE($3, status), effective_start_time = COALESCE($4, effective_start_time), effective_end_time = COALESCE($5, effective_end_time) WHERE id = $6 AND deleted_at IS NULL"#,
         )
         .bind(params.data)
         .bind(params.description)
         .bind(params.status)
         .bind(params.effective_start_time)
         .bind(params.effective_end_time)
-        .bind(id)
+        .bind(id as i64)
         .execute(pool)
         .await
         .context(SqlxSnafu)?;
@@ -257,7 +257,7 @@ impl Model for ConfigurationModel {
         Ok(())
     }
 
-    async fn count(&self, pool: &Pool<MySql>, params: &ModelListParams) -> Result<i64> {
+    async fn count(&self, pool: &Pool<Postgres>, params: &ModelListParams) -> Result<i64> {
         let mut sql = String::from("SELECT COUNT(*) FROM configurations");
         sql.push_str(&self.condition_sql(params)?);
         let count = sqlx::query_scalar::<_, i64>(&sql)
@@ -270,7 +270,7 @@ impl Model for ConfigurationModel {
 
     async fn list(
         &self,
-        pool: &Pool<MySql>,
+        pool: &Pool<Postgres>,
         params: &ModelListParams,
     ) -> Result<Vec<Self::Output>> {
         let limit = params.limit.min(200);
@@ -302,18 +302,18 @@ impl Model for ConfigurationModel {
 impl ConfigurationModel {
     pub async fn get_response_headers(
         &self,
-        pool: &Pool<MySql>,
+        pool: &Pool<Postgres>,
         name: &str,
     ) -> Result<Option<HeaderMap>> {
         let now = OffsetDateTime::now_utc();
         let configurations = sqlx::query_as::<_, ConfigurationSchema>(
-            r#"SELECT * FROM configurations 
-               WHERE category = 'response_headers' 
-               AND status = ?
-               AND name = ? 
+            r#"SELECT * FROM configurations
+               WHERE category = 'response_headers'
+               AND status = $1
+               AND name = $2
                AND deleted_at IS NULL
-               AND effective_start_time <= ?
-               AND effective_end_time >= ?"#,
+               AND effective_start_time <= $3
+               AND effective_end_time >= $4"#,
         )
         .bind(Status::Enabled as i8)
         .bind(name)
@@ -345,19 +345,24 @@ impl ConfigurationModel {
         }
         Ok(Some(headers))
     }
-    pub async fn get_config<T>(&self, pool: &Pool<MySql>, category: &str, name: &str) -> Result<T>
+    pub async fn get_config<T>(
+        &self,
+        pool: &Pool<Postgres>,
+        category: &str,
+        name: &str,
+    ) -> Result<T>
     where
         T: DeserializeOwned,
     {
         let now = OffsetDateTime::now_utc();
         let configuration = sqlx::query_as::<_, ConfigurationSchema>(
-            r#"SELECT * FROM configurations 
-               WHERE category = ? 
-               AND status = ?
-               AND name = ? 
+            r#"SELECT * FROM configurations
+               WHERE category = $1
+               AND status = $2
+               AND name = $3
                AND deleted_at IS NULL
-               AND effective_start_time <= ?
-               AND effective_end_time >= ?"#,
+               AND effective_start_time <= $4
+               AND effective_end_time >= $5"#,
         )
         .bind(category)
         .bind(Status::Enabled as i8)

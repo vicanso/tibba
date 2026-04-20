@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use snafu::ResultExt;
 use sqlx::FromRow;
 use sqlx::types::Json;
-use sqlx::{MySql, Pool};
+use sqlx::{Pool, Postgres};
 use std::collections::HashMap;
 use substring::Substring;
 use time::OffsetDateTime;
@@ -32,16 +32,16 @@ type Result<T> = std::result::Result<T, Error>;
 
 #[derive(FromRow)]
 struct HttpDetectorSchema {
-    id: u64,
+    id: i64,
     status: i8,
     name: String,
-    interval: u16,
+    interval: i16,
     url: String,
     method: String,
     alpn_protocols: Option<Json<Vec<String>>>,
     resolves: Option<Json<Vec<String>>>,
     headers: Option<Json<HashMap<String, String>>>,
-    ip_version: u8,
+    ip_version: i16,
     skip_verify: bool,
     dns_servers: Option<Json<Vec<String>>>,
     body: Option<Vec<u8>>,
@@ -49,12 +49,12 @@ struct HttpDetectorSchema {
     alarm_url: String,
     random_querystring: bool,
     alarm_on_change: bool,
-    retries: u8,
-    failure_threshold: u8,
+    retries: i16,
+    failure_threshold: i16,
     regions: Json<Vec<String>>,
-    group_id: u64,
+    group_id: i64,
     verbose: bool,
-    created_by: u64,
+    created_by: i64,
     remark: String,
     created: OffsetDateTime,
     modified: OffsetDateTime,
@@ -62,29 +62,29 @@ struct HttpDetectorSchema {
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct HttpDetector {
-    pub id: u64,
+    pub id: i64,
     pub status: i8,
     pub name: String,
-    pub group_id: u64,
-    pub interval: u16,
+    pub group_id: i64,
+    pub interval: i16,
     pub url: String,
     pub method: String,
     pub alpn_protocols: Option<Vec<String>>,
     pub resolves: Option<Vec<String>>,
     pub headers: Option<HashMap<String, String>>,
     pub dns_servers: Option<Vec<String>>,
-    pub ip_version: u8,
+    pub ip_version: i16,
     pub skip_verify: bool,
     pub body: Option<Vec<u8>>,
     pub script: Option<String>,
     pub alarm_url: String,
     pub random_querystring: bool,
     pub alarm_on_change: bool,
-    pub retries: u8,
-    pub failure_threshold: u8,
+    pub retries: i16,
+    pub failure_threshold: i16,
     pub regions: Vec<String>,
     pub verbose: bool,
-    pub created_by: u64,
+    pub created_by: i64,
     pub remark: String,
     pub created: String,
     pub modified: String,
@@ -177,7 +177,7 @@ pub struct HttpDetectorUpdateParams {
 pub struct HttpDetectorModel {}
 
 impl HttpDetectorModel {
-    pub async fn list_enabled(&self, pool: &Pool<MySql>) -> Result<Vec<HttpDetector>> {
+    pub async fn list_enabled(&self, pool: &Pool<Postgres>) -> Result<Vec<HttpDetector>> {
         let detectors = sqlx::query_as::<_, HttpDetectorSchema>(
             r#"SELECT * FROM http_detectors WHERE deleted_at IS NULL AND status = 1"#,
         )
@@ -189,19 +189,19 @@ impl HttpDetectorModel {
     }
     pub async fn list_enabled_by_region(
         &self,
-        pool: &Pool<MySql>,
+        pool: &Pool<Postgres>,
         region: Option<String>,
         limit: u64,
         offset: u64,
     ) -> Result<Vec<HttpDetector>> {
         let region = region.unwrap_or(REGION_ANY.to_string());
         let detectors = sqlx::query_as::<_, HttpDetectorSchema>(
-            r#"SELECT * FROM http_detectors WHERE deleted_at IS NULL AND status = 1 AND (JSON_LENGTH(regions) = 0 OR JSON_CONTAINS(regions, ?) OR JSON_CONTAINS(regions, ?)) ORDER BY id ASC LIMIT ? OFFSET ?"#,
+            r#"SELECT * FROM http_detectors WHERE deleted_at IS NULL AND status = 1 AND (jsonb_array_length(regions) = 0 OR regions @> $1::jsonb OR regions @> $2::jsonb) ORDER BY id ASC LIMIT $3 OFFSET $4"#,
         )
-        .bind(serde_json::json!(region))
-        .bind(serde_json::json!(REGION_ANY.to_string()))
-        .bind(limit)
-        .bind(offset)
+        .bind(format!("[{:?}]", region))
+        .bind(format!("[{:?}]", REGION_ANY))
+        .bind(limit as i64)
+        .bind(offset as i64)
         .fetch_all(pool)
         .await
         .context(SqlxSnafu)?;
@@ -216,14 +216,14 @@ impl Model for HttpDetectorModel {
     fn new() -> Self {
         Self {}
     }
-    async fn schema_view(&self, pool: &Pool<MySql>) -> SchemaView {
+    async fn schema_view(&self, pool: &Pool<Postgres>) -> SchemaView {
         let mut group_options = vec![];
         let group_model = DetectorGroupModel {};
         if let Ok(groups) = group_model.list_enabled(pool).await {
             for group in groups {
                 group_options.push(SchemaOption {
                     label: group.name,
-                    value: SchemaOptionValue::Integer(group.id as i64),
+                    value: SchemaOptionValue::Integer(group.id),
                 });
             }
             group_options.sort_by_key(|option| option.label.clone());
@@ -386,55 +386,55 @@ impl Model for HttpDetectorModel {
 
         (!conditions.is_empty()).then_some(conditions)
     }
-    async fn insert(&self, pool: &Pool<MySql>, params: serde_json::Value) -> Result<u64> {
+    async fn insert(&self, pool: &Pool<Postgres>, params: serde_json::Value) -> Result<u64> {
         let params: HttpDetectorInsertParams = serde_json::from_value(params).context(JsonSnafu)?;
-        let result = sqlx::query(
-            r#"INSERT INTO http_detectors (status, name, group_id, url, method, alpn_protocols, resolves, headers, ip_version, skip_verify, body, `interval`, script, alarm_url, random_querystring, alarm_on_change, retries, failure_threshold, verbose, regions, created_by, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+        let row: (i64,) = sqlx::query_as(
+            r#"INSERT INTO http_detectors (status, name, group_id, url, method, alpn_protocols, resolves, headers, ip_version, skip_verify, body, interval, script, alarm_url, random_querystring, alarm_on_change, retries, failure_threshold, verbose, regions, created_by, remark) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22) RETURNING id"#,
         )
         .bind(params.status)
         .bind(params.name)
-        .bind(params.group_id)
+        .bind(params.group_id as i64)
         .bind(params.url)
         .bind(params.method)
         .bind(params.alpn_protocols.map(Json).unwrap_or_default())
         .bind(params.resolves.map(Json).unwrap_or_default())
         .bind(params.headers.map(Json).unwrap_or_default())
-        .bind(params.ip_version)
+        .bind(params.ip_version as i16)
         .bind(params.skip_verify)
         .bind(params.body)
-        .bind(params.interval)
+        .bind(params.interval as i16)
         .bind(params.script)
         .bind(params.alarm_url.unwrap_or_default())
         .bind(params.random_querystring)
         .bind(params.alarm_on_change)
-        .bind(params.retries)
-        .bind(params.failure_threshold)
+        .bind(params.retries as i16)
+        .bind(params.failure_threshold as i16)
         .bind(params.verbose)
         .bind(Json(params.regions))
-        .bind(params.created_by)
+        .bind(params.created_by as i64)
         .bind(params.remark)
-        .execute(pool)
+        .fetch_one(pool)
         .await
         .context(SqlxSnafu)?;
 
-        Ok(result.last_insert_id())
+        Ok(row.0 as u64)
     }
-    async fn get_by_id(&self, pool: &Pool<MySql>, id: u64) -> Result<Option<Self::Output>> {
+    async fn get_by_id(&self, pool: &Pool<Postgres>, id: u64) -> Result<Option<Self::Output>> {
         let result = sqlx::query_as::<_, HttpDetectorSchema>(
-            r#"SELECT * FROM http_detectors WHERE id = ? AND deleted_at IS NULL"#,
+            r#"SELECT * FROM http_detectors WHERE id = $1 AND deleted_at IS NULL"#,
         )
-        .bind(id)
+        .bind(id as i64)
         .fetch_optional(pool)
         .await
         .context(SqlxSnafu)?;
 
         Ok(result.map(|schema| schema.into()))
     }
-    async fn delete_by_id(&self, pool: &Pool<MySql>, id: u64) -> Result<()> {
+    async fn delete_by_id(&self, pool: &Pool<Postgres>, id: u64) -> Result<()> {
         sqlx::query(
-            r#"UPDATE http_detectors SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL"#,
+            r#"UPDATE http_detectors SET deleted_at = CURRENT_TIMESTAMP WHERE id = $1 AND deleted_at IS NULL"#,
         )
-        .bind(id)
+        .bind(id as i64)
         .execute(pool)
         .await
         .context(SqlxSnafu)?;
@@ -443,44 +443,44 @@ impl Model for HttpDetectorModel {
     }
     async fn update_by_id(
         &self,
-        pool: &Pool<MySql>,
+        pool: &Pool<Postgres>,
         id: u64,
         params: serde_json::Value,
     ) -> Result<()> {
         let params: HttpDetectorUpdateParams = serde_json::from_value(params).context(JsonSnafu)?;
 
         let _ = sqlx::query(
-            r#"UPDATE http_detectors SET status = COALESCE(?, status), name = COALESCE(?, name), group_id = COALESCE(?, group_id), url = COALESCE(?, url), method = COALESCE(?, method), alpn_protocols = COALESCE(?, alpn_protocols), resolves = COALESCE(?, resolves), headers = COALESCE(?, headers), ip_version = COALESCE(?, ip_version), skip_verify = COALESCE(?, skip_verify), body = COALESCE(?, body), `interval` = COALESCE(?, `interval`), script = COALESCE(?, script), alarm_url = COALESCE(?, alarm_url), random_querystring = COALESCE(?, random_querystring), alarm_on_change = COALESCE(?, alarm_on_change), retries = COALESCE(?, retries), failure_threshold = COALESCE(?, failure_threshold), verbose = COALESCE(?, verbose), regions = COALESCE(?, regions), remark = COALESCE(?, remark) WHERE id = ? AND deleted_at IS NULL"#,
+            r#"UPDATE http_detectors SET status = COALESCE($1, status), name = COALESCE($2, name), group_id = COALESCE($3, group_id), url = COALESCE($4, url), method = COALESCE($5, method), alpn_protocols = COALESCE($6, alpn_protocols), resolves = COALESCE($7, resolves), headers = COALESCE($8, headers), ip_version = COALESCE($9, ip_version), skip_verify = COALESCE($10, skip_verify), body = COALESCE($11, body), interval = COALESCE($12, interval), script = COALESCE($13, script), alarm_url = COALESCE($14, alarm_url), random_querystring = COALESCE($15, random_querystring), alarm_on_change = COALESCE($16, alarm_on_change), retries = COALESCE($17, retries), failure_threshold = COALESCE($18, failure_threshold), verbose = COALESCE($19, verbose), regions = COALESCE($20, regions), remark = COALESCE($21, remark) WHERE id = $22 AND deleted_at IS NULL"#,
         )
         .bind(params.status)
         .bind(params.name)
-        .bind(params.group_id)
+        .bind(params.group_id.map(|v| v as i64))
         .bind(params.url)
         .bind(params.method)
         .bind(params.alpn_protocols.map(Json))
         .bind(params.resolves.map(Json))
         .bind(params.headers.map(Json))
-        .bind(params.ip_version)
+        .bind(params.ip_version.map(|v| v as i16))
         .bind(params.skip_verify)
         .bind(params.body)
-        .bind(params.interval)
+        .bind(params.interval.map(|v| v as i16))
         .bind(params.script)
         .bind(params.alarm_url)
         .bind(params.random_querystring)
         .bind(params.alarm_on_change)
-        .bind(params.retries)
-        .bind(params.failure_threshold)
+        .bind(params.retries.map(|v| v as i16))
+        .bind(params.failure_threshold.map(|v| v as i16))
         .bind(params.verbose)
         .bind(params.regions.map(Json))
         .bind(params.remark)
-        .bind(id)
+        .bind(id as i64)
         .execute(pool)
         .await
         .context(SqlxSnafu)?;
 
         Ok(())
     }
-    async fn count(&self, pool: &Pool<MySql>, params: &ModelListParams) -> Result<i64> {
+    async fn count(&self, pool: &Pool<Postgres>, params: &ModelListParams) -> Result<i64> {
         let mut sql = String::from("SELECT COUNT(*) FROM http_detectors");
         sql.push_str(&self.condition_sql(params)?);
         let count = sqlx::query_scalar::<_, i64>(&sql)
@@ -493,7 +493,7 @@ impl Model for HttpDetectorModel {
 
     async fn list(
         &self,
-        pool: &Pool<MySql>,
+        pool: &Pool<Postgres>,
         params: &ModelListParams,
     ) -> Result<Vec<Self::Output>> {
         let limit = params.limit.min(200);

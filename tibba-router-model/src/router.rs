@@ -23,7 +23,7 @@ use axum::http::StatusCode;
 use axum::routing::{delete, get, patch, post};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use sqlx::MySqlPool;
+use sqlx::PgPool;
 use std::str::FromStr;
 use tibba_error::Error;
 use tibba_model::{Model, ModelListParams, SchemaView};
@@ -44,7 +44,7 @@ fn get_model(name: &str) -> Result<CmsModel> {
 }
 
 async fn get_schema(
-    State(pool): State<&'static MySqlPool>,
+    State(pool): State<&'static PgPool>,
     QueryParams(params): QueryParams<GetSchemaParams>,
     _session: UserSession,
 ) -> JsonResult<SchemaView> {
@@ -74,7 +74,7 @@ struct ListParams {
 }
 
 async fn list_model(
-    State(pool): State<&'static MySqlPool>,
+    State(pool): State<&'static PgPool>,
     QueryParams(params): QueryParams<ListParams>,
     _session: AdminSession,
 ) -> JsonResult<Value> {
@@ -138,7 +138,7 @@ struct GetModelParams {
 }
 
 async fn get_detail(
-    State(pool): State<&'static MySqlPool>,
+    State(pool): State<&'static PgPool>,
     QueryParams(params): QueryParams<GetModelParams>,
     _session: AdminSession,
 ) -> JsonResult<Value> {
@@ -190,7 +190,7 @@ struct DeleteModelParams {
 }
 
 async fn delete_model(
-    State(pool): State<&'static MySqlPool>,
+    State(pool): State<&'static PgPool>,
     _session: AdminSession,
     QueryParams(params): QueryParams<DeleteModelParams>,
 ) -> Result<StatusCode> {
@@ -236,7 +236,7 @@ struct UpdateModelParams {
 }
 
 async fn update_model(
-    State(pool): State<&'static MySqlPool>,
+    State(pool): State<&'static PgPool>,
     _session: AdminSession,
     JsonParams(params): JsonParams<UpdateModelParams>,
 ) -> Result<StatusCode> {
@@ -291,7 +291,7 @@ struct CreateModelParams {
 }
 
 async fn create_model(
-    State(pool): State<&'static MySqlPool>,
+    State(pool): State<&'static PgPool>,
     session: AdminSession,
     JsonParams(params): JsonParams<CreateModelParams>,
 ) -> JsonResult<Value> {
@@ -323,7 +323,7 @@ async fn create_model(
 }
 
 pub struct ModelRouterParams {
-    pub pool: &'static MySqlPool,
+    pub pool: &'static PgPool,
 }
 
 pub fn new_model_router(params: ModelRouterParams) -> Router {

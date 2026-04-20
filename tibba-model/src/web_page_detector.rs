@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use snafu::ResultExt;
 use sqlx::FromRow;
 use sqlx::types::Json;
-use sqlx::{MySql, Pool};
+use sqlx::{Pool, Postgres};
 use substring::Substring;
 use time::OffsetDateTime;
 
@@ -30,48 +30,48 @@ type Result<T> = std::result::Result<T, Error>;
 
 #[derive(FromRow)]
 struct WebPageDetectorSchema {
-    id: u64,
+    id: i64,
     status: i8,
     name: String,
-    interval: u16,
+    interval: i16,
     url: String,
-    width: u32,
-    height: u32,
+    width: i32,
+    height: i32,
     user_agent: String,
     accept_language: String,
     platform: String,
     wait_for_element: String,
     device_scale_factor: f64,
-    timeout: u32,
+    timeout: i32,
     capture_screenshot: bool,
     capture_element: String,
     remark: String,
     regions: Json<Vec<String>>,
-    created_by: u64,
+    created_by: i64,
     created: OffsetDateTime,
     modified: OffsetDateTime,
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct WebPageDetector {
-    pub id: u64,
+    pub id: i64,
     pub status: i8,
     pub name: String,
-    pub interval: u16,
+    pub interval: i16,
     pub url: String,
-    pub width: u32,
-    pub height: u32,
+    pub width: i32,
+    pub height: i32,
     pub user_agent: String,
     pub accept_language: String,
     pub platform: String,
     pub wait_for_element: String,
     pub device_scale_factor: f64,
-    pub timeout: u32,
+    pub timeout: i32,
     pub capture_screenshot: bool,
     pub capture_element: String,
     pub remark: String,
     pub regions: Vec<String>,
-    pub created_by: u64,
+    pub created_by: i64,
     pub created: String,
     pub modified: String,
 }
@@ -134,7 +134,7 @@ impl Model for WebPageDetectorModel {
     fn keyword(&self) -> String {
         "name".to_string()
     }
-    async fn schema_view(&self, _pool: &Pool<MySql>) -> SchemaView {
+    async fn schema_view(&self, _pool: &Pool<Postgres>) -> SchemaView {
         SchemaView {
             schemas: vec![
                 Schema::new_id(),
@@ -242,35 +242,35 @@ impl Model for WebPageDetectorModel {
         }
         Ok(format!(" WHERE {}", where_conditions.join(" AND ")))
     }
-    async fn insert(&self, pool: &Pool<MySql>, params: serde_json::Value) -> Result<u64> {
+    async fn insert(&self, pool: &Pool<Postgres>, params: serde_json::Value) -> Result<u64> {
         let params: WebPageDetectorInsertParams =
             serde_json::from_value(params).context(JsonSnafu)?;
-        let result = sqlx::query(
-            r#"INSERT INTO web_page_detectors (name, `interval`, url, width, height, user_agent, accept_language, platform, wait_for_element, device_scale_factor, timeout, capture_screenshot, capture_element, remark, regions, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+        let row: (i64,) = sqlx::query_as(
+            r#"INSERT INTO web_page_detectors (name, interval, url, width, height, user_agent, accept_language, platform, wait_for_element, device_scale_factor, timeout, capture_screenshot, capture_element, remark, regions, created_by) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING id"#,
         )
         .bind(params.name)
-        .bind(params.interval)
+        .bind(params.interval as i16)
         .bind(params.url)
-        .bind(params.width)
-        .bind(params.height)
+        .bind(params.width as i32)
+        .bind(params.height as i32)
         .bind(params.user_agent.unwrap_or_default())
         .bind(params.accept_language.unwrap_or_default())
         .bind(params.platform.unwrap_or_default())
         .bind(params.wait_for_element.unwrap_or_default())
         .bind(params.device_scale_factor.unwrap_or_default())
-        .bind(params.timeout.unwrap_or_default())
+        .bind(params.timeout.unwrap_or_default() as i32)
         .bind(params.capture_screenshot.unwrap_or_default())
         .bind(params.capture_element.unwrap_or_default())
         .bind(params.remark)
         .bind(Json(params.regions))
-        .bind(params.created_by)
-        .execute(pool)
+        .bind(params.created_by as i64)
+        .fetch_one(pool)
         .await
         .context(SqlxSnafu)?;
 
-        Ok(result.last_insert_id())
+        Ok(row.0 as u64)
     }
-    async fn count(&self, pool: &Pool<MySql>, params: &ModelListParams) -> Result<i64> {
+    async fn count(&self, pool: &Pool<Postgres>, params: &ModelListParams) -> Result<i64> {
         let mut sql = String::from("SELECT COUNT(*) FROM web_page_detectors");
         sql.push_str(&self.condition_sql(params)?);
         let count = sqlx::query_scalar::<_, i64>(&sql)
@@ -282,7 +282,7 @@ impl Model for WebPageDetectorModel {
     }
     async fn list(
         &self,
-        pool: &Pool<MySql>,
+        pool: &Pool<Postgres>,
         params: &ModelListParams,
     ) -> Result<Vec<Self::Output>> {
         let limit = params.limit.min(200);
@@ -294,13 +294,7 @@ impl Model for WebPageDetectorModel {
             } else {
                 (order_by.clone(), "ASC")
             };
-            // Escape reserved keywords in ORDER BY clause
-            let escaped_order_by = if order_by == "interval" {
-                "`interval`".to_string()
-            } else {
-                order_by
-            };
-            sql.push_str(&format!(" ORDER BY {escaped_order_by} {direction}"));
+            sql.push_str(&format!(" ORDER BY {order_by} {direction}"));
         }
         let offset = (params.page - 1) * limit;
         sql.push_str(&format!(" LIMIT {limit} OFFSET {offset}"));
@@ -317,19 +311,19 @@ impl Model for WebPageDetectorModel {
 impl WebPageDetectorModel {
     pub async fn list_enabled_by_region(
         &self,
-        pool: &Pool<MySql>,
+        pool: &Pool<Postgres>,
         region: Option<String>,
         limit: u64,
         offset: u64,
     ) -> Result<Vec<WebPageDetector>> {
         let region = region.unwrap_or(REGION_ANY.to_string());
         let detectors = sqlx::query_as::<_, WebPageDetectorSchema>(
-            r#"SELECT * FROM web_page_detectors WHERE deleted_at IS NULL AND status = 1 AND (JSON_LENGTH(regions) = 0 OR JSON_CONTAINS(regions, ?) OR JSON_CONTAINS(regions, ?)) ORDER BY id ASC LIMIT ? OFFSET ?"#,
+            r#"SELECT * FROM web_page_detectors WHERE deleted_at IS NULL AND status = 1 AND (jsonb_array_length(regions) = 0 OR regions @> $1::jsonb OR regions @> $2::jsonb) ORDER BY id ASC LIMIT $3 OFFSET $4"#,
         )
-        .bind(serde_json::json!(region))
-        .bind(serde_json::json!(REGION_ANY.to_string()))
-        .bind(limit)
-        .bind(offset)
+        .bind(format!("[{:?}]", region))
+        .bind(format!("[{:?}]", REGION_ANY))
+        .bind(limit as i64)
+        .bind(offset as i64)
         .fetch_all(pool)
         .await
         .context(SqlxSnafu)?;

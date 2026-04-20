@@ -20,7 +20,7 @@ use axum::{Json, Router};
 use axum_extra::extract::cookie::CookieJar;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sqlx::MySqlPool;
+use sqlx::PgPool;
 use tibba_cache::RedisCache;
 use tibba_error::Error;
 use tibba_middleware::{user_tracker, validate_captcha};
@@ -91,7 +91,7 @@ struct UserMeResp {
 
 /// Login with account and password
 async fn login(
-    State((secret, pool)): State<(String, &'static MySqlPool)>,
+    State((secret, pool)): State<(String, &'static PgPool)>,
     session: Session,
     JsonParams(params): JsonParams<LoginParams>,
 ) -> Result<SessionResponse<Json<UserMeResp>>> {
@@ -134,7 +134,7 @@ async fn login(
 
 /// Get login user info
 async fn me(
-    State(pool): State<&'static MySqlPool>,
+    State(pool): State<&'static PgPool>,
     mut jar: CookieJar,
     session: Session,
 ) -> Result<(CookieJar, Json<UserMeResp>)> {
@@ -179,7 +179,7 @@ struct RegisterResp {
 
 /// Register a new user
 async fn register(
-    State(pool): State<&'static MySqlPool>,
+    State(pool): State<&'static PgPool>,
     JsonParams(params): JsonParams<RegisterParams>,
 ) -> JsonResult<RegisterResp> {
     let model = UserModel::new();
@@ -223,7 +223,7 @@ struct UpdateProfileParams {
 
 /// Update user profile
 async fn update_profile(
-    State(pool): State<&'static MySqlPool>,
+    State(pool): State<&'static PgPool>,
     session: UserSession,
     JsonParams(params): JsonParams<UpdateProfileParams>,
 ) -> Result<StatusCode> {
@@ -242,7 +242,7 @@ async fn update_profile(
 pub struct UserRouterParams {
     pub secret: String,
     pub magic_code: String,
-    pub pool: &'static MySqlPool,
+    pub pool: &'static PgPool,
     pub cache: &'static RedisCache,
 }
 

@@ -16,20 +16,20 @@ use crate::config::must_get_config;
 use async_trait::async_trait;
 use ctor::ctor;
 use once_cell::sync::OnceCell;
-use sqlx::MySqlPool;
+use sqlx::PgPool;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, atomic::AtomicBool};
 use std::time::Duration;
 use tibba_error::Error;
 use tibba_hook::{Task, register_task};
 use tibba_scheduler::{Job, register_job_task};
-use tibba_sql::{PoolStat, new_mysql_pool};
+use tibba_sql::{PoolStat, new_pg_pool};
 use tracing::info;
 
 type Result<T> = std::result::Result<T, Error>;
-static DB_POOL: OnceCell<MySqlPool> = OnceCell::new();
+static DB_POOL: OnceCell<PgPool> = OnceCell::new();
 
-pub fn get_db_pool() -> &'static MySqlPool {
+pub fn get_db_pool() -> &'static PgPool {
     // init db pool is checked in init function
     DB_POOL
         .get()
@@ -45,7 +45,7 @@ impl Task for SqlTask {
     async fn before(&self) -> Result<bool> {
         let app_config = must_get_config();
         let stat = Arc::new(PoolStat::default());
-        let pool = new_mysql_pool(&app_config.sub_config("database"), Some(stat.clone()))
+        let pool = new_pg_pool(&app_config.sub_config("database"), Some(stat.clone()))
             .await
             .map_err(Error::new)?;
         DB_POOL

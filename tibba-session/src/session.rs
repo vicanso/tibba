@@ -94,7 +94,7 @@ impl SessionParams {
 
 #[derive(Serialize, Deserialize, Default, Clone)]
 struct SessionData {
-    user_id: u64,
+    user_id: i64,
     // id
     id: String,
     // issued at
@@ -148,7 +148,7 @@ impl Session {
 
     /// Sets the account and user ID, generating a new session ID when the account changes.
     #[must_use]
-    pub fn with_account(mut self, account: impl Into<String>, user_id: u64) -> Self {
+    pub fn with_account(mut self, account: impl Into<String>, user_id: i64) -> Self {
         let account = account.into();
         if self.data.id.is_empty() || self.data.account != account {
             self.data.id = uuid();
@@ -185,7 +185,7 @@ impl Session {
     }
 
     /// Returns the authenticated user ID.
-    pub fn get_user_id(&self) -> u64 {
+    pub fn get_user_id(&self) -> i64 {
         self.data.user_id
     }
 

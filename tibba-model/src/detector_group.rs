@@ -20,7 +20,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use snafu::ResultExt;
 use sqlx::FromRow;
-use sqlx::{MySql, Pool};
+use sqlx::{Pool, Postgres};
 use std::collections::HashMap;
 use substring::Substring;
 use time::OffsetDateTime;
@@ -29,25 +29,25 @@ type Result<T> = std::result::Result<T, Error>;
 
 #[derive(FromRow)]
 struct DetectorGroupSchema {
-    id: u64,
+    id: i64,
     name: String,
     code: String,
-    owner_id: u64,
+    owner_id: i64,
     status: i8,
     remark: String,
-    created_by: u64,
+    created_by: i64,
     created: OffsetDateTime,
     modified: OffsetDateTime,
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct DetectorGroup {
-    pub id: u64,
+    pub id: i64,
     pub name: String,
     pub code: String,
-    pub owner_id: u64,
+    pub owner_id: i64,
     pub status: i8,
-    pub created_by: u64,
+    pub created_by: i64,
     pub remark: String,
     pub created: String,
     pub modified: String,
@@ -90,7 +90,7 @@ pub struct DetectorGroupUpdateParams {
 pub struct DetectorGroupModel {}
 
 impl DetectorGroupModel {
-    pub async fn list_enabled(&self, pool: &Pool<MySql>) -> Result<Vec<DetectorGroup>> {
+    pub async fn list_enabled(&self, pool: &Pool<Postgres>) -> Result<Vec<DetectorGroup>> {
         let groups = sqlx::query_as::<_, DetectorGroupSchema>(
             r#"SELECT * FROM detector_groups WHERE deleted_at IS NULL AND status = 1"#,
         )
@@ -108,7 +108,7 @@ impl Model for DetectorGroupModel {
     fn new() -> Self {
         Self {}
     }
-    async fn schema_view(&self, _pool: &Pool<MySql>) -> SchemaView {
+    async fn schema_view(&self, _pool: &Pool<Postgres>) -> SchemaView {
         SchemaView {
             schemas: vec![
                 Schema::new_id(),
@@ -159,30 +159,30 @@ impl Model for DetectorGroupModel {
         (!conditions.is_empty()).then_some(conditions)
     }
 
-    async fn insert(&self, pool: &Pool<MySql>, params: serde_json::Value) -> Result<u64> {
+    async fn insert(&self, pool: &Pool<Postgres>, params: serde_json::Value) -> Result<u64> {
         let params: DetectorGroupInsertParams =
             serde_json::from_value(params).context(JsonSnafu)?;
-        let result = sqlx::query(
-            r#"INSERT INTO detector_groups (name, code, owner_id, created_by, status, remark) VALUES (?, ?, ?, ?, ?, ?)"#,
+        let row: (i64,) = sqlx::query_as(
+            r#"INSERT INTO detector_groups (name, code, owner_id, created_by, status, remark) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id"#,
         )
         .bind(params.name)
         .bind(params.code)
-        .bind(params.owner_id)
-        .bind(params.created_by)
+        .bind(params.owner_id as i64)
+        .bind(params.created_by as i64)
         .bind(params.status)
         .bind(params.remark)
-        .execute(pool)
+        .fetch_one(pool)
         .await
         .context(SqlxSnafu)?;
 
-        Ok(result.last_insert_id())
+        Ok(row.0 as u64)
     }
 
-    async fn get_by_id(&self, pool: &Pool<MySql>, id: u64) -> Result<Option<Self::Output>> {
+    async fn get_by_id(&self, pool: &Pool<Postgres>, id: u64) -> Result<Option<Self::Output>> {
         let result = sqlx::query_as::<_, DetectorGroupSchema>(
-            r#"SELECT * FROM detector_groups WHERE id = ? AND deleted_at IS NULL"#,
+            r#"SELECT * FROM detector_groups WHERE id = $1 AND deleted_at IS NULL"#,
         )
-        .bind(id)
+        .bind(id as i64)
         .fetch_optional(pool)
         .await
         .context(SqlxSnafu)?;
@@ -190,9 +190,9 @@ impl Model for DetectorGroupModel {
         Ok(result.map(|schema| schema.into()))
     }
 
-    async fn delete_by_id(&self, pool: &Pool<MySql>, id: u64) -> Result<()> {
-        sqlx::query(r#"UPDATE detector_groups SET deleted_at = NOW() WHERE id = ?"#)
-            .bind(id)
+    async fn delete_by_id(&self, pool: &Pool<Postgres>, id: u64) -> Result<()> {
+        sqlx::query(r#"UPDATE detector_groups SET deleted_at = NOW() WHERE id = $1"#)
+            .bind(id as i64)
             .execute(pool)
             .await
             .context(SqlxSnafu)?;
@@ -202,7 +202,7 @@ impl Model for DetectorGroupModel {
 
     async fn update_by_id(
         &self,
-        pool: &Pool<MySql>,
+        pool: &Pool<Postgres>,
         id: u64,
         params: serde_json::Value,
     ) -> Result<()> {
@@ -210,13 +210,13 @@ impl Model for DetectorGroupModel {
             serde_json::from_value(params).context(JsonSnafu)?;
 
         let _ = sqlx::query(
-            r#"UPDATE detector_groups SET name = COALESCE(?, name), owner_id = COALESCE(?, owner_id), status = COALESCE(?, status), remark = COALESCE(?, remark) WHERE id = ? AND deleted_at IS NULL"#,
+            r#"UPDATE detector_groups SET name = COALESCE($1, name), owner_id = COALESCE($2, owner_id), status = COALESCE($3, status), remark = COALESCE($4, remark) WHERE id = $5 AND deleted_at IS NULL"#,
         )
         .bind(params.name)
-        .bind(params.owner_id)
+        .bind(params.owner_id.map(|v| v as i64))
         .bind(params.status)
         .bind(params.remark)
-        .bind(id)
+        .bind(id as i64)
         .execute(pool)
         .await
         .context(SqlxSnafu)?;
@@ -224,7 +224,7 @@ impl Model for DetectorGroupModel {
         Ok(())
     }
 
-    async fn count(&self, pool: &Pool<MySql>, params: &ModelListParams) -> Result<i64> {
+    async fn count(&self, pool: &Pool<Postgres>, params: &ModelListParams) -> Result<i64> {
         let mut sql = String::from("SELECT COUNT(*) FROM detector_groups");
         sql.push_str(&self.condition_sql(params)?);
         let count = sqlx::query_scalar::<_, i64>(&sql)
@@ -237,7 +237,7 @@ impl Model for DetectorGroupModel {
 
     async fn list(
         &self,
-        pool: &Pool<MySql>,
+        pool: &Pool<Postgres>,
         params: &ModelListParams,
     ) -> Result<Vec<Self::Output>> {
         let limit = params.limit.min(200);

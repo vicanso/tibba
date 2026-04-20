@@ -56,8 +56,8 @@ async fn run_web_page_stat() -> Result<()> {
         println!("detector: {detector:?}");
         let mut params = WebPageParams {
             url: detector.url,
-            width: detector.width,
-            height: detector.height,
+            width: detector.width as u32,
+            height: detector.height as u32,
             capture_screenshot: detector.capture_screenshot,
             ..Default::default()
         };
