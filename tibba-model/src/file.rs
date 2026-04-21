@@ -26,7 +26,7 @@ use sqlx::types::Json;
 use sqlx::{Pool, Postgres};
 use std::str::FromStr;
 use substring::Substring;
-use time::OffsetDateTime;
+use time::PrimitiveDateTime;
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -41,8 +41,8 @@ struct FileSchema {
     image_height: Option<i32>,
     metadata: Option<Json<serde_json::Value>>,
     uploader: String,
-    created: OffsetDateTime,
-    modified: OffsetDateTime,
+    created: PrimitiveDateTime,
+    modified: PrimitiveDateTime,
 }
 
 #[derive(Deserialize, Serialize)]

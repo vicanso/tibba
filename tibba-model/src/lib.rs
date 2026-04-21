@@ -21,15 +21,16 @@ use snafu::Snafu;
 use sqlx::{Pool, Postgres};
 use std::collections::HashMap;
 use tibba_error::Error as BaseError;
-use time::OffsetDateTime;
+use time::PrimitiveDateTime;
 
 pub const REGION_ANY: &str = "any";
 pub const REGION_TX: &str = "tx";
 pub const REGION_GZ: &str = "gz";
 pub const REGION_ALIYUN: &str = "aliyun";
 
-fn format_datetime(datetime: OffsetDateTime) -> String {
-    if let Some(value) = DateTime::from_timestamp(datetime.unix_timestamp(), 0) {
+fn format_datetime(datetime: PrimitiveDateTime) -> String {
+    let ts = datetime.assume_utc().unix_timestamp();
+    if let Some(value) = DateTime::from_timestamp(ts, 0) {
         value.with_timezone(&offset::Local).to_string()
     } else {
         String::new()

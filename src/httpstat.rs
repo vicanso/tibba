@@ -528,9 +528,12 @@ async fn run_stat_alarm() -> Result<(i32, i32)> {
         return Ok((0, -1));
     }
     let pool = get_db_pool();
-    let alarm_config = ConfigurationModel::new()
+    let Some(alarm_config) = ConfigurationModel::new()
         .get_config(pool, "alarm", "httpstat")
-        .await?;
+        .await?
+    else {
+        return Ok((0, 0));
+    };
 
     let key = "http_alarm_targets_cache";
     let mut alarm_cache = StatAlarmCache {

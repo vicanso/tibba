@@ -43,10 +43,13 @@ async fn run_web_page_stat() -> Result<()> {
         return Ok(());
     }
 
-    let browser_less_config: BrowserLessConfig = ConfigurationModel::new()
+    let Some(browser_less_config): Option<BrowserLessConfig> = ConfigurationModel::new()
         .get_config(pool, "app", "browserless")
         .await
-        .map_err(|e| Error::new(e.to_string()))?;
+        .map_err(|e| Error::new(e.to_string()))?
+    else {
+        return Err(Error::new("browserless config not found"));
+    };
     if browser_less_config.urls.is_empty() {
         return Err(Error::new("browser less urls is empty"));
     }

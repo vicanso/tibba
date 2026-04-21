@@ -26,14 +26,14 @@ use sqlx::types::Json;
 use sqlx::{Pool, Postgres};
 use std::collections::HashMap;
 use substring::Substring;
-use time::OffsetDateTime;
+use time::PrimitiveDateTime;
 
 type Result<T> = std::result::Result<T, Error>;
 
 #[derive(FromRow)]
 struct HttpDetectorSchema {
     id: i64,
-    status: i8,
+    status: i16,
     name: String,
     interval: i16,
     url: String,
@@ -56,14 +56,14 @@ struct HttpDetectorSchema {
     verbose: bool,
     created_by: i64,
     remark: String,
-    created: OffsetDateTime,
-    modified: OffsetDateTime,
+    created: PrimitiveDateTime,
+    modified: PrimitiveDateTime,
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct HttpDetector {
     pub id: i64,
-    pub status: i8,
+    pub status: i16,
     pub name: String,
     pub group_id: i64,
     pub interval: i16,
@@ -125,7 +125,7 @@ impl From<HttpDetectorSchema> for HttpDetector {
 
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct HttpDetectorInsertParams {
-    pub status: i8,
+    pub status: i16,
     pub name: String,
     pub group_id: u64,
     pub url: String,
@@ -151,7 +151,7 @@ pub struct HttpDetectorInsertParams {
 
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct HttpDetectorUpdateParams {
-    pub status: Option<i8>,
+    pub status: Option<i16>,
     pub name: Option<String>,
     pub group_id: Option<u64>,
     pub url: Option<String>,
@@ -381,7 +381,7 @@ impl Model for HttpDetectorModel {
         let mut conditions = vec![];
 
         if let Some(status) = filters.get("status") {
-            conditions.push(format!("status = '{status}'"));
+            conditions.push(format!("status = {status}"));
         }
 
         (!conditions.is_empty()).then_some(conditions)

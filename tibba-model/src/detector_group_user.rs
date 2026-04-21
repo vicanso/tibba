@@ -22,7 +22,7 @@ use snafu::ResultExt;
 use sqlx::FromRow;
 use sqlx::{Pool, Postgres};
 use std::collections::HashMap;
-use time::OffsetDateTime;
+use time::PrimitiveDateTime;
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -46,8 +46,8 @@ impl DetectorGroupRole {
     //     }
     // }
 
-    pub fn to_i8(self) -> i8 {
-        self as i8
+    pub fn to_i16(self) -> i16 {
+        self as i16
     }
 
     pub fn as_str(self) -> &'static str {
@@ -71,14 +71,14 @@ struct DetectorGroupUserSchema {
     id: i64,
     user_id: i64,
     group_id: i64,
-    role: i8,
-    status: i8,
-    effective_start_time: OffsetDateTime,
-    effective_end_time: OffsetDateTime,
+    role: i16,
+    status: i16,
+    effective_start_time: PrimitiveDateTime,
+    effective_end_time: PrimitiveDateTime,
     invited_by: i64,
     remark: String,
-    created: OffsetDateTime,
-    modified: OffsetDateTime,
+    created: PrimitiveDateTime,
+    modified: PrimitiveDateTime,
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
@@ -86,8 +86,8 @@ pub struct DetectorGroupUser {
     pub id: i64,
     pub user_id: i64,
     pub group_id: i64,
-    pub role: i8,
-    pub status: i8,
+    pub role: i16,
+    pub status: i16,
     pub effective_start_time: String,
     pub effective_end_time: String,
     pub invited_by: i64,
@@ -118,8 +118,8 @@ impl From<DetectorGroupUserSchema> for DetectorGroupUser {
 pub struct DetectorGroupUserInsertParams {
     pub user_id: u64,
     pub group_id: u64,
-    pub role: i8,
-    pub status: i8,
+    pub role: i16,
+    pub status: i16,
     pub effective_start_time: String,
     pub effective_end_time: String,
     pub invited_by: u64,
@@ -128,8 +128,8 @@ pub struct DetectorGroupUserInsertParams {
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct DetectorGroupUserUpdateParams {
-    pub role: Option<i8>,
-    pub status: Option<i8>,
+    pub role: Option<i16>,
+    pub status: Option<i16>,
     pub effective_start_time: Option<String>,
     pub effective_end_time: Option<String>,
     pub invited_by: Option<u64>,
@@ -165,25 +165,25 @@ impl Model for DetectorGroupUserModel {
                         SchemaOption {
                             label: DetectorGroupRole::Owner.to_string(),
                             value: SchemaOptionValue::Integer(
-                                DetectorGroupRole::Owner.to_i8() as i64
+                                DetectorGroupRole::Owner.to_i16() as i64
                             ),
                         },
                         SchemaOption {
                             label: DetectorGroupRole::Admin.to_string(),
                             value: SchemaOptionValue::Integer(
-                                DetectorGroupRole::Admin.to_i8() as i64
+                                DetectorGroupRole::Admin.to_i16() as i64
                             ),
                         },
                         SchemaOption {
                             label: DetectorGroupRole::Member.to_string(),
                             value: SchemaOptionValue::Integer(
-                                DetectorGroupRole::Member.to_i8() as i64
+                                DetectorGroupRole::Member.to_i16() as i64
                             ),
                         },
                         SchemaOption {
                             label: DetectorGroupRole::Viewer.to_string(),
                             value: SchemaOptionValue::Integer(
-                                DetectorGroupRole::Viewer.to_i8() as i64
+                                DetectorGroupRole::Viewer.to_i16() as i64
                             ),
                         },
                     ]),
@@ -219,11 +219,11 @@ impl Model for DetectorGroupUserModel {
         let mut conditions = vec![];
 
         if let Some(status) = filters.get("status") {
-            conditions.push(format!("status = '{status}'"));
+            conditions.push(format!("status = {status}"));
         }
 
         if let Some(group_id) = filters.get("group_id") {
-            conditions.push(format!("group_id = '{group_id}'"));
+            conditions.push(format!("group_id = {group_id}"));
         }
 
         (!conditions.is_empty()).then_some(conditions)

@@ -24,14 +24,14 @@ use sqlx::FromRow;
 use sqlx::types::Json;
 use sqlx::{Pool, Postgres};
 use substring::Substring;
-use time::OffsetDateTime;
+use time::PrimitiveDateTime;
 
 type Result<T> = std::result::Result<T, Error>;
 
 #[derive(FromRow)]
 struct WebPageDetectorSchema {
     id: i64,
-    status: i8,
+    status: i16,
     name: String,
     interval: i16,
     url: String,
@@ -48,14 +48,14 @@ struct WebPageDetectorSchema {
     remark: String,
     regions: Json<Vec<String>>,
     created_by: i64,
-    created: OffsetDateTime,
-    modified: OffsetDateTime,
+    created: PrimitiveDateTime,
+    modified: PrimitiveDateTime,
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct WebPageDetector {
     pub id: i64,
-    pub status: i8,
+    pub status: i16,
     pub name: String,
     pub interval: i16,
     pub url: String,

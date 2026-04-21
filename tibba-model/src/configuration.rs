@@ -29,28 +29,28 @@ use sqlx::{Pool, Postgres};
 use std::collections::HashMap;
 use std::str::FromStr;
 use substring::Substring;
-use time::OffsetDateTime;
+use time::{OffsetDateTime, PrimitiveDateTime};
 
 type Result<T> = std::result::Result<T, Error>;
 
 #[derive(FromRow)]
 struct ConfigurationSchema {
     id: i64,
-    status: i8,
+    status: i16,
     category: String,
     name: String,
     data: Json<serde_json::Value>,
     description: String,
-    effective_start_time: OffsetDateTime,
-    effective_end_time: OffsetDateTime,
-    created: OffsetDateTime,
-    modified: OffsetDateTime,
+    effective_start_time: PrimitiveDateTime,
+    effective_end_time: PrimitiveDateTime,
+    created: PrimitiveDateTime,
+    modified: PrimitiveDateTime,
 }
 
 #[derive(Deserialize, Serialize)]
 pub struct Configuration {
     pub id: i64,
-    pub status: i8,
+    pub status: i16,
     pub category: String,
     pub name: String,
     pub data: HashMap<String, serde_json::Value>,
@@ -84,7 +84,7 @@ pub struct ConfigurationInsertParams {
     pub name: String,
     pub data: serde_json::Value,
     pub description: Option<String>,
-    pub status: i8,
+    pub status: i16,
     pub effective_start_time: String,
     pub effective_end_time: String,
 }
@@ -93,7 +93,7 @@ pub struct ConfigurationInsertParams {
 pub struct ConfigurationUpdateParams {
     pub data: Option<serde_json::Value>,
     pub description: Option<String>,
-    pub status: Option<i8>,
+    pub status: Option<i16>,
     pub effective_start_time: Option<String>,
     pub effective_end_time: Option<String>,
 }
@@ -305,7 +305,8 @@ impl ConfigurationModel {
         pool: &Pool<Postgres>,
         name: &str,
     ) -> Result<Option<HeaderMap>> {
-        let now = OffsetDateTime::now_utc();
+        let now_utc = OffsetDateTime::now_utc();
+        let now = PrimitiveDateTime::new(now_utc.date(), now_utc.time());
         let configurations = sqlx::query_as::<_, ConfigurationSchema>(
             r#"SELECT * FROM configurations
                WHERE category = 'response_headers'
@@ -315,7 +316,7 @@ impl ConfigurationModel {
                AND effective_start_time <= $3
                AND effective_end_time >= $4"#,
         )
-        .bind(Status::Enabled as i8)
+        .bind(Status::Enabled as i16)
         .bind(name)
         .bind(now)
         .bind(now)
@@ -350,11 +351,12 @@ impl ConfigurationModel {
         pool: &Pool<Postgres>,
         category: &str,
         name: &str,
-    ) -> Result<T>
+    ) -> Result<Option<T>>
     where
         T: DeserializeOwned,
     {
-        let now = OffsetDateTime::now_utc();
+        let now_utc = OffsetDateTime::now_utc();
+        let now = PrimitiveDateTime::new(now_utc.date(), now_utc.time());
         let configuration = sqlx::query_as::<_, ConfigurationSchema>(
             r#"SELECT * FROM configurations
                WHERE category = $1
@@ -365,20 +367,23 @@ impl ConfigurationModel {
                AND effective_end_time >= $5"#,
         )
         .bind(category)
-        .bind(Status::Enabled as i8)
+        .bind(Status::Enabled as i16)
         .bind(name)
         .bind(now)
         .bind(now)
-        .fetch_one(pool)
+        .fetch_optional(pool)
         .await
         .context(SqlxSnafu)?;
 
+        let Some(configuration) = configuration else {
+            return Ok(None);
+        };
         let data = configuration.data;
         let Some(data) = data.as_object() else {
             return Err(Error::NotFound);
         };
         let data: T =
             serde_json::from_value(serde_json::Value::Object(data.clone())).context(JsonSnafu)?;
-        Ok(data)
+        Ok(Some(data))
     }
 }

@@ -24,7 +24,7 @@ use sqlx::types::Json;
 use sqlx::{Pool, Postgres};
 use std::collections::HashMap;
 use substring::Substring;
-use time::OffsetDateTime;
+use time::PrimitiveDateTime;
 type Result<T> = std::result::Result<T, Error>;
 
 pub const ROLE_ADMIN: &str = "admin";
@@ -33,9 +33,9 @@ pub const ROLE_SUPER_ADMIN: &str = "su";
 #[derive(FromRow)]
 struct UserSchema {
     id: i64,
-    status: i8,
-    created: OffsetDateTime,
-    modified: OffsetDateTime,
+    status: i16,
+    created: PrimitiveDateTime,
+    modified: PrimitiveDateTime,
     account: String,
     password: String,
     roles: Option<Json<Vec<String>>>,
@@ -48,7 +48,7 @@ struct UserSchema {
 #[derive(Deserialize, Serialize)]
 pub struct User {
     pub id: i64,
-    pub status: i8,
+    pub status: i16,
     pub created: String,
     pub modified: String,
     pub account: String,
@@ -85,7 +85,7 @@ pub struct UserUpdateParams {
     pub avatar: Option<String>,
     pub roles: Option<Vec<String>>,
     pub groups: Option<Vec<String>>,
-    pub status: Option<i8>,
+    pub status: Option<i16>,
 }
 
 pub struct UserModel {}
@@ -260,7 +260,7 @@ impl UserModel {
             ) RETURNING id
             "#,
         )
-        .bind(Status::Enabled as i8)
+        .bind(Status::Enabled as i16)
         .bind(account)
         .bind(password)
         .fetch_one(pool)

@@ -24,7 +24,7 @@ use sqlx::FromRow;
 use sqlx::{Pool, Postgres};
 use std::collections::HashMap;
 use substring::Substring;
-use time::OffsetDateTime;
+use time::PrimitiveDateTime;
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -56,8 +56,8 @@ struct HttpStatSchema {
     result: i16,
     remark: String,
     region: String,
-    created: OffsetDateTime,
-    modified: OffsetDateTime,
+    created: PrimitiveDateTime,
+    modified: PrimitiveDateTime,
 }
 
 #[derive(Default, Deserialize, Serialize, Debug, Clone)]
@@ -439,10 +439,10 @@ impl Model for HttpStatModel {
     fn filter_condition_sql(&self, filters: &HashMap<String, String>) -> Option<Vec<String>> {
         let mut conditions = vec![];
         if let Some(result) = filters.get("result") {
-            conditions.push(format!("result = '{result}'"));
+            conditions.push(format!("result = {result}"));
         }
         if let Some(target_id) = filters.get("target_id") {
-            conditions.push(format!("target_id = '{target_id}'"));
+            conditions.push(format!("target_id = {target_id}"));
         }
         if let Some(total) = filters.get("total") {
             conditions.push(format!("total >= {total}"));

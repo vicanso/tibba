@@ -23,7 +23,7 @@ use sqlx::FromRow;
 use sqlx::{Pool, Postgres};
 use std::collections::HashMap;
 use substring::Substring;
-use time::OffsetDateTime;
+use time::PrimitiveDateTime;
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -33,11 +33,11 @@ struct DetectorGroupSchema {
     name: String,
     code: String,
     owner_id: i64,
-    status: i8,
+    status: i16,
     remark: String,
     created_by: i64,
-    created: OffsetDateTime,
-    modified: OffsetDateTime,
+    created: PrimitiveDateTime,
+    modified: PrimitiveDateTime,
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
@@ -46,7 +46,7 @@ pub struct DetectorGroup {
     pub name: String,
     pub code: String,
     pub owner_id: i64,
-    pub status: i8,
+    pub status: i16,
     pub created_by: i64,
     pub remark: String,
     pub created: String,
@@ -75,7 +75,7 @@ pub struct DetectorGroupInsertParams {
     pub code: String,
     pub owner_id: u64,
     pub created_by: u64,
-    pub status: i8,
+    pub status: i16,
     pub remark: String,
 }
 
@@ -83,7 +83,7 @@ pub struct DetectorGroupInsertParams {
 pub struct DetectorGroupUpdateParams {
     pub name: Option<String>,
     pub owner_id: Option<u64>,
-    pub status: Option<i8>,
+    pub status: Option<i16>,
     pub remark: Option<String>,
 }
 
@@ -153,7 +153,7 @@ impl Model for DetectorGroupModel {
         let mut conditions = vec![];
 
         if let Some(status) = filters.get("status") {
-            conditions.push(format!("status = '{status}'"));
+            conditions.push(format!("status = {status}"));
         }
 
         (!conditions.is_empty()).then_some(conditions)
