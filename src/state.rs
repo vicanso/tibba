@@ -13,13 +13,12 @@
 // limitations under the License.
 
 use super::config::must_get_basic_config;
-use async_trait::async_trait;
 use ctor::ctor;
 use once_cell::sync::{Lazy, OnceCell};
 use std::sync::Arc;
 use std::time::Duration;
 use tibba_error::Error;
-use tibba_hook::{Task, register_task};
+use tibba_hook::{BoxFuture, Task, register_task};
 use tibba_performance::get_process_system_info;
 use tibba_scheduler::{Job, register_job_task};
 use tibba_state::AppState;
@@ -81,15 +80,16 @@ async fn update_performance() {
 
 struct StateTask;
 
-#[async_trait]
 impl Task for StateTask {
-    async fn before(&self) -> Result<bool> {
-        let job = Job::new_repeated_async(Duration::from_secs(60), move |_, _| {
-            Box::pin(update_performance())
+    fn before(&self) -> BoxFuture<'_, Result<bool>> {
+        Box::pin(async move {
+            let job = Job::new_repeated_async(Duration::from_secs(60), move |_, _| {
+                Box::pin(update_performance())
+            })
+            .map_err(Error::new)?;
+            register_job_task("application_performance", job);
+            Ok(true)
         })
-        .map_err(Error::new)?;
-        register_job_task("application_performance", job);
-        Ok(true)
     }
     fn priority(&self) -> u8 {
         u8::MAX
@@ -97,16 +97,18 @@ impl Task for StateTask {
 }
 
 struct StopAppTask;
-#[async_trait]
+
 impl Task for StopAppTask {
-    async fn after(&self) -> Result<bool> {
-        if !is_production() {
-            return Ok(false);
-        }
-        // set flag --> wait x seconds
-        get_app_state().stop();
-        tokio::time::sleep(Duration::from_secs(10)).await;
-        Ok(true)
+    fn after(&self) -> BoxFuture<'_, Result<bool>> {
+        Box::pin(async move {
+            if !is_production() {
+                return Ok(false);
+            }
+            // set flag --> wait x seconds
+            get_app_state().stop();
+            tokio::time::sleep(Duration::from_secs(10)).await;
+            Ok(true)
+        })
     }
 }
 

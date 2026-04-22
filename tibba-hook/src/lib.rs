@@ -12,8 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use async_trait::async_trait;
 use dashmap::DashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::LazyLock;
 use tibba_error::Error;
@@ -25,13 +26,14 @@ const LOG_TARGET: &str = "tibba:hook";
 
 type Result<T> = std::result::Result<T, Error>;
 
-#[async_trait]
+pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+
 pub trait Task {
-    async fn before(&self) -> Result<bool> {
-        Ok(false)
+    fn before(&self) -> BoxFuture<'_, Result<bool>> {
+        Box::pin(async { Ok(false) })
     }
-    async fn after(&self) -> Result<bool> {
-        Ok(false)
+    fn after(&self) -> BoxFuture<'_, Result<bool>> {
+        Box::pin(async { Ok(false) })
     }
     fn priority(&self) -> u8 {
         0

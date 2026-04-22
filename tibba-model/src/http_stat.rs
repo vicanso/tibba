@@ -17,7 +17,6 @@ use super::{
     SchemaAllowEdit, SchemaOption, SchemaOptionValue, SchemaType, SchemaView, SqlxSnafu,
     format_datetime,
 };
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use snafu::ResultExt;
 use sqlx::FromRow;
@@ -220,7 +219,6 @@ impl HttpStatModel {
     }
 }
 
-#[async_trait]
 impl Model for HttpStatModel {
     type Output = HttpStat;
     fn new() -> Self {

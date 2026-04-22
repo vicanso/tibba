@@ -163,6 +163,46 @@
 
 3. **过滤方式**：`RUST_LOG=tibba:cache=info` 即可隔离该模块所有日志，无需 grep 或额外字段匹配。
 
+## async fn in trait（Rust 1.75+）
+
+禁止使用 `async-trait` crate，直接使用 Rust 原生 async fn in trait。
+
+### 规则
+
+1. **仅静态分发的 trait**（不用于 `dyn Trait`）：直接写 `async fn`，并在 trait 定义处加 `#[allow(async_fn_in_trait)]` 消除 clippy 警告：
+   ```rust
+   #[allow(async_fn_in_trait)]
+   pub trait Model {
+       async fn schema_view(&self, pool: &Pool<Postgres>) -> SchemaView;
+       async fn list(&self, pool: &Pool<Postgres>, params: &Params) -> Result<Vec<Self::Output>>;
+   }
+   ```
+
+2. **用于 `dyn Trait`（trait object）的 trait**：使用显式 `BoxFuture` 返回类型，避免装箱开销由宏隐藏：
+   ```rust
+   pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+
+   pub trait Task: Send + Sync {
+       fn before(&self) -> BoxFuture<'_, Result<bool>> {
+           Box::pin(async { Ok(false) })
+       }
+   }
+
+   // 实现侧
+   impl Task for MyTask {
+       fn before(&self) -> BoxFuture<'_, Result<bool>> {
+           Box::pin(async move {
+               // ...
+               Ok(true)
+           })
+       }
+   }
+   ```
+
+3. **`BoxFuture` 定义在各 crate 的入口**（`lib.rs`），设为 `pub` 供外部 impl 引用。
+
+4. **`Cargo.toml` 不引入 `async-trait`**，workspace 层面已移除该依赖。
+
 ## 其他约定
 
 - 字符串初始化用 `String::new()` 而非 `"".to_string()`

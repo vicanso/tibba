@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use async_trait::async_trait;
 use axum_extra::extract::cookie::Key;
 use ctor::ctor;
 use once_cell::sync::OnceCell;
@@ -22,7 +21,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tibba_config::{Config, humantime_serde};
 use tibba_error::Error;
-use tibba_hook::{Task, register_task};
+use tibba_hook::{BoxFuture, Task, register_task};
 use tibba_session::SessionParams;
 use tracing::info;
 use validator::{Validate, ValidationError};
@@ -177,11 +176,12 @@ async fn init_config() -> Result<()> {
 
 struct ConfigTask;
 
-#[async_trait]
 impl Task for ConfigTask {
-    async fn before(&self) -> Result<bool> {
-        init_config().await?;
-        Ok(true)
+    fn before(&self) -> BoxFuture<'_, Result<bool>> {
+        Box::pin(async move {
+            init_config().await?;
+            Ok(true)
+        })
     }
 }
 

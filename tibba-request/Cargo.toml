@@ -14,7 +14,6 @@ name = "tibba_request"
 path = "src/lib.rs"
 
 [dependencies]
-async-trait = { workspace = true }
 axum = { workspace = true }
 bytes = { workspace = true }
 reqwest = { workspace = true }

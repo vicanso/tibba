@@ -13,10 +13,10 @@
 // limitations under the License.
 
 use super::{
-    Error, JsonSnafu, Model, ModelListParams, Schema, SchemaAllowEdit, SchemaType, SchemaView,
-    SqlxSnafu, Status, format_datetime, new_schema_options,
+    Error, JsonSnafu, Model, ModelListParams, Schema, SchemaAllowEdit, SchemaOption,
+    SchemaOptionValue, SchemaType, SchemaView, SqlxSnafu, Status, format_datetime,
+    new_schema_options,
 };
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use snafu::ResultExt;
 use sqlx::FromRow;
@@ -90,7 +90,6 @@ pub struct UserUpdateParams {
 
 pub struct UserModel {}
 
-#[async_trait]
 impl Model for UserModel {
     type Output = User;
     fn new() -> Self {
@@ -238,6 +237,26 @@ impl Model for UserModel {
             .context(SqlxSnafu)?;
 
         Ok(result.into_iter().map(|user| user.into()).collect())
+    }
+    async fn search_options(
+        &self,
+        pool: &Pool<Postgres>,
+        keyword: Option<String>,
+    ) -> Result<Vec<SchemaOption>> {
+        let params = ModelListParams {
+            keyword,
+            limit: 20,
+            page: 1,
+            ..Default::default()
+        };
+        let users = self.list(pool, &params).await?;
+        Ok(users
+            .into_iter()
+            .map(|u| SchemaOption {
+                label: u.account,
+                value: SchemaOptionValue::String(u.id.to_string()),
+            })
+            .collect())
     }
 }
 

@@ -15,7 +15,6 @@
 use super::sql::get_db_pool;
 use crate::cache::get_redis_cache;
 use crate::config::must_get_basic_config;
-use async_trait::async_trait;
 use chrono::DateTime;
 use ctor::ctor;
 use futures::future::join_all;
@@ -30,7 +29,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::{net::IpAddr, time::Duration};
 use tibba_error::Error;
-use tibba_hook::{Task, register_task};
+use tibba_hook::{BoxFuture, Task, register_task};
 use tibba_model::{
     AlarmConfig, ConfigurationModel, HttpDetector, HttpDetectorModel, HttpStat,
     HttpStatInsertParams, HttpStatModel, Model, REGION_ANY, ResultValue,
@@ -695,35 +694,36 @@ async fn run_stat_alarm() -> Result<(i32, i32)> {
 
 struct HttpDetectorTask;
 
-#[async_trait]
 impl Task for HttpDetectorTask {
-    async fn before(&self) -> Result<bool> {
-        // 每分钟
-        let job = Job::new_async("0 * * * * *", |_, _| {
-            let category = "http_detector";
-            Box::pin(async move {
-                match run_detector_stat().await {
-                    Err(e) => {
-                        error!(
-                            category,
-                            error = ?e,
-                            "run http detector failed"
-                        );
-                    }
-                    Ok((success, count, all_task_count)) => {
-                        if count >= 0 {
-                            info!(
+    fn before(&self) -> BoxFuture<'_, Result<bool>> {
+        Box::pin(async move {
+            // 每分钟
+            let job = Job::new_async("0 * * * * *", |_, _| {
+                let category = "http_detector";
+                Box::pin(async move {
+                    match run_detector_stat().await {
+                        Err(e) => {
+                            error!(
                                 category,
-                                success, count, all_task_count, "run http detector success"
+                                error = ?e,
+                                "run http detector failed"
                             );
                         }
-                    }
-                };
+                        Ok((success, count, all_task_count)) => {
+                            if count >= 0 {
+                                info!(
+                                    category,
+                                    success, count, all_task_count, "run http detector success"
+                                );
+                            }
+                        }
+                    };
+                })
             })
+            .map_err(Error::new)?;
+            register_job_task("http_detector", job);
+            Ok(true)
         })
-        .map_err(Error::new)?;
-        register_job_task("http_detector", job);
-        Ok(true)
     }
     fn priority(&self) -> u8 {
         u8::MAX
@@ -732,35 +732,36 @@ impl Task for HttpDetectorTask {
 
 struct HttpStatAlarmTask;
 
-#[async_trait]
 impl Task for HttpStatAlarmTask {
-    async fn before(&self) -> Result<bool> {
-        // 每分钟
-        let job = Job::new_async("30 * * * * *", |_, _| {
-            let category = "http_stat_alarm";
-            Box::pin(async move {
-                // 随机delay，为了让各机器更好的获到执行的机会
-                let delay = Duration::from_millis(rand::random::<u64>() % 2000);
-                tokio::time::sleep(delay).await;
-                match run_stat_alarm().await {
-                    Err(e) => {
-                        error!(
-                            category,
-                            error = ?e,
-                            "run http stat alarm failed"
-                        );
-                    }
-                    Ok((failed, count)) => {
-                        if count >= 0 {
-                            info!(category, failed, count, "run http stat alarm success");
+    fn before(&self) -> BoxFuture<'_, Result<bool>> {
+        Box::pin(async move {
+            // 每分钟
+            let job = Job::new_async("30 * * * * *", |_, _| {
+                let category = "http_stat_alarm";
+                Box::pin(async move {
+                    // 随机delay，为了让各机器更好的获到执行的机会
+                    let delay = Duration::from_millis(rand::random::<u64>() % 2000);
+                    tokio::time::sleep(delay).await;
+                    match run_stat_alarm().await {
+                        Err(e) => {
+                            error!(
+                                category,
+                                error = ?e,
+                                "run http stat alarm failed"
+                            );
+                        }
+                        Ok((failed, count)) => {
+                            if count >= 0 {
+                                info!(category, failed, count, "run http stat alarm success");
+                            }
                         }
                     }
-                }
+                })
             })
+            .map_err(Error::new)?;
+            register_job_task("http_stat_alarm", job);
+            Ok(true)
         })
-        .map_err(Error::new)?;
-        register_job_task("http_stat_alarm", job);
-        Ok(true)
     }
     fn priority(&self) -> u8 {
         u8::MAX

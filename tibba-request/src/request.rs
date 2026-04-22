@@ -13,7 +13,6 @@
 // limitations under the License.
 
 use super::{BuildSnafu, Error, LOG_TARGET, RequestSnafu, SerdeSnafu, UriSnafu};
-use async_trait::async_trait;
 use axum::http::Method;
 use axum::http::header::HeaderMap;
 use axum::http::uri::Uri;
@@ -25,12 +24,15 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use snafu::ResultExt;
 use std::collections::HashMap;
+use std::future::Future;
 use std::net::SocketAddr;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 use tibba_util::{Stopwatch, json_get};
 use tracing::info;
 type Result<T> = std::result::Result<T, Error>;
+pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -76,23 +78,22 @@ pub struct HttpStats {
 }
 
 /// HTTP interceptor trait for request/response modification and monitoring
-#[async_trait]
 pub trait HttpInterceptor: Send + Sync {
     // Handle failed requests (status >= 400)
-    async fn fail(&self, _status: u16, _data: &Bytes) -> Result<()> {
-        Ok(())
+    fn fail(&self, _status: u16, _data: &Bytes) -> BoxFuture<'_, Result<()>> {
+        Box::pin(async { Ok(()) })
     }
     // Modify outgoing requests
-    async fn request(&self, req: RequestBuilder) -> Result<RequestBuilder> {
-        Ok(req)
+    fn request(&self, req: RequestBuilder) -> BoxFuture<'_, Result<RequestBuilder>> {
+        Box::pin(async move { Ok(req) })
     }
     // Modify incoming responses
-    async fn response(&self, data: Bytes) -> Result<Bytes> {
-        Ok(data)
+    fn response(&self, data: Bytes) -> BoxFuture<'_, Result<Bytes>> {
+        Box::pin(async move { Ok(data) })
     }
     // Handle request completion
-    async fn on_done(&self, _stats: &HttpStats, _err: Option<&Error>) -> Result<()> {
-        Ok(())
+    fn on_done(&self, _stats: &HttpStats, _err: Option<&Error>) -> BoxFuture<'_, Result<()>> {
+        Box::pin(async { Ok(()) })
     }
 }
 
@@ -124,28 +125,40 @@ impl CommonInterceptor {
     }
 }
 
-#[async_trait]
 impl HttpInterceptor for CommonInterceptor {
-    async fn fail(&self, status: u16, data: &Bytes) -> Result<()> {
-        handle_fail(&self.service, status, data)
+    fn fail(&self, status: u16, data: &Bytes) -> BoxFuture<'_, Result<()>> {
+        let result = handle_fail(&self.service, status, data);
+        Box::pin(async move { result })
     }
-    async fn on_done(&self, stats: &HttpStats, err: Option<&Error>) -> Result<()> {
+    fn on_done(&self, stats: &HttpStats, err: Option<&Error>) -> BoxFuture<'_, Result<()>> {
         let error = err.map(ToString::to_string);
-        info!(
-            target: LOG_TARGET,
-            service = self.service,
-            method = stats.method,
-            path = stats.path,
-            status = stats.status,
-            remote_addr = stats.remote_addr,
-            content_length = stats.content_length,
-            processing = stats.processing,
-            transfer = stats.transfer,
-            serde = stats.serde,
-            total = stats.total,
-            error,
-        );
-        Ok(())
+        let service = self.service.clone();
+        let method = stats.method.clone();
+        let path = stats.path.clone();
+        let status = stats.status;
+        let remote_addr = stats.remote_addr.clone();
+        let content_length = stats.content_length;
+        let processing = stats.processing;
+        let transfer = stats.transfer;
+        let serde = stats.serde;
+        let total = stats.total;
+        Box::pin(async move {
+            info!(
+                target: LOG_TARGET,
+                service,
+                method,
+                path,
+                status,
+                remote_addr,
+                content_length,
+                processing,
+                transfer,
+                serde,
+                total,
+                error,
+            );
+            Ok(())
+        })
     }
 }
 

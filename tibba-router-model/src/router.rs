@@ -21,12 +21,12 @@ use axum::Router;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::routing::{delete, get, patch, post};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use std::str::FromStr;
 use tibba_error::Error;
-use tibba_model::{Model, ModelListParams, SchemaView};
+use tibba_model::{Model, ModelListParams, SchemaOption, SchemaView};
 use tibba_session::{AdminSession, UserSession};
 use tibba_util::{JsonParams, JsonResult, QueryParams};
 use tibba_validator::x_schema_name;
@@ -312,7 +312,18 @@ async fn create_model(
             }
             DETECTOR_GROUP_MODEL.insert(pool, data).await?
         }
-        CmsModel::DetectorGroupUser => DETECTOR_GROUP_USER_MODEL.insert(pool, data).await?,
+        CmsModel::DetectorGroupUser => {
+            if let Some(obj) = data.as_object_mut() {
+                obj.insert("invited_by".to_string(), user_id.into());
+                if let Some(id) = obj.get("user_id").and_then(|id| id.as_str()) {
+                    let id = id
+                        .parse::<u64>()
+                        .map_err(|_| Error::new("Invalid user id"))?;
+                    obj.insert("user_id".to_string(), id.into());
+                }
+            }
+            DETECTOR_GROUP_USER_MODEL.insert(pool, data).await?
+        }
         _ => {
             return Err(Error::new("The model is not supported"));
         }
@@ -320,6 +331,30 @@ async fn create_model(
     Ok(Json(json!({
         "id": id,
     })))
+}
+
+#[derive(Deserialize, Validate)]
+struct SearchParams {
+    model: String,
+    keyword: Option<String>,
+}
+
+#[derive(Serialize)]
+struct SearchOptionsResp {
+    options: Vec<SchemaOption>,
+}
+
+async fn search_model(
+    State(pool): State<&'static PgPool>,
+    QueryParams(params): QueryParams<SearchParams>,
+    _session: UserSession,
+) -> JsonResult<SearchOptionsResp> {
+    let model = get_model(&params.model)?;
+    let options = match model {
+        CmsModel::User => USER_MODEL.search_options(pool, params.keyword).await?,
+        _ => vec![],
+    };
+    Ok(Json(SearchOptionsResp { options }))
 }
 
 pub struct ModelRouterParams {
@@ -330,6 +365,7 @@ pub fn new_model_router(params: ModelRouterParams) -> Router {
     Router::new()
         .route("/schema", get(get_schema).with_state(params.pool))
         .route("/list", get(list_model).with_state(params.pool))
+        .route("/search", get(search_model).with_state(params.pool))
         .route("/detail", get(get_detail).with_state(params.pool))
         .route("/delete", delete(delete_model).with_state(params.pool))
         .route("/update", patch(update_model).with_state(params.pool))

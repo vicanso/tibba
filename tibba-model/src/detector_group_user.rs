@@ -13,10 +13,10 @@
 // limitations under the License.
 
 use super::{
-    Error, JsonSnafu, Model, ModelListParams, Schema, SchemaAllowCreate, SchemaAllowEdit,
-    SchemaOption, SchemaOptionValue, SchemaType, SchemaView, SqlxSnafu, format_datetime,
+    DetectorGroupModel, Error, JsonSnafu, Model, ModelListParams, Schema, SchemaAllowCreate,
+    SchemaAllowEdit, SchemaOption, SchemaOptionValue, SchemaType, SchemaView, SqlxSnafu,
+    format_datetime, parse_primitive_datetime,
 };
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use snafu::ResultExt;
 use sqlx::FromRow;
@@ -123,6 +123,7 @@ pub struct DetectorGroupUserInsertParams {
     pub effective_start_time: String,
     pub effective_end_time: String,
     pub invited_by: u64,
+    pub created_by: u64,
     pub remark: String,
 }
 
@@ -138,24 +139,31 @@ pub struct DetectorGroupUserUpdateParams {
 
 pub struct DetectorGroupUserModel {}
 
-#[async_trait]
 impl Model for DetectorGroupUserModel {
     type Output = DetectorGroupUser;
     fn new() -> Self {
         Self {}
     }
-    async fn schema_view(&self, _pool: &Pool<Postgres>) -> SchemaView {
+    async fn schema_view(&self, pool: &Pool<Postgres>) -> SchemaView {
+        let mut group_options = vec![];
+        if let Ok(groups) = DetectorGroupModel::new().list_enabled(pool).await {
+            for group in groups {
+                group_options.push(SchemaOption {
+                    label: group.name,
+                    value: SchemaOptionValue::Integer(group.id),
+                });
+            }
+            group_options.sort_by_key(|option| option.label.clone());
+        }
         SchemaView {
             schemas: vec![
                 Schema::new_id(),
-                Schema {
-                    name: "user_id".to_string(),
-                    category: SchemaType::Number,
-                    ..Default::default()
-                },
+                Schema::new_user_search("user_id"),
                 Schema {
                     name: "group_id".to_string(),
                     category: SchemaType::Number,
+                    required: true,
+                    options: Some(group_options),
                     ..Default::default()
                 },
                 Schema {
@@ -193,11 +201,13 @@ impl Model for DetectorGroupUserModel {
                 Schema {
                     name: "effective_start_time".to_string(),
                     category: SchemaType::Date,
+                    required: true,
                     ..Default::default()
                 },
                 Schema {
                     name: "effective_end_time".to_string(),
                     category: SchemaType::Date,
+                    required: true,
                     ..Default::default()
                 },
                 Schema::new_remark(),
@@ -233,15 +243,16 @@ impl Model for DetectorGroupUserModel {
         let params: DetectorGroupUserInsertParams =
             serde_json::from_value(params).context(JsonSnafu)?;
         let row: (i64,) = sqlx::query_as(
-            r#"INSERT INTO detector_group_users (user_id, group_id, role, status, effective_start_time, effective_end_time, invited_by, remark) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id"#,
+            r#"INSERT INTO detector_group_users (user_id, group_id, role, status, effective_start_time, effective_end_time, invited_by, created_by, remark) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id"#,
         )
         .bind(params.user_id as i64)
         .bind(params.group_id as i64)
         .bind(params.role)
         .bind(params.status)
-        .bind(params.effective_start_time)
-        .bind(params.effective_end_time)
+        .bind(parse_primitive_datetime(&params.effective_start_time)?)
+        .bind(parse_primitive_datetime(&params.effective_end_time)?)
         .bind(params.invited_by as i64)
+        .bind(params.created_by as i64)
         .bind(params.remark)
         .fetch_one(pool)
         .await
@@ -286,8 +297,8 @@ impl Model for DetectorGroupUserModel {
         )
         .bind(params.role)
         .bind(params.status)
-        .bind(params.effective_start_time)
-        .bind(params.effective_end_time)
+        .bind(params.effective_start_time.as_deref().map(parse_primitive_datetime).transpose()?)
+        .bind(params.effective_end_time.as_deref().map(parse_primitive_datetime).transpose()?)
         .bind(params.invited_by.map(|v| v as i64))
         .bind(params.remark)
         .bind(id as i64)

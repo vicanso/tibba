@@ -43,6 +43,7 @@ pub enum SchemaType {
     Code,
     PopoverCard,
     Placeholder,
+    Search,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -131,6 +132,7 @@ pub struct Schema {
     pub hidden_values: Vec<String>,
     pub max_width: Option<u16>,
     pub combinations: Option<Vec<String>>,
+    pub search_model: Option<String>,
 }
 
 impl Schema {
@@ -188,6 +190,14 @@ impl Schema {
         let mut modified = Self::new_modified();
         modified.filterable = true;
         modified
+    }
+    pub fn new_user_search(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            category: SchemaType::Search,
+            search_model: Some("user".to_string()),
+            ..Default::default()
+        }
     }
     pub fn new_readonly_remark() -> Self {
         Self {

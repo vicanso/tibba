@@ -14,7 +14,6 @@ name = "tibba_cache"
 path = "src/lib.rs"
 
 [dependencies]
-async-trait = { workspace = true }
 deadpool-redis = { workspace = true }
 humantime-serde = { workspace = true }
 lru = { workspace = true }

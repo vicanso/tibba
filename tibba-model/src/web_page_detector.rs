@@ -17,7 +17,6 @@ use super::{
     SchemaType, SchemaView, SqlxSnafu, format_datetime, new_schema_options,
 };
 use super::{REGION_ALIYUN, REGION_ANY, REGION_GZ, REGION_TX};
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use snafu::ResultExt;
 use sqlx::FromRow;
@@ -125,7 +124,6 @@ pub struct WebPageDetectorInsertParams {
 
 pub struct WebPageDetectorModel {}
 
-#[async_trait]
 impl Model for WebPageDetectorModel {
     type Output = WebPageDetector;
     fn new() -> Self {

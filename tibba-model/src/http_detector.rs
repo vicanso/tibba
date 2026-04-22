@@ -18,7 +18,6 @@ use super::{
     format_datetime, new_schema_options,
 };
 use super::{REGION_ALIYUN, REGION_ANY, REGION_GZ, REGION_TX};
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use snafu::ResultExt;
 use sqlx::FromRow;
@@ -210,7 +209,6 @@ impl HttpDetectorModel {
     }
 }
 
-#[async_trait]
 impl Model for HttpDetectorModel {
     type Output = HttpDetector;
     fn new() -> Self {

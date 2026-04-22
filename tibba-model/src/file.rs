@@ -17,7 +17,6 @@ use super::{
     SchemaAllowCreate, SchemaAllowEdit, SchemaOption, SchemaOptionValue, SchemaType, SchemaView,
     SqlxSnafu, format_datetime,
 };
-use async_trait::async_trait;
 use http::header::{HeaderMap, HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
 use snafu::ResultExt;
@@ -172,7 +171,6 @@ impl FileModel {
     }
 }
 
-#[async_trait]
 impl Model for FileModel {
     type Output = File;
     fn new() -> Self {

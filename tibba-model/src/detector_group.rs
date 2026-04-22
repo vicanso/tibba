@@ -16,7 +16,6 @@ use super::{
     Error, JsonSnafu, Model, ModelListParams, Schema, SchemaAllowCreate, SchemaAllowEdit,
     SchemaType, SchemaView, SqlxSnafu, format_datetime,
 };
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use snafu::ResultExt;
 use sqlx::FromRow;
@@ -102,7 +101,6 @@ impl DetectorGroupModel {
     }
 }
 
-#[async_trait]
 impl Model for DetectorGroupModel {
     type Output = DetectorGroup;
     fn new() -> Self {

@@ -13,14 +13,13 @@
 // limitations under the License.
 
 use super::config::must_get_config;
-use async_trait::async_trait;
 use ctor::ctor;
 use once_cell::sync::OnceCell;
 use std::sync::Arc;
 use std::time::Duration;
 use tibba_cache::{RedisCache, RedisClient, RedisCmdStat, new_redis_client};
 use tibba_error::Error;
-use tibba_hook::{Task, register_task};
+use tibba_hook::{BoxFuture, Task, register_task};
 use tibba_scheduler::{Job, register_job_task};
 use tibba_util::Stopwatch;
 use tracing::{error, info};
@@ -75,40 +74,43 @@ async fn redis_health_check() {
 
 struct RedisTask;
 
-#[async_trait]
 impl Task for RedisTask {
-    async fn before(&self) -> Result<bool> {
-        let _ = get_redis_client()?;
-        get_redis_cache().ping().await?;
-        let job = Job::new_repeated_async(Duration::from_secs(60), |_, _| {
-            Box::pin(redis_health_check())
-        })
-        .map_err(Error::new)?;
-        register_job_task("redis_health_check", job);
+    fn before(&self) -> BoxFuture<'_, Result<bool>> {
+        Box::pin(async move {
+            let _ = get_redis_client()?;
+            get_redis_cache().ping().await?;
+            let job = Job::new_repeated_async(Duration::from_secs(60), |_, _| {
+                Box::pin(redis_health_check())
+            })
+            .map_err(Error::new)?;
+            register_job_task("redis_health_check", job);
 
-        let job = Job::new_repeated(Duration::from_secs(60), |_, _| {
-            if let Ok(client) = get_redis_client() {
-                let stat = client.stat();
-                info!(
-                    category = "redis_client_stat",
-                    pool_max_size = stat.pool_max_size,
-                    pool_size = stat.pool_size,
-                    pool_available = stat.pool_available,
-                    pool_waiting = stat.pool_waiting,
-                    conn_created = stat.conn_created,
-                    conn_recycled = stat.conn_recycled,
-                );
-            }
+            let job = Job::new_repeated(Duration::from_secs(60), |_, _| {
+                if let Ok(client) = get_redis_client() {
+                    let stat = client.stat();
+                    info!(
+                        category = "redis_client_stat",
+                        pool_max_size = stat.pool_max_size,
+                        pool_size = stat.pool_size,
+                        pool_available = stat.pool_available,
+                        pool_waiting = stat.pool_waiting,
+                        conn_created = stat.conn_created,
+                        conn_recycled = stat.conn_recycled,
+                    );
+                }
+            })
+            .map_err(Error::new)?;
+            register_job_task("redis_client_stat", job);
+            Ok(true)
         })
-        .map_err(Error::new)?;
-        register_job_task("redis_client_stat", job);
-        Ok(true)
     }
-    async fn after(&self) -> Result<bool> {
-        if let Ok(client) = get_redis_client() {
-            client.close();
-        }
-        Ok(true)
+    fn after(&self) -> BoxFuture<'_, Result<bool>> {
+        Box::pin(async move {
+            if let Ok(client) = get_redis_client() {
+                client.close();
+            }
+            Ok(true)
+        })
     }
     fn priority(&self) -> u8 {
         16

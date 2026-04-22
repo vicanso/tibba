@@ -14,13 +14,12 @@
 
 use super::dal::get_opendal_storage;
 use super::sql::get_db_pool;
-use async_trait::async_trait;
 use ctor::ctor;
 use serde::Deserialize;
 use std::sync::Arc;
 use tibba_error::Error;
 use tibba_headless::{WebPageParams, new_browser, run_web_page_stat_with_browser};
-use tibba_hook::{Task, register_task};
+use tibba_hook::{BoxFuture, Task, register_task};
 use tibba_model::{ConfigurationModel, FileInsertParams, FileModel, Model, WebPageDetectorModel};
 use tibba_scheduler::{Job, register_job_task};
 use tibba_util::uuid;
@@ -94,30 +93,31 @@ async fn run_web_page_stat() -> Result<()> {
 
 struct WebPageStatTask;
 
-#[async_trait]
 impl Task for WebPageStatTask {
-    async fn before(&self) -> Result<bool> {
-        // 每分钟
-        let job = Job::new_async("30 * * * * *", |_, _| {
-            let category = "web_page_stat";
-            Box::pin(async move {
-                match run_web_page_stat().await {
-                    Err(e) => {
-                        error!(
-                            category,
-                            error = ?e,
-                            "run web page stat failed"
-                        );
-                    }
-                    Ok(()) => {
-                        info!(category, "run web page stat success");
-                    }
-                };
+    fn before(&self) -> BoxFuture<'_, Result<bool>> {
+        Box::pin(async move {
+            // 每分钟
+            let job = Job::new_async("30 * * * * *", |_, _| {
+                let category = "web_page_stat";
+                Box::pin(async move {
+                    match run_web_page_stat().await {
+                        Err(e) => {
+                            error!(
+                                category,
+                                error = ?e,
+                                "run web page stat failed"
+                            );
+                        }
+                        Ok(()) => {
+                            info!(category, "run web page stat success");
+                        }
+                    };
+                })
             })
+            .map_err(Error::new)?;
+            register_job_task("web_page_stat", job);
+            Ok(true)
         })
-        .map_err(Error::new)?;
-        register_job_task("web_page_stat", job);
-        Ok(true)
     }
     fn priority(&self) -> u8 {
         u8::MAX

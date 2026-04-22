@@ -16,9 +16,8 @@ use super::Model;
 use super::user::{ROLE_ADMIN, ROLE_SUPER_ADMIN};
 use super::{
     Error, JsonSnafu, ModelListParams, Schema, SchemaAllowCreate, SchemaAllowEdit, SchemaType,
-    SchemaView, SqlxSnafu, Status, format_datetime, new_schema_options,
+    SchemaView, SqlxSnafu, Status, format_datetime, new_schema_options, parse_primitive_datetime,
 };
-use async_trait::async_trait;
 use http::header::{HeaderMap, HeaderName, HeaderValue};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -107,7 +106,6 @@ pub struct AlarmConfig {
 #[derive(Default)]
 pub struct ConfigurationModel {}
 
-#[async_trait]
 impl Model for ConfigurationModel {
     type Output = Configuration;
     fn new() -> Self {
@@ -201,8 +199,8 @@ impl Model for ConfigurationModel {
         .bind(params.data)
         .bind(params.description)
         .bind(params.status)
-        .bind(params.effective_start_time)
-        .bind(params.effective_end_time)
+        .bind(parse_primitive_datetime(&params.effective_start_time)?)
+        .bind(parse_primitive_datetime(&params.effective_end_time)?)
         .fetch_one(pool)
         .await
         .context(SqlxSnafu)?;
@@ -247,8 +245,8 @@ impl Model for ConfigurationModel {
         .bind(params.data)
         .bind(params.description)
         .bind(params.status)
-        .bind(params.effective_start_time)
-        .bind(params.effective_end_time)
+        .bind(params.effective_start_time.as_deref().map(parse_primitive_datetime).transpose()?)
+        .bind(params.effective_end_time.as_deref().map(parse_primitive_datetime).transpose()?)
         .bind(id as i64)
         .execute(pool)
         .await

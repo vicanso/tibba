@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use async_trait::async_trait;
 use chrono::{DateTime, offset};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -21,7 +20,8 @@ use snafu::Snafu;
 use sqlx::{Pool, Postgres};
 use std::collections::HashMap;
 use tibba_error::Error as BaseError;
-use time::PrimitiveDateTime;
+use time::macros::format_description;
+use time::{OffsetDateTime, PrimitiveDateTime};
 
 pub const REGION_ANY: &str = "any";
 pub const REGION_TX: &str = "tx";
@@ -47,6 +47,8 @@ pub enum Error {
     NotSupported { name: String },
     #[snafu(display("Not found"))]
     NotFound,
+    #[snafu(display("Invalid datetime: {value}"))]
+    InvalidDatetime { value: String },
 }
 
 impl From<Error> for BaseError {
@@ -66,14 +68,37 @@ impl From<Error> for BaseError {
             Error::NotFound => BaseError::new("Not found")
                 .with_sub_category("not_found")
                 .with_exception(true),
+            Error::InvalidDatetime { value } => {
+                BaseError::new(format!("Invalid datetime: {value}"))
+                    .with_sub_category("invalid_datetime")
+            }
         };
         err.with_category("model")
     }
 }
 
+pub(crate) fn parse_primitive_datetime(s: &str) -> Result<PrimitiveDateTime> {
+    let fmt_t = format_description!("[year]-[month]-[day]T[hour]:[minute]:[second]");
+    let fmt_space = format_description!("[year]-[month]-[day] [hour]:[minute]:[second]");
+    if let Ok(dt) = PrimitiveDateTime::parse(s, fmt_t) {
+        return Ok(dt);
+    }
+    if let Ok(dt) = PrimitiveDateTime::parse(s, fmt_space) {
+        return Ok(dt);
+    }
+    // with timezone offset: convert to UTC then strip offset
+    if let Ok(odt) = OffsetDateTime::parse(s, &time::format_description::well_known::Rfc3339) {
+        let utc = odt.to_offset(time::UtcOffset::UTC);
+        return Ok(PrimitiveDateTime::new(utc.date(), utc.time()));
+    }
+    Err(Error::InvalidDatetime {
+        value: s.to_string(),
+    })
+}
+
 type Result<T> = std::result::Result<T, Error>;
 
-#[async_trait]
+#[allow(async_fn_in_trait)]
 pub trait Model {
     type Output: Serialize;
     fn new() -> Self;
@@ -167,6 +192,13 @@ pub trait Model {
         "count": count,
         "items": items,
         }))
+    }
+    async fn search_options(
+        &self,
+        _pool: &Pool<Postgres>,
+        _keyword: Option<String>,
+    ) -> Result<Vec<SchemaOption>> {
+        Ok(vec![])
     }
 }
 

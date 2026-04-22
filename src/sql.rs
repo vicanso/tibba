@@ -13,7 +13,6 @@
 // limitations under the License.
 
 use crate::config::must_get_config;
-use async_trait::async_trait;
 use ctor::ctor;
 use once_cell::sync::OnceCell;
 use sqlx::PgPool;
@@ -21,7 +20,7 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, atomic::AtomicBool};
 use std::time::Duration;
 use tibba_error::Error;
-use tibba_hook::{Task, register_task};
+use tibba_hook::{BoxFuture, Task, register_task};
 use tibba_scheduler::{Job, register_job_task};
 use tibba_sql::{PoolStat, new_pg_pool};
 use tracing::info;
@@ -40,43 +39,46 @@ struct SqlTask {
     running: AtomicBool,
 }
 
-#[async_trait]
 impl Task for SqlTask {
-    async fn before(&self) -> Result<bool> {
-        let app_config = must_get_config();
-        let stat = Arc::new(PoolStat::default());
-        let pool = new_pg_pool(&app_config.sub_config("database"), Some(stat.clone()))
-            .await
+    fn before(&self) -> BoxFuture<'_, Result<bool>> {
+        Box::pin(async move {
+            let app_config = must_get_config();
+            let stat = Arc::new(PoolStat::default());
+            let pool = new_pg_pool(&app_config.sub_config("database"), Some(stat.clone()))
+                .await
+                .map_err(Error::new)?;
+            DB_POOL
+                .set(pool)
+                .map_err(|_| Error::new("set db pool fail"))?;
+
+            let task = "database_performance";
+            let job = Job::new_repeated(Duration::from_secs(60), move |_, _| {
+                let (connected, executions, idle_for) = stat.stat();
+                let pool = get_db_pool();
+                let connection_size = pool.size();
+                let connection_idle = pool.num_idle();
+
+                info!(
+                    category = task,
+                    connection_size, connection_idle, connected, executions, idle_for,
+                );
+            })
             .map_err(Error::new)?;
-        DB_POOL
-            .set(pool)
-            .map_err(|_| Error::new("set db pool fail"))?;
+            register_job_task(task, job);
+            self.running.store(true, Ordering::Relaxed);
 
-        let task = "database_performance";
-        let job = Job::new_repeated(Duration::from_secs(60), move |_, _| {
-            let (connected, executions, idle_for) = stat.stat();
-            let pool = get_db_pool();
-            let connection_size = pool.size();
-            let connection_idle = pool.num_idle();
-
-            info!(
-                category = task,
-                connection_size, connection_idle, connected, executions, idle_for,
-            );
+            Ok(true)
         })
-        .map_err(Error::new)?;
-        register_job_task(task, job);
-        self.running.store(true, Ordering::Relaxed);
-
-        Ok(true)
     }
-    async fn after(&self) -> Result<bool> {
-        if !self.running.load(Ordering::Relaxed) {
-            return Ok(false);
-        }
-        let pool = get_db_pool();
-        pool.close().await;
-        Ok(true)
+    fn after(&self) -> BoxFuture<'_, Result<bool>> {
+        Box::pin(async move {
+            if !self.running.load(Ordering::Relaxed) {
+                return Ok(false);
+            }
+            let pool = get_db_pool();
+            pool.close().await;
+            Ok(true)
+        })
     }
     fn priority(&self) -> u8 {
         16

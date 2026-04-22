@@ -5413,7 +5413,6 @@ dependencies = [
 name = "tibba"
 version = "0.1.0"
 dependencies = [
- "async-trait",
  "axum",
  "axum-extra",
  "chrono",
@@ -5468,7 +5467,6 @@ dependencies = [
 name = "tibba-cache"
 version = "0.1.2"
 dependencies = [
- "async-trait",
  "deadpool-redis",
  "humantime-serde",
  "lru",
@@ -5538,7 +5536,6 @@ dependencies = [
 name = "tibba-hook"
 version = "0.1.0"
 dependencies = [
- "async-trait",
  "dashmap",
  "tibba-error",
  "tracing",
@@ -5565,7 +5562,6 @@ dependencies = [
 name = "tibba-model"
 version = "0.1.0"
 dependencies = [
- "async-trait",
  "chrono",
  "http",
  "serde",
@@ -5605,7 +5601,6 @@ dependencies = [
 name = "tibba-request"
 version = "0.1.0"
 dependencies = [
- "async-trait",
  "axum",
  "bytes",
  "pretty_assertions",
