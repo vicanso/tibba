@@ -27,9 +27,12 @@ mod storage;
 
 pub use storage::*;
 
+/// MySQL 存储 URL 前缀。
 const MYSQL_PREFIX: &str = "mysql://";
+/// 本地文件系统存储 URL 前缀。
 const FS_PREFIX: &str = "file://";
 
+/// OpenDAL 存储配置，`url` 决定后端类型，`schema` 可显式指定协议（如 "http"）。
 #[derive(Debug, Clone, Validate, Deserialize, Default)]
 pub struct OpenDalConfig {
     #[validate(length(min = 10))]
@@ -38,6 +41,7 @@ pub struct OpenDalConfig {
     pub schema: String,
 }
 
+/// 从应用配置中读取并校验 OpenDalConfig。
 fn new_opendal_config(config: &Config) -> Result<OpenDalConfig> {
     let open_dal_config = config
         .try_deserialize::<OpenDalConfig>()
@@ -68,6 +72,7 @@ pub enum Error {
         #[snafu(source(from(validator::ValidationErrors, Box::new)))]
         source: Box<validator::ValidationErrors>,
     },
+    /// 其他无效参数或配置错误。
     #[snafu(display("{message}"))]
     Invalid { message: String },
 }
@@ -91,6 +96,7 @@ impl From<Error> for BaseError {
     }
 }
 
+/// S3 连接参数，从 URL 查询字符串中解析。
 #[derive(Deserialize, Debug, PartialEq)]
 struct S3Params {
     bucket: String,
@@ -99,7 +105,7 @@ struct S3Params {
     secret_access_key: Option<String>,
 }
 
-/// Create a new S3 storage.
+/// 从 S3 兼容 URL 创建 S3 存储后端。
 fn new_s3_dal(url: &str) -> Result<Storage> {
     let parsed = parse_uri::<S3Params>(url).context(ParseUriSnafu)?;
     let mut builder = opendal::services::S3::default().endpoint(&parsed.endpoint());
@@ -124,7 +130,7 @@ fn new_s3_dal(url: &str) -> Result<Storage> {
     Ok(Storage::new(dal))
 }
 
-/// Create a new MySQL storage.
+/// 从 MySQL 连接字符串创建 MySQL 存储后端，使用 `objects` 表存储对象数据。
 fn new_mysql_dal(url: &str) -> Result<Storage> {
     let builder = opendal::services::Mysql::default()
         .connection_string(url)
@@ -136,6 +142,7 @@ fn new_mysql_dal(url: &str) -> Result<Storage> {
     Ok(Storage::new(dal))
 }
 
+/// 将路径字符串规范化为绝对路径，支持 `~/` 家目录前缀展开。
 #[inline]
 fn resolve_path(path_str: &str) -> String {
     if path_str.is_empty() {
@@ -155,6 +162,7 @@ fn resolve_path(path_str: &str) -> String {
     )
 }
 
+/// 从 `file://` URL 创建本地文件系统存储后端，根路径需至少 2 个字符。
 fn new_fs_dal(url: &str) -> Result<Storage> {
     let root = url.strip_prefix(FS_PREFIX).unwrap_or_default();
     if root.len() < 2 {
@@ -170,6 +178,7 @@ fn new_fs_dal(url: &str) -> Result<Storage> {
     Ok(Storage::new(dal))
 }
 
+/// 从 HTTP URL 创建只读 HTTP 存储后端。
 fn new_http_dal(url: &str) -> Result<Storage> {
     let builder = opendal::services::Http::default().endpoint(url);
     let dal = Operator::new(builder)
@@ -179,9 +188,11 @@ fn new_http_dal(url: &str) -> Result<Storage> {
     Ok(Storage::new(dal))
 }
 
-/// Create a new storage from config.
-/// If it's a MySQL URL, it will create a MySQL storage.
-/// Otherwise, it will create a S3 storage.
+/// 根据配置 URL 自动选择存储后端并创建 Storage 实例。
+/// - `mysql://` → MySQL 后端
+/// - `file://`  → 本地文件系统后端
+/// - `schema = "http"` → HTTP 只读后端
+/// - 其余 → S3 兼容后端
 pub fn new_opendal_storage(config: &Config) -> Result<Storage> {
     let opendal_config = new_opendal_config(config)?;
     let url = opendal_config.url.as_str();

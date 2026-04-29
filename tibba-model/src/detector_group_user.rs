@@ -20,7 +20,7 @@ use super::{
 use serde::{Deserialize, Serialize};
 use snafu::ResultExt;
 use sqlx::FromRow;
-use sqlx::{Pool, Postgres};
+use sqlx::{Pool, Postgres, QueryBuilder};
 use std::collections::HashMap;
 use time::PrimitiveDateTime;
 
@@ -198,18 +198,8 @@ impl Model for DetectorGroupUserModel {
                     ..Default::default()
                 },
                 Schema::new_status(),
-                Schema {
-                    name: "effective_start_time".to_string(),
-                    category: SchemaType::Date,
-                    required: true,
-                    ..Default::default()
-                },
-                Schema {
-                    name: "effective_end_time".to_string(),
-                    category: SchemaType::Date,
-                    required: true,
-                    ..Default::default()
-                },
+                Schema::new_effective_start_time(),
+                Schema::new_effective_end_time(),
                 Schema::new_remark(),
                 Schema::new_created(),
             ],
@@ -225,18 +215,20 @@ impl Model for DetectorGroupUserModel {
         }
     }
 
-    fn filter_condition_sql(&self, filters: &HashMap<String, String>) -> Option<Vec<String>> {
-        let mut conditions = vec![];
-
-        if let Some(status) = filters.get("status") {
-            conditions.push(format!("status = {status}"));
+    fn push_filter_conditions<'args>(
+        &self,
+        qb: &mut QueryBuilder<'args, Postgres>,
+        filters: &HashMap<String, String>,
+    ) -> Result<()> {
+        if let Some(status) = filters.get("status").and_then(|s| s.parse::<i16>().ok()) {
+            qb.push(" AND status = ");
+            qb.push_bind(status);
         }
-
-        if let Some(group_id) = filters.get("group_id") {
-            conditions.push(format!("group_id = {group_id}"));
+        if let Some(group_id) = filters.get("group_id").and_then(|s| s.parse::<i64>().ok()) {
+            qb.push(" AND group_id = ");
+            qb.push_bind(group_id);
         }
-
-        (!conditions.is_empty()).then_some(conditions)
+        Ok(())
     }
 
     async fn insert(&self, pool: &Pool<Postgres>, params: serde_json::Value) -> Result<u64> {
@@ -310,13 +302,13 @@ impl Model for DetectorGroupUserModel {
     }
 
     async fn count(&self, pool: &Pool<Postgres>, params: &ModelListParams) -> Result<i64> {
-        let mut sql = String::from("SELECT COUNT(*) FROM detector_group_users");
-        sql.push_str(&self.condition_sql(params)?);
-        let count = sqlx::query_scalar::<_, i64>(&sql)
+        let mut qb = QueryBuilder::new("SELECT COUNT(*) FROM detector_group_users");
+        self.push_conditions(&mut qb, params)?;
+        let count = qb
+            .build_query_scalar::<i64>()
             .fetch_one(pool)
             .await
             .context(SqlxSnafu)?;
-
         Ok(count)
     }
 
@@ -325,17 +317,14 @@ impl Model for DetectorGroupUserModel {
         pool: &Pool<Postgres>,
         params: &ModelListParams,
     ) -> Result<Vec<Self::Output>> {
-        let limit = params.limit.min(200);
-        let mut sql = String::from("SELECT * FROM detector_group_users");
-        sql.push_str(&self.condition_sql(params)?);
-        let offset = (params.page - 1) * limit;
-        sql.push_str(&format!(" LIMIT {limit} OFFSET {offset}"));
-
-        let users = sqlx::query_as::<_, DetectorGroupUserSchema>(&sql)
+        let mut qb = QueryBuilder::new("SELECT * FROM detector_group_users");
+        self.push_conditions(&mut qb, params)?;
+        params.push_pagination(&mut qb);
+        let users = qb
+            .build_query_as::<DetectorGroupUserSchema>()
             .fetch_all(pool)
             .await
             .context(SqlxSnafu)?;
-
-        Ok(users.into_iter().map(|schema| schema.into()).collect())
+        Ok(users.into_iter().map(|s| s.into()).collect())
     }
 }

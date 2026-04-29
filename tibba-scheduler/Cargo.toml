@@ -1,6 +1,6 @@
 [package]
 name = "tibba-scheduler"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 authors = ["Tree Xie <tree.xie@outlook.com>"]
 license = "Apache-2.0"
@@ -17,6 +17,6 @@ path = "src/lib.rs"
 [dependencies]
 dashmap = { workspace = true }
 snafu = { workspace = true }
-tibba-error = { path = "../tibba-error", version = "0.1.0" }
+tibba-error = { path = "../tibba-error", version = "0.2.0" }
 tokio-cron-scheduler = { workspace = true }
 tracing = { workspace = true }

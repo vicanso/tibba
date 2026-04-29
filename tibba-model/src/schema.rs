@@ -208,6 +208,31 @@ impl Schema {
             ..Default::default()
         }
     }
+    pub fn new_name() -> Self {
+        Self {
+            name: "name".to_string(),
+            category: SchemaType::String,
+            required: true,
+            fixed: true,
+            ..Default::default()
+        }
+    }
+    pub fn new_effective_start_time() -> Self {
+        Self {
+            name: "effective_start_time".to_string(),
+            category: SchemaType::Date,
+            required: true,
+            ..Default::default()
+        }
+    }
+    pub fn new_effective_end_time() -> Self {
+        Self {
+            name: "effective_end_time".to_string(),
+            category: SchemaType::Date,
+            required: true,
+            ..Default::default()
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]

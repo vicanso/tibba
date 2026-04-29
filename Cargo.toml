@@ -1,6 +1,6 @@
 [package]
 name = "tibba"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 authors = ["Tree Xie <tree.xie@outlook.com>"]
 license = "Apache-2.0"
@@ -156,7 +156,7 @@ serde_path_to_error = "0.1.20"
 serde_urlencoded = "0.7.1"
 sha2 = "0.11.0"
 snafu = "0.9.0"
-sqlx = { version = "0.8.6", features = ["runtime-tokio", "postgres", "time"] }
+sqlx = { version = "0.8.6", features = ["runtime-tokio", "postgres", "time", "chrono"] }
 strum = { version = "0.28.0", features = ["derive"] }
 substring = "1.4.5"
 sysinfo = "0.38.4"

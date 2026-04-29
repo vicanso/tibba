@@ -1,6 +1,6 @@
 [package]
 name = "tibba-model"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 
 
@@ -16,5 +16,6 @@ serde_json = { workspace = true }
 snafu = { workspace = true }
 sqlx = { workspace = true }
 substring = { workspace = true }
+tokio = { workspace = true }
 tibba-error = { path = "../tibba-error" }
 time = { workspace = true }

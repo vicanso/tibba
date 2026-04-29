@@ -21,9 +21,8 @@ use serde::{Deserialize, Serialize};
 use snafu::ResultExt;
 use sqlx::FromRow;
 use sqlx::types::Json;
-use sqlx::{Pool, Postgres};
+use sqlx::{Pool, Postgres, QueryBuilder};
 use std::collections::HashMap;
-use substring::Substring;
 use time::PrimitiveDateTime;
 type Result<T> = std::result::Result<T, Error>;
 
@@ -38,11 +37,14 @@ struct UserSchema {
     modified: PrimitiveDateTime,
     account: String,
     password: String,
+    nickname: Option<String>,
+    phone: Option<String>,
     roles: Option<Json<Vec<String>>>,
     groups: Option<Json<Vec<String>>>,
     remark: Option<String>,
     email: Option<String>,
     avatar: Option<String>,
+    last_login_at: Option<PrimitiveDateTime>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -54,11 +56,14 @@ pub struct User {
     pub account: String,
     #[serde(skip_serializing)]
     pub password: String,
+    pub nickname: Option<String>,
+    pub phone: Option<String>,
     pub roles: Option<Vec<String>>,
     pub groups: Option<Vec<String>>,
     pub remark: Option<String>,
     pub email: Option<String>,
     pub avatar: Option<String>,
+    pub last_login_at: Option<String>,
 }
 
 impl From<UserSchema> for User {
@@ -70,17 +75,22 @@ impl From<UserSchema> for User {
             modified: format_datetime(user.modified),
             account: user.account,
             password: user.password,
+            nickname: user.nickname,
+            phone: user.phone,
             roles: user.roles.map(|roles| roles.0),
             groups: user.groups.map(|groups| groups.0),
             remark: user.remark,
             email: user.email,
             avatar: user.avatar,
+            last_login_at: user.last_login_at.map(format_datetime),
         }
     }
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct UserUpdateParams {
+    pub nickname: Option<String>,
+    pub phone: Option<String>,
     pub email: Option<String>,
     pub avatar: Option<String>,
     pub roles: Option<Vec<String>>,
@@ -112,6 +122,16 @@ impl Model for UserModel {
                 },
                 Schema::new_status(),
                 Schema {
+                    name: "nickname".to_string(),
+                    category: SchemaType::String,
+                    ..Default::default()
+                },
+                Schema {
+                    name: "phone".to_string(),
+                    category: SchemaType::String,
+                    ..Default::default()
+                },
+                Schema {
                     name: "roles".to_string(),
                     category: SchemaType::Strings,
                     options: Some(new_schema_options(&[ROLE_ADMIN, ROLE_SUPER_ADMIN])),
@@ -121,6 +141,12 @@ impl Model for UserModel {
                     name: "groups".to_string(),
                     category: SchemaType::Strings,
                     options: Some(new_schema_options(&["it", "marketing"])),
+                    ..Default::default()
+                },
+                Schema {
+                    name: "last_login_at".to_string(),
+                    category: SchemaType::Date,
+                    read_only: true,
                     ..Default::default()
                 },
                 Schema::new_created(),
@@ -169,8 +195,10 @@ impl Model for UserModel {
                 avatar = COALESCE($2, avatar),
                 roles = COALESCE($3, roles),
                 groups = COALESCE($4, groups),
-                status = COALESCE($5, status)
-            WHERE id = $6 AND deleted_at IS NULL
+                status = COALESCE($5, status),
+                nickname = COALESCE($6, nickname),
+                phone = COALESCE($7, phone)
+            WHERE id = $8 AND deleted_at IS NULL
             "#,
         )
         .bind(params.email.as_deref())
@@ -178,6 +206,8 @@ impl Model for UserModel {
         .bind(params.roles.map(Json))
         .bind(params.groups.map(Json))
         .bind(params.status)
+        .bind(params.nickname.as_deref())
+        .bind(params.phone.as_deref())
         .bind(id as i64)
         .execute(pool)
         .await
@@ -185,24 +215,33 @@ impl Model for UserModel {
 
         Ok(())
     }
-    fn filter_condition_sql(&self, filters: &HashMap<String, String>) -> Option<Vec<String>> {
-        let mut conditions = vec![];
-        if let Some(status) = filters.get("status") {
-            conditions.push(format!("status = {status}"));
+    fn push_filter_conditions<'args>(
+        &self,
+        qb: &mut QueryBuilder<'args, Postgres>,
+        filters: &HashMap<String, String>,
+    ) -> Result<()> {
+        if let Some(status) = filters.get("status").and_then(|s| s.parse::<i16>().ok()) {
+            qb.push(" AND status = ");
+            qb.push_bind(status);
         }
         if let Some(role) = filters.get("role") {
-            conditions.push(format!("roles @> '[\"{role}\"]'::jsonb"));
+            qb.push(" AND roles @> ");
+            qb.push_bind(Json(vec![role.clone()]));
+            qb.push("::jsonb");
         }
         if let Some(group) = filters.get("group") {
-            conditions.push(format!("groups @> '[\"{group}\"]'::jsonb"));
+            qb.push(" AND groups @> ");
+            qb.push_bind(Json(vec![group.clone()]));
+            qb.push("::jsonb");
         }
-        (!conditions.is_empty()).then_some(conditions)
+        Ok(())
     }
 
     async fn count(&self, pool: &Pool<Postgres>, params: &ModelListParams) -> Result<i64> {
-        let mut sql = String::from("SELECT COUNT(*) FROM users");
-        sql.push_str(&self.condition_sql(params)?);
-        let count = sqlx::query_scalar::<_, i64>(&sql)
+        let mut qb = QueryBuilder::new("SELECT COUNT(*) FROM users");
+        self.push_conditions(&mut qb, params)?;
+        let count = qb
+            .build_query_scalar::<i64>()
             .fetch_one(pool)
             .await
             .context(SqlxSnafu)?;
@@ -214,29 +253,15 @@ impl Model for UserModel {
         pool: &Pool<Postgres>,
         params: &ModelListParams,
     ) -> Result<Vec<Self::Output>> {
-        let limit = params.limit.min(200);
-        let mut sql = String::from("SELECT * FROM users");
-
-        sql.push_str(&self.condition_sql(params)?);
-
-        if let Some(order_by) = &params.order_by {
-            let (order_by, direction) = if order_by.starts_with("-") {
-                (order_by.substring(1, order_by.len()).to_string(), "DESC")
-            } else {
-                (order_by.clone(), "ASC")
-            };
-            sql.push_str(&format!(" ORDER BY {order_by} {direction}"));
-        }
-
-        let offset = (params.page - 1) * limit;
-        sql.push_str(&format!(" LIMIT {limit} OFFSET {offset}"));
-
-        let result = sqlx::query_as::<_, UserSchema>(&sql)
+        let mut qb = QueryBuilder::new("SELECT * FROM users");
+        self.push_conditions(&mut qb, params)?;
+        params.push_pagination(&mut qb);
+        let result = qb
+            .build_query_as::<UserSchema>()
             .fetch_all(pool)
             .await
             .context(SqlxSnafu)?;
-
-        Ok(result.into_iter().map(|user| user.into()).collect())
+        Ok(result.into_iter().map(|u| u.into()).collect())
     }
     async fn search_options(
         &self,
@@ -315,12 +340,28 @@ impl UserModel {
             r#"
             UPDATE users SET
                 email = COALESCE($1, email),
-                avatar = COALESCE($2, avatar)
-            WHERE account = $3 AND deleted_at IS NULL
+                avatar = COALESCE($2, avatar),
+                nickname = COALESCE($3, nickname),
+                phone = COALESCE($4, phone)
+            WHERE account = $5 AND deleted_at IS NULL
             "#,
         )
         .bind(params.email.as_deref())
         .bind(params.avatar.as_deref())
+        .bind(params.nickname.as_deref())
+        .bind(params.phone.as_deref())
+        .bind(account)
+        .execute(pool)
+        .await
+        .context(SqlxSnafu)?;
+        Ok(())
+    }
+
+    /// 登录成功后更新 last_login_at 为当前时间。
+    pub async fn update_last_login_at(&self, pool: &Pool<Postgres>, account: &str) -> Result<()> {
+        sqlx::query(
+            r#"UPDATE users SET last_login_at = CURRENT_TIMESTAMP WHERE account = $1 AND deleted_at IS NULL"#,
+        )
         .bind(account)
         .execute(pool)
         .await

@@ -16,46 +16,40 @@ use cached::proc_macro::cached;
 use serde::{Deserialize, Serialize};
 use sysinfo::{Pid, ProcessesToUpdate, System};
 
-/// System resource usage snapshot for a single process.
+/// 单个进程的系统资源使用快照。
 ///
-/// All byte values are in bytes; `cpu_usage` is a percentage in `[0, 100]`.
+/// 所有字节值单位为 bytes，`cpu_usage` 为百分比，范围 `[0, 100]`。
 #[derive(Debug, Default, Serialize, Deserialize, Clone)]
 pub struct ProcessSystemInfo {
-    /// Memory usage in bytes
+    /// 内存占用（字节）
     pub memory_usage: u64,
-    /// CPU usage as a percentage (0–100)
+    /// CPU 使用率（百分比，0–100）
     pub cpu_usage: f32,
-    /// Accumulated CPU time in milliseconds
+    /// 累计 CPU 时间（毫秒）
     pub cpu_time: u64,
-    /// Number of open file descriptors, if available
+    /// 打开的文件描述符数量，平台不支持时为 `None`
     pub open_files: Option<usize>,
-    /// Total bytes written to disk since process start
+    /// 进程启动以来写入磁盘的总字节数
     pub total_written_bytes: u64,
-    /// Bytes written to disk since the last refresh
+    /// 自上次刷新以来写入磁盘的字节数
     pub written_bytes: u64,
-    /// Total bytes read from disk since process start
+    /// 进程启动以来从磁盘读取的总字节数
     pub total_read_bytes: u64,
-    /// Bytes read from disk since the last refresh
+    /// 自上次刷新以来从磁盘读取的字节数
     pub read_bytes: u64,
 }
 
-/// Returns resource usage for the current process.
-///
-/// Delegates to [`get_process_system_info`] using the current PID.
+/// 获取当前进程的系统资源使用情况，内部委托给 `get_process_system_info`。
 pub fn current_process_system_info() -> ProcessSystemInfo {
     get_process_system_info(std::process::id() as usize)
 }
 
-/// Returns resource usage for the process identified by `pid`.
+/// 获取指定 PID 进程的系统资源使用情况。
 ///
-/// Results are cached for 10 seconds per PID (`sync_writes = "by_key"`
-/// ensures only one thread refreshes a given PID at a time).
+/// 结果按 PID 缓存 10 秒（`sync_writes = "by_key"` 确保同一 PID
+/// 同一时刻只有一个线程执行刷新，避免重复采集）。
 ///
-/// Collected metrics:
-/// - Memory usage
-/// - CPU usage percentage and accumulated CPU time
-/// - Open file descriptor count (platform-dependent)
-/// - Disk read / write bytes (delta and total)
+/// 采集的指标：内存占用、CPU 使用率与累计时间、文件描述符数量、磁盘读写字节数。
 #[cached(time = 10, sync_writes = "by_key")]
 pub fn get_process_system_info(pid: usize) -> ProcessSystemInfo {
     let mut sys = System::new();

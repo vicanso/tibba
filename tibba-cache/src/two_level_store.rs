@@ -27,69 +27,53 @@ fn now_secs() -> u64 {
         .as_secs()
 }
 
-/// Calculates TTL (Time-To-Live) aligned to interval boundaries
-/// # Arguments
-/// * `unit` - The base duration unit to align with
-/// # Returns
-/// * Duration - Calculated TTL that aligns with the unit boundaries
-/// # Notes
-/// * If remaining time is less than 1/10 of unit, extends to next interval
-/// * Helps prevent cache stampede by aligning expiration times
+/// 计算与间隔边界对齐的 TTL，防止大量缓存在同一时刻集中失效（缓存雪崩）。
+/// 若剩余时间不足 unit 的 1/10，则延伸至下一个间隔周期。
 #[inline]
 fn get_ttl_by_unit(unit: Duration) -> Duration {
     let secs = unit.as_secs();
     if secs == 0 {
         return Duration::ZERO;
     }
-    // Calculate the remaining time until next interval
+    // 计算距下一个间隔边界的剩余秒数
     let remaining = secs - (now_secs() % secs);
-    // If less than 1/10 of the unit, extend to next interval
+    // 剩余时间不足 1/10 时延伸到下一周期，避免刚写入就立刻过期
     if remaining < secs / 10 {
         return Duration::from_secs(secs + remaining);
     }
     Duration::from_secs(remaining)
 }
-/// Wrapper struct that adds expiration time to cached data
-/// # Type Parameters
-/// * `T` - The type of data being cached
+
+/// 为缓存数据附加过期时间戳的包装结构体。
 #[derive(Clone)]
 struct ExpiredCache<T> {
-    /// The actual cached data
+    /// 实际缓存的数据
     data: T,
-    /// Unix timestamp (seconds) when this cache entry expires
+    /// 缓存条目的过期 Unix 时间戳（秒）
     expired_at: u64,
 }
 
 impl<T> Expired for ExpiredCache<T> {
-    /// Checks if the cached data has expired
-    /// # Returns
-    /// * `true` - Cache entry has expired
-    /// * `false` - Cache entry is still valid
+    /// 当前时间已达到或超过 expired_at 时返回 `true`。
     fn is_expired(&self) -> bool {
         now_secs() >= self.expired_at
     }
 }
 
-/// Two-level cache implementation combining in-memory LRU cache and Redis
-/// # Type Parameters
-/// * `T` - The type of data being cached
+/// 内存 LRU + Redis 双层缓存。
+/// 读操作优先命中内存 LRU，未命中再查 Redis 并回填内存层。
 pub struct TwoLevelStore<T> {
-    /// First level: In-memory LRU cache with TTL
+    /// 第一层：带 TTL 的内存 LRU 缓存
     lru: TtlLruStore<ExpiredCache<T>>,
-    /// Default TTL for cache entries
+    /// 缓存条目的默认 TTL
     ttl: Duration,
-    /// Second level: Redis cache
+    /// 第二层：Redis 缓存
     redis: RedisCache,
 }
 
 impl<T: Clone + Serialize + DeserializeOwned> TwoLevelStore<T> {
-    /// Creates a new TwoLevelStore instance
-    /// # Arguments
-    /// * `cache` - Redis cache instance for second level storage
-    /// * `size` - Maximum number of entries in the LRU cache
-    /// * `ttl` - Default time-to-live for cache entries
-    /// # Returns
-    /// * New TwoLevelStore instance
+    /// 创建新的 TwoLevelStore 实例。
+    /// `size` 为内存 LRU 的最大条目数，`ttl` 为缓存默认过期时长。
     pub fn new(redis: RedisCache, size: NonZeroUsize, ttl: Duration) -> Self {
         Self {
             lru: TtlLruStore::new(size),
@@ -97,6 +81,7 @@ impl<T: Clone + Serialize + DeserializeOwned> TwoLevelStore<T> {
             redis,
         }
     }
+
     async fn fill_lru(&self, key: &str, value: T, ttl: Duration) {
         if ttl.is_zero() {
             return;
@@ -112,50 +97,31 @@ impl<T: Clone + Serialize + DeserializeOwned> TwoLevelStore<T> {
             .await;
     }
 
-    /// Stores a value in both cache levels
-    /// # Arguments
-    /// * `key` - The key under which to store the value
-    /// * `value` - The value to store
-    /// # Returns
-    /// * `Ok(())` - Successfully stored in both caches
-    /// * `Err(Error)` - Failed to store in Redis
-    /// # Notes
-    /// * Calculates TTL aligned with interval boundaries
-    /// * Stores in Redis first, then LRU cache
+    /// 将值写入两层缓存。
+    /// TTL 与间隔边界对齐，先写 Redis 再更新内存 LRU。
     pub async fn set(&self, key: &str, value: T) -> Result<()> {
-        // Calculate the remaining time
+        // 计算对齐后的 TTL
         let ttl = get_ttl_by_unit(self.ttl);
 
-        // Set redis cache first
+        // 先写入 Redis，再更新内存缓存
         self.redis.set_struct(key, &value, Some(ttl)).await?;
         self.fill_lru(key, value, ttl).await;
 
         Ok(())
     }
 
-    /// Retrieves a value from the cache
-    /// # Arguments
-    /// * `key` - The key to look up
-    /// # Returns
-    /// * `Ok(Some(T))` - Value found in either cache level
-    /// * `Ok(None)` - Value not found in either cache
-    /// * `Err(Error)` - Redis operation failed
-    /// # Notes
-    /// * Checks LRU cache first
-    /// * If not in LRU, checks Redis and updates LRU if found
-    /// * Only updates LRU if Redis TTL is within expected range
+    /// 从缓存读取值，优先查询内存 LRU，未命中则查 Redis 并回填 LRU。
+    /// 若 Redis 中条目剩余 TTL 已超出预期范围则不回填内存层。
     pub async fn get(&self, key: &str) -> Result<Option<T>> {
-        // Try LRU cache first (get ensures it is not expired)
+        // 优先查内存 LRU（已过期条目不会被返回）
         if let Some(value) = self.lru.get(key).await {
             return Ok(Some(value.data));
         }
-        // Try Redis if not in LRU
+        // 内存未命中，查 Redis
         let result: Option<T> = self.redis.get_struct(key).await?;
-        // If found in Redis, potentially update LRU
         if let Some(value) = &result {
             let ttl = get_ttl_by_unit(self.ttl);
-            // Only cache in LRU if TTL is within expected range
-            // Prevents caching nearly-expired values
+            // TTL 超出预期范围说明条目即将过期，不回填内存缓存
             if ttl <= self.ttl {
                 self.fill_lru(key, value.clone(), ttl).await;
             }
@@ -163,21 +129,14 @@ impl<T: Clone + Serialize + DeserializeOwned> TwoLevelStore<T> {
         Ok(result)
     }
 
-    /// Removes a value from both cache levels
-    /// # Arguments
-    /// * `key` - The key to invalidate
-    /// # Returns
-    /// * `Ok(())` - Successfully removed from both caches
-    /// * `Err(Error)` - Redis operation failed
+    /// 从两层缓存中删除指定键。
     pub async fn del(&self, key: &str) -> Result<()> {
         self.lru.del(key).await;
         self.redis.del(key).await
     }
 
-    /// Purges expired entries from the in-memory LRU cache
-    /// # Notes
-    /// * Should be called periodically to reclaim memory
-    /// * Does not affect Redis entries (Redis handles its own TTL expiry)
+    /// 清除内存 LRU 中的过期条目，应定期调用以释放内存。
+    /// Redis 侧的 TTL 由 Redis 自身管理，无需手动清理。
     pub async fn purge_expired(&self) {
         self.lru.purge_expired().await;
     }

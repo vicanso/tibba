@@ -16,20 +16,21 @@ use arc_swap::ArcSwap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-/// Trace context for the current request
+/// 当前请求的追踪上下文，记录设备 ID、Trace ID、起始时间和登录账号。
 #[derive(Debug)]
 pub struct Context {
-    /// Device ID
+    /// 设备 ID
     pub device_id: String,
-    /// Trace ID
+    /// 链路追踪 ID
     pub trace_id: String,
-    /// Start time
+    /// 请求开始时间（用于计算耗时）
     start_time: Instant,
-    /// Account
+    /// 当前登录账号，无锁原子更新
     account: ArcSwap<String>,
 }
 
 impl Context {
+    /// 创建新的请求上下文，记录设备 ID 和 Trace ID，并以当前时刻为起始时间。
     pub fn new(device_id: impl Into<String>, trace_id: impl Into<String>) -> Self {
         Self {
             device_id: device_id.into(),
@@ -39,27 +40,28 @@ impl Context {
         }
     }
 
-    /// Returns the elapsed time since the request started.
+    /// 返回自请求开始以来经过的时间。
     pub fn elapsed(&self) -> Duration {
         self.start_time.elapsed()
     }
 
-    /// Returns elapsed milliseconds since the request started.
+    /// 返回自请求开始以来经过的毫秒数。
     pub fn elapsed_ms(&self) -> u64 {
         self.start_time.elapsed().as_millis() as u64
     }
 
-    /// Returns the current account associated with this context.
+    /// 返回当前上下文关联的登录账号。
     pub fn get_account(&self) -> Arc<String> {
         self.account.load_full()
     }
 
-    /// Sets the account for this context.
+    /// 设置当前上下文的登录账号，无锁原子写入。
     pub fn set_account(&self, account: impl Into<String>) {
         self.account.store(Arc::new(account.into()));
     }
 }
 
 tokio::task_local! {
+    /// Tokio task-local 变量，存储当前请求的追踪上下文，生命周期与请求任务绑定。
     pub static CTX: Arc<Context>;
 }

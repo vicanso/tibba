@@ -17,11 +17,11 @@ use tibba_error::Error as BaseError;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
-    /// Wraps the original `InvalidLength` from the hmac crate so callers can
-    /// use `.context(HmacSha256Snafu)` instead of manual `map_err`.
+    /// 封装 hmac crate 的 `InvalidLength`，使调用方可直接使用 `.context(HmacSha256Snafu)`。
     #[snafu(display("hmac sha256 error: {source}"))]
     HmacSha256 { source: hmac::digest::InvalidLength },
 
+    /// 密钥列表为空，无法执行签名或验签操作。
     #[snafu(display("key grip empty"))]
     KeyGripEmpty,
 }

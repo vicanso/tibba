@@ -24,13 +24,13 @@ const DEFAULT_ZSTD: Algorithm = Algorithm::Zstd(3);
 
 type Result<T> = std::result::Result<T, Error>;
 
-/// Redis cache implementation that provides various caching operations
+/// Redis 缓存封装，提供键值读写、分布式锁、计数器等常用缓存操作。
 pub struct RedisCache {
-    /// Time-to-live duration for cache entries
+    /// 缓存条目的默认过期时长
     ttl: Duration,
-    /// Prefix added to all cache keys
+    /// 所有缓存键统一添加的前缀
     prefix: String,
-    /// Redis connection pool
+    /// Redis 连接池
     client: &'static RedisClient,
 }
 
@@ -39,10 +39,8 @@ impl RedisCache {
     pub async fn conn(&self) -> Result<RedisClientConn> {
         self.client.conn().await
     }
-    /// Creates a new RedisCacheBuilder with default settings:
-    /// - TTL: 10 minutes
-    /// - Empty prefix
-    /// - Given Redis pool
+
+    /// 创建新的 RedisCache 实例，默认 TTL 10 分钟，无前缀。
     pub fn new(client: &'static RedisClient) -> Self {
         Self {
             ttl: Duration::from_secs(10 * 60),
@@ -51,16 +49,14 @@ impl RedisCache {
         }
     }
 
-    /// Sets the time-to-live duration for cache entries
-    /// Returns self for method chaining
+    /// 设置缓存条目的过期时长，支持链式调用。
     #[must_use]
     pub fn with_ttl(mut self, ttl: Duration) -> Self {
         self.ttl = ttl;
         self
     }
 
-    /// Sets the prefix for all cache keys
-    /// Returns self for method chaining
+    /// 设置所有缓存键的前缀，支持链式调用。
     #[must_use]
     pub fn with_prefix(mut self, prefix: impl Into<String>) -> Self {
         self.prefix = prefix.into();
@@ -72,12 +68,8 @@ impl RedisCache {
         ttl.unwrap_or(self.ttl).as_secs()
     }
 
-    /// Generates the full cache key by combining prefix (if any) with the provided key
-    /// # Arguments
-    /// * `key` - The base key to be prefixed
-    /// # Returns
-    /// * If prefix is empty: returns the original key
-    /// * If prefix exists: returns prefix + key
+    /// 拼接前缀与键名，生成完整的缓存键。
+    /// 前缀为空时直接借用原始键，避免额外分配。
     #[inline]
     fn get_key<'a>(&'a self, key: &'a str) -> Cow<'a, str> {
         if self.prefix.is_empty() {
@@ -86,10 +78,8 @@ impl RedisCache {
             Cow::Owned(format!("{}{}", self.prefix, key))
         }
     }
-    /// Pings the Redis server to check connection
-    /// # Returns
-    /// * `Ok(())` - Connection is successful
-    /// * `Err(Error)` - Redis operation failed
+
+    /// 向 Redis 发送 PING 以检测连接是否正常。
     pub async fn ping(&self) -> Result<()> {
         let () = self
             .conn()
@@ -99,14 +89,8 @@ impl RedisCache {
             .context(RedisSnafu { category: "ping" })?;
         Ok(())
     }
-    /// Retrieves a raw value from Redis for the given key
-    /// # Type Parameters
-    /// * `T` - The type to deserialize the Redis value into
-    /// # Arguments
-    /// * `key` - The key to retrieve
-    /// # Returns
-    /// * `Ok(T)` - Successfully retrieved and converted value
-    /// * `Err(Error)` - Redis error or value conversion error
+
+    /// 从 Redis 读取原始值，类型由调用方通过泛型指定。
     async fn get_value<T: redis::FromRedisValue>(&self, key: &str) -> Result<T> {
         let result = self
             .conn()
@@ -117,13 +101,8 @@ impl RedisCache {
 
         Ok(result)
     }
-    /// Stores a raw value in Redis with optional TTL
-    /// # Type Parameters
-    /// * `T` - The type of value to store, must be convertible to Redis data
-    /// # Arguments
-    /// * `key` - The key under which to store the value
-    /// * `value` - The value to store
-    /// * `ttl` - Optional time-to-live duration (uses instance default if None)
+
+    /// 向 Redis 写入原始值，并设置过期时间（秒）。
     async fn set_value<T: redis::ToSingleRedisArg + Send + Sync>(
         &self,
         key: &str,
@@ -138,14 +117,9 @@ impl RedisCache {
             .context(RedisSnafu { category: "set" })?;
         Ok(())
     }
-    /// Attempts to acquire a distributed lock using Redis SET NX command
-    /// # Arguments
-    /// * `key` - The lock key
-    /// * `ttl` - Optional lock duration (uses instance default if None)
-    /// # Returns
-    /// * `Ok(true)` - Lock was successfully acquired
-    /// * `Ok(false)` - Lock already exists
-    /// * `Err(Error)` - Redis operation failed
+
+    /// 尝试通过 SET NX 获取分布式锁。
+    /// 返回 `true` 表示加锁成功，`false` 表示锁已被持有。
     pub async fn lock(&self, key: &str, ttl: Option<Duration>) -> Result<bool> {
         let mut conn = self.conn().await?;
 
@@ -160,12 +134,8 @@ impl RedisCache {
             .context(RedisSnafu { category: "lock" })?;
         Ok(result)
     }
-    /// Removes a key and its value from Redis
-    /// # Arguments
-    /// * `key` - The key to delete
-    /// # Returns
-    /// * `Ok(())` - Key was successfully deleted (or didn't exist)
-    /// * `Err(Error)` - Redis operation failed
+
+    /// 删除指定键。
     pub async fn del(&self, key: &str) -> Result<()> {
         let () = self
             .conn()
@@ -176,38 +146,28 @@ impl RedisCache {
 
         Ok(())
     }
-    /// Atomically increments a counter by delta
-    /// # Arguments
-    /// * `key` - The counter key
-    /// * `delta` - Amount to increment by (can be negative)
-    /// * `ttl` - Optional time-to-live for the counter
-    /// # Returns
-    /// * `Ok(i64)` - The new value after incrementing
-    /// * `Err(Error)` - Redis operation failed
-    /// # Notes
-    /// If the key doesn't exist, it's initialized to 0 with ttl before incrementing
+
+    /// 原子性地将计数器累加 delta，返回累加后的值。
+    /// 键不存在时先用 SET NX 初始化为 0 再执行 INCRBY。
     pub async fn incr(&self, key: &str, delta: i64, ttl: Option<Duration>) -> Result<i64> {
         let mut conn = self.conn().await?;
         let k = self.get_key(key);
-        let (_, count) = pipe()
-            .cmd("SET")
-            .arg(&k)
-            .arg(0)
-            .arg("NX")
-            .arg("EX")
-            .arg(self.get_ttl(ttl))
+        // 这里的逻辑逻辑更加自然
+        let (count, _) = pipe()
             .cmd("INCRBY")
             .arg(&k)
-            .arg(delta)
-            .query_async::<(bool, i64)>(&mut conn)
+            .arg(delta) // 1. 先累加（不存在会自动创建，且无 TTL）
+            .cmd("EXPIRE")
+            .arg(&k)
+            .arg(self.get_ttl(ttl))
+            .arg("NX") // 2. 只有它没有 TTL 时（即刚创建时）才设 TTL
+            .query_async::<(i64, bool)>(&mut conn)
             .await
             .context(RedisSnafu { category: "incr" })?;
         Ok(count)
     }
-    /// Sets a value in Redis with an optional TTL
-    /// - If TTL is None, uses the default TTL configured for this cache
-    /// - Value type must implement ToRedisArgs trait
-    /// - Key will be automatically prefixed if a prefix is configured
+
+    /// 向 Redis 写入值，TTL 为 None 时使用实例默认值。
     pub async fn set<T: redis::ToSingleRedisArg + Send + Sync>(
         &self,
         key: &str,
@@ -217,17 +177,13 @@ impl RedisCache {
         self.set_value(&self.get_key(key), value, self.get_ttl(ttl))
             .await
     }
-    /// Retrieves a value from Redis
-    /// - Value type must implement FromRedisValue trait
-    /// - Key will be automatically prefixed if a prefix is configured
-    /// - Returns Error if key doesn't exist or value can't be converted to T
+
+    /// 从 Redis 读取值，类型由泛型参数指定。
     pub async fn get<T: redis::FromRedisValue>(&self, key: &str) -> Result<T> {
         self.get_value::<T>(&self.get_key(key)).await
     }
-    /// Serializes and stores a struct in Redis as JSON
-    /// - Value must implement Serialize trait
-    /// - Optional TTL (uses default if None)
-    /// - Key will be automatically prefixed
+
+    /// 将结构体序列化为 JSON 后存入 Redis。
     pub async fn set_struct<T>(&self, key: &str, value: &T, ttl: Option<Duration>) -> Result<()>
     where
         T: ?Sized + Serialize,
@@ -237,11 +193,8 @@ impl RedisCache {
             .await?;
         Ok(())
     }
-    /// Retrieves and deserializes a struct from Redis
-    /// - Type must implement DeserializeOwned trait
-    /// - Returns None if key doesn't exist
-    /// - Returns Error if deserialization fails
-    /// - Key will be automatically prefixed
+
+    /// 从 Redis 读取并反序列化为结构体，键不存在时返回 `None`。
     pub async fn get_struct<T>(&self, key: &str) -> Result<Option<T>>
     where
         T: DeserializeOwned,
@@ -252,15 +205,9 @@ impl RedisCache {
             Some(b) => serde_json::from_slice(&b).context(SerdeJsonSnafu).map(Some),
         }
     }
-    /// Gets the remaining time-to-live for a key
-    /// # Arguments
-    /// * `key` - The key to check
-    /// # Returns
-    /// * `Ok(seconds)` where:
-    ///   * `seconds > 0` - Remaining time in seconds
-    ///   * `seconds = -2` - Key does not exist
-    ///   * `seconds = -1` - Key exists but has no expiry
-    /// * `Err(Error)` - Redis operation failed
+
+    /// 获取指定键的剩余过期时间（秒）。
+    /// 返回 -2 表示键不存在，-1 表示键无过期时间。
     pub async fn ttl(&self, key: &str) -> Result<i32> {
         let result = self
             .conn()
@@ -271,14 +218,8 @@ impl RedisCache {
 
         Ok(result)
     }
-    /// Atomically retrieves a value and deletes it from Redis(>=6.2.0)
-    /// # Type Parameters
-    /// * `T` - The type to deserialize the Redis value into
-    /// # Arguments
-    /// * `key` - The key to get and delete
-    /// # Returns
-    /// * `Ok(T)` - The value before deletion
-    /// * `Err(Error)` - Redis operation failed or value conversion error
+
+    /// 原子性地读取并删除指定键（需 Redis ≥6.2.0）。
     pub async fn get_del<T: redis::FromRedisValue>(&self, key: &str) -> Result<T> {
         let result = self
             .conn()
@@ -291,13 +232,8 @@ impl RedisCache {
 
         Ok(result)
     }
-    /// Checks whether a key exists in Redis
-    /// # Arguments
-    /// * `key` - The key to check
-    /// # Returns
-    /// * `Ok(true)` - Key exists
-    /// * `Ok(false)` - Key does not exist
-    /// * `Err(Error)` - Redis operation failed
+
+    /// 检查指定键是否存在。
     pub async fn exists(&self, key: &str) -> Result<bool> {
         let result = self
             .conn()
@@ -307,14 +243,9 @@ impl RedisCache {
             .context(RedisSnafu { category: "exists" })?;
         Ok(result)
     }
-    /// Updates the TTL of an existing key without changing its value
-    /// # Arguments
-    /// * `key` - The key whose TTL to update
-    /// * `ttl` - Optional duration (uses instance default if None)
-    /// # Returns
-    /// * `Ok(true)` - TTL was successfully updated
-    /// * `Ok(false)` - Key does not exist
-    /// * `Err(Error)` - Redis operation failed
+
+    /// 刷新指定键的过期时间而不修改其值。
+    /// 返回 `true` 表示刷新成功，`false` 表示键不存在。
     pub async fn expire(&self, key: &str, ttl: Option<Duration>) -> Result<bool> {
         let result = self
             .conn()
@@ -324,6 +255,7 @@ impl RedisCache {
             .context(RedisSnafu { category: "expire" })?;
         Ok(result)
     }
+
     async fn set_struct_compressed<T>(
         &self,
         key: &str,
@@ -354,15 +286,9 @@ impl RedisCache {
             }
         }
     }
-    /// Serializes a struct to JSON, compresses it with LZ4, and stores in Redis
-    /// # Type Parameters
-    /// * `T` - The struct type to serialize
-    /// # Arguments
-    /// * `key` - The key under which to store the compressed data
-    /// * `value` - The struct to serialize and compress
-    /// * `ttl` - Optional time-to-live duration
-    /// # Notes
-    /// Uses LZ4 compression which favors speed over compression ratio
+
+    /// 将结构体序列化为 JSON 并以 LZ4 压缩后存入 Redis。
+    /// LZ4 压缩速度快，适合对延迟敏感的场景。
     pub async fn set_struct_lz4<T>(&self, key: &str, value: &T, ttl: Option<Duration>) -> Result<()>
     where
         T: ?Sized + Serialize,
@@ -370,30 +296,17 @@ impl RedisCache {
         self.set_struct_compressed(&self.get_key(key), value, self.get_ttl(ttl), Algorithm::Lz4)
             .await
     }
-    /// Retrieves, decompresses (LZ4), and deserializes a struct from Redis
-    /// # Type Parameters
-    /// * `T` - The struct type to deserialize into
-    /// # Arguments
-    /// * `key` - The key to retrieve
-    /// # Returns
-    /// * `Ok(Some(T))` - Successfully retrieved and deserialized value
-    /// * `Ok(None)` - Key doesn't exist
-    /// * `Err(Error)` - Redis, decompression, or deserialization error
+
+    /// 从 Redis 读取并以 LZ4 解压后反序列化为结构体，键不存在时返回 `None`。
     pub async fn get_struct_lz4<T>(&self, key: &str) -> Result<Option<T>>
     where
         T: DeserializeOwned,
     {
         self.get_struct_compressed(key, Algorithm::Lz4).await
     }
-    /// Serializes a struct to JSON, compresses it with Zstd, and stores in Redis
-    /// # Type Parameters
-    /// * `T` - The struct type to serialize
-    /// # Arguments
-    /// * `key` - The key under which to store the compressed data
-    /// * `value` - The struct to serialize and compress
-    /// * `ttl` - Optional time-to-live duration
-    /// # Notes
-    /// Uses Zstd compression which provides better compression ratios than LZ4
+
+    /// 将结构体序列化为 JSON 并以 Zstd 压缩后存入 Redis。
+    /// Zstd 压缩率更高，适合对存储空间敏感的场景。
     pub async fn set_struct_zstd<T>(
         &self,
         key: &str,
@@ -406,15 +319,8 @@ impl RedisCache {
         self.set_struct_compressed(&self.get_key(key), value, self.get_ttl(ttl), DEFAULT_ZSTD)
             .await
     }
-    /// Retrieves, decompresses (Zstd), and deserializes a struct from Redis
-    /// # Type Parameters
-    /// * `T` - The struct type to deserialize into
-    /// # Arguments
-    /// * `key` - The key to retrieve
-    /// # Returns
-    /// * `Ok(Some(T))` - Successfully retrieved and deserialized value
-    /// * `Ok(None)` - Key doesn't exist
-    /// * `Err(Error)` - Redis, decompression, or deserialization error
+
+    /// 从 Redis 读取并以 Zstd 解压后反序列化为结构体，键不存在时返回 `None`。
     pub async fn get_struct_zstd<T>(&self, key: &str) -> Result<Option<T>>
     where
         T: DeserializeOwned,

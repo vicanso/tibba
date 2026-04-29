@@ -21,8 +21,7 @@ use serde::{Deserialize, Serialize};
 use snafu::ResultExt;
 use sqlx::FromRow;
 use sqlx::types::Json;
-use sqlx::{Pool, Postgres};
-use substring::Substring;
+use sqlx::{Pool, Postgres, QueryBuilder};
 use time::PrimitiveDateTime;
 
 type Result<T> = std::result::Result<T, Error>;
@@ -136,13 +135,7 @@ impl Model for WebPageDetectorModel {
         SchemaView {
             schemas: vec![
                 Schema::new_id(),
-                Schema {
-                    name: "name".to_string(),
-                    category: SchemaType::String,
-                    required: true,
-                    fixed: true,
-                    ..Default::default()
-                },
+                Schema::new_name(),
                 Schema {
                     name: "interval".to_string(),
                     category: SchemaType::Number,
@@ -232,19 +225,11 @@ impl Model for WebPageDetectorModel {
             },
         }
     }
-    fn condition_sql(&self, params: &ModelListParams) -> Result<String> {
-        let mut where_conditions = vec!["deleted_at IS NULL".to_string()];
-
-        if let Some(keyword) = &params.keyword {
-            where_conditions.push(format!("{} LIKE '%{}%'", self.keyword(), keyword));
-        }
-        Ok(format!(" WHERE {}", where_conditions.join(" AND ")))
-    }
     async fn insert(&self, pool: &Pool<Postgres>, params: serde_json::Value) -> Result<u64> {
         let params: WebPageDetectorInsertParams =
             serde_json::from_value(params).context(JsonSnafu)?;
         let row: (i64,) = sqlx::query_as(
-            r#"INSERT INTO web_page_detectors (name, interval, url, width, height, user_agent, accept_language, platform, wait_for_element, device_scale_factor, timeout, capture_screenshot, capture_element, remark, regions, created_by) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING id"#,
+            r#"INSERT INTO web_page_detectors (name, "interval", url, width, height, user_agent, accept_language, platform, wait_for_element, device_scale_factor, timeout, capture_screenshot, capture_element, remark, regions, created_by) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING id"#,
         )
         .bind(params.name)
         .bind(params.interval as i16)
@@ -269,13 +254,13 @@ impl Model for WebPageDetectorModel {
         Ok(row.0 as u64)
     }
     async fn count(&self, pool: &Pool<Postgres>, params: &ModelListParams) -> Result<i64> {
-        let mut sql = String::from("SELECT COUNT(*) FROM web_page_detectors");
-        sql.push_str(&self.condition_sql(params)?);
-        let count = sqlx::query_scalar::<_, i64>(&sql)
+        let mut qb = QueryBuilder::new("SELECT COUNT(*) FROM web_page_detectors");
+        self.push_conditions(&mut qb, params)?;
+        let count = qb
+            .build_query_scalar::<i64>()
             .fetch_one(pool)
             .await
             .context(SqlxSnafu)?;
-
         Ok(count)
     }
     async fn list(
@@ -283,26 +268,15 @@ impl Model for WebPageDetectorModel {
         pool: &Pool<Postgres>,
         params: &ModelListParams,
     ) -> Result<Vec<Self::Output>> {
-        let limit = params.limit.min(200);
-        let mut sql = String::from("SELECT * FROM web_page_detectors");
-        sql.push_str(&self.condition_sql(params)?);
-        if let Some(order_by) = &params.order_by {
-            let (order_by, direction) = if order_by.starts_with("-") {
-                (order_by.substring(1, order_by.len()).to_string(), "DESC")
-            } else {
-                (order_by.clone(), "ASC")
-            };
-            sql.push_str(&format!(" ORDER BY {order_by} {direction}"));
-        }
-        let offset = (params.page - 1) * limit;
-        sql.push_str(&format!(" LIMIT {limit} OFFSET {offset}"));
-
-        let detectors = sqlx::query_as::<_, WebPageDetectorSchema>(&sql)
+        let mut qb = QueryBuilder::new("SELECT * FROM web_page_detectors");
+        self.push_conditions(&mut qb, params)?;
+        params.push_pagination(&mut qb);
+        let detectors = qb
+            .build_query_as::<WebPageDetectorSchema>()
             .fetch_all(pool)
             .await
             .context(SqlxSnafu)?;
-
-        Ok(detectors.into_iter().map(|schema| schema.into()).collect())
+        Ok(detectors.into_iter().map(|s| s.into()).collect())
     }
 }
 

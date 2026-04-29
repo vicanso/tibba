@@ -5,9 +5,12 @@ CREATE TABLE users (
   password VARCHAR(255) NOT NULL,
   roles JSONB NOT NULL DEFAULT '[]',
   "groups" JSONB NOT NULL DEFAULT '[]',
+  nickname VARCHAR(100) DEFAULT NULL,
+  phone VARCHAR(64) DEFAULT NULL,
   remark VARCHAR(255) NOT NULL DEFAULT '',
   email VARCHAR(255) NOT NULL DEFAULT '',
   avatar VARCHAR(1024) NOT NULL DEFAULT '',
+  last_login_at TIMESTAMP DEFAULT NULL,
   created TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   modified TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   deleted_at TIMESTAMP DEFAULT NULL
@@ -26,6 +29,9 @@ COMMENT ON COLUMN users.status IS '状态，0：禁用，1：启用';
 COMMENT ON COLUMN users.password IS '密码';
 COMMENT ON COLUMN users.roles IS '用户角色';
 COMMENT ON COLUMN users."groups" IS '用户群组';
+COMMENT ON COLUMN users.nickname IS '用户昵称';
+COMMENT ON COLUMN users.phone IS '手机号';
+COMMENT ON COLUMN users.last_login_at IS '最后登录时间';
 COMMENT ON COLUMN users.remark IS '备注';
 COMMENT ON COLUMN users.email IS '用户邮箱';
 COMMENT ON COLUMN users.avatar IS '用户头像';

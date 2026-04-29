@@ -16,7 +16,7 @@ use tibba_error::Error as BaseError;
 
 mod app_config;
 
-// Error enum for handling various error types in the configuration
+// 配置模块的错误类型，涵盖配置读取失败和字节大小解析失败两种场景
 #[derive(Debug, Snafu)]
 pub enum Error {
     #[snafu(display("{category}, config error {source}"))]

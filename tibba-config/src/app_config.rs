@@ -21,36 +21,38 @@ use std::time::Duration;
 
 type Result<T> = std::result::Result<T, Error>;
 
-/// Config struct represents the application configuration.
-/// It wraps the `config::Config` instance to provide namespacing and convenience methods.
+/// 应用配置，封装底层 `config::Config`，提供命名空间与便捷读取方法。
 #[derive(Debug, Clone, Default)]
 pub struct Config {
-    /// Prefix for environment variables (e.g., "APP").
+    /// 环境变量前缀，例如 "APP"，用于从环境变量中覆盖配置项。
     env_prefix: String,
-    /// Prefix for configuration keys, used for sub-configs.
+    /// 子配置前缀，用于隔离不同模块的配置命名空间。
     prefix: String,
     settings: RawConfig,
 }
 
 impl Config {
+    /// 从多个 TOML 字符串和可选的环境变量前缀构建配置。
+    /// 后面的配置源会覆盖前面的同名配置项，环境变量优先级最高。
+    /// 例如：`APP_DATABASE_PORT=5433` 会覆盖 TOML 中的 `database.port`。
     pub fn new(data: &[&str], env_prefix: Option<&str>) -> Result<Self> {
         let env_prefix_str = env_prefix.unwrap_or_default();
 
         let mut builder = RawConfig::builder();
 
-        // Add file sources
+        // 逐个加载 TOML 配置源，空字符串跳过
         for d in data {
             if !d.is_empty() {
                 builder = builder.add_source(File::from_str(d, FileFormat::Toml));
             }
         }
 
-        // Environment variables are used to override the configuration values.
-        // For example, `APP_DATABASE_PORT=5433` will automatically override the `database.port` configuration.
+        // 环境变量覆盖同名配置，使用 `_` 作为层级分隔符
+        // 例如 `APP_DATABASE_HOST` 对应 `database.host`
         builder = builder.add_source(
             Environment::with_prefix(env_prefix_str)
                 .prefix_separator("_")
-                .separator("_"), // use `_` as the separator, for example `APP_DATABASE_HOST`
+                .separator("_"),
         );
 
         let settings = builder.build().context(ConfigSnafu {
@@ -64,6 +66,7 @@ impl Config {
         })
     }
 
+    /// 将前缀与键名拼接为完整的配置键路径。
     fn get_key(&self, key: &str) -> String {
         if self.prefix.is_empty() {
             return key.to_string();
@@ -75,51 +78,50 @@ impl Config {
         format!("{}.{}", self.prefix, key)
     }
 
-    /// Try to deserialize the entire configuration into the requested type.
+    /// 将当前命名空间下的配置整体反序列化为指定类型。
     pub fn try_deserialize<'de, T: Deserialize<'de>>(&self) -> Result<T> {
         self.settings
             .get(&self.get_key(""))
             .context(ConfigSnafu { category: "config" })
     }
 
-    /// Retrieves a value, returning a default if not found or type mismatch.
+    /// 读取任意可反序列化类型的配置值。
     pub fn get<'de, T: Deserialize<'de>>(&self, key: &str) -> Result<T> {
         self.settings
             .get(&self.get_key(key))
             .context(ConfigSnafu { category: "config" })
     }
 
-    /// Retrieves a string value, returning a default if not found or type mismatch.
+    /// 读取字符串类型的配置值。
     pub fn get_string(&self, key: &str) -> Result<String> {
         self.settings
             .get_string(&self.get_key(key))
             .context(ConfigSnafu { category: "config" })
     }
 
-    /// Retrieves an integer value, returning a default if not found or type mismatch.
+    /// 读取 i64 类型的整数配置值。
     pub fn get_int(&self, key: &str) -> Result<i64> {
         self.settings
             .get_int(&self.get_key(key))
             .context(ConfigSnafu { category: "config" })
     }
 
-    /// Retrieves a float value, returning an error if not found or type mismatch.
+    /// 读取 f64 类型的浮点数配置值。
     pub fn get_float(&self, key: &str) -> Result<f64> {
         self.settings
             .get_float(&self.get_key(key))
             .context(ConfigSnafu { category: "config" })
     }
 
-    /// Retrieves a boolean value, returning a default if not found or type mismatch.
+    /// 读取布尔类型的配置值。
     pub fn get_bool(&self, key: &str) -> Result<bool> {
         self.settings
             .get_bool(&self.get_key(key))
             .context(ConfigSnafu { category: "config" })
     }
 
-    /// Retrieves a Duration value, returning a default if not found or parsing fails.
-    /// Note: `config` crate can deserialize human-readable strings ("10s", "1h") into `Duration`
-    /// if the `humantime` feature is enabled on the `config` crate.
+    /// 读取时间长度配置值。
+    /// 优先解析人类可读格式（如 "10s"、"1h"），失败则回退为纯数字（秒）。
     pub fn get_duration(&self, key: &str) -> Result<Duration> {
         let key = &self.get_key(key);
         if let Ok(duration_str) = self.settings.get_string(key)
@@ -128,7 +130,7 @@ impl Config {
             return Ok(duration);
         }
 
-        // Fallback: try to parse as u64 seconds
+        // 回退：尝试将值作为秒数（u64）解析
         let seconds = self
             .settings
             .get_int(key)
@@ -136,7 +138,7 @@ impl Config {
         Ok(Duration::from_secs(seconds as u64))
     }
 
-    /// Retrieves a byte size value, returning a default if not found or parsing fails.
+    /// 读取字节大小配置值，支持 "10MB"、"1KB" 等人类可读格式，返回字节数。
     pub fn get_byte_size(&self, key: &str) -> Result<usize> {
         let value = self
             .settings
@@ -146,7 +148,8 @@ impl Config {
         Ok(size as usize)
     }
 
-    /// Create a new sub-config with a given prefix.
+    /// 创建具有指定前缀的子配置视图，用于隔离不同模块的配置命名空间。
+    /// `prefix` 为空时返回当前配置的克隆。
     pub fn sub_config(&self, prefix: &str) -> Config {
         if prefix.is_empty() {
             return self.clone();
@@ -177,34 +180,34 @@ mod tests {
             # String values
             app_name = "test_app"
             empty_string = ""
-            
+
             # Integer values
             port = 8080
             negative_number = -42
-            
+
             # Boolean values
             debug = true
             production = false
-            
+
             # Duration values - human readable
             timeout = "60s"
             cache_ttl = "5m"
             session_duration = "2h"
             cleanup_interval = "1d"
-            
+
             # Duration values - numeric (seconds)
             numeric_timeout = 120
-            
+
             # Byte size values
             max_file_size = "10MB"
             buffer_size = "1KB"
-            
+
             # Nested configuration
             [database]
             host = "localhost"
             port = 5432
             timeout = "30s"
-            
+
             [cache]
             enabled = true
             ttl = "10m"

@@ -17,15 +17,18 @@ use super::{
     SchemaAllowEdit, SchemaOption, SchemaOptionValue, SchemaType, SchemaView, SqlxSnafu,
     format_datetime, new_schema_options,
 };
-use super::{REGION_ALIYUN, REGION_ANY, REGION_GZ, REGION_TX};
 use serde::{Deserialize, Serialize};
 use snafu::ResultExt;
 use sqlx::FromRow;
 use sqlx::types::Json;
-use sqlx::{Pool, Postgres};
+use sqlx::{Pool, Postgres, QueryBuilder};
 use std::collections::HashMap;
-use substring::Substring;
 use time::PrimitiveDateTime;
+
+pub const REGION_ANY: &str = "any";
+pub const REGION_TX: &str = "tx";
+pub const REGION_GZ: &str = "gz";
+pub const REGION_ALIYUN: &str = "aliyun";
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -229,13 +232,7 @@ impl Model for HttpDetectorModel {
         SchemaView {
             schemas: vec![
                 Schema::new_id(),
-                Schema {
-                    name: "name".to_string(),
-                    category: SchemaType::String,
-                    required: true,
-                    fixed: true,
-                    ..Default::default()
-                },
+                Schema::new_name(),
                 Schema {
                     name: "group_id".to_string(),
                     category: SchemaType::Number,
@@ -375,19 +372,21 @@ impl Model for HttpDetectorModel {
         }
     }
 
-    fn filter_condition_sql(&self, filters: &HashMap<String, String>) -> Option<Vec<String>> {
-        let mut conditions = vec![];
-
-        if let Some(status) = filters.get("status") {
-            conditions.push(format!("status = {status}"));
+    fn push_filter_conditions<'args>(
+        &self,
+        qb: &mut QueryBuilder<'args, Postgres>,
+        filters: &HashMap<String, String>,
+    ) -> Result<()> {
+        if let Some(status) = filters.get("status").and_then(|s| s.parse::<i16>().ok()) {
+            qb.push(" AND status = ");
+            qb.push_bind(status);
         }
-
-        (!conditions.is_empty()).then_some(conditions)
+        Ok(())
     }
     async fn insert(&self, pool: &Pool<Postgres>, params: serde_json::Value) -> Result<u64> {
         let params: HttpDetectorInsertParams = serde_json::from_value(params).context(JsonSnafu)?;
         let row: (i64,) = sqlx::query_as(
-            r#"INSERT INTO http_detectors (status, name, group_id, url, method, alpn_protocols, resolves, headers, ip_version, skip_verify, body, interval, script, alarm_url, random_querystring, alarm_on_change, retries, failure_threshold, verbose, regions, created_by, remark) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22) RETURNING id"#,
+            r#"INSERT INTO http_detectors (status, name, group_id, url, method, alpn_protocols, resolves, headers, ip_version, skip_verify, body, "interval", script, alarm_url, random_querystring, alarm_on_change, retries, failure_threshold, "verbose", regions, created_by, remark) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22) RETURNING id"#,
         )
         .bind(params.status)
         .bind(params.name)
@@ -448,7 +447,7 @@ impl Model for HttpDetectorModel {
         let params: HttpDetectorUpdateParams = serde_json::from_value(params).context(JsonSnafu)?;
 
         let _ = sqlx::query(
-            r#"UPDATE http_detectors SET status = COALESCE($1, status), name = COALESCE($2, name), group_id = COALESCE($3, group_id), url = COALESCE($4, url), method = COALESCE($5, method), alpn_protocols = COALESCE($6, alpn_protocols), resolves = COALESCE($7, resolves), headers = COALESCE($8, headers), ip_version = COALESCE($9, ip_version), skip_verify = COALESCE($10, skip_verify), body = COALESCE($11, body), interval = COALESCE($12, interval), script = COALESCE($13, script), alarm_url = COALESCE($14, alarm_url), random_querystring = COALESCE($15, random_querystring), alarm_on_change = COALESCE($16, alarm_on_change), retries = COALESCE($17, retries), failure_threshold = COALESCE($18, failure_threshold), verbose = COALESCE($19, verbose), regions = COALESCE($20, regions), remark = COALESCE($21, remark) WHERE id = $22 AND deleted_at IS NULL"#,
+            r#"UPDATE http_detectors SET status = COALESCE($1, status), name = COALESCE($2, name), group_id = COALESCE($3, group_id), url = COALESCE($4, url), method = COALESCE($5, method), alpn_protocols = COALESCE($6, alpn_protocols), resolves = COALESCE($7, resolves), headers = COALESCE($8, headers), ip_version = COALESCE($9, ip_version), skip_verify = COALESCE($10, skip_verify), body = COALESCE($11, body), "interval" = COALESCE($12, "interval"), script = COALESCE($13, script), alarm_url = COALESCE($14, alarm_url), random_querystring = COALESCE($15, random_querystring), alarm_on_change = COALESCE($16, alarm_on_change), retries = COALESCE($17, retries), failure_threshold = COALESCE($18, failure_threshold), "verbose" = COALESCE($19, "verbose"), regions = COALESCE($20, regions), remark = COALESCE($21, remark) WHERE id = $22 AND deleted_at IS NULL"#,
         )
         .bind(params.status)
         .bind(params.name)
@@ -479,13 +478,13 @@ impl Model for HttpDetectorModel {
         Ok(())
     }
     async fn count(&self, pool: &Pool<Postgres>, params: &ModelListParams) -> Result<i64> {
-        let mut sql = String::from("SELECT COUNT(*) FROM http_detectors");
-        sql.push_str(&self.condition_sql(params)?);
-        let count = sqlx::query_scalar::<_, i64>(&sql)
+        let mut qb = QueryBuilder::new("SELECT COUNT(*) FROM http_detectors");
+        self.push_conditions(&mut qb, params)?;
+        let count = qb
+            .build_query_scalar::<i64>()
             .fetch_one(pool)
             .await
             .context(SqlxSnafu)?;
-
         Ok(count)
     }
 
@@ -494,25 +493,14 @@ impl Model for HttpDetectorModel {
         pool: &Pool<Postgres>,
         params: &ModelListParams,
     ) -> Result<Vec<Self::Output>> {
-        let limit = params.limit.min(200);
-        let mut sql = String::from("SELECT * FROM http_detectors");
-        sql.push_str(&self.condition_sql(params)?);
-        if let Some(order_by) = &params.order_by {
-            let (order_by, direction) = if order_by.starts_with("-") {
-                (order_by.substring(1, order_by.len()).to_string(), "DESC")
-            } else {
-                (order_by.clone(), "ASC")
-            };
-            sql.push_str(&format!(" ORDER BY {order_by} {direction}"));
-        }
-        let offset = (params.page - 1) * limit;
-        sql.push_str(&format!(" LIMIT {limit} OFFSET {offset}"));
-
-        let detectors = sqlx::query_as::<_, HttpDetectorSchema>(&sql)
+        let mut qb = QueryBuilder::new("SELECT * FROM http_detectors");
+        self.push_conditions(&mut qb, params)?;
+        params.push_pagination(&mut qb);
+        let detectors = qb
+            .build_query_as::<HttpDetectorSchema>()
             .fetch_all(pool)
             .await
             .context(SqlxSnafu)?;
-
-        Ok(detectors.into_iter().map(|schema| schema.into()).collect())
+        Ok(detectors.into_iter().map(|s| s.into()).collect())
     }
 }

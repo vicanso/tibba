@@ -24,10 +24,9 @@ use serde::{Deserialize, Serialize};
 use snafu::ResultExt;
 use sqlx::FromRow;
 use sqlx::types::Json;
-use sqlx::{Pool, Postgres};
+use sqlx::{Pool, Postgres, QueryBuilder};
 use std::collections::HashMap;
 use std::str::FromStr;
-use substring::Substring;
 use time::{OffsetDateTime, PrimitiveDateTime};
 
 type Result<T> = std::result::Result<T, Error>;
@@ -140,18 +139,8 @@ impl Model for ConfigurationModel {
                     ])),
                     ..Default::default()
                 },
-                Schema {
-                    name: "effective_start_time".to_string(),
-                    category: SchemaType::Date,
-                    required: true,
-                    ..Default::default()
-                },
-                Schema {
-                    name: "effective_end_time".to_string(),
-                    category: SchemaType::Date,
-                    required: true,
-                    ..Default::default()
-                },
+                Schema::new_effective_start_time(),
+                Schema::new_effective_end_time(),
                 Schema {
                     name: "data".to_string(),
                     category: SchemaType::Json,
@@ -181,12 +170,16 @@ impl Model for ConfigurationModel {
         }
     }
 
-    fn filter_condition_sql(&self, filters: &HashMap<String, String>) -> Option<Vec<String>> {
-        let mut conditions = vec![];
+    fn push_filter_conditions<'args>(
+        &self,
+        qb: &mut QueryBuilder<'args, Postgres>,
+        filters: &HashMap<String, String>,
+    ) -> Result<()> {
         if let Some(category) = filters.get("category") {
-            conditions.push(format!("category = '{category}'"));
+            qb.push(" AND category = ");
+            qb.push_bind(category.clone());
         }
-        (!conditions.is_empty()).then_some(conditions)
+        Ok(())
     }
     async fn insert(&self, pool: &Pool<Postgres>, data: serde_json::Value) -> Result<u64> {
         let params: ConfigurationInsertParams = serde_json::from_value(data).context(JsonSnafu)?;
@@ -256,13 +249,13 @@ impl Model for ConfigurationModel {
     }
 
     async fn count(&self, pool: &Pool<Postgres>, params: &ModelListParams) -> Result<i64> {
-        let mut sql = String::from("SELECT COUNT(*) FROM configurations");
-        sql.push_str(&self.condition_sql(params)?);
-        let count = sqlx::query_scalar::<_, i64>(&sql)
+        let mut qb = QueryBuilder::new("SELECT COUNT(*) FROM configurations");
+        self.push_conditions(&mut qb, params)?;
+        let count = qb
+            .build_query_scalar::<i64>()
             .fetch_one(pool)
             .await
             .context(SqlxSnafu)?;
-
         Ok(count)
     }
 
@@ -271,29 +264,15 @@ impl Model for ConfigurationModel {
         pool: &Pool<Postgres>,
         params: &ModelListParams,
     ) -> Result<Vec<Self::Output>> {
-        let limit = params.limit.min(200);
-        let mut sql = String::from("SELECT * FROM configurations");
-        sql.push_str(&self.condition_sql(params)?);
-        if let Some(order_by) = &params.order_by {
-            let (order_by, direction) = if order_by.starts_with("-") {
-                (order_by.substring(1, order_by.len()).to_string(), "DESC")
-            } else {
-                (order_by.clone(), "ASC")
-            };
-            sql.push_str(&format!(" ORDER BY {order_by} {direction}"));
-        }
-        let offset = (params.page - 1) * limit;
-        sql.push_str(&format!(" LIMIT {limit} OFFSET {offset}"));
-
-        let configurations = sqlx::query_as::<_, ConfigurationSchema>(&sql)
+        let mut qb = QueryBuilder::new("SELECT * FROM configurations");
+        self.push_conditions(&mut qb, params)?;
+        params.push_pagination(&mut qb);
+        let configurations = qb
+            .build_query_as::<ConfigurationSchema>()
             .fetch_all(pool)
             .await
             .context(SqlxSnafu)?;
-
-        Ok(configurations
-            .into_iter()
-            .map(|schema| schema.into())
-            .collect())
+        Ok(configurations.into_iter().map(|s| s.into()).collect())
     }
 }
 

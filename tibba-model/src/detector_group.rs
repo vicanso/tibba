@@ -19,9 +19,8 @@ use super::{
 use serde::{Deserialize, Serialize};
 use snafu::ResultExt;
 use sqlx::FromRow;
-use sqlx::{Pool, Postgres};
+use sqlx::{Pool, Postgres, QueryBuilder};
 use std::collections::HashMap;
-use substring::Substring;
 use time::PrimitiveDateTime;
 
 type Result<T> = std::result::Result<T, Error>;
@@ -147,14 +146,16 @@ impl Model for DetectorGroupModel {
         }
     }
 
-    fn filter_condition_sql(&self, filters: &HashMap<String, String>) -> Option<Vec<String>> {
-        let mut conditions = vec![];
-
-        if let Some(status) = filters.get("status") {
-            conditions.push(format!("status = {status}"));
+    fn push_filter_conditions<'args>(
+        &self,
+        qb: &mut QueryBuilder<'args, Postgres>,
+        filters: &HashMap<String, String>,
+    ) -> Result<()> {
+        if let Some(status) = filters.get("status").and_then(|s| s.parse::<i16>().ok()) {
+            qb.push(" AND status = ");
+            qb.push_bind(status);
         }
-
-        (!conditions.is_empty()).then_some(conditions)
+        Ok(())
     }
 
     async fn insert(&self, pool: &Pool<Postgres>, params: serde_json::Value) -> Result<u64> {
@@ -223,13 +224,13 @@ impl Model for DetectorGroupModel {
     }
 
     async fn count(&self, pool: &Pool<Postgres>, params: &ModelListParams) -> Result<i64> {
-        let mut sql = String::from("SELECT COUNT(*) FROM detector_groups");
-        sql.push_str(&self.condition_sql(params)?);
-        let count = sqlx::query_scalar::<_, i64>(&sql)
+        let mut qb = QueryBuilder::new("SELECT COUNT(*) FROM detector_groups");
+        self.push_conditions(&mut qb, params)?;
+        let count = qb
+            .build_query_scalar::<i64>()
             .fetch_one(pool)
             .await
             .context(SqlxSnafu)?;
-
         Ok(count)
     }
 
@@ -238,25 +239,14 @@ impl Model for DetectorGroupModel {
         pool: &Pool<Postgres>,
         params: &ModelListParams,
     ) -> Result<Vec<Self::Output>> {
-        let limit = params.limit.min(200);
-        let mut sql = String::from("SELECT * FROM detector_groups");
-        sql.push_str(&self.condition_sql(params)?);
-        if let Some(order_by) = &params.order_by {
-            let (order_by, direction) = if order_by.starts_with("-") {
-                (order_by.substring(1, order_by.len()).to_string(), "DESC")
-            } else {
-                (order_by.clone(), "ASC")
-            };
-            sql.push_str(&format!(" ORDER BY {order_by} {direction}"));
-        }
-        let offset = (params.page - 1) * limit;
-        sql.push_str(&format!(" LIMIT {limit} OFFSET {offset}"));
-
-        let groups = sqlx::query_as::<_, DetectorGroupSchema>(&sql)
+        let mut qb = QueryBuilder::new("SELECT * FROM detector_groups");
+        self.push_conditions(&mut qb, params)?;
+        params.push_pagination(&mut qb);
+        let groups = qb
+            .build_query_as::<DetectorGroupSchema>()
             .fetch_all(pool)
             .await
             .context(SqlxSnafu)?;
-
-        Ok(groups.into_iter().map(|schema| schema.into()).collect())
+        Ok(groups.into_iter().map(|s| s.into()).collect())
     }
 }

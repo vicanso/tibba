@@ -29,6 +29,7 @@ use tracing::debug;
 
 type Result<T, E = tibba_error::Error> = std::result::Result<T, E>;
 
+/// 用户角色枚举，支持内置角色（Admin / SuperAdmin）和自定义角色。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Role {
     Admin,
@@ -46,21 +47,22 @@ impl From<&str> for Role {
     }
 }
 
+/// Session 配置参数，包含签名密钥、Cookie 名称、TTL 和最大续期次数。
 #[derive(Debug, Clone, Serialize)]
 pub struct SessionParams {
-    // secret for session cookie
+    /// Cookie 签名密钥，序列化时跳过（不暴露到外部）
     #[serde(skip)]
     key: Key,
-    // cookie name
+    /// 存储 Session ID 的 Cookie 名称
     cookie: String,
-    // ttl of session
+    /// Session 有效期（秒），默认 86400（24 小时）
     ttl: i64,
-    // max renewal count
+    /// 允许续期的最大次数，0 表示不允许续期
     max_renewal: u8,
 }
 
 impl SessionParams {
-    /// Creates a new SessionParams with the given signing key.
+    /// 以签名密钥创建 SessionParams，其余字段使用默认值（TTL 24h，不允许续期）。
     pub fn new(key: Key) -> Self {
         Self {
             key,
@@ -70,21 +72,21 @@ impl SessionParams {
         }
     }
 
-    /// Sets the cookie name used to store the session ID.
+    /// 设置存储 Session ID 的 Cookie 名称，支持链式调用。
     #[must_use]
     pub fn with_cookie(mut self, cookie: impl Into<String>) -> Self {
         self.cookie = cookie.into();
         self
     }
 
-    /// Sets the session TTL in seconds.
+    /// 设置 Session 有效期（秒），支持链式调用。
     #[must_use]
     pub fn with_ttl(mut self, ttl: i64) -> Self {
         self.ttl = ttl;
         self
     }
 
-    /// Sets the maximum number of session renewals allowed.
+    /// 设置允许续期的最大次数，支持链式调用。
     #[must_use]
     pub fn with_max_renewal(mut self, max_renewal: u8) -> Self {
         self.max_renewal = max_renewal;
@@ -92,23 +94,27 @@ impl SessionParams {
     }
 }
 
+/// Session 的内部数据，序列化后存入 Redis。
 #[derive(Serialize, Deserialize, Default, Clone)]
 struct SessionData {
+    /// 用户 ID
     user_id: i64,
-    // id
+    /// Session 唯一标识（UUID）
     id: String,
-    // issued at
+    /// 签发时间戳（Unix 秒）
     iat: i64,
-    // account
+    /// 用户账号
     account: String,
-    // renewal count
+    /// 已续期次数
     renewal_count: u8,
-    // roles
+    /// 角色列表
     roles: Vec<String>,
-    // groups
+    /// 用户组列表
     groups: Vec<String>,
 }
 
+/// HTTP Session，持有 Redis 缓存引用、配置参数和当前会话数据。
+/// 实现了 axum `FromRequestParts`，可直接作为 handler 参数提取。
 #[derive(Clone)]
 pub struct Session {
     cache: &'static RedisCache,
@@ -117,7 +123,7 @@ pub struct Session {
 }
 
 impl Session {
-    /// Creates a new session backed by the given cache and parameters.
+    /// 创建未登录的空 Session，数据从下一次请求中按需加载。
     pub fn new(cache: &'static RedisCache, params: Arc<SessionParams>) -> Self {
         Self {
             cache,
@@ -125,10 +131,13 @@ impl Session {
             data: SessionData::default(),
         }
     }
+
+    /// 生成 Redis 存储键，格式为 `ss:{session_id}`。
     fn get_key(id: &str) -> String {
         format!("ss:{id}")
     }
 
+    /// 校验用户是否已登录，未登录时返回 401 错误。
     fn validate_login(&self) -> Result<()> {
         if !self.is_login() {
             return Err(Error::UserNotLogin.into());
@@ -136,17 +145,17 @@ impl Session {
         Ok(())
     }
 
-    /// Returns true if the session has an authenticated account.
+    /// 返回 `true` 表示用户已登录（account 非空）。
     pub fn is_login(&self) -> bool {
         !self.data.account.is_empty()
     }
 
-    /// Returns true if the session has not yet reached the renewal limit.
+    /// 返回 `true` 表示 Session 尚未达到最大续期次数，可以续期。
     pub fn can_renew(&self) -> bool {
         self.data.renewal_count < self.params.max_renewal
     }
 
-    /// Sets the account and user ID, generating a new session ID when the account changes.
+    /// 设置账号和用户 ID，账号变更时自动生成新的 Session ID，支持链式调用。
     #[must_use]
     pub fn with_account(mut self, account: impl Into<String>, user_id: i64) -> Self {
         let account = account.into();
@@ -159,63 +168,63 @@ impl Session {
         self
     }
 
-    /// Sets the roles for this session.
+    /// 设置角色列表，支持链式调用。
     #[must_use]
     pub fn with_roles(mut self, roles: Vec<String>) -> Self {
         self.data.roles = roles;
         self
     }
 
-    /// Sets the groups for this session.
+    /// 设置用户组列表，支持链式调用。
     #[must_use]
     pub fn with_groups(mut self, groups: Vec<String>) -> Self {
         self.data.groups = groups;
         self
     }
 
-    /// Increments the renewal counter and updates the issued-at timestamp.
+    /// 续期：累加续期计数并更新签发时间戳。
     pub fn refresh(&mut self) {
         self.data.renewal_count += 1;
         self.data.iat = timestamp();
     }
 
-    /// Returns the authenticated account name.
+    /// 返回当前登录的用户账号。
     pub fn get_account(&self) -> &str {
         &self.data.account
     }
 
-    /// Returns the authenticated user ID.
+    /// 返回当前登录的用户 ID。
     pub fn get_user_id(&self) -> i64 {
         self.data.user_id
     }
 
-    /// Returns the session expiry time as a formatted string.
+    /// 返回 Session 过期时间的格式化字符串。
     pub fn get_expired_at(&self) -> String {
         from_timestamp(self.data.iat + self.params.ttl, 0)
     }
 
-    /// Returns true if the session will expire within the next hour.
+    /// 返回 `true` 表示 Session 将在 1 小时内过期。
     pub fn is_will_expired(&self) -> bool {
         self.data.iat + self.params.ttl - timestamp() < 3600
     }
 
-    /// Returns the session issue time as a formatted string.
+    /// 返回 Session 签发时间的格式化字符串。
     pub fn get_issued_at(&self) -> String {
         from_timestamp(self.data.iat, 0)
     }
 
-    /// Returns true if the session has passed its TTL.
+    /// 返回 `true` 表示 Session 已超过 TTL 过期。
     pub fn is_expired(&self) -> bool {
         self.data.iat + self.params.ttl < timestamp()
     }
 
-    /// Clears the session ID and account, effectively logging out.
+    /// 重置 Session（登出），清除 ID 和账号信息。
     pub fn reset(&mut self) {
         self.data.id = String::new();
         self.data.account = String::new();
     }
 
-    /// Persists the session data to Redis.
+    /// 将当前 Session 数据持久化到 Redis，TTL 与配置一致。
     pub async fn save(&self) -> Result<()> {
         if self.data.id.is_empty() {
             return Err(Error::SessionIdEmpty.into());
@@ -231,6 +240,8 @@ impl Session {
     }
 }
 
+/// 将 Session 转换为携带签名 Cookie 的 `SignedCookieJar`。
+/// Session ID 为空时将 Cookie max-age 设为 0（即删除 Cookie）。
 impl TryFrom<&Session> for SignedCookieJar {
     type Error = tibba_error::Error;
 
@@ -241,6 +252,7 @@ impl TryFrom<&Session> for SignedCookieJar {
             .max_age(time::Duration::seconds(se.params.ttl));
 
         if se.data.id.is_empty() {
+            // ID 为空表示登出，将 max-age 置 0 以清除客户端 Cookie
             c = c.max_age(time::Duration::days(0));
         }
 
@@ -248,12 +260,14 @@ impl TryFrom<&Session> for SignedCookieJar {
     }
 }
 
+/// Session 登出/刷新接口的响应体。
 #[derive(Debug, Serialize, Deserialize, Default)]
 struct SessionResp {
     account: String,
     renewal_count: u8,
 }
 
+/// 将 Session 序列化为 HTTP 响应：设置签名 Cookie + JSON 账号信息。
 impl IntoResponse for Session {
     fn into_response(self) -> Response {
         let result: Result<SignedCookieJar, _> = (&self).try_into();
@@ -271,6 +285,7 @@ impl IntoResponse for Session {
     }
 }
 
+/// 将 Session 和额外数据一起序列化为 HTTP 响应，同时设置签名 Cookie。
 pub struct SessionResponse<T>(pub Session, pub T);
 
 impl<T> IntoResponse for SessionResponse<T>
@@ -286,6 +301,8 @@ where
     }
 }
 
+/// axum extractor：从请求扩展中提取 Session，按需从 Redis 加载数据。
+/// 若 Cookie 中存在有效 Session ID 且 Redis 中有对应数据，则填充 SessionData。
 impl<S> FromRequestParts<S> for Session
 where
     S: Send + Sync,
@@ -307,7 +324,7 @@ where
             iat = se.data.iat,
             "from_request_parts"
         );
-        // not fetch
+        // iat == 0 表示本次请求尚未从 Redis 加载过数据
         if se.data.iat == 0 {
             let jar = SignedCookieJar::from_headers(&parts.headers, se.params.key.clone());
             let Some(c) = jar.get(&se.params.cookie) else {
@@ -329,6 +346,7 @@ where
                     "load from cache"
                 );
                 se.data = data;
+                // 回写到扩展，同一请求内后续提取无需再查 Redis
                 parts.extensions.insert(se.clone());
                 if se.is_login() {
                     CTX.get().set_account(se.get_account());
@@ -341,6 +359,8 @@ where
     }
 }
 
+/// axum extractor：要求用户已登录，否则返回 401。
+/// 通过 `Deref`/`DerefMut` 可直接访问内部 `Session` 的所有方法。
 pub struct UserSession(Session);
 
 impl From<UserSession> for Session {
@@ -379,6 +399,8 @@ impl std::ops::DerefMut for UserSession {
     }
 }
 
+/// axum extractor：要求用户已登录且具有 Admin 或 SuperAdmin 角色，否则返回 401/403。
+/// 通过 `Deref`/`DerefMut` 可直接访问内部 `Session` 的所有方法。
 pub struct AdminSession(Session);
 
 impl From<AdminSession> for Session {

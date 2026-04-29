@@ -16,79 +16,50 @@ use lru::LruCache;
 use std::num::NonZeroUsize;
 use tokio::sync::RwLock;
 
-/// Trait for types that can expire
+/// 用于判断缓存数据是否已过期的 trait。
 pub trait Expired {
-    /// Checks if the data has expired
-    /// # Returns
-    /// * `true` - The data has expired and should be removed
-    /// * `false` - The data is still valid
+    /// 返回 `true` 表示数据已过期，应从缓存中移除。
     fn is_expired(&self) -> bool;
 }
 
-/// A thread-safe storage component combining TTL (Time-To-Live) and LRU (Least Recently Used) caching strategies
-/// # Type Parameters
-/// * `T` - The type of values to store, must implement Expired trait
+/// 线程安全的 TTL + LRU 两级淘汰缓存存储。
+/// 同时支持多读或单写并发访问。
 pub struct TtlLruStore<T> {
-    /// Thread-safe LRU cache storing key-value pairs
-    /// Uses RwLock for concurrent access with multiple readers or single writer
     cache: RwLock<LruCache<String, T>>,
 }
 
 impl<T: Expired + Clone> TtlLruStore<T> {
-    /// Creates a new TtlLruStore with specified capacity
-    /// # Arguments
-    /// * `size` - Maximum number of items the cache can hold (must be non-zero)
-    /// # Returns
-    /// * A new TtlLruStore instance
+    /// 创建指定容量的 TtlLruStore，容量必须大于 0。
     pub fn new(size: NonZeroUsize) -> Self {
         Self {
             cache: RwLock::new(LruCache::new(size)),
         }
     }
 
-    /// Stores a value in the cache
-    /// # Arguments
-    /// * `key` - The key under which to store the value
-    /// * `value` - The value to store
-    /// # Notes
-    /// * If the cache is at capacity, the least recently used item will be removed
-    /// * If the key already exists, the value will be updated
+    /// 向缓存写入键值对。容量已满时自动淘汰最久未使用的条目。
     pub async fn set(&self, key: &str, value: T) {
         let mut cache = self.cache.write().await;
         cache.put(key.to_string(), value);
     }
 
-    /// Retrieves a value from the cache if it exists and hasn't expired
-    /// # Arguments
-    /// * `key` - The key to look up
-    /// # Returns
-    /// * `Some(T)` - The value if found and not expired
-    /// * `None` - If key doesn't exist or value has expired
-    /// # Notes
-    /// * Uses peek() instead of get() to avoid updating LRU order
-    /// * Returns a clone of the value to maintain thread safety
+    /// 读取未过期的缓存值，键不存在或已过期时返回 `None`。
+    /// 内部使用 peek 而非 get，不更新 LRU 顺序，性能更优。
     pub async fn get(&self, key: &str) -> Option<T> {
         let cache = self.cache.read().await;
-        // better performance use peek to avoid moving the data to the front of the cache
+        // 使用 peek 避免更新 LRU 顺序，读多写少场景性能更佳
         cache.peek(key).filter(|v| !v.is_expired()).cloned()
     }
 
-    /// Removes a value from the cache
-    /// # Arguments
-    /// * `key` - The key to remove
-    /// # Notes
-    /// * No-op if key doesn't exist
-    /// * Requires mutable access to the store
+    /// 删除指定键，键不存在时为空操作。
     pub async fn del(&self, key: &str) {
         let mut cache = self.cache.write().await;
         cache.pop(key);
     }
 
-    /// This method should be called periodically to free up memory from expired "garbage" data.
+    /// 清除所有已过期的条目，应定期调用以释放内存。
     pub async fn purge_expired(&self) {
         let mut cache = self.cache.write().await;
-        // LruCache has a limited API for removal during iteration.
-        // The safest way is to collect expired keys first, then remove them.
+        // LruCache 不支持迭代中删除，需先收集过期键再批量移除
         let keys: Vec<String> = cache
             .iter()
             .filter(|(_, v)| v.is_expired())

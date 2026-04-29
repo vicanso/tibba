@@ -22,9 +22,9 @@ use serde::{Deserialize, Serialize};
 use snafu::ResultExt;
 use sqlx::FromRow;
 use sqlx::types::Json;
-use sqlx::{Pool, Postgres};
+use sqlx::{Pool, Postgres, QueryBuilder};
+use std::collections::HashMap;
 use std::str::FromStr;
-use substring::Substring;
 use time::PrimitiveDateTime;
 
 type Result<T> = std::result::Result<T, Error>;
@@ -267,23 +267,23 @@ impl Model for FileModel {
         }
     }
 
-    fn condition_sql(&self, params: &ModelListParams) -> Result<String> {
-        let mut where_conditions = vec!["deleted_at IS NULL".to_string()];
-
-        if let Some(keyword) = &params.keyword {
-            where_conditions.push(format!("filename LIKE '%{keyword}%'"));
+    fn keyword(&self) -> String {
+        "filename".to_string()
+    }
+    fn push_filter_conditions<'args>(
+        &self,
+        qb: &mut QueryBuilder<'args, Postgres>,
+        filters: &HashMap<String, String>,
+    ) -> Result<()> {
+        if let Some(group) = filters.get("group") {
+            qb.push(" AND \"group\" = ");
+            qb.push_bind(group.clone());
         }
-
-        if let Some(filters) = params.parse_filters()? {
-            if let Some(group) = filters.get("group") {
-                where_conditions.push(format!("\"group\" = '{group}'"));
-            }
-            if let Some(uploader) = filters.get("uploader") {
-                where_conditions.push(format!("uploader = '{uploader}'"));
-            }
+        if let Some(uploader) = filters.get("uploader") {
+            qb.push(" AND uploader = ");
+            qb.push_bind(uploader.clone());
         }
-
-        Ok(format!(" WHERE {}", where_conditions.join(" AND ")))
+        Ok(())
     }
 
     async fn get_by_id(&self, pool: &Pool<Postgres>, id: u64) -> Result<Option<Self::Output>> {
@@ -329,9 +329,10 @@ impl Model for FileModel {
     }
 
     async fn count(&self, pool: &Pool<Postgres>, params: &ModelListParams) -> Result<i64> {
-        let mut sql = String::from("SELECT COUNT(*) FROM files");
-        sql.push_str(&self.condition_sql(params)?);
-        let count = sqlx::query_scalar::<_, i64>(&sql)
+        let mut qb = QueryBuilder::new("SELECT COUNT(*) FROM files");
+        self.push_conditions(&mut qb, params)?;
+        let count = qb
+            .build_query_scalar::<i64>()
             .fetch_one(pool)
             .await
             .context(SqlxSnafu)?;
@@ -343,26 +344,14 @@ impl Model for FileModel {
         pool: &Pool<Postgres>,
         params: &ModelListParams,
     ) -> Result<Vec<Self::Output>> {
-        let limit = params.limit.min(200);
-        let mut sql = String::from("SELECT * FROM files");
-        sql.push_str(&self.condition_sql(params)?);
-        if let Some(order_by) = &params.order_by {
-            let (order_by, direction) = if order_by.starts_with("-") {
-                (order_by.substring(1, order_by.len()).to_string(), "DESC")
-            } else {
-                (order_by.clone(), "ASC")
-            };
-            sql.push_str(&format!(" ORDER BY {order_by} {direction}"));
-        }
-
-        let offset = (params.page - 1) * limit;
-        sql.push_str(&format!(" LIMIT {limit} OFFSET {offset}"));
-
-        let files = sqlx::query_as::<_, FileSchema>(&sql)
+        let mut qb = QueryBuilder::new("SELECT * FROM files");
+        self.push_conditions(&mut qb, params)?;
+        params.push_pagination(&mut qb);
+        let files = qb
+            .build_query_as::<FileSchema>()
             .fetch_all(pool)
             .await
             .context(SqlxSnafu)?;
-
-        Ok(files.into_iter().map(|file| file.into()).collect())
+        Ok(files.into_iter().map(|f| f.into()).collect())
     }
 }

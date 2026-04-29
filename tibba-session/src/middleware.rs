@@ -24,6 +24,8 @@ use tracing::debug;
 
 type Result<T, E = tibba_error::Error> = std::result::Result<T, E>;
 
+/// axum 中间件：在请求扩展中注入空 Session 实例，供后续 handler 通过 extractor 按需加载。
+/// Session 数据不在此处预加载，而是在 `FromRequestParts` 实现中按需从 Redis 读取。
 pub async fn session(
     State((cache, params)): State<(&'static RedisCache, Arc<SessionParams>)>,
     mut req: Request,

@@ -209,3 +209,4 @@
 - `From` impl 中解构 `val` 用单次 match，避免双重 match
 - `impl Xxx { fn new(...) -> Self }` 返回类型统一用 `Self`
 - 每次修改后运行 `cargo clippy -p <crate-name>` 确保零警告
+- 代码注释使用中文注释

@@ -68,26 +68,25 @@ pub enum Error {
 
 type Result<T> = std::result::Result<T, Error>;
 
-// RedisConfig struct defines Redis-specific configuration
-// with validation rules for connection parameters
+// Redis 连接配置，含校验规则
 #[derive(Debug, Clone, Default, Validate)]
 pub struct RedisConfig {
-    // redis nodes
+    // Redis 节点列表
     #[validate(length(min = 1))]
     pub nodes: Vec<String>,
-    // pool size
+    // 连接池大小
     pub pool_size: u32,
-    // connection timeout
+    // 建立连接的超时时间
     pub connection_timeout: Duration,
-    // wait timeout
+    // 等待连接的超时时间
     pub wait_timeout: Duration,
-    // recycle timeout
+    // 回收连接时的健康检测超时时间
     pub recycle_timeout: Duration,
-    // idle timeout
+    // 连接空闲超时时间
     pub idle_timeout: Duration,
-    // password
+    // 认证密码
     pub password: Option<String>,
-    // max connection age
+    // 连接最大存活时间
     pub max_conn_age: Duration,
 }
 
@@ -117,8 +116,7 @@ struct RedisParams {
     password: Option<String>,
 }
 
-// Creates a new RedisConfig instance from the configuration
-// Parses Redis URI and extracts connection parameters
+// 从配置中解析并构建 RedisConfig
 fn new_redis_config(config: &Config) -> Result<RedisConfig> {
     let uri = config.get_string("uri").context(ConfigSnafu)?;
     let parsed = parse_uri::<RedisParams>(&uri).context(ParseUriSnafu)?;
@@ -148,7 +146,7 @@ fn new_redis_config(config: &Config) -> Result<RedisConfig> {
 
 impl From<Error> for BaseError {
     fn from(val: Error) -> Self {
-        // Infrastructure errors: unreachable Redis → 500 + exception
+        // 基础设施错误（Redis 不可达等）→ 500 + 异常标记
         fn infra(err: BaseError) -> BaseError {
             err.with_status(500).with_exception(true)
         }
@@ -187,8 +185,8 @@ impl From<Error> for BaseError {
     }
 }
 
-/// Tracing target for all log events in this crate.
-/// Use `RUST_LOG=tibba:cache=info` (or `debug`) to filter these logs.
+/// 该 crate 所有日志事件的 tracing target。
+/// 可通过 `RUST_LOG=tibba:cache=info`（或 `debug`）进行过滤。
 pub(crate) const LOG_TARGET: &str = "tibba:cache";
 
 mod cache;
