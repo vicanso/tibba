@@ -17,5 +17,5 @@ snafu = { workspace = true }
 sqlx = { workspace = true }
 substring = { workspace = true }
 tokio = { workspace = true }
-tibba-error = { path = "../tibba-error" }
+tibba-error = { path = "../tibba-error", version = "0.2.0" }
 time = { workspace = true }
