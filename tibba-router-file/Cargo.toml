@@ -15,10 +15,10 @@ imageoptimize = "0.4.1"
 mime_guess2 = { workspace = true }
 serde = { workspace = true }
 sqlx = { workspace = true }
-tibba-error = { path = "../tibba-error" }
-tibba-model = { path = "../tibba-model" }
-tibba-opendal = { path = "../tibba-opendal" }
-tibba-session = { path = "../tibba-session" }
-tibba-util = { path = "../tibba-util" }
-tibba-validator = { path = "../tibba-validator" }
+tibba-error = { path = "../tibba-error", version = "0.2.0" }
+tibba-model = { path = "../tibba-model", version = "0.2.0" }
+tibba-opendal = { path = "../tibba-opendal", version = "0.2.0" }
+tibba-session = { path = "../tibba-session", version = "0.2.0" }
+tibba-util = { path = "../tibba-util", version = "0.2.0" }
+tibba-validator = { path = "../tibba-validator", version = "0.2.0" }
 validator = { workspace = true }

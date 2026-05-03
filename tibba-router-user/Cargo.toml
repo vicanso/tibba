@@ -14,11 +14,11 @@ axum-extra = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sqlx = { workspace = true }
-tibba-cache = { path = "../tibba-cache" }
-tibba-error = { path = "../tibba-error" }
-tibba-middleware = { path = "../tibba-middleware" }
-tibba-model = { path = "../tibba-model" }
-tibba-session = { path = "../tibba-session" }
-tibba-util = { path = "../tibba-util" }
-tibba-validator = { path = "../tibba-validator" }
+tibba-cache = { path = "../tibba-cache", version = "0.2.0" }
+tibba-error = { path = "../tibba-error", version = "0.2.0" }
+tibba-middleware = { path = "../tibba-middleware", version = "0.2.0" }
+tibba-model = { path = "../tibba-model", version = "0.2.0" }
+tibba-session = { path = "../tibba-session", version = "0.2.0" }
+tibba-util = { path = "../tibba-util", version = "0.2.0" }
+tibba-validator = { path = "../tibba-validator", version = "0.2.0" }
 validator = { workspace = true }
