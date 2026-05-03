@@ -6,7 +6,7 @@ authors = ["Tree Xie <tree.xie@outlook.com>"]
 license = "Apache-2.0"
 homepage = "https://github.com/vicanso/tibba"
 repository = "https://github.com/vicanso/tibba"
-keywords = ["tibba", "browser headless"]
+keywords = ["tibba", "browser"]
 description = "browser headless for tibba"
 
 
