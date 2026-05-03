@@ -2,6 +2,13 @@
 name = "tibba-headless"
 version = "0.2.0"
 edition = "2024"
+authors = ["Tree Xie <tree.xie@outlook.com>"]
+license = "Apache-2.0"
+homepage = "https://github.com/vicanso/tibba"
+repository = "https://github.com/vicanso/tibba"
+keywords = ["tibba", "browser headless"]
+description = "browser headless for tibba"
+
 
 [lib]
 name = "tibba_headless"
