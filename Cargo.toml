@@ -96,6 +96,7 @@ members = [
     "tibba-session",
     "tibba-router-model",
     "tibba-headless",
+    "tibba-scaffold",
 ]
 
 

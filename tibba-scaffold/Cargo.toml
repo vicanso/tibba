@@ -1,0 +1,13 @@
+[package]
+name = "tibba-scaffold"
+version = "0.2.0"
+edition = "2024"
+description = "CLI scaffold tool for tibba web projects"
+
+[[bin]]
+name = "tibba-scaffold"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+inquire = "0.7"
