@@ -10,6 +10,8 @@ graph TD
 
     hook --> error
 
+    llm --> error
+
     model --> error
 
     scheduler --> error
@@ -18,6 +20,9 @@ graph TD
 
     model-builtin --> error
     model-builtin --> model
+
+    model-token --> error
+    model-token --> model
 
     cache --> config
     cache --> error

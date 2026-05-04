@@ -42,6 +42,7 @@ tibba-hook = { path = "./tibba-hook" }
 tibba-middleware = { path = "./tibba-middleware" }
 tibba-model = { path = "./tibba-model" }
 tibba-model-builtin = { path = "./tibba-model-builtin" }
+tibba-model-token = { path = "./tibba-model-token" }
 tibba-opendal = { path = "./tibba-opendal" }
 tibba-router-common = { path = "./tibba-router-common" }
 tibba-router-file = { path = "./tibba-router-file" }
@@ -84,6 +85,7 @@ members = [
     "tibba-middleware",
     "tibba-model",
     "tibba-model-builtin",
+    "tibba-model-token",
     "tibba-opendal",
     "tibba-performance",
     "tibba-request",
@@ -98,6 +100,7 @@ members = [
     "tibba-session",
     "tibba-router-model",
     "tibba-headless",
+    "tibba-llm",
     "tibba-scaffold",
 ]
 
