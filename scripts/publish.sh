@@ -38,6 +38,7 @@ publish tibba-cache
 publish tibba-opendal
 publish tibba-request
 publish tibba-sql
+publish tibba-model-builtin
 
 echo "batch 3 done, waiting for crates.io index..."
 sleep 30

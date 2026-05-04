@@ -26,7 +26,7 @@ use serde_json::{Value, json};
 use sqlx::PgPool;
 use std::str::FromStr;
 use tibba_error::Error;
-use tibba_model::{Model, ModelListParams, SchemaOption, SchemaView};
+use tibba_model_builtin::{Model, ModelListParams, SchemaOption, SchemaView};
 use tibba_session::{AdminSession, UserSession};
 use tibba_util::{JsonParams, JsonResult, QueryParams};
 use tibba_validator::x_schema_name;

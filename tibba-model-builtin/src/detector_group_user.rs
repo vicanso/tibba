@@ -12,16 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{
-    DetectorGroupModel, Error, JsonSnafu, Model, ModelListParams, Schema, SchemaAllowCreate,
-    SchemaAllowEdit, SchemaOption, SchemaOptionValue, SchemaType, SchemaView, SqlxSnafu,
-    format_datetime, parse_primitive_datetime,
-};
+use super::DetectorGroupModel;
 use serde::{Deserialize, Serialize};
 use snafu::ResultExt;
 use sqlx::FromRow;
 use sqlx::{Pool, Postgres, QueryBuilder};
 use std::collections::HashMap;
+use tibba_model::{
+    Error, JsonSnafu, Model, ModelListParams, Schema, SchemaAllowCreate, SchemaAllowEdit,
+    SchemaOption, SchemaOptionValue, SchemaType, SchemaView, SqlxSnafu, format_datetime,
+    parse_primitive_datetime,
+};
 use time::PrimitiveDateTime;
 
 type Result<T> = std::result::Result<T, Error>;

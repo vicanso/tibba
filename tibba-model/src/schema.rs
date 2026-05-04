@@ -72,7 +72,7 @@ pub struct SchemaOption {
     pub value: SchemaOptionValue,
 }
 
-pub(crate) fn new_schema_options(values: &[&str]) -> Vec<SchemaOption> {
+pub fn new_schema_options(values: &[&str]) -> Vec<SchemaOption> {
     values
         .iter()
         .map(|v| SchemaOption {

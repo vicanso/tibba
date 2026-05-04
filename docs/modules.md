@@ -16,6 +16,9 @@ graph TD
 
     util --> error
 
+    model-builtin --> error
+    model-builtin --> model
+
     cache --> config
     cache --> error
     cache --> util
@@ -48,14 +51,14 @@ graph TD
     session --> util
 
     router-file --> error
-    router-file --> model
+    router-file --> model-builtin
     router-file --> opendal
     router-file --> session
     router-file --> util
     router-file --> validator
 
     router-model --> error
-    router-model --> model
+    router-model --> model-builtin
     router-model --> session
     router-model --> util
     router-model --> validator

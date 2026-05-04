@@ -12,17 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{
-    DetectorGroupModel, Error, JsonSnafu, Model, ModelListParams, Schema, SchemaAllowCreate,
-    SchemaAllowEdit, SchemaOption, SchemaOptionValue, SchemaType, SchemaView, SqlxSnafu,
-    format_datetime, new_schema_options,
-};
+use super::DetectorGroupModel;
 use serde::{Deserialize, Serialize};
 use snafu::ResultExt;
 use sqlx::FromRow;
 use sqlx::types::Json;
 use sqlx::{Pool, Postgres, QueryBuilder};
 use std::collections::HashMap;
+use tibba_model::{
+    Error, JsonSnafu, Model, ModelListParams, Schema, SchemaAllowCreate, SchemaAllowEdit,
+    SchemaOption, SchemaOptionValue, SchemaType, SchemaView, SqlxSnafu, format_datetime,
+    new_schema_options,
+};
 use time::PrimitiveDateTime;
 
 pub const REGION_ANY: &str = "any";

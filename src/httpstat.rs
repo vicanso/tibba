@@ -30,9 +30,9 @@ use std::sync::atomic::{AtomicI32, Ordering};
 use std::{net::IpAddr, time::Duration};
 use tibba_error::Error;
 use tibba_hook::{BoxFuture, Task, register_task};
-use tibba_model::{
-    AlarmConfig, ConfigurationModel, HttpDetector, HttpDetectorModel, HttpStat,
-    HttpStatInsertParams, HttpStatModel, Model, REGION_ANY, ResultValue,
+use tibba_model::{AlarmConfig, ConfigurationModel, Model, ResultValue};
+use tibba_model_builtin::{
+    HttpDetector, HttpDetectorModel, HttpStat, HttpStatInsertParams, HttpStatModel, REGION_ANY,
 };
 use tibba_scheduler::{Job, register_job_task};
 use time::OffsetDateTime;

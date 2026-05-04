@@ -132,12 +132,20 @@ fn module_deps(module: &str) -> &'static [&'static str] {
         "error" | "state" | "performance" | "validator" => &[],
         "util" | "config" | "crypto" | "headless" | "hook" | "model" | "scheduler" => &["error"],
         "cache" | "opendal" | "sql" => &["config", "error", "util"],
+        "model-builtin" => &["error", "model"],
         "request" => &["error", "util"],
         "middleware" => &["cache", "error", "state", "util"],
         "router-common" => &["cache", "error", "performance", "state", "util"],
         "session" => &["cache", "error", "state", "util"],
-        "router-file" => &["error", "model", "opendal", "session", "util", "validator"],
-        "router-model" => &["error", "model", "session", "util", "validator"],
+        "router-file" => &[
+            "error",
+            "model-builtin",
+            "opendal",
+            "session",
+            "util",
+            "validator",
+        ],
+        "router-model" => &["error", "model-builtin", "session", "util", "validator"],
         "router-user" => &[
             "cache",
             "error",
@@ -177,7 +185,7 @@ fn feature_modules(feature: &Feature) -> &'static [&'static str] {
         Feature::RouterUser => &["router-user"],
         Feature::RouterFile => &["router-file"],
         Feature::RouterModel => &["router-model"],
-        Feature::Model => &["model"],
+        Feature::Model => &["model-builtin"],
     }
 }
 

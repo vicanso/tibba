@@ -12,11 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{
-    Error, JsonSnafu, Model, ModelListParams, ROLE_ADMIN, ROLE_SUPER_ADMIN, Schema,
-    SchemaAllowCreate, SchemaAllowEdit, SchemaOption, SchemaOptionValue, SchemaType, SchemaView,
-    SqlxSnafu, format_datetime,
-};
 use http::header::{HeaderMap, HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
 use snafu::ResultExt;
@@ -25,6 +20,11 @@ use sqlx::types::Json;
 use sqlx::{Pool, Postgres, QueryBuilder};
 use std::collections::HashMap;
 use std::str::FromStr;
+use tibba_model::{
+    Error, JsonSnafu, Model, ModelListParams, ROLE_ADMIN, ROLE_SUPER_ADMIN, Schema,
+    SchemaAllowCreate, SchemaAllowEdit, SchemaOption, SchemaOptionValue, SchemaType, SchemaView,
+    SqlxSnafu, format_datetime,
+};
 use time::PrimitiveDateTime;
 
 type Result<T> = std::result::Result<T, Error>;

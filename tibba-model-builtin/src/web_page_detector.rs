@@ -12,16 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{
-    Error, JsonSnafu, Model, ModelListParams, Schema, SchemaAllowCreate, SchemaAllowEdit,
-    SchemaType, SchemaView, SqlxSnafu, format_datetime, new_schema_options,
-};
 use super::{REGION_ALIYUN, REGION_ANY, REGION_GZ, REGION_TX};
 use serde::{Deserialize, Serialize};
 use snafu::ResultExt;
 use sqlx::FromRow;
 use sqlx::types::Json;
 use sqlx::{Pool, Postgres, QueryBuilder};
+use tibba_model::{
+    Error, JsonSnafu, Model, ModelListParams, Schema, SchemaAllowCreate, SchemaAllowEdit,
+    SchemaType, SchemaView, SqlxSnafu, format_datetime, new_schema_options,
+};
 use time::PrimitiveDateTime;
 
 type Result<T> = std::result::Result<T, Error>;

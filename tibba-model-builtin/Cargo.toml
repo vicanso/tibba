@@ -1,0 +1,26 @@
+[package]
+name = "tibba-model-builtin"
+version = "0.2.0"
+edition = "2024"
+authors = ["Tree Xie <tree.xie@outlook.com>"]
+license = "Apache-2.0"
+homepage = "https://github.com/vicanso/tibba"
+repository = "https://github.com/vicanso/tibba"
+keywords = ["tibba", "model"]
+description = "built-in models for tibba (file, detector, http-stat, etc.)"
+
+[lib]
+name = "tibba_model_builtin"
+path = "src/lib.rs"
+
+[dependencies]
+http = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+snafu = { workspace = true }
+sqlx = { workspace = true }
+substring = { workspace = true }
+tokio = { workspace = true }
+tibba-error = { path = "../tibba-error", version = "0.2.0" }
+tibba-model = { path = "../tibba-model", version = "0.2.0" }
+time = { workspace = true }

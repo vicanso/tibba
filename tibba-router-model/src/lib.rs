@@ -14,7 +14,7 @@
 
 use std::sync::LazyLock;
 use strum::EnumString;
-use tibba_model::{
+use tibba_model_builtin::{
     ConfigurationModel, DetectorGroupModel, DetectorGroupUserModel, FileModel, HttpDetectorModel,
     HttpStatModel, Model, UserModel, WebPageDetectorModel,
 };

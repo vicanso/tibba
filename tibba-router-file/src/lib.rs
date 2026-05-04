@@ -26,7 +26,7 @@ use sqlx::PgPool;
 use std::collections::HashMap;
 use std::path::Path;
 use tibba_error::Error;
-use tibba_model::{ConfigurationModel, FileInsertParams, FileModel, Model};
+use tibba_model_builtin::{ConfigurationModel, FileInsertParams, FileModel, Model};
 use tibba_opendal::Storage;
 use tibba_session::UserSession;
 use tibba_util::{JsonResult, QueryParams, uuid};

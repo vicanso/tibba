@@ -18,7 +18,7 @@ use tibba_error::Error as BaseError;
 use time::macros::format_description;
 use time::{OffsetDateTime, PrimitiveDateTime};
 
-pub(crate) fn format_datetime(datetime: PrimitiveDateTime) -> String {
+pub fn format_datetime(datetime: PrimitiveDateTime) -> String {
     let ts = datetime.assume_utc().unix_timestamp();
     if let Some(value) = DateTime::from_timestamp(ts, 0) {
         value.with_timezone(&offset::Local).to_string()
@@ -27,7 +27,7 @@ pub(crate) fn format_datetime(datetime: PrimitiveDateTime) -> String {
     }
 }
 
-pub(crate) fn parse_primitive_datetime(s: &str) -> Result<PrimitiveDateTime> {
+pub fn parse_primitive_datetime(s: &str) -> Result<PrimitiveDateTime> {
     let fmt_t = format_description!("[year]-[month]-[day]T[hour]:[minute]:[second]");
     let fmt_space = format_description!("[year]-[month]-[day] [hour]:[minute]:[second]");
     if let Ok(dt) = PrimitiveDateTime::parse(s, fmt_t) {
@@ -48,6 +48,7 @@ pub(crate) fn parse_primitive_datetime(s: &str) -> Result<PrimitiveDateTime> {
 type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, Snafu)]
+#[snafu(visibility(pub))]
 pub enum Error {
     #[snafu(display("{source}"))]
     Sqlx { source: sqlx::Error },
@@ -88,23 +89,11 @@ impl From<Error> for BaseError {
 }
 
 mod configuration;
-mod detector_group;
-mod detector_group_user;
-mod file;
-mod http_detector;
-mod http_stat;
 mod model;
 mod schema;
 mod user;
-mod web_page_detector;
 
 pub use configuration::*;
-pub use detector_group::*;
-pub use detector_group_user::*;
-pub use file::*;
-pub use http_detector::*;
-pub use http_stat::*;
 pub use model::*;
 pub use schema::*;
 pub use user::*;
-pub use web_page_detector::*;

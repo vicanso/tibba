@@ -5527,6 +5527,7 @@ dependencies = [
  "tibba-hook",
  "tibba-middleware",
  "tibba-model",
+ "tibba-model-builtin",
  "tibba-opendal",
  "tibba-performance",
  "tibba-router-common",
@@ -5660,6 +5661,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "tibba-model-builtin"
+version = "0.2.0"
+dependencies = [
+ "http",
+ "serde",
+ "serde_json",
+ "snafu",
+ "sqlx",
+ "substring",
+ "tibba-error",
+ "tibba-model",
+ "time",
+ "tokio",
+]
+
+[[package]]
 name = "tibba-opendal"
 version = "0.2.0"
 dependencies = [
@@ -5731,7 +5748,7 @@ dependencies = [
  "serde",
  "sqlx",
  "tibba-error",
- "tibba-model",
+ "tibba-model-builtin",
  "tibba-opendal",
  "tibba-session",
  "tibba-util",
@@ -5749,7 +5766,7 @@ dependencies = [
  "sqlx",
  "strum 0.28.0",
  "tibba-error",
- "tibba-model",
+ "tibba-model-builtin",
  "tibba-session",
  "tibba-util",
  "tibba-validator",
