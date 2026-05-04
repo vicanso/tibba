@@ -48,13 +48,28 @@ impl Feature {
             ("sql           - PostgreSQL 数据库", Feature::Sql),
             ("cache         - Redis 缓存", Feature::Cache),
             ("session       - 会话管理（依赖 cache）", Feature::Session),
-            ("opendal       - 文件存储（S3 / 本地 / HTTP）", Feature::Opendal),
+            (
+                "opendal       - 文件存储（S3 / 本地 / HTTP）",
+                Feature::Opendal,
+            ),
             ("scheduler     - 定时任务（cron）", Feature::Scheduler),
             ("headless      - 无头浏览器", Feature::Headless),
-            ("router-common - 公共路由（ping / captcha，依赖 cache）", Feature::RouterCommon),
-            ("router-user   - 用户路由（登录 / 注册，依赖 sql / cache / session）", Feature::RouterUser),
-            ("router-file   - 文件路由（上传 / 下载，依赖 sql / opendal / session）", Feature::RouterFile),
-            ("router-model  - 模型 CRUD 路由（依赖 sql / session）", Feature::RouterModel),
+            (
+                "router-common - 公共路由（ping / captcha，依赖 cache）",
+                Feature::RouterCommon,
+            ),
+            (
+                "router-user   - 用户路由（登录 / 注册，依赖 sql / cache / session）",
+                Feature::RouterUser,
+            ),
+            (
+                "router-file   - 文件路由（上传 / 下载，依赖 sql / opendal / session）",
+                Feature::RouterFile,
+            ),
+            (
+                "router-model  - 模型 CRUD 路由（依赖 sql / session）",
+                Feature::RouterModel,
+            ),
         ]
     }
 
@@ -115,9 +130,7 @@ fn resolve(selected: HashSet<Feature>) -> HashSet<Feature> {
 fn module_deps(module: &str) -> &'static [&'static str] {
     match module {
         "error" | "state" | "performance" | "validator" => &[],
-        "util" | "config" | "crypto" | "headless" | "hook" | "model" | "scheduler" => {
-            &["error"]
-        }
+        "util" | "config" | "crypto" | "headless" | "hook" | "model" | "scheduler" => &["error"],
         "cache" | "opendal" | "sql" => &["config", "error", "util"],
         "request" => &["error", "util"],
         "middleware" => &["cache", "error", "state", "util"],
@@ -126,7 +139,13 @@ fn module_deps(module: &str) -> &'static [&'static str] {
         "router-file" => &["error", "model", "opendal", "session", "util", "validator"],
         "router-model" => &["error", "model", "session", "util", "validator"],
         "router-user" => &[
-            "cache", "error", "middleware", "model", "session", "util", "validator",
+            "cache",
+            "error",
+            "middleware",
+            "model",
+            "session",
+            "util",
+            "validator",
         ],
         _ => &[],
     }
@@ -195,10 +214,6 @@ enum Commands {
         /// 示例: --output /tmp/projects
         #[arg(long, short = 'o')]
         output: Option<String>,
-        /// tibba workspace 本地路径，用于生成 [patch.crates-io] 绕过 crates.io
-        /// 示例: --tibba-path ~/github/tibba
-        #[arg(long)]
-        tibba_path: Option<String>,
     },
 }
 
@@ -207,13 +222,19 @@ enum Commands {
 fn main() {
     let cli = Cli::parse();
     match cli.command {
-        Commands::New { name, features, output, tibba_path } => {
+        Commands::New {
+            name,
+            features,
+            output,
+        } => {
             let selected = match features {
                 Some(list) => {
                     let mut set = HashSet::new();
                     for s in &list {
                         match Feature::from_str(s.trim()) {
-                            Some(f) => { set.insert(f); }
+                            Some(f) => {
+                                set.insert(f);
+                            }
                             None => {
                                 eprintln!("未知模块: {s}");
                                 std::process::exit(1);
@@ -239,12 +260,7 @@ fn main() {
                 }
             };
 
-            let tibba_path = match tibba_path {
-                Some(p) => Some(expand_tilde(&p)),
-                None => interactive_tibba_path(),
-            };
-
-            generate_project(&name, &root, &features, tibba_path.as_deref());
+            generate_project(&name, &root, &features);
         }
     }
 }
@@ -278,28 +294,9 @@ fn interactive_output() -> String {
         })
 }
 
-/// 询问 tibba workspace 本地路径；留空表示使用 crates.io。
-fn interactive_tibba_path() -> Option<PathBuf> {
-    let input = inquire::Text::new(
-        "tibba 本地路径（留空则从 crates.io 拉取，填路径则生成 [patch.crates-io]）：",
-    )
-    .with_default("")
-    .prompt()
-    .unwrap_or_else(|_| {
-        eprintln!("已取消");
-        std::process::exit(0);
-    });
-
-    if input.trim().is_empty() {
-        None
-    } else {
-        Some(expand_tilde(input.trim()))
-    }
-}
-
 // ── 项目生成 ──────────────────────────────────────────────────────────────────
 
-fn generate_project(name: &str, root: &Path, features: &HashSet<Feature>, tibba_path: Option<&Path>) {
+fn generate_project(name: &str, root: &Path, features: &HashSet<Feature>) {
     if root.exists() {
         eprintln!("目录 {} 已存在，请换一个名称或手动删除", root.display());
         std::process::exit(1);
@@ -308,7 +305,7 @@ fn generate_project(name: &str, root: &Path, features: &HashSet<Feature>, tibba_
     fs::create_dir_all(root.join("src")).unwrap();
     fs::create_dir_all(root.join("configs")).unwrap();
 
-    write(root, "Cargo.toml", &gen_cargo_toml(name, features, tibba_path));
+    write(root, "Cargo.toml", &gen_cargo_toml(name, features));
     write(root, ".env.example", &gen_env_example(features));
     write(root, "configs/default.toml", &gen_default_toml(features));
     write(root, "src/main.rs", &gen_main_rs(features));
@@ -335,7 +332,7 @@ fn write(root: &Path, path: &str, content: &str) {
 
 // ── Cargo.toml 生成 ───────────────────────────────────────────────────────────
 
-fn gen_cargo_toml(name: &str, features: &HashSet<Feature>, tibba_path: Option<&Path>) -> String {
+fn gen_cargo_toml(name: &str, features: &HashSet<Feature>) -> String {
     let v = TIBBA_VERSION;
 
     // 通过模块图计算所有需要的 tibba-* 模块
@@ -356,10 +353,11 @@ tracing = "0.1"
 tracing-subscriber = {{ version = "0.3", features = ["local-time"] }}
 time = {{ version = "0.3", features = ["serde"] }}
 once_cell = "1"
-ctor = "0.10"
+ctor = "1.0.0"
 tower = {{ version = "0.5", features = ["timeout"] }}
 tower-http = {{ version = "0.6", features = ["compression-br", "compression-gzip"] }}
 rust-embed = "8"
+validator = {{ version = "0.20", features = ["derive"] }}
 "#
     );
 
@@ -370,7 +368,9 @@ rust-embed = "8"
 
     // 需要额外 feature 的第三方依赖
     if features.contains(&Feature::Sql) {
-        out.push_str("sqlx = { version = \"0.8\", features = [\"runtime-tokio\", \"postgres\"] }\n");
+        out.push_str(
+            "sqlx = { version = \"0.8\", features = [\"runtime-tokio\", \"postgres\"] }\n",
+        );
     }
     if features.contains(&Feature::Session) {
         out.push_str(
@@ -387,30 +387,36 @@ strip = "debuginfo"
 "#,
     );
 
-    // 本地路径 patch（绕过 crates.io）
-    if let Some(tibba_root) = tibba_path {
-        out.push_str("\n[patch.crates-io]\n");
-        for module in &tibba_modules {
-            let local = tibba_root.join(format!("tibba-{module}"));
-            out.push_str(&format!(
-                "tibba-{module} = {{ path = \"{}\" }}\n",
-                local.display()
-            ));
-        }
-    }
-
     out
 }
 
 // ── .env.example 生成 ─────────────────────────────────────────────────────────
 
 fn gen_env_example(features: &HashSet<Feature>) -> String {
-    let mut s = String::from("APP_ENV=development\n");
+    let mut s = String::from(
+        r#"# 运行环境，对应 configs/{RUST_ENV}.toml，默认 dev
+RUST_ENV=dev
+
+# 以下变量通过 APP_ 前缀 + 单下划线分隔嵌套键来覆盖 configs/ 中的配置
+# 例如 APP_BASIC_SECRET 覆盖 [basic] secret
+
+APP_BASIC_LISTEN=0.0.0.0:3000
+APP_BASIC_SECRET=change-me-to-a-random-secret
+"#,
+    );
+
     if features.contains(&Feature::Sql) {
-        s.push_str("DATABASE_URI=postgres://user:password@127.0.0.1:5432/mydb\n");
+        s.push_str("APP_DATABASE_URI=postgres://user:password@127.0.0.1:5432/mydb\n");
     }
     if features.contains(&Feature::Cache) {
-        s.push_str("REDIS_URI=redis://127.0.0.1:6379\n");
+        s.push_str("APP_REDIS_URI=redis://127.0.0.1:6379\n");
+    }
+    if features.contains(&Feature::Session) {
+        s.push_str(
+            "APP_SESSION_SECRET=change-me-to-a-64-char-random-secret-for-cookie-signing-xxxxx\n",
+        );
+        s.push_str("APP_SESSION_COOKIE=sid\n");
+        s.push_str("APP_SESSION_TTL=24h\n");
     }
     s
 }
@@ -466,7 +472,9 @@ use tibba_state::AppState;
 static APP_STATE: OnceCell<AppState> = OnceCell::new();
 
 pub fn init_app_state(state: AppState) {
-    APP_STATE.set(state).expect("app state already initialized");
+    if APP_STATE.set(state).is_err() {
+        panic!("app state already initialized");
+    }
 }
 
 pub fn get_app_state() -> &'static AppState {
@@ -479,7 +487,7 @@ pub fn get_app_state() -> &'static AppState {
 
 fn gen_config_rs(features: &HashSet<Feature>) -> String {
     let session_import = if features.contains(&Feature::Session) {
-        "use tibba_session::SessionParams;\nuse axum_extra::extract::cookie::Key;\n"
+        "use tibba_session::SessionParams;\nuse axum_extra::extract::cookie::Key;\nuse validator::ValidationError;\n"
     } else {
         ""
     };
@@ -535,7 +543,7 @@ use tibba_config::Config;
 use tibba_error::Error;
 use tibba_hook::{{BoxFuture, Task, register_task}};
 use tibba_util::get_env;
-use validator::{{Validate, ValidationError}};
+use validator::Validate;
 {session_import}
 type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -594,7 +602,7 @@ impl Task for ConfigTask {{
     }}
 }}
 
-#[ctor]
+#[ctor(unsafe)]
 fn init() {{
     register_task("config", Arc::new(ConfigTask));
 }}
@@ -613,7 +621,7 @@ use tibba_cache::{RedisCache, RedisClient, new_redis_client};
 use tibba_error::Error;
 use tibba_hook::{BoxFuture, Task, register_task};
 
-type Result<T, E = Error> = std::result::Result<T, Error>;
+type Result<T> = std::result::Result<T, Error>;
 static REDIS_CLIENT: OnceCell<RedisClient> = OnceCell::new();
 static REDIS_CACHE: OnceCell<RedisCache> = OnceCell::new();
 
@@ -649,7 +657,7 @@ impl Task for RedisTask {
     fn priority(&self) -> u8 { 16 }
 }
 
-#[ctor]
+#[ctor(unsafe)]
 fn init() {
     register_task("redis", Arc::new(RedisTask));
 }
@@ -668,7 +676,7 @@ use tibba_error::Error;
 use tibba_hook::{BoxFuture, Task, register_task};
 use tibba_sql::new_pg_pool;
 
-type Result<T, E = Error> = std::result::Result<T, Error>;
+type Result<T> = std::result::Result<T, Error>;
 static DB_POOL: OnceCell<PgPool> = OnceCell::new();
 
 pub fn get_db_pool() -> &'static PgPool {
@@ -695,7 +703,7 @@ impl Task for SqlTask {
     fn priority(&self) -> u8 { 16 }
 }
 
-#[ctor]
+#[ctor(unsafe)]
 fn init() {
     register_task("sql", Arc::new(SqlTask));
 }
@@ -785,8 +793,26 @@ pub fn new_router() -> Result<axum::Router, Error> {{
 // ── src/main.rs 生成 ─────────────────────────────────────────────────────────
 
 fn gen_main_rs(features: &HashSet<Feature>) -> String {
-    let mod_cache = if features.contains(&Feature::Cache) { "mod cache;\n" } else { "" };
-    let mod_sql = if features.contains(&Feature::Sql) { "mod sql;\n" } else { "" };
+    let mod_cache = if features.contains(&Feature::Cache) {
+        "mod cache;\n"
+    } else {
+        ""
+    };
+    let mod_sql = if features.contains(&Feature::Sql) {
+        "mod sql;\n"
+    } else {
+        ""
+    };
+    let use_arc = if features.contains(&Feature::Session) {
+        "use std::sync::Arc;\n"
+    } else {
+        ""
+    };
+    let use_session = if features.contains(&Feature::Session) {
+        "use tibba_session::session as session_middleware;\n"
+    } else {
+        ""
+    };
 
     let scheduler_run = if features.contains(&Feature::Scheduler) {
         "    tibba_scheduler::run_scheduler_jobs().await.expect(\"scheduler start failed\");\n"
@@ -796,9 +822,6 @@ fn gen_main_rs(features: &HashSet<Feature>) -> String {
 
     let session_layer = if features.contains(&Feature::Session) {
         r#"
-    use axum::middleware::from_fn_with_state;
-    use tibba_session::session as session_middleware;
-    use std::sync::Arc;
     let session_params = Arc::new(config::get_session_params().expect("session params failed"));
     let cache = cache::get_redis_cache();
 "#
@@ -817,20 +840,18 @@ fn gen_main_rs(features: &HashSet<Feature>) -> String {
 mod router;
 mod state;
 {mod_cache}{mod_sql}
-use axum::BoxError;
+{use_arc}{use_session}use axum::BoxError;
 use axum::error_handling::HandleErrorLayer;
 use axum::http::{{Method, Uri}};
 use axum::middleware::from_fn_with_state;
 use std::net::SocketAddr;
 use std::str::FromStr;
-use std::time::Duration;
 use tibba_hook::{{run_after_tasks, run_before_tasks}};
 use tibba_middleware::{{entry, processing_limit, stats}};
 use tibba_state::AppState;
 use tibba_util::is_development;
 use tokio::signal;
 use tower::ServiceBuilder;
-use tower_http::compression::CompressionLayer;
 use tracing::{{Level, error, info}};
 use tracing_subscriber::FmtSubscriber;
 

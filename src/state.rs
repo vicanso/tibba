@@ -112,7 +112,7 @@ impl Task for StopAppTask {
     }
 }
 
-#[ctor]
+#[ctor(unsafe)]
 fn init() {
     register_task("state", Arc::new(StateTask));
     register_task("stop_app", Arc::new(StopAppTask));

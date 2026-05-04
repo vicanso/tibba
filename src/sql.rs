@@ -85,7 +85,7 @@ impl Task for SqlTask {
     }
 }
 
-#[ctor]
+#[ctor(unsafe)]
 fn init() {
     register_task(
         "sql",

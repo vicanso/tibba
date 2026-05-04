@@ -767,7 +767,7 @@ impl Task for HttpStatAlarmTask {
         u8::MAX
     }
 }
-#[ctor]
+#[ctor(unsafe)]
 fn init() {
     register_task("http_detector", Arc::new(HttpDetectorTask));
     register_task("http_stat_alarm", Arc::new(HttpStatAlarmTask));

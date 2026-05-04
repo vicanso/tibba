@@ -117,7 +117,7 @@ impl Task for RedisTask {
     }
 }
 
-#[ctor]
+#[ctor(unsafe)]
 fn init() {
     register_task("redis", Arc::new(RedisTask));
 }

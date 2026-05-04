@@ -123,7 +123,7 @@ impl Task for WebPageStatTask {
         u8::MAX
     }
 }
-#[ctor]
+#[ctor(unsafe)]
 fn init() {
     register_task("web_page_stat", Arc::new(WebPageStatTask));
 }

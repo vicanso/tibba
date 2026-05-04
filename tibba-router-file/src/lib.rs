@@ -157,6 +157,7 @@ async fn get_file(
         data = image
             .get_buffer()
             .map_err(|e| Error::new(e).with_category(ERROR_CATEGORY))?
+            .into_owned()
             .into();
         if let Some(mime_type) = mime_guess2::from_ext(format.as_str()).first() {
             content_type = mime_type.to_string();
