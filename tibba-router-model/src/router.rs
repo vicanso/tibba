@@ -14,7 +14,8 @@
 
 use crate::{
     CONFIGURATION_MODEL, CmsModel, DETECTOR_GROUP_MODEL, DETECTOR_GROUP_USER_MODEL, FILE_MODEL,
-    HTTP_DETECTOR_MODEL, HTTP_STAT_MODEL, USER_MODEL, WEB_PAGE_DETECTOR_MODEL,
+    HTTP_DETECTOR_MODEL, HTTP_STAT_MODEL, TOKEN_ACCOUNT_MODEL, TOKEN_KEY_MODEL, TOKEN_PRICE_MODEL,
+    TOKEN_RECHARGE_MODEL, TOKEN_USAGE_MODEL, USER_MODEL, WEB_PAGE_DETECTOR_MODEL,
 };
 use axum::Json;
 use axum::Router;
@@ -58,6 +59,11 @@ async fn get_schema(
         CmsModel::WebPageDetector => WEB_PAGE_DETECTOR_MODEL.schema_view(pool).await,
         CmsModel::DetectorGroup => DETECTOR_GROUP_MODEL.schema_view(pool).await,
         CmsModel::DetectorGroupUser => DETECTOR_GROUP_USER_MODEL.schema_view(pool).await,
+        CmsModel::TokenAccount => TOKEN_ACCOUNT_MODEL.schema_view(pool).await,
+        CmsModel::TokenKey => TOKEN_KEY_MODEL.schema_view(pool).await,
+        CmsModel::TokenRecharge => TOKEN_RECHARGE_MODEL.schema_view(pool).await,
+        CmsModel::TokenUsage => TOKEN_USAGE_MODEL.schema_view(pool).await,
+        CmsModel::TokenPrice => TOKEN_PRICE_MODEL.schema_view(pool).await,
     };
     Ok(Json(view))
 }
@@ -127,6 +133,31 @@ async fn list_model(
                 .list_and_count(pool, params.count, &query_params)
                 .await?
         }
+        CmsModel::TokenAccount => {
+            TOKEN_ACCOUNT_MODEL
+                .list_and_count(pool, params.count, &query_params)
+                .await?
+        }
+        CmsModel::TokenKey => {
+            TOKEN_KEY_MODEL
+                .list_and_count(pool, params.count, &query_params)
+                .await?
+        }
+        CmsModel::TokenRecharge => {
+            TOKEN_RECHARGE_MODEL
+                .list_and_count(pool, params.count, &query_params)
+                .await?
+        }
+        CmsModel::TokenUsage => {
+            TOKEN_USAGE_MODEL
+                .list_and_count(pool, params.count, &query_params)
+                .await?
+        }
+        CmsModel::TokenPrice => {
+            TOKEN_PRICE_MODEL
+                .list_and_count(pool, params.count, &query_params)
+                .await?
+        }
     };
     Ok(Json(value))
 }
@@ -176,6 +207,26 @@ async fn get_detail(
             let user = DETECTOR_GROUP_USER_MODEL.get_by_id(pool, params.id).await?;
             json!(user)
         }
+        CmsModel::TokenAccount => {
+            let account = TOKEN_ACCOUNT_MODEL.get_by_id(pool, params.id).await?;
+            json!(account)
+        }
+        CmsModel::TokenKey => {
+            let key = TOKEN_KEY_MODEL.get_by_id(pool, params.id).await?;
+            json!(key)
+        }
+        CmsModel::TokenRecharge => {
+            let recharge = TOKEN_RECHARGE_MODEL.get_by_id(pool, params.id).await?;
+            json!(recharge)
+        }
+        CmsModel::TokenUsage => {
+            let usage = TOKEN_USAGE_MODEL.get_by_id(pool, params.id).await?;
+            json!(usage)
+        }
+        CmsModel::TokenPrice => {
+            let price = TOKEN_PRICE_MODEL.get_by_id(pool, params.id).await?;
+            json!(price)
+        }
     };
     if data.is_null() {
         return Err(Error::new("The record is not found"));
@@ -223,6 +274,21 @@ async fn delete_model(
             DETECTOR_GROUP_USER_MODEL
                 .delete_by_id(pool, params.id)
                 .await?;
+        }
+        CmsModel::TokenAccount => {
+            TOKEN_ACCOUNT_MODEL.delete_by_id(pool, params.id).await?;
+        }
+        CmsModel::TokenKey => {
+            TOKEN_KEY_MODEL.delete_by_id(pool, params.id).await?;
+        }
+        CmsModel::TokenRecharge => {
+            TOKEN_RECHARGE_MODEL.delete_by_id(pool, params.id).await?;
+        }
+        CmsModel::TokenUsage => {
+            TOKEN_USAGE_MODEL.delete_by_id(pool, params.id).await?;
+        }
+        CmsModel::TokenPrice => {
+            TOKEN_PRICE_MODEL.delete_by_id(pool, params.id).await?;
         }
     }
     Ok(StatusCode::NO_CONTENT)
@@ -277,6 +343,21 @@ async fn update_model(
                 .update_by_id(pool, params.id, params.data)
                 .await?;
         }
+        CmsModel::TokenAccount => {
+            TOKEN_ACCOUNT_MODEL
+                .update_by_id(pool, params.id, params.data)
+                .await?;
+        }
+        CmsModel::TokenKey => {
+            TOKEN_KEY_MODEL
+                .update_by_id(pool, params.id, params.data)
+                .await?;
+        }
+        CmsModel::TokenPrice => {
+            TOKEN_PRICE_MODEL
+                .update_by_id(pool, params.id, params.data)
+                .await?;
+        }
         _ => {
             return Err(Error::new("The model is not supported"));
         }
@@ -324,6 +405,40 @@ async fn create_model(
             }
             DETECTOR_GROUP_USER_MODEL.insert(pool, data).await?
         }
+        CmsModel::TokenAccount => {
+            if let Some(obj) = data.as_object_mut() {
+                if let Some(id) = obj.get("user_id").and_then(|id| id.as_str()) {
+                    let id = id
+                        .parse::<u64>()
+                        .map_err(|_| Error::new("Invalid user id"))?;
+                    obj.insert("user_id".to_string(), id.into());
+                }
+            }
+            TOKEN_ACCOUNT_MODEL.insert(pool, data).await?
+        }
+        CmsModel::TokenKey => {
+            if let Some(obj) = data.as_object_mut() {
+                if let Some(id) = obj.get("user_id").and_then(|id| id.as_str()) {
+                    let id = id
+                        .parse::<u64>()
+                        .map_err(|_| Error::new("Invalid user id"))?;
+                    obj.insert("user_id".to_string(), id.into());
+                }
+            }
+            TOKEN_KEY_MODEL.insert(pool, data).await?
+        }
+        CmsModel::TokenRecharge => {
+            if let Some(obj) = data.as_object_mut() {
+                if let Some(id) = obj.get("user_id").and_then(|id| id.as_str()) {
+                    let id = id
+                        .parse::<u64>()
+                        .map_err(|_| Error::new("Invalid user id"))?;
+                    obj.insert("user_id".to_string(), id.into());
+                }
+            }
+            TOKEN_RECHARGE_MODEL.insert(pool, data).await?
+        }
+        CmsModel::TokenPrice => TOKEN_PRICE_MODEL.insert(pool, data).await?,
         _ => {
             return Err(Error::new("The model is not supported"));
         }

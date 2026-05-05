@@ -83,21 +83,6 @@ pub fn new_schema_options(values: &[&str]) -> Vec<SchemaOption> {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum SchemaConditionType {
-    #[default]
-    Input,
-    Select,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, Default)]
-pub struct SchemaCondition {
-    pub name: String,
-    pub category: SchemaConditionType,
-    pub options: Option<Vec<SchemaOption>>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct SchemaAllowEdit {
     pub owner: bool,
     pub groups: Vec<String>,

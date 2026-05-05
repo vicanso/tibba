@@ -38,11 +38,13 @@ pub const SERVICE_API: &str = "api";
 pub const SERVICE_STORAGE: &str = "storage";
 
 mod account;
+mod key;
 mod price;
 mod recharge;
 mod usage;
 
 pub use account::*;
+pub use key::*;
 pub use price::*;
 pub use recharge::*;
 pub use usage::*;

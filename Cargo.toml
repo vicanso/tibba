@@ -39,6 +39,7 @@ tibba-config = { path = "./tibba-config" }
 tibba-error = { path = "./tibba-error" }
 tibba-headless = { path = "./tibba-headless" }
 tibba-hook = { path = "./tibba-hook" }
+tibba-llm = { path = "./tibba-llm" }
 tibba-middleware = { path = "./tibba-middleware" }
 tibba-model = { path = "./tibba-model" }
 tibba-model-builtin = { path = "./tibba-model-builtin" }

@@ -21,8 +21,8 @@ use snafu::ResultExt;
 use sqlx::FromRow;
 use sqlx::{Pool, Postgres, QueryBuilder};
 use std::collections::HashMap;
-use time::PrimitiveDateTime;
 use tibba_model::Model;
+use time::PrimitiveDateTime;
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -320,10 +320,13 @@ impl Model for TokenUsageModel {
     }
 
     async fn count(&self, pool: &Pool<Postgres>, params: &ModelListParams) -> Result<i64> {
-        let mut qb: QueryBuilder<Postgres> =
-            QueryBuilder::new("SELECT COUNT(*) FROM token_usages");
+        let mut qb: QueryBuilder<Postgres> = QueryBuilder::new("SELECT COUNT(*) FROM token_usages");
         self.push_conditions(&mut qb, params)?;
-        let row: (i64,) = qb.build_query_as().fetch_one(pool).await.context(SqlxSnafu)?;
+        let row: (i64,) = qb
+            .build_query_as()
+            .fetch_one(pool)
+            .await
+            .context(SqlxSnafu)?;
         Ok(row.0)
     }
 
@@ -332,8 +335,7 @@ impl Model for TokenUsageModel {
         pool: &Pool<Postgres>,
         params: &ModelListParams,
     ) -> Result<Vec<Self::Output>> {
-        let mut qb: QueryBuilder<Postgres> =
-            QueryBuilder::new("SELECT * FROM token_usages");
+        let mut qb: QueryBuilder<Postgres> = QueryBuilder::new("SELECT * FROM token_usages");
         self.push_conditions(&mut qb, params)?;
         params.push_pagination(&mut qb);
         let rows = qb

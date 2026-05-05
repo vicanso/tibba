@@ -21,8 +21,8 @@ use snafu::ResultExt;
 use sqlx::FromRow;
 use sqlx::{Pool, Postgres, QueryBuilder};
 use std::collections::HashMap;
-use time::PrimitiveDateTime;
 use tibba_model::Model;
+use time::PrimitiveDateTime;
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -154,12 +154,8 @@ impl Model for TokenRechargeModel {
             schemas: vec![
                 Schema::new_id(),
                 Schema {
-                    name: "user_id".to_string(),
-                    category: SchemaType::Number,
-                    required: true,
-                    read_only: true,
                     filterable: true,
-                    ..Default::default()
+                    ..Schema::new_user_search("user_id")
                 },
                 Schema {
                     name: "amount".to_string(),
@@ -250,7 +246,11 @@ impl Model for TokenRechargeModel {
         let mut qb: QueryBuilder<Postgres> =
             QueryBuilder::new("SELECT COUNT(*) FROM token_recharges");
         self.push_conditions(&mut qb, params)?;
-        let row: (i64,) = qb.build_query_as().fetch_one(pool).await.context(SqlxSnafu)?;
+        let row: (i64,) = qb
+            .build_query_as()
+            .fetch_one(pool)
+            .await
+            .context(SqlxSnafu)?;
         Ok(row.0)
     }
 
@@ -259,8 +259,7 @@ impl Model for TokenRechargeModel {
         pool: &Pool<Postgres>,
         params: &ModelListParams,
     ) -> Result<Vec<Self::Output>> {
-        let mut qb: QueryBuilder<Postgres> =
-            QueryBuilder::new("SELECT * FROM token_recharges");
+        let mut qb: QueryBuilder<Postgres> = QueryBuilder::new("SELECT * FROM token_recharges");
         self.push_conditions(&mut qb, params)?;
         params.push_pagination(&mut qb);
         let rows = qb

@@ -19,11 +19,13 @@ use axum::Router;
 use axum::error_handling::HandleErrorLayer;
 use axum::http::{Method, Uri};
 use axum::middleware::from_fn_with_state;
+use futures::StreamExt;
 use std::env;
 use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::Arc;
 use tibba_hook::{run_after_tasks, run_before_tasks};
+use tibba_llm::LlmCall;
 use tibba_middleware::{entry, processing_limit, stats};
 use tibba_scheduler::run_scheduler_jobs;
 use tibba_session::session;
@@ -32,7 +34,7 @@ use tokio::signal;
 use tower::ServiceBuilder;
 use tower_http::compression::CompressionLayer;
 use tower_http::compression::predicate::{NotForContentType, Predicate, SizeAbove};
-use tracing::{Level, error, info};
+use tracing::{Level, error, info, warn};
 use tracing_subscriber::FmtSubscriber;
 
 mod cache;
@@ -166,7 +168,70 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// OpenAI 调用示例：非流式 + 流式两种模式。
+/// 通过环境变量 OPENAI_API_KEY 提供密钥，未设置时跳过。
+async fn openai_example() {
+    let api_key = match std::env::var("OPENAI_API_KEY") {
+        Ok(k) if !k.is_empty() => k,
+        _ => {
+            warn!("OPENAI_API_KEY not set, skipping openai example");
+            return;
+        }
+    };
+
+    // ── 非流式调用 ────────────────────────────────────────────────────────────
+    match LlmCall::new(
+        &api_key,
+        "mimo-v2.5-pro",
+        "Reply with one sentence: what is Rust?",
+    )
+    .with_base_url("https://token-plan-cn.xiaomimimo.com")
+    .with_system_message("You are a concise assistant.")
+    .chat()
+    .await
+    {
+        Ok(resp) => {
+            info!(
+                model = resp.model,
+                input_tokens = resp.usage.as_ref().map(|u| u.input_tokens).unwrap_or(0),
+                output_tokens = resp.usage.as_ref().map(|u| u.output_tokens).unwrap_or(0),
+                content = resp.content,
+                "openai non-stream response",
+            );
+        }
+        Err(e) => error!(err = %e, "openai chat failed"),
+    }
+
+    // ── 流式调用 ──────────────────────────────────────────────────────────────
+    match LlmCall::new(
+        &api_key,
+        "mimo-v2.5-pro",
+        "Count from 1 to 5, one number per word.",
+    )
+    .with_base_url("https://token-plan-cn.xiaomimimo.com")
+    .with_system_message("You are a concise assistant.")
+    .chat_stream()
+    .await
+    {
+        Ok(mut stream) => {
+            let mut full = String::new();
+            while let Some(chunk) = stream.next().await {
+                match chunk {
+                    Ok(c) => full.push_str(&c.delta),
+                    Err(e) => {
+                        error!(err = %e, "openai stream chunk error");
+                        break;
+                    }
+                }
+            }
+            info!(content = full, "openai stream response");
+        }
+        Err(e) => error!(err = %e, "openai chat_stream failed"),
+    }
+}
+
 async fn start() {
+    openai_example().await;
     // only use unwrap in run function
     if let Err(e) = run().await {
         error!(category = "launch_app", message = ?e)

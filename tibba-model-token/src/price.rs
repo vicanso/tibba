@@ -21,8 +21,8 @@ use snafu::ResultExt;
 use sqlx::FromRow;
 use sqlx::{Pool, Postgres, QueryBuilder};
 use std::collections::HashMap;
-use time::PrimitiveDateTime;
 use tibba_model::Model;
+use time::PrimitiveDateTime;
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -147,17 +147,11 @@ impl TokenPriceModel {
 
     /// 根据定价配置和 token 用量计算本次消耗积分。
     /// 使用整数向上取整，避免浮点误差。
-    pub fn calculate_cost(
-        price: &TokenPrice,
-        input_tokens: i32,
-        output_tokens: i32,
-    ) -> i64 {
+    pub fn calculate_cost(price: &TokenPrice, input_tokens: i32, output_tokens: i32) -> i64 {
         let unit = price.unit_size.max(1) as i64;
         // 向上取整：(n * p + unit - 1) / unit
-        let input_cost =
-            (input_tokens as i64 * price.input_price + unit - 1) / unit;
-        let output_cost =
-            (output_tokens as i64 * price.output_price + unit - 1) / unit;
+        let input_cost = (input_tokens as i64 * price.input_price + unit - 1) / unit;
+        let output_cost = (output_tokens as i64 * price.output_price + unit - 1) / unit;
         price.fixed_price + input_cost + output_cost
     }
 }
@@ -305,10 +299,13 @@ impl Model for TokenPriceModel {
     }
 
     async fn count(&self, pool: &Pool<Postgres>, params: &ModelListParams) -> Result<i64> {
-        let mut qb: QueryBuilder<Postgres> =
-            QueryBuilder::new("SELECT COUNT(*) FROM token_prices");
+        let mut qb: QueryBuilder<Postgres> = QueryBuilder::new("SELECT COUNT(*) FROM token_prices");
         self.push_conditions(&mut qb, params)?;
-        let row: (i64,) = qb.build_query_as().fetch_one(pool).await.context(SqlxSnafu)?;
+        let row: (i64,) = qb
+            .build_query_as()
+            .fetch_one(pool)
+            .await
+            .context(SqlxSnafu)?;
         Ok(row.0)
     }
 
@@ -317,8 +314,7 @@ impl Model for TokenPriceModel {
         pool: &Pool<Postgres>,
         params: &ModelListParams,
     ) -> Result<Vec<Self::Output>> {
-        let mut qb: QueryBuilder<Postgres> =
-            QueryBuilder::new("SELECT * FROM token_prices");
+        let mut qb: QueryBuilder<Postgres> = QueryBuilder::new("SELECT * FROM token_prices");
         self.push_conditions(&mut qb, params)?;
         params.push_pagination(&mut qb);
         let rows = qb

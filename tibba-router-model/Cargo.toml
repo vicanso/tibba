@@ -21,6 +21,7 @@ sqlx = { workspace = true }
 strum = { workspace = true }
 tibba-error = { path = "../tibba-error", version = "0.2.0" }
 tibba-model-builtin = { path = "../tibba-model-builtin", version = "0.2.0" }
+tibba-model-token = { path = "../tibba-model-token", version = "0.2.0" }
 tibba-session = { path = "../tibba-session", version = "0.2.0" }
 tibba-util = { path = "../tibba-util", version = "0.2.0" }
 tibba-validator = { path = "../tibba-validator", version = "0.2.0" }

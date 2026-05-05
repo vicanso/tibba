@@ -18,6 +18,9 @@ use tibba_model_builtin::{
     ConfigurationModel, DetectorGroupModel, DetectorGroupUserModel, FileModel, HttpDetectorModel,
     HttpStatModel, Model, UserModel, WebPageDetectorModel,
 };
+use tibba_model_token::{
+    TokenAccountModel, TokenKeyModel, TokenPriceModel, TokenRechargeModel, TokenUsageModel,
+};
 
 mod router;
 
@@ -32,6 +35,11 @@ enum CmsModel {
     WebPageDetector,
     DetectorGroup,
     DetectorGroupUser,
+    TokenAccount,
+    TokenKey,
+    TokenRecharge,
+    TokenUsage,
+    TokenPrice,
 }
 
 pub static USER_MODEL: LazyLock<UserModel> = LazyLock::new(UserModel::new);
@@ -46,5 +54,11 @@ pub static DETECTOR_GROUP_MODEL: LazyLock<DetectorGroupModel> =
     LazyLock::new(DetectorGroupModel::new);
 pub static DETECTOR_GROUP_USER_MODEL: LazyLock<DetectorGroupUserModel> =
     LazyLock::new(DetectorGroupUserModel::new);
+pub static TOKEN_KEY_MODEL: LazyLock<TokenKeyModel> = LazyLock::new(TokenKeyModel::new);
+pub static TOKEN_ACCOUNT_MODEL: LazyLock<TokenAccountModel> = LazyLock::new(TokenAccountModel::new);
+pub static TOKEN_RECHARGE_MODEL: LazyLock<TokenRechargeModel> =
+    LazyLock::new(TokenRechargeModel::new);
+pub static TOKEN_USAGE_MODEL: LazyLock<TokenUsageModel> = LazyLock::new(TokenUsageModel::new);
+pub static TOKEN_PRICE_MODEL: LazyLock<TokenPriceModel> = LazyLock::new(TokenPriceModel::new);
 
 pub use router::*;

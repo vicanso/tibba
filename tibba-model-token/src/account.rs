@@ -22,8 +22,8 @@ use sqlx::FromRow;
 use sqlx::{Pool, Postgres, QueryBuilder};
 use std::collections::HashMap;
 use tibba_error::Error as AppError;
-use time::PrimitiveDateTime;
 use tibba_model::Model;
+use time::PrimitiveDateTime;
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -103,11 +103,7 @@ impl TokenAccountModel {
 
     /// 若账户不存在则自动创建，返回当前账户信息。
     /// 通常在用户注册后调用。
-    pub async fn get_or_create(
-        &self,
-        pool: &Pool<Postgres>,
-        user_id: i64,
-    ) -> Result<TokenAccount> {
+    pub async fn get_or_create(&self, pool: &Pool<Postgres>, user_id: i64) -> Result<TokenAccount> {
         sqlx::query(
             r#"INSERT INTO token_accounts (user_id) VALUES ($1) ON CONFLICT (user_id) WHERE deleted_at IS NULL DO NOTHING"#,
         )
@@ -197,13 +193,7 @@ impl Model for TokenAccountModel {
         SchemaView {
             schemas: vec![
                 Schema::new_id(),
-                Schema {
-                    name: "user_id".to_string(),
-                    category: SchemaType::Number,
-                    required: true,
-                    read_only: true,
-                    ..Default::default()
-                },
+                Schema::new_user_search("user_id"),
                 Schema {
                     name: "balance".to_string(),
                     category: SchemaType::Number,
@@ -239,8 +229,7 @@ impl Model for TokenAccountModel {
     }
 
     async fn insert(&self, pool: &Pool<Postgres>, data: serde_json::Value) -> Result<u64> {
-        let params: TokenAccountInsertParams =
-            serde_json::from_value(data).context(JsonSnafu)?;
+        let params: TokenAccountInsertParams = serde_json::from_value(data).context(JsonSnafu)?;
         let row: (i64,) = sqlx::query_as(
             r#"INSERT INTO token_accounts (user_id, remark) VALUES ($1, $2) RETURNING id"#,
         )
@@ -269,8 +258,7 @@ impl Model for TokenAccountModel {
         id: u64,
         data: serde_json::Value,
     ) -> Result<()> {
-        let params: TokenAccountUpdateParams =
-            serde_json::from_value(data).context(JsonSnafu)?;
+        let params: TokenAccountUpdateParams = serde_json::from_value(data).context(JsonSnafu)?;
         let mut qb: QueryBuilder<Postgres> =
             QueryBuilder::new("UPDATE token_accounts SET modified = NOW()");
         if let Some(status) = params.status {
@@ -300,7 +288,11 @@ impl Model for TokenAccountModel {
         let mut qb: QueryBuilder<Postgres> =
             QueryBuilder::new("SELECT COUNT(*) FROM token_accounts");
         self.push_conditions(&mut qb, params)?;
-        let row: (i64,) = qb.build_query_as().fetch_one(pool).await.context(SqlxSnafu)?;
+        let row: (i64,) = qb
+            .build_query_as()
+            .fetch_one(pool)
+            .await
+            .context(SqlxSnafu)?;
         Ok(row.0)
     }
 
@@ -309,8 +301,7 @@ impl Model for TokenAccountModel {
         pool: &Pool<Postgres>,
         params: &ModelListParams,
     ) -> Result<Vec<Self::Output>> {
-        let mut qb: QueryBuilder<Postgres> =
-            QueryBuilder::new("SELECT * FROM token_accounts");
+        let mut qb: QueryBuilder<Postgres> = QueryBuilder::new("SELECT * FROM token_accounts");
         self.push_conditions(&mut qb, params)?;
         params.push_pagination(&mut qb);
         let rows = qb

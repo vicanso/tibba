@@ -17,3 +17,8 @@ $$ LANGUAGE plpgsql;
 \i create_objects.sql
 \i create_detector_groups.sql
 \i create_detector_group_users.sql
+\i create_token_accounts.sql
+\i create_token_recharges.sql
+\i create_token_usages.sql
+\i create_token_keys.sql
+\i create_token_prices.sql

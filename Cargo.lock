@@ -5528,6 +5528,7 @@ dependencies = [
  "tibba-error",
  "tibba-headless",
  "tibba-hook",
+ "tibba-llm",
  "tibba-middleware",
  "tibba-model",
  "tibba-model-builtin",
@@ -5705,6 +5706,7 @@ dependencies = [
  "tibba-error",
  "tibba-model",
  "time",
+ "uuid",
 ]
 
 [[package]]
@@ -5798,6 +5800,7 @@ dependencies = [
  "strum 0.28.0",
  "tibba-error",
  "tibba-model-builtin",
+ "tibba-model-token",
  "tibba-session",
  "tibba-util",
  "tibba-validator",

@@ -20,4 +20,5 @@ snafu = { workspace = true }
 sqlx = { workspace = true }
 tibba-error = { path = "../tibba-error", version = "0.2.0" }
 tibba-model = { path = "../tibba-model", version = "0.2.0" }
+uuid = { workspace = true, features = ["v4"] }
 time = { workspace = true }

@@ -38,6 +38,8 @@ enum Feature {
     RouterUser,
     RouterFile,
     RouterModel,
+    Llm,
+    ModelToken,
     // 自动依赖，不直接展示给用户选择
     Model,
 }
@@ -70,6 +72,14 @@ impl Feature {
                 "router-model  - 模型 CRUD 路由（依赖 sql / session）",
                 Feature::RouterModel,
             ),
+            (
+                "llm           - 大语言模型 API（OpenAI / Anthropic）",
+                Feature::Llm,
+            ),
+            (
+                "model-token   - token 计费模型（积分账户 / 充值 / 消耗，依赖 sql）",
+                Feature::ModelToken,
+            ),
         ]
     }
 
@@ -85,6 +95,8 @@ impl Feature {
             "router-user" => Some(Feature::RouterUser),
             "router-file" => Some(Feature::RouterFile),
             "router-model" => Some(Feature::RouterModel),
+            "llm" => Some(Feature::Llm),
+            "model-token" => Some(Feature::ModelToken),
             _ => None,
         }
     }
@@ -117,6 +129,10 @@ fn resolve(selected: HashSet<Feature>) -> HashSet<Feature> {
         f.insert(Feature::Session);
         f.insert(Feature::Model);
     }
+    if f.contains(&Feature::ModelToken) {
+        f.insert(Feature::Sql);
+        f.insert(Feature::Model);
+    }
     // session 补充 cache（可能在上面刚插入 session）
     if f.contains(&Feature::Session) {
         f.insert(Feature::Cache);
@@ -133,6 +149,8 @@ fn module_deps(module: &str) -> &'static [&'static str] {
         "util" | "config" | "crypto" | "headless" | "hook" | "model" | "scheduler" => &["error"],
         "cache" | "opendal" | "sql" => &["config", "error", "util"],
         "model-builtin" => &["error", "model"],
+        "model-token" => &["error", "model"],
+        "llm" => &["error"],
         "request" => &["error", "util"],
         "middleware" => &["cache", "error", "state", "util"],
         "router-common" => &["cache", "error", "performance", "state", "util"],
@@ -185,6 +203,8 @@ fn feature_modules(feature: &Feature) -> &'static [&'static str] {
         Feature::RouterUser => &["router-user"],
         Feature::RouterFile => &["router-file"],
         Feature::RouterModel => &["router-model"],
+        Feature::Llm => &["llm"],
+        Feature::ModelToken => &["model-token"],
         Feature::Model => &["model-builtin"],
     }
 }
@@ -213,15 +233,15 @@ enum Commands {
     New {
         /// 项目名称（同时作为 Cargo package 名）
         name: String,
+        /// 输出目录（必填），项目文件将生成到该目录；目录已存在时覆盖文件，不删除原有文件
+        /// 示例: --output /tmp/myapp  或  -o ./myapp
+        #[arg(long, short = 'o')]
+        output: String,
         /// 选择模块，逗号分隔（不提供则进入交互式选择）
         /// 可选值: sql,cache,session,opendal,scheduler,headless,
-        ///         router-common,router-user,router-file,router-model
+        ///         router-common,router-user,router-file,router-model,llm,model-token
         #[arg(long, value_delimiter = ',')]
         features: Option<Vec<String>>,
-        /// 生成目录，默认为当前目录下的 <name> 子目录
-        /// 示例: --output /tmp/projects
-        #[arg(long, short = 'o')]
-        output: Option<String>,
     },
 }
 
@@ -232,8 +252,8 @@ fn main() {
     match cli.command {
         Commands::New {
             name,
-            features,
             output,
+            features,
         } => {
             let selected = match features {
                 Some(list) => {
@@ -255,19 +275,7 @@ fn main() {
             };
 
             let features = resolve(selected);
-
-            let root = match output {
-                Some(dir) => expand_tilde(&dir).join(&name),
-                None => {
-                    let dir = interactive_output();
-                    if dir.is_empty() || dir == "." {
-                        PathBuf::from(&name)
-                    } else {
-                        expand_tilde(&dir).join(&name)
-                    }
-                }
-            };
-
+            let root = expand_tilde(&output);
             generate_project(&name, &root, &features);
         }
     }
@@ -292,24 +300,9 @@ fn interactive_select() -> HashSet<Feature> {
     set
 }
 
-fn interactive_output() -> String {
-    inquire::Text::new("输出目录（留空则生成到当前目录）：")
-        .with_default(".")
-        .prompt()
-        .unwrap_or_else(|_| {
-            eprintln!("已取消");
-            std::process::exit(0);
-        })
-}
-
 // ── 项目生成 ──────────────────────────────────────────────────────────────────
 
 fn generate_project(name: &str, root: &Path, features: &HashSet<Feature>) {
-    if root.exists() {
-        eprintln!("目录 {} 已存在，请换一个名称或手动删除", root.display());
-        std::process::exit(1);
-    }
-
     fs::create_dir_all(root.join("src")).unwrap();
     fs::create_dir_all(root.join("configs")).unwrap();
 

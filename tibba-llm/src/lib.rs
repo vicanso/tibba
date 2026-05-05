@@ -186,6 +186,132 @@ impl SseState {
     }
 }
 
+// ── 通用一次性调用封装 ────────────────────────────────────────────────────────
+
+/// LLM 后端协议选择。
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum Backend {
+    /// OpenAI 兼容格式（默认），也适用于 DeepSeek、Qwen 等第三方服务。
+    #[default]
+    OpenAi,
+    /// Anthropic Messages API（Claude 系列）。
+    Anthropic,
+}
+
+/// 一次性 LLM 调用的参数，内部自动构建客户端并执行请求。
+///
+/// ```rust
+/// // OpenAI 兼容接口
+/// let resp = LlmCall::new(api_key, "gpt-4o-mini", "What is Rust?")
+///     .with_system_message("You are a concise assistant.")
+///     .chat()
+///     .await?;
+///
+/// // Anthropic（Claude）接口
+/// let resp = LlmCall::new(api_key, "claude-sonnet-4-6", "What is Rust?")
+///     .with_backend(Backend::Anthropic)
+///     .with_system_message("You are a concise assistant.")
+///     .chat()
+///     .await?;
+/// ```
+pub struct LlmCall {
+    api_key: String,
+    model: String,
+    user_message: String,
+    base_url: String,
+    system_message: String,
+    backend: Backend,
+}
+
+impl LlmCall {
+    /// 创建调用，`api_key`、`model`、`user_message` 为必填，默认使用 OpenAI 协议。
+    pub fn new(
+        api_key: impl Into<String>,
+        model: impl Into<String>,
+        user_message: impl Into<String>,
+    ) -> Self {
+        Self {
+            api_key: api_key.into(),
+            model: model.into(),
+            user_message: user_message.into(),
+            base_url: String::new(),
+            system_message: String::new(),
+            backend: Backend::default(),
+        }
+    }
+
+    /// 选择后端协议，默认为 `Backend::OpenAi`。
+    #[must_use]
+    pub fn with_backend(mut self, backend: Backend) -> Self {
+        self.backend = backend;
+        self
+    }
+
+    /// 覆盖 API base URL；省略时各后端使用各自的官方默认地址。
+    #[must_use]
+    pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
+        self.base_url = base_url.into();
+        self
+    }
+
+    /// 设置系统提示词，留空则不注入 system 消息。
+    #[must_use]
+    pub fn with_system_message(mut self, system_message: impl Into<String>) -> Self {
+        self.system_message = system_message.into();
+        self
+    }
+
+    fn build_params(&self) -> ChatParams {
+        let mut params = ChatParams::new(self.model.clone());
+        if !self.system_message.is_empty() {
+            params = params.add_message(Message::system(self.system_message.clone()));
+        }
+        params.add_message(Message::user(self.user_message.clone()))
+    }
+
+    /// 非流式调用，返回完整 `ChatResponse`。
+    pub async fn chat(self) -> Result<ChatResponse, Error> {
+        let params = self.build_params();
+        match self.backend {
+            Backend::OpenAi => {
+                let mut builder = openai::OpenAiClientBuilder::new(self.api_key);
+                if !self.base_url.is_empty() {
+                    builder = builder.with_base_url(self.base_url);
+                }
+                builder.build()?.chat(&params).await
+            }
+            Backend::Anthropic => {
+                let mut builder = anthropic::AnthropicClientBuilder::new(self.api_key);
+                if !self.base_url.is_empty() {
+                    builder = builder.with_base_url(self.base_url);
+                }
+                builder.build()?.chat(&params).await
+            }
+        }
+    }
+
+    /// 流式调用，返回增量 `StreamChunk` 流。
+    pub async fn chat_stream(self) -> Result<BoxStream<Result<StreamChunk, Error>>, Error> {
+        let params = self.build_params();
+        match self.backend {
+            Backend::OpenAi => {
+                let mut builder = openai::OpenAiClientBuilder::new(self.api_key);
+                if !self.base_url.is_empty() {
+                    builder = builder.with_base_url(self.base_url);
+                }
+                builder.build()?.chat_stream(&params).await
+            }
+            Backend::Anthropic => {
+                let mut builder = anthropic::AnthropicClientBuilder::new(self.api_key);
+                if !self.base_url.is_empty() {
+                    builder = builder.with_base_url(self.base_url);
+                }
+                builder.build()?.chat_stream(&params).await
+            }
+        }
+    }
+}
+
 // ── 子模块 ────────────────────────────────────────────────────────────────────
 
 mod anthropic;
