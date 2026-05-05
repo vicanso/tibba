@@ -13,7 +13,7 @@ FROM rust:1.95.0 AS builder
 # Accept GIT_COMMIT_ID as build argument
 ARG GIT_COMMIT_ID
 
-COPY --from webbuilder /tibba /tibba
+COPY --from=webbuilder /tibba /tibba
 
 # Write the GIT_COMMIT_ID to configs/commit_id.txt
 RUN echo "$GIT_COMMIT_ID" | cut -c1-7 > /tibba/configs/commit_id.txt
