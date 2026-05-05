@@ -15,7 +15,6 @@
 use crate::router::new_router;
 use crate::state::get_app_state;
 use axum::BoxError;
-use axum::Router;
 use axum::error_handling::HandleErrorLayer;
 use axum::http::{Method, Uri};
 use axum::middleware::from_fn_with_state;
