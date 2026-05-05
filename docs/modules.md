@@ -63,7 +63,8 @@ graph TD
     router-file --> validator
 
     router-model --> error
-    router-model --> model-builtin
+    router-model --> hook
+    router-model --> model
     router-model --> session
     router-model --> util
     router-model --> validator

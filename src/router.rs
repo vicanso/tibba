@@ -19,24 +19,77 @@ use crate::sql::get_db_pool;
 use crate::state::get_app_state;
 use crate::web::serve_web;
 use axum::Router;
+use std::sync::Arc;
 use tibba_error::Error;
+use tibba_model::Model;
+use tibba_model_builtin::{
+    ConfigurationModel, DetectorGroupModel, DetectorGroupUserModel, FileModel, HttpDetectorModel,
+    HttpStatModel, UserModel, WebPageDetectorModel,
+};
+use tibba_model_token::{
+    TokenAccountModel, TokenKeyModel, TokenPriceModel, TokenRechargeModel, TokenUsageModel,
+};
 use tibba_router_common::{CommonRouterParams, new_common_router};
 use tibba_router_file::{FileRouterParams, new_file_router};
-use tibba_router_model::{ModelRouterParams, new_model_router};
+use tibba_router_model::{ModelAdapter, ModelRouterParams, new_model_router, register_model};
 use tibba_router_user::{UserRouterParams, new_user_router};
 use tibba_util::{is_development, is_test};
 
 type Result<T> = std::result::Result<T, Error>;
 
+fn register_models() {
+    register_model("user", Arc::new(ModelAdapter(UserModel::new())));
+    register_model(
+        "configuration",
+        Arc::new(ModelAdapter(ConfigurationModel::new())),
+    );
+    register_model("file", Arc::new(ModelAdapter(FileModel::new())));
+    register_model(
+        "http_detector",
+        Arc::new(ModelAdapter(HttpDetectorModel::new())),
+    );
+    register_model("http_stat", Arc::new(ModelAdapter(HttpStatModel::new())));
+    register_model(
+        "web_page_detector",
+        Arc::new(ModelAdapter(WebPageDetectorModel::new())),
+    );
+    register_model(
+        "detector_group",
+        Arc::new(ModelAdapter(DetectorGroupModel::new())),
+    );
+    register_model(
+        "detector_group_user",
+        Arc::new(ModelAdapter(DetectorGroupUserModel::new())),
+    );
+    register_model(
+        "token_account",
+        Arc::new(ModelAdapter(TokenAccountModel::new())),
+    );
+    register_model("token_key", Arc::new(ModelAdapter(TokenKeyModel::new())));
+    register_model(
+        "token_recharge",
+        Arc::new(ModelAdapter(TokenRechargeModel::new())),
+    );
+    register_model(
+        "token_usage",
+        Arc::new(ModelAdapter(TokenUsageModel::new())),
+    );
+    register_model(
+        "token_price",
+        Arc::new(ModelAdapter(TokenPriceModel::new())),
+    );
+}
+
 pub fn new_router() -> Result<Router> {
+    register_models();
+
     let basic_config = must_get_basic_config();
     let cache = get_redis_cache();
     let common_router = new_common_router(CommonRouterParams {
         state: get_app_state(),
         cache: Some(cache),
     });
-    let mut magic_code = "".to_string();
-    // only for test
+    let mut magic_code = String::new();
     if is_test() || is_development() {
         magic_code = "1234".to_string();
     }

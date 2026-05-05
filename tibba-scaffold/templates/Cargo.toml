@@ -1,0 +1,61 @@
+[package]
+name = "{{name}}"
+version = "0.1.0"
+edition = "2024"
+authors = []
+license = "Apache-2.0"
+default-run = "{{name}}"
+
+[lints.clippy]
+unwrap_used = "deny"
+
+[dependencies]
+axum = { version = "0.8.9", features = ["multipart"] }
+axum-extra = { version = "0.12.6", features = ["cookie", "cookie-signed"] }
+chrono = "0.4.44"
+ctor = "1.0.0"
+futures = "0.3.32"
+hostname = "0.4.2"
+http = "1.4.0"
+mime_guess2 = "2.3.1"
+nanoid = "0.5.0"
+num_cpus = "1.17.0"
+once_cell = "1.21.4"
+rand = "0.10.1"
+reqwest = { version = "0.13.2", default-features = false, features = ["rustls", "query", "json"] }
+rust-embed = { version = "8.11.0", features = ["include-exclude"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+sqlx = { version = "0.8.6", features = ["runtime-tokio", "postgres", "time", "chrono"] }
+substring = "1.4.5"
+time = { version = "0.3.47", features = ["serde"] }
+tibba-cache = "0.2.0"
+tibba-config = "0.2.0"
+tibba-error = "0.2.0"
+tibba-hook = "0.2.0"
+tibba-middleware = "0.2.0"
+tibba-model = "0.2.1"
+tibba-model-builtin = "0.2.0"
+tibba-model-token = "0.2.0"
+tibba-opendal = "0.2.0"
+tibba-router-common = "0.2.0"
+tibba-router-file = "0.2.0"
+tibba-router-model = "0.2.0"
+tibba-router-user = "0.2.0"
+tibba-scheduler = "0.2.0"
+tibba-session = "0.2.0"
+tibba-sql = "0.2.0"
+tibba-state = "0.2.0"
+tibba-util = "0.2.0"
+tibba-performance = "0.2.0"
+tokio = { version = "1.52.1", features = ["macros", "rt", "rt-multi-thread", "net", "signal"] }
+tower = { version = "0.5.3", features = ["timeout"] }
+tower-http = { version = "0.6.8", features = ["compression-br", "compression-gzip", "compression-zstd"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["local-time"] }
+validator = { version = "0.20.0", features = ["derive"] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+strip = "debuginfo"

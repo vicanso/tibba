@@ -1,0 +1,178 @@
+// Copyright 2026 Tree xie.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+use crate::router::new_router;
+use crate::state::get_app_state;
+use axum::BoxError;
+use axum::error_handling::HandleErrorLayer;
+use axum::http::{Method, Uri};
+use axum::middleware::from_fn_with_state;
+use std::env;
+use std::net::SocketAddr;
+use std::str::FromStr;
+use std::sync::Arc;
+use tibba_hook::{run_after_tasks, run_before_tasks};
+use tibba_middleware::{entry, processing_limit, stats};
+use tibba_scheduler::run_scheduler_jobs;
+use tibba_session::session;
+use tibba_util::is_development;
+use tokio::signal;
+use tower::ServiceBuilder;
+use tower_http::compression::CompressionLayer;
+use tower_http::compression::predicate::{NotForContentType, Predicate, SizeAbove};
+use tracing::{Level, error, info};
+use tracing_subscriber::FmtSubscriber;
+
+mod cache;
+mod config;
+mod dal;
+mod router;
+mod sql;
+mod state;
+mod web;
+
+pub async fn handle_error(
+    method: Method,
+    uri: Uri,
+    err: BoxError,
+) -> tibba_error::Error {
+    error!(method = method.to_string(), uri = uri.to_string(), err,);
+    let (message, category, status) = if err.is::<tower::timeout::error::Elapsed>() {
+        (
+            "Request took too long".to_string(),
+            "timeout".to_string(),
+            408,
+        )
+    } else {
+        (err.to_string(), "exception".to_string(), 500)
+    };
+    tibba_error::Error::new(message)
+        .with_category(category)
+        .with_status(status)
+}
+
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        signal::unix::signal(signal::unix::SignalKind::terminate())
+            .expect("failed to install signal handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
+    info!("signal received, starting graceful shutdown");
+}
+
+fn init_logger() {
+    let mut level = Level::INFO;
+    if let Ok(log_level) = env::var("RUST_LOG")
+        && let Ok(value) = Level::from_str(log_level.as_str())
+    {
+        level = value;
+    }
+
+    let timer = tracing_subscriber::fmt::time::OffsetTime::local_rfc_3339().unwrap_or_else(|_| {
+        tracing_subscriber::fmt::time::OffsetTime::new(
+            time::UtcOffset::UTC,
+            time::format_description::well_known::Rfc3339,
+        )
+    });
+
+    let subscriber = FmtSubscriber::builder()
+        .with_max_level(level)
+        .with_timer(timer)
+        .with_ansi(is_development())
+        .finish();
+    tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
+}
+
+async fn run() -> Result<(), Box<dyn std::error::Error>> {
+    run_before_tasks().await?;
+    run_scheduler_jobs().await?;
+
+    let basic_config = config::must_get_basic_config();
+    let app = new_router()?;
+
+    let predicate = SizeAbove::new(1024)
+        .and(NotForContentType::GRPC)
+        .and(NotForContentType::IMAGES)
+        .and(NotForContentType::SSE);
+    let state = get_app_state();
+    let session_params = config::get_session_params()?;
+    let app = app.layer(
+        ServiceBuilder::new()
+            .layer(HandleErrorLayer::new(handle_error))
+            .layer(CompressionLayer::new().compress_when(predicate))
+            .timeout(basic_config.timeout)
+            .layer(from_fn_with_state(state, entry))
+            .layer(from_fn_with_state(state, stats))
+            .layer(from_fn_with_state(
+                (cache::get_redis_cache(), Arc::new(session_params)),
+                session,
+            ))
+            .layer(from_fn_with_state(state, processing_limit)),
+    );
+    state.run();
+
+    info!("listening on http://{}/", basic_config.listen);
+    let listener = tokio::net::TcpListener::bind(basic_config.listen.clone()).await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await?;
+    Ok(())
+}
+
+async fn start() {
+    if let Err(e) = run().await {
+        error!(category = "launch_app", message = ?e)
+    }
+    if let Err(e) = run_after_tasks().await {
+        error!(category = "run_after_tasks", message = ?e,);
+    }
+}
+
+fn main() {
+    std::panic::set_hook(Box::new(|e| {
+        error!(category = "panic", message = e.to_string(),);
+        std::process::exit(1);
+    }));
+    init_logger();
+    let cpus = std::env::var("{{NAME_UPPER}}_THREADS")
+        .map(|v| v.parse::<usize>().unwrap_or(num_cpus::get()))
+        .unwrap_or(num_cpus::get())
+        .max(1);
+    info!(threads = cpus, "start static server");
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .worker_threads(cpus)
+        .build()
+        .unwrap_or_else(|e| panic!("failed to build tokio runtime: {}", e))
+        .block_on(start());
+}

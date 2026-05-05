@@ -12,11 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{
-    CONFIGURATION_MODEL, CmsModel, DETECTOR_GROUP_MODEL, DETECTOR_GROUP_USER_MODEL, FILE_MODEL,
-    HTTP_DETECTOR_MODEL, HTTP_STAT_MODEL, TOKEN_ACCOUNT_MODEL, TOKEN_KEY_MODEL, TOKEN_PRICE_MODEL,
-    TOKEN_RECHARGE_MODEL, TOKEN_USAGE_MODEL, USER_MODEL, WEB_PAGE_DETECTOR_MODEL,
-};
+use crate::get_registered_model;
 use axum::Json;
 use axum::Router;
 use axum::extract::State;
@@ -25,23 +21,19 @@ use axum::routing::{delete, get, patch, post};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sqlx::PgPool;
-use std::str::FromStr;
 use tibba_error::Error;
-use tibba_model_builtin::{Model, ModelListParams, SchemaOption, SchemaView};
+use tibba_model::{ModelListParams, SchemaOption, SchemaView};
 use tibba_session::{AdminSession, UserSession};
 use tibba_util::{JsonParams, JsonResult, QueryParams};
 use tibba_validator::x_schema_name;
 use validator::Validate;
 
 type Result<T> = std::result::Result<T, Error>;
+
 #[derive(Debug, Deserialize, Clone, Validate)]
 struct GetSchemaParams {
     #[validate(custom(function = "x_schema_name"))]
     name: String,
-}
-
-fn get_model(name: &str) -> Result<CmsModel> {
-    CmsModel::from_str(name).map_err(|_| Error::new("The model is not supported"))
 }
 
 async fn get_schema(
@@ -49,23 +41,8 @@ async fn get_schema(
     QueryParams(params): QueryParams<GetSchemaParams>,
     _session: UserSession,
 ) -> JsonResult<SchemaView> {
-    let model = get_model(&params.name)?;
-    let view = match model {
-        CmsModel::User => USER_MODEL.schema_view(pool).await,
-        CmsModel::Configuration => CONFIGURATION_MODEL.schema_view(pool).await,
-        CmsModel::File => FILE_MODEL.schema_view(pool).await,
-        CmsModel::HttpDetector => HTTP_DETECTOR_MODEL.schema_view(pool).await,
-        CmsModel::HttpStat => HTTP_STAT_MODEL.schema_view(pool).await,
-        CmsModel::WebPageDetector => WEB_PAGE_DETECTOR_MODEL.schema_view(pool).await,
-        CmsModel::DetectorGroup => DETECTOR_GROUP_MODEL.schema_view(pool).await,
-        CmsModel::DetectorGroupUser => DETECTOR_GROUP_USER_MODEL.schema_view(pool).await,
-        CmsModel::TokenAccount => TOKEN_ACCOUNT_MODEL.schema_view(pool).await,
-        CmsModel::TokenKey => TOKEN_KEY_MODEL.schema_view(pool).await,
-        CmsModel::TokenRecharge => TOKEN_RECHARGE_MODEL.schema_view(pool).await,
-        CmsModel::TokenUsage => TOKEN_USAGE_MODEL.schema_view(pool).await,
-        CmsModel::TokenPrice => TOKEN_PRICE_MODEL.schema_view(pool).await,
-    };
-    Ok(Json(view))
+    let model = get_registered_model(&params.name)?;
+    Ok(Json(model.schema_view(pool).await))
 }
 
 #[derive(Deserialize, Validate)]
@@ -91,75 +68,12 @@ async fn list_model(
         keyword: params.keyword,
         filters: params.filters,
     };
-    let model = get_model(&params.model)?;
-    let value = match model {
-        CmsModel::User => {
-            USER_MODEL
-                .list_and_count(pool, params.count, &query_params)
-                .await?
-        }
-        CmsModel::Configuration => {
-            CONFIGURATION_MODEL
-                .list_and_count(pool, params.count, &query_params)
-                .await?
-        }
-        CmsModel::File => {
-            FILE_MODEL
-                .list_and_count(pool, params.count, &query_params)
-                .await?
-        }
-        CmsModel::HttpDetector => {
-            HTTP_DETECTOR_MODEL
-                .list_and_count(pool, params.count, &query_params)
-                .await?
-        }
-        CmsModel::HttpStat => {
-            HTTP_STAT_MODEL
-                .list_and_count(pool, params.count, &query_params)
-                .await?
-        }
-        CmsModel::WebPageDetector => {
-            WEB_PAGE_DETECTOR_MODEL
-                .list_and_count(pool, params.count, &query_params)
-                .await?
-        }
-        CmsModel::DetectorGroup => {
-            DETECTOR_GROUP_MODEL
-                .list_and_count(pool, params.count, &query_params)
-                .await?
-        }
-        CmsModel::DetectorGroupUser => {
-            DETECTOR_GROUP_USER_MODEL
-                .list_and_count(pool, params.count, &query_params)
-                .await?
-        }
-        CmsModel::TokenAccount => {
-            TOKEN_ACCOUNT_MODEL
-                .list_and_count(pool, params.count, &query_params)
-                .await?
-        }
-        CmsModel::TokenKey => {
-            TOKEN_KEY_MODEL
-                .list_and_count(pool, params.count, &query_params)
-                .await?
-        }
-        CmsModel::TokenRecharge => {
-            TOKEN_RECHARGE_MODEL
-                .list_and_count(pool, params.count, &query_params)
-                .await?
-        }
-        CmsModel::TokenUsage => {
-            TOKEN_USAGE_MODEL
-                .list_and_count(pool, params.count, &query_params)
-                .await?
-        }
-        CmsModel::TokenPrice => {
-            TOKEN_PRICE_MODEL
-                .list_and_count(pool, params.count, &query_params)
-                .await?
-        }
-    };
-    Ok(Json(value))
+    let model = get_registered_model(&params.model)?;
+    Ok(Json(
+        model
+            .list_and_count(pool, params.count, &query_params)
+            .await?,
+    ))
 }
 
 #[derive(Deserialize, Validate)]
@@ -173,64 +87,11 @@ async fn get_detail(
     QueryParams(params): QueryParams<GetModelParams>,
     _session: AdminSession,
 ) -> JsonResult<Value> {
-    let model = get_model(&params.model)?;
-    let data = match model {
-        CmsModel::User => {
-            let user = USER_MODEL.get_by_id(pool, params.id).await?;
-            json!(user)
-        }
-        CmsModel::Configuration => {
-            let configuration = CONFIGURATION_MODEL.get_by_id(pool, params.id).await?;
-            json!(configuration)
-        }
-        CmsModel::File => {
-            let file = FILE_MODEL.get_by_id(pool, params.id).await?;
-            json!(file)
-        }
-        CmsModel::HttpDetector => {
-            let detector = HTTP_DETECTOR_MODEL.get_by_id(pool, params.id).await?;
-            json!(detector)
-        }
-        CmsModel::HttpStat => {
-            let stat = HTTP_STAT_MODEL.get_by_id(pool, params.id).await?;
-            json!(stat)
-        }
-        CmsModel::WebPageDetector => {
-            let detector = WEB_PAGE_DETECTOR_MODEL.get_by_id(pool, params.id).await?;
-            json!(detector)
-        }
-        CmsModel::DetectorGroup => {
-            let group = DETECTOR_GROUP_MODEL.get_by_id(pool, params.id).await?;
-            json!(group)
-        }
-        CmsModel::DetectorGroupUser => {
-            let user = DETECTOR_GROUP_USER_MODEL.get_by_id(pool, params.id).await?;
-            json!(user)
-        }
-        CmsModel::TokenAccount => {
-            let account = TOKEN_ACCOUNT_MODEL.get_by_id(pool, params.id).await?;
-            json!(account)
-        }
-        CmsModel::TokenKey => {
-            let key = TOKEN_KEY_MODEL.get_by_id(pool, params.id).await?;
-            json!(key)
-        }
-        CmsModel::TokenRecharge => {
-            let recharge = TOKEN_RECHARGE_MODEL.get_by_id(pool, params.id).await?;
-            json!(recharge)
-        }
-        CmsModel::TokenUsage => {
-            let usage = TOKEN_USAGE_MODEL.get_by_id(pool, params.id).await?;
-            json!(usage)
-        }
-        CmsModel::TokenPrice => {
-            let price = TOKEN_PRICE_MODEL.get_by_id(pool, params.id).await?;
-            json!(price)
-        }
-    };
-    if data.is_null() {
-        return Err(Error::new("The record is not found"));
-    }
+    let model = get_registered_model(&params.model)?;
+    let data = model
+        .get_by_id(pool, params.id)
+        .await?
+        .ok_or_else(|| Error::new("The record is not found"))?;
     Ok(Json(data))
 }
 
@@ -245,52 +106,8 @@ async fn delete_model(
     _session: AdminSession,
     QueryParams(params): QueryParams<DeleteModelParams>,
 ) -> Result<StatusCode> {
-    let model = get_model(&params.model)?;
-    match model {
-        CmsModel::User => {
-            USER_MODEL.delete_by_id(pool, params.id).await?;
-        }
-        CmsModel::Configuration => {
-            CONFIGURATION_MODEL.delete_by_id(pool, params.id).await?;
-        }
-        CmsModel::File => {
-            FILE_MODEL.delete_by_id(pool, params.id).await?;
-        }
-        CmsModel::HttpDetector => {
-            HTTP_DETECTOR_MODEL.delete_by_id(pool, params.id).await?;
-        }
-        CmsModel::HttpStat => {
-            HTTP_STAT_MODEL.delete_by_id(pool, params.id).await?;
-        }
-        CmsModel::WebPageDetector => {
-            WEB_PAGE_DETECTOR_MODEL
-                .delete_by_id(pool, params.id)
-                .await?;
-        }
-        CmsModel::DetectorGroup => {
-            DETECTOR_GROUP_MODEL.delete_by_id(pool, params.id).await?;
-        }
-        CmsModel::DetectorGroupUser => {
-            DETECTOR_GROUP_USER_MODEL
-                .delete_by_id(pool, params.id)
-                .await?;
-        }
-        CmsModel::TokenAccount => {
-            TOKEN_ACCOUNT_MODEL.delete_by_id(pool, params.id).await?;
-        }
-        CmsModel::TokenKey => {
-            TOKEN_KEY_MODEL.delete_by_id(pool, params.id).await?;
-        }
-        CmsModel::TokenRecharge => {
-            TOKEN_RECHARGE_MODEL.delete_by_id(pool, params.id).await?;
-        }
-        CmsModel::TokenUsage => {
-            TOKEN_USAGE_MODEL.delete_by_id(pool, params.id).await?;
-        }
-        CmsModel::TokenPrice => {
-            TOKEN_PRICE_MODEL.delete_by_id(pool, params.id).await?;
-        }
-    }
+    let model = get_registered_model(&params.model)?;
+    model.delete_by_id(pool, params.id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -306,62 +123,8 @@ async fn update_model(
     _session: AdminSession,
     JsonParams(params): JsonParams<UpdateModelParams>,
 ) -> Result<StatusCode> {
-    let model = get_model(&params.model)?;
-    match model {
-        CmsModel::User => {
-            USER_MODEL
-                .update_by_id(pool, params.id, params.data)
-                .await?;
-        }
-        CmsModel::Configuration => {
-            CONFIGURATION_MODEL
-                .update_by_id(pool, params.id, params.data)
-                .await?;
-        }
-        CmsModel::File => {
-            FILE_MODEL
-                .update_by_id(pool, params.id, params.data)
-                .await?;
-        }
-        CmsModel::HttpDetector => {
-            HTTP_DETECTOR_MODEL
-                .update_by_id(pool, params.id, params.data)
-                .await?;
-        }
-        CmsModel::WebPageDetector => {
-            WEB_PAGE_DETECTOR_MODEL
-                .update_by_id(pool, params.id, params.data)
-                .await?;
-        }
-        CmsModel::DetectorGroup => {
-            DETECTOR_GROUP_MODEL
-                .update_by_id(pool, params.id, params.data)
-                .await?;
-        }
-        CmsModel::DetectorGroupUser => {
-            DETECTOR_GROUP_USER_MODEL
-                .update_by_id(pool, params.id, params.data)
-                .await?;
-        }
-        CmsModel::TokenAccount => {
-            TOKEN_ACCOUNT_MODEL
-                .update_by_id(pool, params.id, params.data)
-                .await?;
-        }
-        CmsModel::TokenKey => {
-            TOKEN_KEY_MODEL
-                .update_by_id(pool, params.id, params.data)
-                .await?;
-        }
-        CmsModel::TokenPrice => {
-            TOKEN_PRICE_MODEL
-                .update_by_id(pool, params.id, params.data)
-                .await?;
-        }
-        _ => {
-            return Err(Error::new("The model is not supported"));
-        }
-    }
+    let model = get_registered_model(&params.model)?;
+    model.update_by_id(pool, params.id, params.data).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -376,76 +139,11 @@ async fn create_model(
     session: AdminSession,
     JsonParams(params): JsonParams<CreateModelParams>,
 ) -> JsonResult<Value> {
-    let model = get_model(&params.model)?;
-    let mut data = params.data;
-    let user_id = session.get_user_id();
-    if let Some(obj) = data.as_object_mut() {
-        obj.insert("created_by".to_string(), user_id.into());
-    }
-
-    let id = match model {
-        CmsModel::Configuration => CONFIGURATION_MODEL.insert(pool, data).await?,
-        CmsModel::HttpDetector => HTTP_DETECTOR_MODEL.insert(pool, data).await?,
-        CmsModel::WebPageDetector => WEB_PAGE_DETECTOR_MODEL.insert(pool, data).await?,
-        CmsModel::DetectorGroup => {
-            if let Some(obj) = data.as_object_mut() {
-                obj.insert("owner_id".to_string(), user_id.into());
-            }
-            DETECTOR_GROUP_MODEL.insert(pool, data).await?
-        }
-        CmsModel::DetectorGroupUser => {
-            if let Some(obj) = data.as_object_mut() {
-                obj.insert("invited_by".to_string(), user_id.into());
-                if let Some(id) = obj.get("user_id").and_then(|id| id.as_str()) {
-                    let id = id
-                        .parse::<u64>()
-                        .map_err(|_| Error::new("Invalid user id"))?;
-                    obj.insert("user_id".to_string(), id.into());
-                }
-            }
-            DETECTOR_GROUP_USER_MODEL.insert(pool, data).await?
-        }
-        CmsModel::TokenAccount => {
-            if let Some(obj) = data.as_object_mut() {
-                if let Some(id) = obj.get("user_id").and_then(|id| id.as_str()) {
-                    let id = id
-                        .parse::<u64>()
-                        .map_err(|_| Error::new("Invalid user id"))?;
-                    obj.insert("user_id".to_string(), id.into());
-                }
-            }
-            TOKEN_ACCOUNT_MODEL.insert(pool, data).await?
-        }
-        CmsModel::TokenKey => {
-            if let Some(obj) = data.as_object_mut() {
-                if let Some(id) = obj.get("user_id").and_then(|id| id.as_str()) {
-                    let id = id
-                        .parse::<u64>()
-                        .map_err(|_| Error::new("Invalid user id"))?;
-                    obj.insert("user_id".to_string(), id.into());
-                }
-            }
-            TOKEN_KEY_MODEL.insert(pool, data).await?
-        }
-        CmsModel::TokenRecharge => {
-            if let Some(obj) = data.as_object_mut() {
-                if let Some(id) = obj.get("user_id").and_then(|id| id.as_str()) {
-                    let id = id
-                        .parse::<u64>()
-                        .map_err(|_| Error::new("Invalid user id"))?;
-                    obj.insert("user_id".to_string(), id.into());
-                }
-            }
-            TOKEN_RECHARGE_MODEL.insert(pool, data).await?
-        }
-        CmsModel::TokenPrice => TOKEN_PRICE_MODEL.insert(pool, data).await?,
-        _ => {
-            return Err(Error::new("The model is not supported"));
-        }
-    };
-    Ok(Json(json!({
-        "id": id,
-    })))
+    let model = get_registered_model(&params.model)?;
+    let id = model
+        .insert(pool, params.data, session.get_user_id())
+        .await?;
+    Ok(Json(json!({ "id": id })))
 }
 
 #[derive(Deserialize, Validate)]
@@ -464,11 +162,8 @@ async fn search_model(
     QueryParams(params): QueryParams<SearchParams>,
     _session: UserSession,
 ) -> JsonResult<SearchOptionsResp> {
-    let model = get_model(&params.model)?;
-    let options = match model {
-        CmsModel::User => USER_MODEL.search_options(pool, params.keyword).await?,
-        _ => vec![],
-    };
+    let model = get_registered_model(&params.model)?;
+    let options = model.search_options(pool, params.keyword).await?;
     Ok(Json(SearchOptionsResp { options }))
 }
 

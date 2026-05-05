@@ -19,6 +19,7 @@ use serde_json::json;
 use snafu::ResultExt;
 use sqlx::{Pool, Postgres, QueryBuilder};
 use std::collections::HashMap;
+use std::future::Future;
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -64,11 +65,13 @@ pub fn push_order_by(qb: &mut QueryBuilder<'_, Postgres>, order_by: &str) {
     }
 }
 
-#[allow(async_fn_in_trait)]
 pub trait Model: Send + Sync {
-    type Output: Serialize;
+    type Output: Serialize + Send;
     fn new() -> Self;
-    async fn schema_view(&self, _pool: &Pool<Postgres>) -> SchemaView;
+    fn schema_view<'a>(
+        &'a self,
+        pool: &'a Pool<Postgres>,
+    ) -> impl Future<Output = SchemaView> + Send + 'a;
     fn keyword(&self) -> String {
         String::new()
     }
@@ -112,65 +115,95 @@ pub trait Model: Send + Sync {
 
         Ok(())
     }
-    async fn insert(&self, _pool: &Pool<Postgres>, _params: serde_json::Value) -> Result<u64> {
-        Err(Error::NotSupported {
-            name: "insert".to_string(),
-        })
-    }
-    async fn get_by_id(&self, _pool: &Pool<Postgres>, _id: u64) -> Result<Option<Self::Output>> {
-        Err(Error::NotSupported {
-            name: "get_by_id".to_string(),
-        })
-    }
-    async fn delete_by_id(&self, _pool: &Pool<Postgres>, _id: u64) -> Result<()> {
-        Err(Error::NotSupported {
-            name: "delete_by_id".to_string(),
-        })
-    }
-    async fn update_by_id(
-        &self,
-        _pool: &Pool<Postgres>,
-        _id: u64,
+    fn insert<'a>(
+        &'a self,
+        _pool: &'a Pool<Postgres>,
         _params: serde_json::Value,
-    ) -> Result<()> {
-        Err(Error::NotSupported {
-            name: "update_by_id".to_string(),
-        })
-    }
-    async fn count(&self, _pool: &Pool<Postgres>, _params: &ModelListParams) -> Result<i64> {
-        Err(Error::NotSupported {
-            name: "count".to_string(),
-        })
-    }
-    async fn list(
-        &self,
-        _pool: &Pool<Postgres>,
-        _params: &ModelListParams,
-    ) -> Result<Vec<Self::Output>> {
-        Err(Error::NotSupported {
-            name: "list".to_string(),
-        })
-    }
-    async fn list_and_count(
-        &self,
-        pool: &Pool<Postgres>,
-        count: bool,
-        params: &ModelListParams,
-    ) -> Result<serde_json::Value> {
-        if count {
-            let (count, items) =
-                tokio::try_join!(self.count(pool, params), self.list(pool, params))?;
-            Ok(json!({ "count": count, "items": items }))
-        } else {
-            let items = self.list(pool, params).await?;
-            Ok(json!({ "count": -1_i64, "items": items }))
+    ) -> impl Future<Output = Result<u64>> + Send + 'a {
+        async {
+            Err(Error::NotSupported {
+                name: "insert".to_string(),
+            })
         }
     }
-    async fn search_options(
-        &self,
-        _pool: &Pool<Postgres>,
+    fn get_by_id<'a>(
+        &'a self,
+        _pool: &'a Pool<Postgres>,
+        _id: u64,
+    ) -> impl Future<Output = Result<Option<Self::Output>>> + Send + 'a {
+        async {
+            Err(Error::NotSupported {
+                name: "get_by_id".to_string(),
+            })
+        }
+    }
+    fn delete_by_id<'a>(
+        &'a self,
+        _pool: &'a Pool<Postgres>,
+        _id: u64,
+    ) -> impl Future<Output = Result<()>> + Send + 'a {
+        async {
+            Err(Error::NotSupported {
+                name: "delete_by_id".to_string(),
+            })
+        }
+    }
+    fn update_by_id<'a>(
+        &'a self,
+        _pool: &'a Pool<Postgres>,
+        _id: u64,
+        _params: serde_json::Value,
+    ) -> impl Future<Output = Result<()>> + Send + 'a {
+        async {
+            Err(Error::NotSupported {
+                name: "update_by_id".to_string(),
+            })
+        }
+    }
+    fn count<'a>(
+        &'a self,
+        _pool: &'a Pool<Postgres>,
+        _params: &'a ModelListParams,
+    ) -> impl Future<Output = Result<i64>> + Send + 'a {
+        async {
+            Err(Error::NotSupported {
+                name: "count".to_string(),
+            })
+        }
+    }
+    fn list<'a>(
+        &'a self,
+        _pool: &'a Pool<Postgres>,
+        _params: &'a ModelListParams,
+    ) -> impl Future<Output = Result<Vec<Self::Output>>> + Send + 'a {
+        async {
+            Err(Error::NotSupported {
+                name: "list".to_string(),
+            })
+        }
+    }
+    fn list_and_count<'a>(
+        &'a self,
+        pool: &'a Pool<Postgres>,
+        count: bool,
+        params: &'a ModelListParams,
+    ) -> impl Future<Output = Result<serde_json::Value>> + Send + 'a {
+        async move {
+            if count {
+                let (n, items) =
+                    tokio::try_join!(self.count(pool, params), self.list(pool, params))?;
+                Ok(json!({ "count": n, "items": items }))
+            } else {
+                let items = self.list(pool, params).await?;
+                Ok(json!({ "count": -1_i64, "items": items }))
+            }
+        }
+    }
+    fn search_options<'a>(
+        &'a self,
+        _pool: &'a Pool<Postgres>,
         _keyword: Option<String>,
-    ) -> Result<Vec<SchemaOption>> {
-        Ok(vec![])
+    ) -> impl Future<Output = Result<Vec<SchemaOption>>> + Send + 'a {
+        async { Ok(vec![]) }
     }
 }

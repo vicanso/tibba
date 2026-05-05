@@ -232,7 +232,21 @@ impl Model for DetectorGroupUserModel {
         Ok(())
     }
 
-    async fn insert(&self, pool: &Pool<Postgres>, params: serde_json::Value) -> Result<u64> {
+    async fn insert(&self, pool: &Pool<Postgres>, mut params: serde_json::Value) -> Result<u64> {
+        // invited_by 未指定时默认与 created_by 相同
+        // user_id 支持前端以字符串形式传入（JS 大整数安全）
+        if let Some(obj) = params.as_object_mut() {
+            if !obj.contains_key("invited_by") {
+                if let Some(created_by) = obj.get("created_by").cloned() {
+                    obj.insert("invited_by".to_string(), created_by);
+                }
+            }
+            if let Some(id_str) = obj.get("user_id").and_then(|v| v.as_str()) {
+                if let Ok(id) = id_str.parse::<u64>() {
+                    obj.insert("user_id".to_string(), id.into());
+                }
+            }
+        }
         let params: DetectorGroupUserInsertParams =
             serde_json::from_value(params).context(JsonSnafu)?;
         let row: (i64,) = sqlx::query_as(
