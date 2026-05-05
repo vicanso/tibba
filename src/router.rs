@@ -17,6 +17,7 @@ use crate::config::must_get_basic_config;
 use crate::dal::get_opendal_storage;
 use crate::sql::get_db_pool;
 use crate::state::get_app_state;
+use crate::web::serve_web;
 use axum::Router;
 use tibba_error::Error;
 use tibba_router_common::{CommonRouterParams, new_common_router};
@@ -53,9 +54,18 @@ pub fn new_router() -> Result<Router> {
         pool: get_db_pool(),
     });
 
-    Ok(Router::new()
+    // API 路由挂在可配置的 prefix 下（如 /api），静态文件始终在根路径
+    let api_router = Router::new()
         .nest("/users", user_router)
         .nest("/files", file_router)
         .nest("/models", model_router)
-        .merge(common_router))
+        .merge(common_router);
+
+    let app = if let Some(prefix) = &basic_config.prefix {
+        Router::new().nest(prefix, api_router)
+    } else {
+        api_router
+    };
+
+    Ok(app.fallback(serve_web))
 }

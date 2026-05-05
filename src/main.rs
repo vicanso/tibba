@@ -44,6 +44,7 @@ mod httpstat;
 mod router;
 mod sql;
 mod state;
+mod web;
 mod web_page_stat;
 
 // Global error handler for the application
@@ -127,13 +128,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     run_before_tasks().await?;
     run_scheduler_jobs().await?;
 
-    // config is validated in init function
     let basic_config = config::must_get_basic_config();
-    let app = if let Some(prefix) = &basic_config.prefix {
-        Router::new().nest(prefix, new_router()?)
-    } else {
-        new_router()?
-    };
+    let app = new_router()?;
 
     let predicate = SizeAbove::new(1024)
         .and(NotForContentType::GRPC)

@@ -5510,6 +5510,7 @@ dependencies = [
  "hostname",
  "http",
  "http-stat",
+ "mime_guess2",
  "nanoid",
  "num_cpus",
  "once_cell",

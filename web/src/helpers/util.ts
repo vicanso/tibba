@@ -81,6 +81,10 @@ export function getDirtyValues<T extends object>(
     }, {} as Partial<T>);
 }
 
+export function isDev(): boolean {
+    return import.meta.env.DEV;
+}
+
 export function getSystemTheme() {
     if (window.matchMedia("(prefers-color-scheme: dark)").matches) {
         return "dark";

@@ -1,9 +1,19 @@
+FROM node:24-alpine AS webbuilder
+
+COPY . /tibba
+RUN apk update \
+    && apk add git make \
+    && cd web \
+    && npm install --force \
+    && npm run  build 
+
+
 FROM rust:1.95.0 AS builder
 
 # Accept GIT_COMMIT_ID as build argument
 ARG GIT_COMMIT_ID
 
-COPY . /tibba
+COPY --from webbuilder /tibba /tibba
 
 # Write the GIT_COMMIT_ID to configs/commit_id.txt
 RUN echo "$GIT_COMMIT_ID" | cut -c1-7 > /tibba/configs/commit_id.txt
