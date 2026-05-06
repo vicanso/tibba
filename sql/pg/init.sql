@@ -1,13 +1,3 @@
--- Trigger function: auto-update `modified` column on every UPDATE.
--- Must be created before any table that uses it.
-CREATE OR REPLACE FUNCTION trigger_set_modified_timestamp()
-RETURNS TRIGGER AS $$
-BEGIN
-  NEW.modified = CURRENT_TIMESTAMP;
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
 \i create_users.sql
 \i create_configurations.sql
 \i create_files.sql
@@ -22,3 +12,4 @@ $$ LANGUAGE plpgsql;
 \i create_token_usages.sql
 \i create_token_keys.sql
 \i create_token_prices.sql
+\i create_docker_analyses.sql

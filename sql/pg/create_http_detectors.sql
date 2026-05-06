@@ -31,10 +31,6 @@ CREATE TABLE http_detectors (
 CREATE UNIQUE INDEX name_group_id ON http_detectors (name, group_id, deleted_at);
 CREATE INDEX idx_http_detectors_deleted_at ON http_detectors (deleted_at);
 
-CREATE TRIGGER set_http_detectors_modified
-  BEFORE UPDATE ON http_detectors
-  FOR EACH ROW EXECUTE FUNCTION trigger_set_modified_timestamp();
-
 COMMENT ON TABLE http_detectors IS 'HTTP检测器表';
 COMMENT ON COLUMN http_detectors.id IS '主键ID';
 COMMENT ON COLUMN http_detectors.status IS '状态，0：禁用，1：启用';

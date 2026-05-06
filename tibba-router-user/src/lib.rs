@@ -21,6 +21,9 @@ use axum_extra::extract::cookie::CookieJar;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sqlx::PgPool;
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
 use tibba_cache::RedisCache;
 use tibba_error::Error;
 use tibba_middleware::{user_tracker, validate_captcha};
@@ -32,6 +35,18 @@ use tibba_util::{
 };
 use tibba_validator::*;
 use validator::Validate;
+
+/// 注册成功回调的 Future 类型
+pub type OnRegisterFuture = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
+/// 注册成功后的回调。参数为新用户 ID（i64）。
+pub type OnRegisterFn = Arc<dyn Fn(i64) -> OnRegisterFuture + Send + Sync>;
+
+/// 注册 handler 的 axum 状态，包含 DB pool 和可选的注册后回调。
+#[derive(Clone)]
+struct RegisterState {
+    pool: &'static PgPool,
+    on_register: Option<OnRegisterFn>,
+}
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -227,19 +242,23 @@ struct RegisterResp {
 
 /// 注册新用户接口。
 /// 第一个注册成功的用户（id=1）自动授予超级管理员角色。
+/// 注册成功后若配置了 `on_register` 回调，则异步触发；回调失败不影响注册结果。
 async fn register(
-    State(pool): State<&'static PgPool>,
+    State(state): State<RegisterState>,
     JsonParams(params): JsonParams<RegisterParams>,
 ) -> JsonResult<RegisterResp> {
     let model = UserModel::new();
     let id = model
-        .register(pool, &params.account, &params.password)
+        .register(state.pool, &params.account, &params.password)
         .await?;
     // 首个用户自动升级为超级管理员
     if id == 1 {
         model
-            .update_by_id(pool, id, json!({ "roles": [ROLE_SUPER_ADMIN] }))
+            .update_by_id(state.pool, id, json!({ "roles": [ROLE_SUPER_ADMIN] }))
             .await?;
+    }
+    if let Some(cb) = &state.on_register {
+        cb(id as i64).await;
     }
     Ok(Json(RegisterResp {
         id,
@@ -306,6 +325,8 @@ pub struct UserRouterParams {
     pub pool: &'static PgPool,
     /// Redis 缓存（存储验证码答案）
     pub cache: &'static RedisCache,
+    /// 注册成功后的回调，可选。失败不影响注册流程。
+    pub on_register: Option<OnRegisterFn>,
 }
 
 /// 创建用户相关路由，包含以下端点：
@@ -344,7 +365,10 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
         .route(
             "/register",
             post(register)
-                .with_state(params.pool)
+                .with_state(RegisterState {
+                    pool: params.pool,
+                    on_register: params.on_register,
+                })
                 .layer(from_fn_with_state((name, "register").into(), user_tracker)),
         )
         .route(

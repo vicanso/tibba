@@ -16,10 +16,6 @@ CREATE TABLE files (
 CREATE UNIQUE INDEX file_name ON files (filename, deleted_at);
 CREATE INDEX idx_files_deleted_at ON files (deleted_at);
 
-CREATE TRIGGER set_files_modified
-  BEFORE UPDATE ON files
-  FOR EACH ROW EXECUTE FUNCTION trigger_set_modified_timestamp();
-
 COMMENT ON TABLE files IS '文件表';
 COMMENT ON COLUMN files.id IS '主键ID';
 COMMENT ON COLUMN files.filename IS '文件名';

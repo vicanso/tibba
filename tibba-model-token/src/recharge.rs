@@ -71,7 +71,7 @@ impl From<TokenRechargeSchema> for TokenRecharge {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct TokenRechargeInsertParams {
     pub user_id: i64,
     pub amount: i64,
@@ -241,7 +241,7 @@ impl Model for TokenRechargeModel {
 
     async fn delete_by_id(&self, pool: &Pool<Postgres>, id: u64) -> Result<()> {
         sqlx::query(
-            r#"UPDATE token_recharges SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL"#,
+            r#"UPDATE token_recharges SET deleted_at = NOW(), modified = NOW() WHERE id = $1 AND deleted_at IS NULL"#,
         )
         .bind(id as i64)
         .execute(pool)

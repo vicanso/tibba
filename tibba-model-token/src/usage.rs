@@ -310,7 +310,7 @@ impl Model for TokenUsageModel {
 
     async fn delete_by_id(&self, pool: &Pool<Postgres>, id: u64) -> Result<()> {
         sqlx::query(
-            r#"UPDATE token_usages SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL"#,
+            r#"UPDATE token_usages SET deleted_at = NOW(), modified = NOW() WHERE id = $1 AND deleted_at IS NULL"#,
         )
         .bind(id as i64)
         .execute(pool)

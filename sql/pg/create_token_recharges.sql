@@ -15,10 +15,6 @@ CREATE TABLE token_recharges (
 CREATE INDEX idx_token_recharges_user ON token_recharges (user_id, created);
 CREATE INDEX idx_token_recharges_order ON token_recharges (order_id) WHERE order_id <> '';
 
-CREATE TRIGGER set_token_recharges_modified
-  BEFORE UPDATE ON token_recharges
-  FOR EACH ROW EXECUTE FUNCTION trigger_set_modified_timestamp();
-
 COMMENT ON TABLE token_recharges IS '积分充值记录表';
 COMMENT ON COLUMN token_recharges.id IS '主键ID';
 COMMENT ON COLUMN token_recharges.user_id IS '用户ID';

@@ -44,9 +44,8 @@ impl ModelListParams {
     }
 
     pub fn push_pagination(&self, qb: &mut QueryBuilder<'_, Postgres>) {
-        if let Some(order_by) = &self.order_by {
-            push_order_by(qb, order_by);
-        }
+        let order_by = self.order_by.as_deref().unwrap_or("id");
+        push_order_by(qb, order_by);
         let limit = self.limit.min(200);
         let offset = (self.page.max(1) - 1) * limit;
         qb.push(format!(" LIMIT {limit} OFFSET {offset}"));

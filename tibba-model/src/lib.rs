@@ -60,6 +60,8 @@ pub enum Error {
     NotFound,
     #[snafu(display("Invalid datetime: {value}"))]
     InvalidDatetime { value: String },
+    #[snafu(display("Insufficient balance"))]
+    InsufficientBalance,
 }
 
 impl From<Error> for BaseError {
@@ -83,6 +85,9 @@ impl From<Error> for BaseError {
                 BaseError::new(format!("Invalid datetime: {value}"))
                     .with_sub_category("invalid_datetime")
             }
+            Error::InsufficientBalance => BaseError::new("Insufficient balance")
+                .with_sub_category("insufficient_balance")
+                .with_status(402),
         };
         err.with_category("model")
     }

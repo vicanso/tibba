@@ -15,10 +15,12 @@
 use crate::cache::get_redis_cache;
 use crate::config::must_get_basic_config;
 use crate::dal::get_opendal_storage;
+use crate::docker::analyze as docker_analyze;
 use crate::sql::get_db_pool;
 use crate::state::get_app_state;
 use crate::web::serve_web;
 use axum::Router;
+use axum::routing::post;
 use std::sync::Arc;
 use tibba_error::Error;
 use tibba_model::Model;
@@ -27,13 +29,15 @@ use tibba_model_builtin::{
     HttpStatModel, UserModel, WebPageDetectorModel,
 };
 use tibba_model_token::{
-    TokenAccountModel, TokenKeyModel, TokenPriceModel, TokenRechargeModel, TokenUsageModel,
+    RECHARGE_SOURCE_GIFT, TokenAccountModel, TokenKeyModel, TokenPriceModel,
+    TokenRechargeInsertParams, TokenRechargeModel, TokenService, TokenUsageModel,
 };
 use tibba_router_common::{CommonRouterParams, new_common_router};
 use tibba_router_file::{FileRouterParams, new_file_router};
 use tibba_router_model::{ModelAdapter, ModelRouterParams, new_model_router, register_model};
 use tibba_router_user::{UserRouterParams, new_user_router};
 use tibba_util::{is_development, is_test};
+use tracing::error;
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -98,6 +102,24 @@ pub fn new_router() -> Result<Router> {
         magic_code,
         pool: get_db_pool(),
         cache,
+        on_register: Some(Arc::new(|user_id| {
+            Box::pin(async move {
+                if let Err(e) = TokenService::recharge(
+                    get_db_pool(),
+                    TokenRechargeInsertParams {
+                        user_id,
+                        amount: 1_000_000,
+                        source: RECHARGE_SOURCE_GIFT,
+                        remark: Some("注册赠送".to_string()),
+                        ..Default::default()
+                    },
+                )
+                .await
+                {
+                    error!(user_id, error = %e, "注册赠送积分失败");
+                }
+            })
+        })),
     });
     let file_router = new_file_router(FileRouterParams {
         storage: get_opendal_storage(),
@@ -107,11 +129,16 @@ pub fn new_router() -> Result<Router> {
         pool: get_db_pool(),
     });
 
+    let docker_router = Router::new()
+        .route("/analyze", post(docker_analyze))
+        .with_state(get_db_pool());
+
     // API 路由挂在可配置的 prefix 下（如 /api），静态文件始终在根路径
     let api_router = Router::new()
         .nest("/users", user_router)
         .nest("/files", file_router)
         .nest("/models", model_router)
+        .nest("/docker", docker_router)
         .merge(common_router);
 
     let app = if let Some(prefix) = &basic_config.prefix {

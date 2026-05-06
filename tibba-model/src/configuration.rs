@@ -215,7 +215,7 @@ impl Model for ConfigurationModel {
 
     async fn delete_by_id(&self, pool: &Pool<Postgres>, id: u64) -> Result<()> {
         sqlx::query(
-            r#"UPDATE configurations SET deleted_at = CURRENT_TIMESTAMP WHERE id = $1 AND deleted_at IS NULL"#,
+            r#"UPDATE configurations SET deleted_at = NOW(), modified = NOW() WHERE id = $1 AND deleted_at IS NULL"#,
         )
         .bind(id as i64)
         .execute(pool)
@@ -233,7 +233,7 @@ impl Model for ConfigurationModel {
     ) -> Result<()> {
         let params: ConfigurationUpdateParams = serde_json::from_value(data).context(JsonSnafu)?;
         let _ = sqlx::query(
-            r#"UPDATE configurations SET data = COALESCE($1, data), description = COALESCE($2, description), status = COALESCE($3, status), effective_start_time = COALESCE($4, effective_start_time), effective_end_time = COALESCE($5, effective_end_time) WHERE id = $6 AND deleted_at IS NULL"#,
+            r#"UPDATE configurations SET data = COALESCE($1, data), description = COALESCE($2, description), status = COALESCE($3, status), effective_start_time = COALESCE($4, effective_start_time), effective_end_time = COALESCE($5, effective_end_time), modified = NOW() WHERE id = $6 AND deleted_at IS NULL"#,
         )
         .bind(params.data)
         .bind(params.description)

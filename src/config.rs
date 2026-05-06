@@ -133,6 +133,43 @@ pub fn get_session_params() -> Result<SessionParams> {
         .with_max_renewal(session_config.max_renewal))
 }
 
+#[derive(Debug, Clone, Default, Validate, Deserialize)]
+pub struct DivingConfig {
+    // diving url
+    #[validate(length(min = 1))]
+    pub url: String,
+    // llm base url
+    #[validate(length(min = 1))]
+    pub llm_url: String,
+    // llm model name
+    #[validate(length(min = 1))]
+    pub llm_model: String,
+    // llm api key
+    #[validate(length(min = 1))]
+    pub llm_api_key: String,
+    // WeCom robot webhook key (optional)
+    pub notify_wecom: Option<String>,
+    // 通知接收邮箱地址 (optional)
+    pub notify_email: Option<String>,
+    // SMTP 服务器地址
+    pub smtp_host: Option<String>,
+    // SMTP 端口，默认 465
+    pub smtp_port: Option<u16>,
+    // SMTP 认证用户名
+    pub smtp_username: Option<String>,
+    // SMTP 认证密码
+    pub smtp_password: Option<String>,
+    // 发件人地址
+    pub smtp_from: Option<String>,
+}
+
+static DIVING_CONFIG: OnceCell<DivingConfig> = OnceCell::new();
+
+fn new_diving_config(config: &Config) -> Result<DivingConfig> {
+    let diving_config = config.try_deserialize::<DivingConfig>()?;
+    diving_config.validate().map_err(map_err)?;
+    Ok(diving_config)
+}
 fn new_config() -> Result<&'static Config> {
     CONFIGS.get_or_try_init(|| {
         let category = "config";
@@ -161,6 +198,12 @@ pub fn must_get_basic_config() -> &'static BasicConfig {
         .unwrap_or_else(|| panic!("basic config not initialized"))
 }
 
+pub fn must_get_diving_config() -> &'static DivingConfig {
+    DIVING_CONFIG
+        .get()
+        .unwrap_or_else(|| panic!("diving config not initialized"))
+}
+
 async fn init_config() -> Result<()> {
     let app_config = new_config()?;
     let basic_config = new_basic_config(&app_config.sub_config("basic"))?;
@@ -171,6 +214,10 @@ async fn init_config() -> Result<()> {
     SESSION_CONFIG
         .set(session_config)
         .map_err(|_| map_err("session config init failed"))?;
+    let diving_config = new_diving_config(&app_config.sub_config("diving"))?;
+    DIVING_CONFIG
+        .set(diving_config)
+        .map_err(|_| map_err("diving config init failed"))?;
     Ok(())
 }
 

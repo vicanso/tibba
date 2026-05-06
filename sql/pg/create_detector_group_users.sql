@@ -19,10 +19,6 @@ CREATE INDEX idx_detector_group_users_deleted_at ON detector_group_users (delete
 CREATE INDEX idx_effective_time ON detector_group_users (status, effective_start_time, effective_end_time, deleted_at);
 CREATE INDEX idx_group_status ON detector_group_users (group_id, status);
 
-CREATE TRIGGER set_detector_group_users_modified
-  BEFORE UPDATE ON detector_group_users
-  FOR EACH ROW EXECUTE FUNCTION trigger_set_modified_timestamp();
-
 COMMENT ON TABLE detector_group_users IS '检测器分组用户关系表';
 COMMENT ON COLUMN detector_group_users.id IS '主键ID';
 COMMENT ON COLUMN detector_group_users.user_id IS '用户ID';

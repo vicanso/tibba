@@ -10,10 +10,6 @@ CREATE UNIQUE INDEX idx_objects_key ON objects ("key");
 CREATE INDEX idx_objects_modified ON objects (modified);
 CREATE INDEX idx_objects_created ON objects (created);
 
-CREATE TRIGGER set_objects_modified
-  BEFORE UPDATE ON objects
-  FOR EACH ROW EXECUTE FUNCTION trigger_set_modified_timestamp();
-
 COMMENT ON TABLE objects IS '对象表';
 COMMENT ON COLUMN objects.id IS '主键ID';
 COMMENT ON COLUMN objects."key" IS '对象路径';

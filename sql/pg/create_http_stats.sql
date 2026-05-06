@@ -34,10 +34,6 @@ CREATE INDEX idx_http_stats_deleted_at ON http_stats (deleted_at);
 CREATE INDEX idx_target_id_result ON http_stats (target_id, result);
 CREATE INDEX idx_http_stats_modified ON http_stats (modified);
 
-CREATE TRIGGER set_http_stats_modified
-  BEFORE UPDATE ON http_stats
-  FOR EACH ROW EXECUTE FUNCTION trigger_set_modified_timestamp();
-
 COMMENT ON TABLE http_stats IS 'HTTP统计表';
 COMMENT ON COLUMN http_stats.id IS '主键ID';
 COMMENT ON COLUMN http_stats.target_id IS '目标ID';

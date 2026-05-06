@@ -300,7 +300,7 @@ impl Model for FileModel {
 
     async fn delete_by_id(&self, pool: &Pool<Postgres>, id: u64) -> Result<()> {
         sqlx::query(
-            r#"UPDATE files SET deleted_at = CURRENT_TIMESTAMP WHERE id = $1 AND deleted_at IS NULL"#
+            r#"UPDATE files SET deleted_at = NOW(), modified = NOW() WHERE id = $1 AND deleted_at IS NULL"#
         )
             .bind(id as i64)
             .execute(pool)
@@ -317,7 +317,7 @@ impl Model for FileModel {
     ) -> Result<()> {
         let params: FileUpdateParams = serde_json::from_value(data).context(JsonSnafu)?;
         let _ = sqlx::query(
-            r#"UPDATE files SET metadata = COALESCE($1, metadata), "group" = COALESCE($2, "group") WHERE id = $3 AND deleted_at IS NULL"#,
+            r#"UPDATE files SET metadata = COALESCE($1, metadata), "group" = COALESCE($2, "group"), modified = NOW() WHERE id = $3 AND deleted_at IS NULL"#,
         )
             .bind(params.metadata)
             .bind(params.group)

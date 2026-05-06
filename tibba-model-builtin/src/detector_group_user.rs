@@ -281,11 +281,13 @@ impl Model for DetectorGroupUserModel {
     }
 
     async fn delete_by_id(&self, pool: &Pool<Postgres>, id: u64) -> Result<()> {
-        sqlx::query(r#"UPDATE detector_group_users SET deleted_at = NOW() WHERE id = $1"#)
-            .bind(id as i64)
-            .execute(pool)
-            .await
-            .context(SqlxSnafu)?;
+        sqlx::query(
+            r#"UPDATE detector_group_users SET deleted_at = NOW(), modified = NOW() WHERE id = $1"#,
+        )
+        .bind(id as i64)
+        .execute(pool)
+        .await
+        .context(SqlxSnafu)?;
 
         Ok(())
     }
@@ -300,7 +302,7 @@ impl Model for DetectorGroupUserModel {
             serde_json::from_value(params).context(JsonSnafu)?;
 
         let _ = sqlx::query(
-            r#"UPDATE detector_group_users SET role = COALESCE($1, role), status = COALESCE($2, status), effective_start_time = COALESCE($3, effective_start_time), effective_end_time = COALESCE($4, effective_end_time), invited_by = COALESCE($5, invited_by), remark = COALESCE($6, remark) WHERE id = $7 AND deleted_at IS NULL"#,
+            r#"UPDATE detector_group_users SET role = COALESCE($1, role), status = COALESCE($2, status), effective_start_time = COALESCE($3, effective_start_time), effective_end_time = COALESCE($4, effective_end_time), invited_by = COALESCE($5, invited_by), remark = COALESCE($6, remark), modified = NOW() WHERE id = $7 AND deleted_at IS NULL"#,
         )
         .bind(params.role)
         .bind(params.status)

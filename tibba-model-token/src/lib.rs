@@ -41,10 +41,12 @@ mod account;
 mod key;
 mod price;
 mod recharge;
+mod service;
 mod usage;
 
 pub use account::*;
 pub use key::*;
 pub use price::*;
 pub use recharge::*;
+pub use service::*;
 pub use usage::*;

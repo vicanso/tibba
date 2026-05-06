@@ -15,10 +15,6 @@ CREATE UNIQUE INDEX uk_token_keys_token ON token_keys (token) WHERE deleted_at I
 CREATE INDEX idx_token_keys_user_id ON token_keys (user_id);
 CREATE INDEX idx_token_keys_deleted_at ON token_keys (deleted_at);
 
-CREATE TRIGGER set_token_keys_modified
-  BEFORE UPDATE ON token_keys
-  FOR EACH ROW EXECUTE FUNCTION trigger_set_modified_timestamp();
-
 COMMENT ON TABLE token_keys IS 'API 鉴权密钥表';
 COMMENT ON COLUMN token_keys.id IS '主键ID';
 COMMENT ON COLUMN token_keys.user_id IS '关联用户ID';

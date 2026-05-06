@@ -19,10 +19,6 @@ CREATE TABLE users (
 CREATE UNIQUE INDEX user_account ON users (account, deleted_at);
 CREATE INDEX idx_users_deleted_at ON users (deleted_at);
 
-CREATE TRIGGER set_users_modified
-  BEFORE UPDATE ON users
-  FOR EACH ROW EXECUTE FUNCTION trigger_set_modified_timestamp();
-
 COMMENT ON TABLE users IS '用户表';
 COMMENT ON COLUMN users.id IS '主键ID';
 COMMENT ON COLUMN users.status IS '状态，0：禁用，1：启用';

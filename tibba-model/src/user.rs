@@ -173,7 +173,7 @@ impl Model for UserModel {
     }
     async fn delete_by_id(&self, pool: &Pool<Postgres>, id: u64) -> Result<()> {
         sqlx::query(
-            r#"UPDATE users SET deleted_at = CURRENT_TIMESTAMP WHERE id = $1 AND deleted_at IS NULL"#
+            r#"UPDATE users SET deleted_at = NOW(), modified = NOW() WHERE id = $1 AND deleted_at IS NULL"#
         )
             .bind(id as i64)
             .execute(pool)
@@ -197,7 +197,8 @@ impl Model for UserModel {
                 groups = COALESCE($4, groups),
                 status = COALESCE($5, status),
                 nickname = COALESCE($6, nickname),
-                phone = COALESCE($7, phone)
+                phone = COALESCE($7, phone),
+                modified = NOW()
             WHERE id = $8 AND deleted_at IS NULL
             "#,
         )
@@ -342,7 +343,8 @@ impl UserModel {
                 email = COALESCE($1, email),
                 avatar = COALESCE($2, avatar),
                 nickname = COALESCE($3, nickname),
-                phone = COALESCE($4, phone)
+                phone = COALESCE($4, phone),
+                modified = NOW()
             WHERE account = $5 AND deleted_at IS NULL
             "#,
         )

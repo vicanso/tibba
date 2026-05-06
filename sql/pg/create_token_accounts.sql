@@ -14,10 +14,6 @@ CREATE TABLE token_accounts (
 CREATE UNIQUE INDEX uk_token_accounts_user ON token_accounts (user_id) WHERE deleted_at IS NULL;
 CREATE INDEX idx_token_accounts_deleted_at ON token_accounts (deleted_at);
 
-CREATE TRIGGER set_token_accounts_modified
-  BEFORE UPDATE ON token_accounts
-  FOR EACH ROW EXECUTE FUNCTION trigger_set_modified_timestamp();
-
 COMMENT ON TABLE token_accounts IS '积分账户表';
 COMMENT ON COLUMN token_accounts.id IS '主键ID';
 COMMENT ON COLUMN token_accounts.user_id IS '用户ID';

@@ -25,10 +25,6 @@ CREATE TABLE web_page_detectors (
 CREATE UNIQUE INDEX web_page_detectors_name ON web_page_detectors (name, deleted_at);
 CREATE INDEX idx_web_page_detectors_deleted_at ON web_page_detectors (deleted_at);
 
-CREATE TRIGGER set_web_page_detectors_modified
-  BEFORE UPDATE ON web_page_detectors
-  FOR EACH ROW EXECUTE FUNCTION trigger_set_modified_timestamp();
-
 COMMENT ON TABLE web_page_detectors IS '网页检测器表';
 COMMENT ON COLUMN web_page_detectors.id IS '主键ID';
 COMMENT ON COLUMN web_page_detectors.status IS '状态，0：禁用，1：启用';

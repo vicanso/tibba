@@ -15,10 +15,6 @@ CREATE TABLE token_prices (
 
 CREATE UNIQUE INDEX uk_token_prices_service_model ON token_prices (service, model) WHERE deleted_at IS NULL;
 
-CREATE TRIGGER set_token_prices_modified
-  BEFORE UPDATE ON token_prices
-  FOR EACH ROW EXECUTE FUNCTION trigger_set_modified_timestamp();
-
 COMMENT ON TABLE token_prices IS '积分定价配置表';
 COMMENT ON COLUMN token_prices.id IS '主键ID';
 COMMENT ON COLUMN token_prices.service IS '服务类型：llm、api等';

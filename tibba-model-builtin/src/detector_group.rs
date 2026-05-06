@@ -198,11 +198,13 @@ impl Model for DetectorGroupModel {
     }
 
     async fn delete_by_id(&self, pool: &Pool<Postgres>, id: u64) -> Result<()> {
-        sqlx::query(r#"UPDATE detector_groups SET deleted_at = NOW() WHERE id = $1"#)
-            .bind(id as i64)
-            .execute(pool)
-            .await
-            .context(SqlxSnafu)?;
+        sqlx::query(
+            r#"UPDATE detector_groups SET deleted_at = NOW(), modified = NOW() WHERE id = $1"#,
+        )
+        .bind(id as i64)
+        .execute(pool)
+        .await
+        .context(SqlxSnafu)?;
 
         Ok(())
     }
@@ -217,7 +219,7 @@ impl Model for DetectorGroupModel {
             serde_json::from_value(params).context(JsonSnafu)?;
 
         let _ = sqlx::query(
-            r#"UPDATE detector_groups SET name = COALESCE($1, name), owner_id = COALESCE($2, owner_id), status = COALESCE($3, status), remark = COALESCE($4, remark) WHERE id = $5 AND deleted_at IS NULL"#,
+            r#"UPDATE detector_groups SET name = COALESCE($1, name), owner_id = COALESCE($2, owner_id), status = COALESCE($3, status), remark = COALESCE($4, remark), modified = NOW() WHERE id = $5 AND deleted_at IS NULL"#,
         )
         .bind(params.name)
         .bind(params.owner_id.map(|v| v as i64))

@@ -19,10 +19,6 @@ CREATE INDEX idx_token_usages_user    ON token_usages (user_id, created);
 CREATE INDEX idx_token_usages_service ON token_usages (service, model, created);
 CREATE INDEX idx_token_usages_biz     ON token_usages (biz_id) WHERE biz_id <> '';
 
-CREATE TRIGGER set_token_usages_modified
-  BEFORE UPDATE ON token_usages
-  FOR EACH ROW EXECUTE FUNCTION trigger_set_modified_timestamp();
-
 COMMENT ON TABLE token_usages IS '积分消耗记录表';
 COMMENT ON COLUMN token_usages.id IS '主键ID';
 COMMENT ON COLUMN token_usages.user_id IS '用户ID';

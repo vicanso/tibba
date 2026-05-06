@@ -15,10 +15,6 @@ CREATE TABLE configurations (
 CREATE UNIQUE INDEX uk_category_name ON configurations (category, name, deleted_at);
 CREATE INDEX idx_configurations_effective_time ON configurations (status, effective_start_time, effective_end_time, deleted_at);
 
-CREATE TRIGGER set_configurations_modified
-  BEFORE UPDATE ON configurations
-  FOR EACH ROW EXECUTE FUNCTION trigger_set_modified_timestamp();
-
 COMMENT ON TABLE configurations IS '系统配置表';
 COMMENT ON COLUMN configurations.id IS '主键ID';
 COMMENT ON COLUMN configurations.status IS '状态，0：禁用，1：启用';

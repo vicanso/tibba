@@ -16,3 +16,8 @@ ttl = "7d"
 
 [opendal]
 url = "file://~/Downloads"
+
+[diving]
+url = "http://127.0.0.1:7001"
+llm_url = "https://token-plan-cn.xiaomimimo.com"
+llm_model = "mimo-v2.5-pro"

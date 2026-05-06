@@ -47,12 +47,13 @@ impl Config {
             }
         }
 
-        // 环境变量覆盖同名配置，使用 `_` 作为层级分隔符
-        // 例如 `APP_DATABASE_HOST` 对应 `database.host`
+        // 环境变量覆盖同名配置，使用 `__` 作为层级分隔符，单 `_` 保留为字段名的一部分。
+        // 例如 `APP__DATABASE__HOST` 对应 `database.host`，
+        // `APP__DIVING__LLM_API_KEY` 对应 `diving.llm_api_key`。
         builder = builder.add_source(
             Environment::with_prefix(env_prefix_str)
-                .prefix_separator("_")
-                .separator("_"),
+                .prefix_separator("__")
+                .separator("__"),
         );
 
         let settings = builder.build().context(ConfigSnafu {

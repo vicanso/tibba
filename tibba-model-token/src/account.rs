@@ -21,7 +21,6 @@ use snafu::ResultExt;
 use sqlx::FromRow;
 use sqlx::{Pool, Postgres, QueryBuilder};
 use std::collections::HashMap;
-use tibba_error::Error as AppError;
 use tibba_model::Model;
 use time::PrimitiveDateTime;
 
@@ -143,14 +142,14 @@ impl TokenAccountModel {
     }
 
     /// 原子性扣减余额（消费）。
-    /// 余额不足时返回 HTTP 402，不会产生负余额。
+    /// 余额不足时返回 `Error::InsufficientBalance`（HTTP 402），不会产生负余额。
     /// 返回扣减后的余额。
     pub async fn deduct_balance(
         &self,
         pool: &Pool<Postgres>,
         user_id: i64,
         amount: i64,
-    ) -> std::result::Result<i64, AppError> {
+    ) -> Result<i64> {
         let result = sqlx::query_as::<_, (i64,)>(
             r#"
             UPDATE token_accounts
@@ -166,19 +165,11 @@ impl TokenAccountModel {
         .bind(user_id)
         .fetch_optional(pool)
         .await
-        .map_err(|e| {
-            AppError::new(e)
-                .with_category("token")
-                .with_sub_category("sqlx")
-                .with_exception(true)
-        })?;
+        .context(SqlxSnafu)?;
 
         match result {
             Some(row) => Ok(row.0),
-            None => Err(AppError::new("insufficient balance")
-                .with_category("token")
-                .with_sub_category("insufficient_balance")
-                .with_status(402)),
+            None => Err(Error::InsufficientBalance),
         }
     }
 }
@@ -283,7 +274,7 @@ impl Model for TokenAccountModel {
 
     async fn delete_by_id(&self, pool: &Pool<Postgres>, id: u64) -> Result<()> {
         sqlx::query(
-            r#"UPDATE token_accounts SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL"#,
+            r#"UPDATE token_accounts SET deleted_at = NOW(), modified = NOW() WHERE id = $1 AND deleted_at IS NULL"#,
         )
         .bind(id as i64)
         .execute(pool)
