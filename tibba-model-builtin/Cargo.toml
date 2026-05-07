@@ -1,6 +1,6 @@
 [package]
 name = "tibba-model-builtin"
-version = "0.2.0"
+version = "0.2.2"
 edition = "2024"
 authors = ["Tree Xie <tree.xie@outlook.com>"]
 license = "Apache-2.0"
@@ -21,6 +21,6 @@ snafu = { workspace = true }
 sqlx = { workspace = true }
 substring = { workspace = true }
 tokio = { workspace = true }
-tibba-error = { path = "../tibba-error", version = "0.2.0" }
-tibba-model = { path = "../tibba-model", version = "0.2.1" }
+tibba-error = { path = "../tibba-error", version = "0.2.2" }
+tibba-model = { path = "../tibba-model", version = "0.2.2" }
 time = { workspace = true }

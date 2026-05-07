@@ -5443,7 +5443,7 @@ dependencies = [
 
 [[package]]
 name = "tibba"
-version = "0.2.0"
+version = "0.2.2"
 dependencies = [
  "axum",
  "axum-extra",
@@ -5503,7 +5503,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-cache"
-version = "0.2.0"
+version = "0.2.2"
 dependencies = [
  "deadpool-redis",
  "humantime-serde",
@@ -5523,7 +5523,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-config"
-version = "0.2.0"
+version = "0.2.2"
 dependencies = [
  "bytesize-serde",
  "config",
@@ -5538,7 +5538,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-crypto"
-version = "0.2.0"
+version = "0.2.2"
 dependencies = [
  "hex",
  "hmac 0.13.0",
@@ -5549,7 +5549,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-error"
-version = "0.2.0"
+version = "0.2.2"
 dependencies = [
  "axum",
  "serde",
@@ -5557,7 +5557,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-headless"
-version = "0.2.0"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "dashmap",
@@ -5572,7 +5572,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-hook"
-version = "0.2.0"
+version = "0.2.2"
 dependencies = [
  "dashmap",
  "tibba-error",
@@ -5581,7 +5581,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-llm"
-version = "0.2.0"
+version = "0.2.2"
 dependencies = [
  "bytes",
  "futures",
@@ -5595,7 +5595,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-middleware"
-version = "0.2.0"
+version = "0.2.2"
 dependencies = [
  "axum",
  "axum-extra",
@@ -5612,7 +5612,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-model"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "chrono",
  "http",
@@ -5628,7 +5628,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-model-builtin"
-version = "0.2.0"
+version = "0.2.2"
 dependencies = [
  "http",
  "serde",
@@ -5644,7 +5644,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-model-token"
-version = "0.2.0"
+version = "0.2.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -5658,7 +5658,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-opendal"
-version = "0.2.0"
+version = "0.2.2"
 dependencies = [
  "dirs",
  "opendal",
@@ -5673,7 +5673,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-performance"
-version = "0.2.0"
+version = "0.2.2"
 dependencies = [
  "cached",
  "serde",
@@ -5682,7 +5682,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-request"
-version = "0.2.0"
+version = "0.2.2"
 dependencies = [
  "axum",
  "bytes",
@@ -5699,7 +5699,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-router-common"
-version = "0.2.0"
+version = "0.2.2"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -5719,7 +5719,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-router-file"
-version = "0.2.0"
+version = "0.2.2"
 dependencies = [
  "axum",
  "image 0.25.10",
@@ -5738,7 +5738,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-router-model"
-version = "0.2.0"
+version = "0.2.2"
 dependencies = [
  "axum",
  "serde",
@@ -5755,7 +5755,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-router-user"
-version = "0.2.0"
+version = "0.2.2"
 dependencies = [
  "axum",
  "axum-extra",
@@ -5774,14 +5774,14 @@ dependencies = [
 
 [[package]]
 name = "tibba-scaffold"
-version = "0.1.0"
+version = "0.2.2"
 dependencies = [
  "rust-embed",
 ]
 
 [[package]]
 name = "tibba-scheduler"
-version = "0.2.0"
+version = "0.2.2"
 dependencies = [
  "dashmap",
  "snafu",
@@ -5792,7 +5792,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-session"
-version = "0.2.0"
+version = "0.2.2"
 dependencies = [
  "axum",
  "axum-extra",
@@ -5810,7 +5810,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-sql"
-version = "0.2.0"
+version = "0.2.2"
 dependencies = [
  "humantime-serde",
  "serde",
@@ -5825,7 +5825,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-state"
-version = "0.2.0"
+version = "0.2.2"
 dependencies = [
  "arc-swap",
  "tokio",
@@ -5833,7 +5833,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-util"
-version = "0.2.0"
+version = "0.2.2"
 dependencies = [
  "axum",
  "axum-extra",
@@ -5859,7 +5859,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-validator"
-version = "0.2.0"
+version = "0.2.2"
 dependencies = [
  "validator",
 ]

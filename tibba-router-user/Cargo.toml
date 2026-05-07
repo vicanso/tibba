@@ -1,6 +1,6 @@
 [package]
 name = "tibba-router-user"
-version = "0.2.0"
+version = "0.2.2"
 edition = "2024"
 authors = ["Tree Xie <tree.xie@outlook.com>"]
 license = "Apache-2.0"
@@ -20,11 +20,11 @@ axum-extra = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sqlx = { workspace = true }
-tibba-cache = { path = "../tibba-cache", version = "0.2.0" }
-tibba-error = { path = "../tibba-error", version = "0.2.0" }
-tibba-middleware = { path = "../tibba-middleware", version = "0.2.0" }
-tibba-model = { path = "../tibba-model", version = "0.2.1" }
-tibba-session = { path = "../tibba-session", version = "0.2.0" }
-tibba-util = { path = "../tibba-util", version = "0.2.0" }
-tibba-validator = { path = "../tibba-validator", version = "0.2.0" }
+tibba-cache = { path = "../tibba-cache", version = "0.2.2" }
+tibba-error = { path = "../tibba-error", version = "0.2.2" }
+tibba-middleware = { path = "../tibba-middleware", version = "0.2.2" }
+tibba-model = { path = "../tibba-model", version = "0.2.2" }
+tibba-session = { path = "../tibba-session", version = "0.2.2" }
+tibba-util = { path = "../tibba-util", version = "0.2.2" }
+tibba-validator = { path = "../tibba-validator", version = "0.2.2" }
 validator = { workspace = true }
