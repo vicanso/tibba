@@ -13,9 +13,8 @@
 // limitations under the License.
 
 use super::{
-    Error, JsonSnafu, ModelListParams, SERVICE_API, SERVICE_LLM, SERVICE_STORAGE, Schema,
-    SchemaAllowCreate, SchemaAllowEdit, SchemaType, SchemaView, SqlxSnafu, Status, format_datetime,
-    new_schema_options,
+    Error, JsonSnafu, ModelListParams, Schema, SchemaAllowCreate, SchemaAllowEdit, SchemaType,
+    SchemaView, SqlxSnafu, Status, format_datetime, new_schema_options,
 };
 use serde::{Deserialize, Serialize};
 use snafu::ResultExt;
@@ -27,15 +26,18 @@ use time::PrimitiveDateTime;
 
 type Result<T> = std::result::Result<T, Error>;
 
+/// 后端协议：openai（默认）或 anthropic
+pub const LLM_PROVIDER_OPENAI: &str = "openai";
+pub const LLM_PROVIDER_ANTHROPIC: &str = "anthropic";
+
 #[derive(FromRow)]
-struct TokenPriceSchema {
+struct TokenLlmSchema {
     id: i64,
-    service: String,
+    name: String,
+    url: String,
     model: String,
-    input_price: i64,
-    output_price: i64,
-    fixed_price: i64,
-    unit_size: i32,
+    api_key: String,
+    provider: String,
     status: i16,
     remark: String,
     created: PrimitiveDateTime,
@@ -43,34 +45,29 @@ struct TokenPriceSchema {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct TokenPrice {
+pub struct TokenLlm {
     pub id: i64,
-    pub service: String,
+    pub name: String,
+    pub url: String,
     pub model: String,
-    /// 每 unit_size 个输入 token 扣除的积分数
-    pub input_price: i64,
-    /// 每 unit_size 个输出 token 扣除的积分数
-    pub output_price: i64,
-    /// 每次调用固定扣除积分数
-    pub fixed_price: i64,
-    /// 计费基数，默认 1000（per 1K tokens）
-    pub unit_size: i32,
+    pub api_key: String,
+    /// 后端协议：openai 或 anthropic，留空时按 openai 处理
+    pub provider: String,
     pub status: i16,
     pub remark: String,
     pub created: String,
     pub modified: String,
 }
 
-impl From<TokenPriceSchema> for TokenPrice {
-    fn from(s: TokenPriceSchema) -> Self {
+impl From<TokenLlmSchema> for TokenLlm {
+    fn from(s: TokenLlmSchema) -> Self {
         Self {
             id: s.id,
-            service: s.service,
+            name: s.name,
+            url: s.url,
             model: s.model,
-            input_price: s.input_price,
-            output_price: s.output_price,
-            fixed_price: s.fixed_price,
-            unit_size: s.unit_size,
+            api_key: s.api_key,
+            provider: s.provider,
             status: s.status,
             remark: s.remark,
             created: format_datetime(s.created),
@@ -80,47 +77,38 @@ impl From<TokenPriceSchema> for TokenPrice {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct TokenPriceInsertParams {
-    pub service: String,
-    pub model: Option<String>,
-    pub input_price: i64,
-    pub output_price: i64,
-    pub fixed_price: Option<i64>,
-    pub unit_size: Option<i32>,
+pub struct TokenLlmInsertParams {
+    pub name: String,
+    pub url: String,
+    pub model: String,
+    pub api_key: String,
+    pub provider: Option<String>,
     pub status: Option<i16>,
     pub remark: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
-pub struct TokenPriceUpdateParams {
-    pub input_price: Option<i64>,
-    pub output_price: Option<i64>,
-    pub fixed_price: Option<i64>,
-    pub unit_size: Option<i32>,
+pub struct TokenLlmUpdateParams {
+    pub url: Option<String>,
+    pub model: Option<String>,
+    pub api_key: Option<String>,
+    pub provider: Option<String>,
     pub status: Option<i16>,
     pub remark: Option<String>,
 }
 
 #[derive(Default)]
-pub struct TokenPriceModel {}
+pub struct TokenLlmModel {}
 
-impl TokenPriceModel {
-    /// 按服务类型和模型名查询定价配置。
-    /// 先精确匹配 (service, model)，找不到时退回匹配 (service, "default")。
-    pub async fn get_by_service_model(
-        &self,
-        pool: &Pool<Postgres>,
-        service: &str,
-        model: &str,
-    ) -> Result<Option<TokenPrice>> {
-        // 精确匹配
-        let result = sqlx::query_as::<_, TokenPriceSchema>(
-            r#"SELECT * FROM token_prices
-               WHERE service = $1 AND model = $2 AND status = 1 AND deleted_at IS NULL
+impl TokenLlmModel {
+    /// 按 name 查询启用状态的 LLM 配置；未命中时回退到 name = "default"。
+    pub async fn get_by_name(&self, pool: &Pool<Postgres>, name: &str) -> Result<Option<TokenLlm>> {
+        let result = sqlx::query_as::<_, TokenLlmSchema>(
+            r#"SELECT * FROM token_llms
+               WHERE name = $1 AND status = 1 AND deleted_at IS NULL
                LIMIT 1"#,
         )
-        .bind(service)
-        .bind(model)
+        .bind(name)
         .fetch_optional(pool)
         .await
         .context(SqlxSnafu)?;
@@ -129,14 +117,13 @@ impl TokenPriceModel {
             return Ok(result.map(Into::into));
         }
 
-        // 回退：匹配该服务的 "default" 定价（避免 model 已是 default 时重复查询）
-        if model != "default" {
-            let fallback = sqlx::query_as::<_, TokenPriceSchema>(
-                r#"SELECT * FROM token_prices
-                   WHERE service = $1 AND model = 'default' AND status = 1 AND deleted_at IS NULL
+        // 回退：匹配 name = "default"（避免 name 已是 default 时重复查询）
+        if name != "default" {
+            let fallback = sqlx::query_as::<_, TokenLlmSchema>(
+                r#"SELECT * FROM token_llms
+                   WHERE name = 'default' AND status = 1 AND deleted_at IS NULL
                    LIMIT 1"#,
             )
-            .bind(service)
             .fetch_optional(pool)
             .await
             .context(SqlxSnafu)?;
@@ -145,20 +132,10 @@ impl TokenPriceModel {
 
         Ok(None)
     }
-
-    /// 根据定价配置和 token 用量计算本次消耗积分。
-    /// 使用整数向上取整，避免浮点误差。
-    pub fn calculate_cost(price: &TokenPrice, input_tokens: i32, output_tokens: i32) -> i64 {
-        let unit = price.unit_size.max(1) as i64;
-        // 向上取整：(n * p + unit - 1) / unit
-        let input_cost = (input_tokens as i64 * price.input_price + unit - 1) / unit;
-        let output_cost = (output_tokens as i64 * price.output_price + unit - 1) / unit;
-        price.fixed_price + input_cost + output_cost
-    }
 }
 
-impl Model for TokenPriceModel {
-    type Output = TokenPrice;
+impl Model for TokenLlmModel {
+    type Output = TokenLlm;
     fn new() -> Self {
         Self::default()
     }
@@ -168,47 +145,42 @@ impl Model for TokenPriceModel {
             schemas: vec![
                 Schema::new_id(),
                 Schema {
-                    name: "service".to_string(),
+                    name: "name".to_string(),
                     category: SchemaType::String,
                     required: true,
                     fixed: true,
                     filterable: true,
-                    options: Some(new_schema_options(&[
-                        SERVICE_LLM,
-                        SERVICE_API,
-                        SERVICE_STORAGE,
-                    ])),
+                    ..Default::default()
+                },
+                Schema {
+                    name: "url".to_string(),
+                    category: SchemaType::String,
+                    required: true,
                     ..Default::default()
                 },
                 Schema {
                     name: "model".to_string(),
                     category: SchemaType::String,
-                    fixed: true,
+                    required: true,
                     filterable: true,
-                    options: Some(new_schema_options(&["default", "mimo-v2.5-pro"])),
+                    options: Some(new_schema_options(&["mimo-v2.5-pro"])),
                     ..Default::default()
                 },
                 Schema {
-                    name: "input_price".to_string(),
-                    category: SchemaType::Number,
+                    name: "api_key".to_string(),
+                    category: SchemaType::String,
                     required: true,
                     ..Default::default()
                 },
                 Schema {
-                    name: "output_price".to_string(),
-                    category: SchemaType::Number,
-                    required: true,
-                    ..Default::default()
-                },
-                Schema {
-                    name: "fixed_price".to_string(),
-                    category: SchemaType::Number,
-                    ..Default::default()
-                },
-                Schema {
-                    name: "unit_size".to_string(),
-                    category: SchemaType::Number,
-                    default_value: Some(serde_json::json!(1000)),
+                    name: "provider".to_string(),
+                    category: SchemaType::String,
+                    filterable: true,
+                    options: Some(new_schema_options(&[
+                        LLM_PROVIDER_OPENAI,
+                        LLM_PROVIDER_ANTHROPIC,
+                    ])),
+                    default_value: Some(serde_json::json!(LLM_PROVIDER_OPENAI)),
                     ..Default::default()
                 },
                 Schema::new_status(),
@@ -228,19 +200,22 @@ impl Model for TokenPriceModel {
     }
 
     async fn insert(&self, pool: &Pool<Postgres>, data: serde_json::Value) -> Result<u64> {
-        let p: TokenPriceInsertParams = serde_json::from_value(data).context(JsonSnafu)?;
+        let p: TokenLlmInsertParams = serde_json::from_value(data).context(JsonSnafu)?;
+        let provider = p
+            .provider
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| LLM_PROVIDER_OPENAI.to_string());
         let row: (i64,) = sqlx::query_as(
-            r#"INSERT INTO token_prices
-               (service, model, input_price, output_price, fixed_price, unit_size, status, remark)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            r#"INSERT INTO token_llms
+               (name, url, model, api_key, provider, status, remark)
+               VALUES ($1, $2, $3, $4, $5, $6, $7)
                RETURNING id"#,
         )
-        .bind(&p.service)
-        .bind(p.model.unwrap_or_default())
-        .bind(p.input_price)
-        .bind(p.output_price)
-        .bind(p.fixed_price.unwrap_or(0))
-        .bind(p.unit_size.unwrap_or(1000))
+        .bind(&p.name)
+        .bind(&p.url)
+        .bind(&p.model)
+        .bind(&p.api_key)
+        .bind(provider)
         .bind(p.status.unwrap_or(Status::Enabled as i16))
         .bind(p.remark.unwrap_or_default())
         .fetch_one(pool)
@@ -250,8 +225,8 @@ impl Model for TokenPriceModel {
     }
 
     async fn get_by_id(&self, pool: &Pool<Postgres>, id: u64) -> Result<Option<Self::Output>> {
-        let result = sqlx::query_as::<_, TokenPriceSchema>(
-            r#"SELECT * FROM token_prices WHERE id = $1 AND deleted_at IS NULL"#,
+        let result = sqlx::query_as::<_, TokenLlmSchema>(
+            r#"SELECT * FROM token_llms WHERE id = $1 AND deleted_at IS NULL"#,
         )
         .bind(id as i64)
         .fetch_optional(pool)
@@ -266,20 +241,20 @@ impl Model for TokenPriceModel {
         id: u64,
         data: serde_json::Value,
     ) -> Result<()> {
-        let p: TokenPriceUpdateParams = serde_json::from_value(data).context(JsonSnafu)?;
+        let p: TokenLlmUpdateParams = serde_json::from_value(data).context(JsonSnafu)?;
         let mut qb: QueryBuilder<Postgres> =
-            QueryBuilder::new("UPDATE token_prices SET modified = NOW()");
-        if let Some(v) = p.input_price {
-            qb.push(", input_price = ").push_bind(v);
+            QueryBuilder::new("UPDATE token_llms SET modified = NOW()");
+        if let Some(v) = p.url {
+            qb.push(", url = ").push_bind(v);
         }
-        if let Some(v) = p.output_price {
-            qb.push(", output_price = ").push_bind(v);
+        if let Some(v) = p.model {
+            qb.push(", model = ").push_bind(v);
         }
-        if let Some(v) = p.fixed_price {
-            qb.push(", fixed_price = ").push_bind(v);
+        if let Some(v) = p.api_key {
+            qb.push(", api_key = ").push_bind(v);
         }
-        if let Some(v) = p.unit_size {
-            qb.push(", unit_size = ").push_bind(v);
+        if let Some(v) = p.provider {
+            qb.push(", provider = ").push_bind(v);
         }
         if let Some(v) = p.status {
             qb.push(", status = ").push_bind(v);
@@ -296,7 +271,7 @@ impl Model for TokenPriceModel {
 
     async fn delete_by_id(&self, pool: &Pool<Postgres>, id: u64) -> Result<()> {
         sqlx::query(
-            r#"UPDATE token_prices SET deleted_at = NOW(), modified = NOW() WHERE id = $1 AND deleted_at IS NULL"#,
+            r#"UPDATE token_llms SET deleted_at = NOW(), modified = NOW() WHERE id = $1 AND deleted_at IS NULL"#,
         )
         .bind(id as i64)
         .execute(pool)
@@ -306,7 +281,7 @@ impl Model for TokenPriceModel {
     }
 
     async fn count(&self, pool: &Pool<Postgres>, params: &ModelListParams) -> Result<i64> {
-        let mut qb: QueryBuilder<Postgres> = QueryBuilder::new("SELECT COUNT(*) FROM token_prices");
+        let mut qb: QueryBuilder<Postgres> = QueryBuilder::new("SELECT COUNT(*) FROM token_llms");
         self.push_conditions(&mut qb, params)?;
         let row: (i64,) = qb
             .build_query_as()
@@ -321,11 +296,11 @@ impl Model for TokenPriceModel {
         pool: &Pool<Postgres>,
         params: &ModelListParams,
     ) -> Result<Vec<Self::Output>> {
-        let mut qb: QueryBuilder<Postgres> = QueryBuilder::new("SELECT * FROM token_prices");
+        let mut qb: QueryBuilder<Postgres> = QueryBuilder::new("SELECT * FROM token_llms");
         self.push_conditions(&mut qb, params)?;
         params.push_pagination(&mut qb);
         let rows = qb
-            .build_query_as::<TokenPriceSchema>()
+            .build_query_as::<TokenLlmSchema>()
             .fetch_all(pool)
             .await
             .context(SqlxSnafu)?;
@@ -337,8 +312,14 @@ impl Model for TokenPriceModel {
         qb: &mut QueryBuilder<'args, Postgres>,
         filters: &HashMap<String, String>,
     ) -> Result<()> {
-        if let Some(service) = filters.get("service") {
-            qb.push(" AND service = ").push_bind(service.clone());
+        if let Some(name) = filters.get("name") {
+            qb.push(" AND name = ").push_bind(name.clone());
+        }
+        if let Some(model) = filters.get("model") {
+            qb.push(" AND model = ").push_bind(model.clone());
+        }
+        if let Some(provider) = filters.get("provider") {
+            qb.push(" AND provider = ").push_bind(provider.clone());
         }
         if let Some(status) = filters.get("status") {
             if let Ok(v) = status.parse::<i16>() {

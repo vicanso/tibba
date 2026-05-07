@@ -12,4 +12,5 @@
 \i create_token_usages.sql
 \i create_token_keys.sql
 \i create_token_prices.sql
+\i create_token_llms.sql
 \i create_docker_analyses.sql

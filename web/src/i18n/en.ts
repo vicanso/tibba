@@ -20,6 +20,7 @@ const sidebar = {
     tokenUsage: "Usages",
     tokenKey: "API Keys",
     tokenPrice: "Pricing",
+    tokenLlm: "LLM Config",
 };
 const login = {
     title: "Login",

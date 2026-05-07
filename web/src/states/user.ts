@@ -18,6 +18,7 @@ import {
     KeyIcon,
     ReceiptIcon,
     TagIcon,
+    BotIcon,
 } from "lucide-react";
 import { HOME, LOGIN_HISTORY, MODEL } from "@/constants/route";
 
@@ -124,6 +125,12 @@ const adminMainNav: NavGroup[] = [
                 url: `${MODEL}/token_price`,
                 roles: ["su"],
                 icon: TagIcon,
+            },
+            {
+                title: "tokenLlm",
+                url: `${MODEL}/token_llm`,
+                roles: ["su"],
+                icon: BotIcon,
             },
         ],
     },

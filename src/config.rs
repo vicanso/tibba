@@ -138,15 +138,6 @@ pub struct DivingConfig {
     // diving url
     #[validate(length(min = 1))]
     pub url: String,
-    // llm base url
-    #[validate(length(min = 1))]
-    pub llm_url: String,
-    // llm model name
-    #[validate(length(min = 1))]
-    pub llm_model: String,
-    // llm api key
-    #[validate(length(min = 1))]
-    pub llm_api_key: String,
     // WeCom robot webhook key (optional)
     pub notify_wecom: Option<String>,
     // 通知接收邮箱地址 (optional)

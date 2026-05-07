@@ -20,6 +20,7 @@ const sidebar = {
     tokenUsage: "消耗记录",
     tokenKey: "API 密钥",
     tokenPrice: "定价配置",
+    tokenLlm: "LLM 配置",
 };
 const login = {
     title: "登录",

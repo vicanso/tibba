@@ -29,7 +29,7 @@ use tibba_model_builtin::{
     HttpStatModel, UserModel, WebPageDetectorModel,
 };
 use tibba_model_token::{
-    RECHARGE_SOURCE_GIFT, TokenAccountModel, TokenKeyModel, TokenPriceModel,
+    RECHARGE_SOURCE_GIFT, TokenAccountModel, TokenKeyModel, TokenLlmModel, TokenPriceModel,
     TokenRechargeInsertParams, TokenRechargeModel, TokenService, TokenUsageModel,
 };
 use tibba_router_common::{CommonRouterParams, new_common_router};
@@ -82,6 +82,7 @@ fn register_models() {
         "token_price",
         Arc::new(ModelAdapter(TokenPriceModel::new())),
     );
+    register_model("token_llm", Arc::new(ModelAdapter(TokenLlmModel::new())));
 }
 
 pub fn new_router() -> Result<Router> {

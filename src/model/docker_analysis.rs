@@ -15,18 +15,19 @@
 use crate::config::{DivingConfig, must_get_diving_config};
 use crate::sql::get_db_pool;
 use ctor::ctor;
-use http::Method;
 use lettre::message::header::ContentType;
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
-use once_cell::sync::OnceCell;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, PgPool};
 use std::sync::Arc;
 use tibba_error::Error;
 use tibba_hook::{BoxFuture, Task, register_task};
-use tibba_llm::LlmCall;
-use tibba_request::{Client, ClientBuilder, Params};
+use tibba_llm::{Backend, LlmCall, Usage as LlmUsage};
+use tibba_model_token::{
+    LLM_PROVIDER_ANTHROPIC, SERVICE_LLM, TokenLlmModel, TokenPriceModel, TokenService,
+    TokenUsageInsertParams,
+};
 use tibba_scheduler::{Job, register_job_task};
 use tracing::{error, info, warn};
 
@@ -251,15 +252,15 @@ async fn run_docker_analysis() -> Result<usize> {
     Ok(completed)
 }
 
-static DIVING_CLIENT: OnceCell<Client> = OnceCell::new();
-
-fn get_diving_client() -> Result<&'static Client> {
-    DIVING_CLIENT.get_or_try_init(|| {
-        ClientBuilder::new("diving")
-            .with_base_url(must_get_diving_config().url.clone())
-            .build()
-            .map_err(|e| Error::new(e.to_string()).with_category("docker"))
-    })
+/// 与 diving 服务约定的错误响应（status >= 400 时返回此 JSON）。
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DivingHttpError {
+    message: String,
+    #[serde(default)]
+    code: String,
+    #[serde(default)]
+    status: u16,
 }
 
 const ANALYSIS_SYSTEM_PROMPT: &str = r#"
@@ -285,26 +286,106 @@ const ANALYSIS_SYSTEM_PROMPT: &str = r#"
 
 ---"#;
 
-/// 调用 diving 服务获取镜像诊断数据（markdown 格式）。
+/// 调用 diving 服务获取镜像诊断数据。成功时返回 markdown 字符串；
+/// 状态码 >=400 时按 `DivingHttpError` 解析并返回带 message 的错误。
 async fn fetch_diving_result(record: &DockerAnalysisRecord) -> Result<String> {
-    let client = get_diving_client()?;
+    let config = must_get_diving_config();
+    let url = format!("{}/api/analyze", config.url.trim_end_matches('/'));
     let image = format!("{}:{}", record.repo_name, record.tag);
-    let query = [
-        ("image", image.as_str()),
-        ("format", "markdown"),
-        ("skipBase", "true"),
-    ];
-    let bytes = client
-        .request_raw(Params {
-            method: Method::GET,
-            url: "/api/analyze",
-            query: Some(query.as_slice()),
-            body: None::<&[(&str, &str)]>,
-            timeout: None,
-        })
+
+    let resp = reqwest::Client::new()
+        .get(&url)
+        .query(&[
+            ("image", image.as_str()),
+            ("format", "markdown"),
+            ("skipBase", "true"),
+        ])
+        .send()
         .await
         .map_err(|e| Error::new(e.to_string()).with_category("docker"))?;
+
+    let status = resp.status().as_u16();
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| Error::new(e.to_string()).with_category("docker"))?;
+
+    if status >= 400 {
+        // 优先按约定的 HTTPError JSON 解析；解析失败则回退到原始响应文本
+        let err = serde_json::from_slice::<DivingHttpError>(&bytes).unwrap_or(DivingHttpError {
+            message: String::from_utf8_lossy(&bytes).into_owned(),
+            code: String::new(),
+            status,
+        });
+        // err.status 优先使用 diving 自报状态，缺省时回退到 HTTP status
+        let report_status = if err.status == 0 { status } else { err.status };
+        let message = if err.code.is_empty() {
+            format!("diving({report_status}): {}", err.message)
+        } else {
+            format!("diving({}/{}): {}", report_status, err.code, err.message)
+        };
+        return Err(Error::new(message).with_category("docker"));
+    }
+
     String::from_utf8(bytes.to_vec()).map_err(|e| Error::new(e.to_string()).with_category("docker"))
+}
+
+/// 根据 LLM 返回的 token 用量计费并写入 token_usages、扣减账户余额。
+/// 找不到对应定价时仅记录日志、不消费。
+async fn consume_tokens(
+    pool: &PgPool,
+    record: &DockerAnalysisRecord,
+    model: &str,
+    usage: &LlmUsage,
+    elapsed_ms: u128,
+) -> Result<()> {
+    let Some(price) = TokenPriceModel::default()
+        .get_by_service_model(pool, SERVICE_LLM, model)
+        .await
+        .map_err(|e| Error::new(e.to_string()).with_category("docker"))?
+    else {
+        warn!(
+            id = record.id,
+            model, "no token price configured, skip consume"
+        );
+        return Ok(());
+    };
+
+    let input_tokens = usage.input_tokens as i32;
+    let output_tokens = usage.output_tokens as i32;
+    let amount = TokenPriceModel::calculate_cost(&price, input_tokens, output_tokens);
+
+    let duration_ms = elapsed_ms.min(i32::MAX as u128) as i32;
+    let result = TokenService::consume(
+        pool,
+        TokenUsageInsertParams {
+            user_id: record.user_id,
+            service: SERVICE_LLM.to_string(),
+            amount,
+            model: Some(model.to_string()),
+            input_tokens: Some(input_tokens),
+            output_tokens: Some(output_tokens),
+            api_path: None,
+            duration_ms: Some(duration_ms),
+            biz_id: Some(record.id.to_string()),
+            remark: Some(format!(
+                "docker_analysis:{}:{}",
+                record.repo_name, record.tag
+            )),
+        },
+    )
+    .await
+    .map_err(|e| Error::new(e.to_string()).with_category("docker"))?;
+
+    info!(
+        id = record.id,
+        model,
+        amount,
+        new_balance = result.new_balance,
+        usage_id = result.usage_id,
+        "tokens consumed"
+    );
+    Ok(())
 }
 
 /// 调用 diving 获取诊断数据后，交给 LLM 进行深度分析，返回结构化结果。
@@ -334,10 +415,27 @@ async fn analyze_image(record: &DockerAnalysisRecord) -> Result<DockerAnalysisRe
         format!("本次镜像诊断数据：\n\n{diving_result}")
     };
 
-    let config = must_get_diving_config();
+    // 从数据库 token_llms 表读取 LLM 配置（按 name="default" 检索）
+    let llm_config = TokenLlmModel::default()
+        .get_by_name(pool, "default")
+        .await
+        .map_err(|e| Error::new(e.to_string()).with_category("docker"))?
+        .ok_or_else(|| {
+            Error::new("no enabled token_llms record found (expect name='default')")
+                .with_category("docker")
+        })?;
+
+    // 仅 "anthropic" 走 Anthropic 协议；其余（含空字符串、"openai"、未知值）默认 OpenAI
+    let backend = if llm_config.provider == LLM_PROVIDER_ANTHROPIC {
+        Backend::Anthropic
+    } else {
+        Backend::OpenAi
+    };
+
     let llm_start = std::time::Instant::now();
-    let resp = LlmCall::new(&config.llm_api_key, &config.llm_model, &user_message)
-        .with_base_url(&config.llm_url)
+    let resp = LlmCall::new(&llm_config.api_key, &llm_config.model, &user_message)
+        .with_base_url(&llm_config.url)
+        .with_backend(backend)
         .with_system_message(ANALYSIS_SYSTEM_PROMPT)
         .chat()
         .await
@@ -352,6 +450,12 @@ async fn analyze_image(record: &DockerAnalysisRecord) -> Result<DockerAnalysisRe
         elapsed_ms,
         "docker image llm analysis done",
     );
+    // 记录 token 用量并扣减用户余额（失败仅日志告警，不阻断主流程）
+    if let Some(usage) = resp.usage.as_ref() {
+        if let Err(e) = consume_tokens(pool, record, &resp.model, usage, elapsed_ms).await {
+            error!(id = record.id, error = %e, "consume tokens failed");
+        }
+    }
     if resp.content.is_empty() {
         warn!(id = record.id, "llm returned empty content");
     }

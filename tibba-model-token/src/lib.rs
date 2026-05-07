@@ -15,6 +15,7 @@
 pub(crate) use tibba_model::{
     Error, JsonSnafu, ModelListParams, Schema, SchemaAllowCreate, SchemaAllowEdit, SchemaOption,
     SchemaOptionValue, SchemaType, SchemaView, SqlxSnafu, Status, format_datetime,
+    new_schema_options,
 };
 
 // ── 充值来源常量 ──────────────────────────────────────────────────────────────
@@ -39,6 +40,7 @@ pub const SERVICE_STORAGE: &str = "storage";
 
 mod account;
 mod key;
+mod llm;
 mod price;
 mod recharge;
 mod service;
@@ -46,6 +48,7 @@ mod usage;
 
 pub use account::*;
 pub use key::*;
+pub use llm::*;
 pub use price::*;
 pub use recharge::*;
 pub use service::*;
