@@ -196,10 +196,15 @@ fn new_http_dal(url: &str) -> Result<Storage> {
 pub fn new_opendal_storage(config: &Config) -> Result<Storage> {
     let opendal_config = new_opendal_config(config)?;
     let url = opendal_config.url.as_str();
+    new_opendal_storage_from_url(url, Some(&opendal_config.schema))
+}
+
+/// 根据 URL 和 schema 自动选择存储后端并创建 Storage 实例。
+pub fn new_opendal_storage_from_url(url: &str, schema: Option<&str>) -> Result<Storage> {
     match url {
         url if url.starts_with(MYSQL_PREFIX) => new_mysql_dal(url),
         url if url.starts_with(FS_PREFIX) => new_fs_dal(url),
-        url if &opendal_config.schema == "http" => new_http_dal(url),
+        url if schema == Some("http") => new_http_dal(url),
         _ => new_s3_dal(url),
     }
 }
