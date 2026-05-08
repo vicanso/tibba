@@ -19,7 +19,7 @@ use mime_guess2::from_path;
 use rust_embed::RustEmbed;
 
 #[derive(RustEmbed)]
-#[folder = "web/dist/"]
+#[folder = "admin/dist/"]
 struct WebAssets;
 
 fn file_response(path: &str, data: std::borrow::Cow<'static, [u8]>) -> Response {
@@ -41,11 +41,18 @@ fn file_response(path: &str, data: std::borrow::Cow<'static, [u8]>) -> Response 
 }
 
 /// 静态文件服务，兼容 SPA 前端路由：
+/// - `prefix` 非空时，先从请求路径中剥离该前缀（与 Vite `base` 对齐）
 /// - 精确匹配到 embed 文件时直接返回
 /// - assets/ 目录下带哈希的文件设置长缓存
 /// - 其余路径（前端路由）回退到 index.html
-pub(crate) async fn serve_web(uri: Uri) -> Response {
-    let path = uri.path().trim_start_matches('/');
+pub(crate) async fn serve_web(prefix: &str, uri: Uri) -> Response {
+    let raw = uri.path();
+    let path = if prefix.is_empty() {
+        raw
+    } else {
+        raw.strip_prefix(prefix).unwrap_or(raw)
+    };
+    let path = path.trim_start_matches('/');
     let path = if path.is_empty() { "index.html" } else { path };
 
     if let Some(content) = WebAssets::get(path) {

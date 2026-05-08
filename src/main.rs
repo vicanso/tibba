@@ -41,9 +41,9 @@ mod docker;
 mod httpstat;
 mod model;
 mod router;
+mod admin_web;
 mod sql;
 mod state;
-mod web;
 mod web_page_stat;
 
 // Global error handler for the application

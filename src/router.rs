@@ -18,7 +18,7 @@ use crate::dal::get_opendal_storage;
 use crate::docker::analyze as docker_analyze;
 use crate::sql::get_db_pool;
 use crate::state::get_app_state;
-use crate::web::serve_web;
+use crate::admin_web::serve_web;
 use axum::Router;
 use axum::routing::post;
 use std::sync::Arc;
@@ -148,5 +148,9 @@ pub fn new_router() -> Result<Router> {
         api_router
     };
 
-    Ok(app.fallback(serve_web))
+    let web_prefix = basic_config.web_prefix.clone().unwrap_or_default();
+    Ok(app.fallback(move |uri| {
+        let prefix = web_prefix.clone();
+        async move { serve_web(&prefix, uri).await }
+    }))
 }

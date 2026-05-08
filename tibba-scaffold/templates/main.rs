@@ -34,13 +34,13 @@ use tower_http::compression::predicate::{NotForContentType, Predicate, SizeAbove
 use tracing::{Level, error, info};
 use tracing_subscriber::FmtSubscriber;
 
+mod admin_web;
 mod cache;
 mod config;
 mod dal;
 mod router;
 mod sql;
 mod state;
-mod web;
 
 pub async fn handle_error(
     method: Method,

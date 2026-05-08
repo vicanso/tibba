@@ -64,6 +64,8 @@ pub struct BasicConfig {
     pub secret: String,
     // prefix
     pub prefix: Option<String>,
+    // web 静态文件前缀（与 Vite `base` 一致），用于 SPA 部署在子路径下的场景
+    pub web_prefix: Option<String>,
     // commit id
     #[serde(default = "default_commit_id")]
     pub commit_id: String,

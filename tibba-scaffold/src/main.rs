@@ -22,13 +22,18 @@ use std::path::Path;
 #[exclude = "commit_id.txt"]
 struct ConfigTemplates;
 
-// 嵌入 web/ 目录（排除 node_modules 和 dist 构建产物）
+// 嵌入 admin/ 目录（排除 node_modules 和 dist 构建产物，保留 package-lock.json 锁定依赖版本）
 #[derive(RustEmbed)]
-#[folder = "../web/"]
+#[folder = "../admin/"]
 #[exclude = "node_modules/**"]
 #[exclude = "dist/**"]
-#[exclude = "package-lock.json"]
 struct WebTemplates;
+
+// 嵌入 sql/ 目录（包含所有内置模型与 token 相关迁移：
+// configurations、users、files、token_*（accounts/recharges/usages/keys/prices/llms）等）
+#[derive(RustEmbed)]
+#[folder = "../sql/"]
+struct SqlTemplates;
 
 // 通用 src 文件（所有项目均需要）
 const CACHE_RS: &str = include_str!("../../src/cache.rs");
@@ -37,13 +42,20 @@ const DAL_RS: &str = include_str!("../../src/dal.rs");
 const ROUTER_RS: &str = include_str!("../../src/router.rs");
 const SQL_RS: &str = include_str!("../../src/sql.rs");
 const STATE_RS: &str = include_str!("../../src/state.rs");
-const WEB_RS: &str = include_str!("../../src/web.rs");
+const ADMIN_WEB_RS: &str = include_str!("../../src/admin_web.rs");
 
 // 独立项目 Cargo.toml 模板（已解析 workspace 依赖、移除 workspace 配置）
 const CARGO_TOML_TPL: &str = include_str!("../templates/Cargo.toml");
 
 // main.rs 模板（已移除 tibba 特定模块：httpstat、web_page_stat、llm 示例）
 const MAIN_RS_TPL: &str = include_str!("../templates/main.rs");
+
+// Makefile 模板（裁剪自 workspace 根 Makefile，移除 workspace 专属目标）
+const MAKEFILE_TPL: &str = include_str!("../templates/Makefile");
+
+// Dockerfile 与 entrypoint 模板（路径与二进制名通过 {{name}} 占位符替换）
+const DOCKERFILE_TPL: &str = include_str!("../templates/Dockerfile");
+const ENTRYPOINT_TPL: &str = include_str!("../templates/entrypoint.sh");
 
 fn write_file(dir: &Path, relative: &str, content: &[u8]) -> std::io::Result<()> {
     let target = dir.join(relative);
@@ -57,6 +69,20 @@ fn write_text(dir: &Path, relative: &str, content: &str) -> std::io::Result<()> 
     write_file(dir, relative, content.as_bytes())
 }
 
+// 写入并赋予可执行权限（仅 unix 下生效，windows 上 NTFS 无 +x 概念）
+fn write_executable(dir: &Path, relative: &str, content: &str) -> std::io::Result<()> {
+    write_text(dir, relative, content)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let target = dir.join(relative);
+        let mut perms = fs::metadata(&target)?.permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&target, perms)?;
+    }
+    Ok(())
+}
+
 fn generate(name: &str, dir: &Path) -> std::io::Result<()> {
     fs::create_dir_all(dir)?;
 
@@ -65,7 +91,7 @@ fn generate(name: &str, dir: &Path) -> std::io::Result<()> {
     write_text(dir, "src/config.rs", CONFIG_RS)?;
     write_text(dir, "src/dal.rs", DAL_RS)?;
     write_text(dir, "src/sql.rs", SQL_RS)?;
-    write_text(dir, "src/web.rs", WEB_RS)?;
+    write_text(dir, "src/admin_web.rs", ADMIN_WEB_RS)?;
     write_text(dir, "src/router.rs", ROUTER_RS)?;
 
     // state.rs 替换项目名称
@@ -85,15 +111,33 @@ fn generate(name: &str, dir: &Path) -> std::io::Result<()> {
         write_file(dir, &format!("configs/{file}"), &data.data)?;
     }
 
-    // web/ 目录，直接复制（开发者需运行 npm install && npm run build）
+    // admin/ 目录，直接复制（开发者需运行 npm install && npm run build）
     for file in WebTemplates::iter() {
         let data = WebTemplates::get(&file).unwrap();
-        write_file(dir, &format!("web/{file}"), &data.data)?;
+        write_file(dir, &format!("admin/{file}"), &data.data)?;
+    }
+
+    // sql/ 目录（PostgreSQL 迁移），用于初始化数据库 schema
+    for file in SqlTemplates::iter() {
+        let data = SqlTemplates::get(&file).unwrap();
+        write_file(dir, &format!("sql/{file}"), &data.data)?;
     }
 
     // Cargo.toml 替换占位符
     let cargo_toml = CARGO_TOML_TPL.replace("{{name}}", name);
     write_text(dir, "Cargo.toml", &cargo_toml)?;
+
+    // Makefile 直接复制
+    write_text(dir, "Makefile", MAKEFILE_TPL)?;
+
+    // Dockerfile 与 entrypoint.sh 替换 {{name}} 占位符
+    write_text(dir, "Dockerfile", &DOCKERFILE_TPL.replace("{{name}}", name))?;
+    // entrypoint.sh 需要可执行权限，否则 docker ENTRYPOINT 调用会失败
+    write_executable(
+        dir,
+        "entrypoint.sh",
+        &ENTRYPOINT_TPL.replace("{{name}}", name),
+    )?;
 
     Ok(())
 }
@@ -127,6 +171,7 @@ fn main() {
     println!("接下来:");
     println!("  cd {}", dir.display());
     println!("  # 编辑 Cargo.toml，删除不需要的依赖");
-    println!("  cd web && npm install && npm run build && cd ..");
+    println!("  # 初始化数据库（PostgreSQL）：psql -d <db> -f sql/pg/init.sql");
+    println!("  cd admin && npm install && npm run build && cd ..");
     println!("  cargo run");
 }

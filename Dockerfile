@@ -3,7 +3,7 @@ FROM node:24-alpine AS webbuilder
 COPY . /tibba
 RUN apk update \
     && apk add git make \
-    && cd /tibba/web \
+    && cd /tibba/admin \
     && npm install --force \
     && npm run  build 
 
