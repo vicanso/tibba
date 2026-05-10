@@ -15,9 +15,8 @@
 use crate::config::{DivingConfig, must_get_diving_config};
 use crate::sql::get_db_pool;
 use ctor::ctor;
-use lettre::message::header::ContentType;
-use lettre::transport::smtp::authentication::Credentials;
-use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
+use resend_rs::Resend;
+use resend_rs::types::CreateEmailBaseOptions;
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, PgPool};
 use std::sync::Arc;
@@ -49,6 +48,8 @@ pub struct DockerAnalysisRecord {
     pub notify_type: String,
     /// 推送目标：WeCom robot key 或收件邮箱地址
     pub notify_data: String,
+    /// 强制推送：即便结论与上次一致也发送通知
+    pub notify_force: bool,
 }
 
 /// 分析结果，同时保存 diving 原始诊断数据与 LLM 深度分析内容。
@@ -97,16 +98,18 @@ impl DockerAnalysisModel {
         tag: &str,
         notify_type: &str,
         notify_data: &str,
+        notify_force: bool,
     ) -> Result<i64> {
         let row: (i64,) = sqlx::query_as(
-            r#"INSERT INTO docker_analyses (user_id, repo_name, tag, notify_type, notify_data)
-               VALUES ($1, $2, $3, $4, $5) RETURNING id"#,
+            r#"INSERT INTO docker_analyses (user_id, repo_name, tag, notify_type, notify_data, notify_force)
+               VALUES ($1, $2, $3, $4, $5, $6) RETURNING id"#,
         )
         .bind(user_id)
         .bind(repo_name)
         .bind(tag)
         .bind(notify_type)
         .bind(notify_data)
+        .bind(notify_force)
         .fetch_one(pool)
         .await
         .map_err(|e| Error::new(e.to_string()).with_category("docker"))?;
@@ -138,7 +141,7 @@ impl DockerAnalysisModel {
             r#"UPDATE docker_analyses
                SET status = $1, modified = NOW()
                WHERE id = $2 AND status = $3
-               RETURNING id, user_id, repo_name, tag, notify_type, notify_data"#,
+               RETURNING id, user_id, repo_name, tag, notify_type, notify_data, notify_force"#,
         )
         .bind(STATUS_PROCESSING)
         .bind(id)
@@ -237,7 +240,8 @@ async fn run_docker_analysis() -> Result<usize> {
                     error!(id, error = %e, "mark docker analysis completed failed");
                 } else {
                     completed += 1;
-                    if !result.is_same_as_last {
+                    // 默认仅在结论变化时通知；notify_force=true 时无条件触发
+                    if !result.is_same_as_last || record.notify_force {
                         notify_result(&record, &result).await;
                     }
                 }
@@ -514,11 +518,14 @@ async fn send_email_notification(
     record: &DockerAnalysisRecord,
     result: &DockerAnalysisResult,
 ) -> Result<()> {
-    let smtp_host = config
-        .smtp_host
+    let from_addr = config
+        .email_from
         .as_deref()
-        .ok_or_else(|| Error::new("smtp_host not configured").with_category("docker"))?;
-    let from_addr = config.smtp_from.as_deref().unwrap_or("noreply@tibba.io");
+        .ok_or_else(|| Error::new("email_from not configured").with_category("docker"))?;
+    let api_key = config
+        .resend_api_key
+        .as_deref()
+        .ok_or_else(|| Error::new("resend_api_key not configured").with_category("docker"))?;
 
     let subject = format!("Docker Analysis: {}:{}", record.repo_name, record.tag);
     let body = format!(
@@ -531,34 +538,11 @@ async fn send_email_notification(
         result.diving_result,
     );
 
-    let email = Message::builder()
-        .from(
-            from_addr
-                .parse()
-                .map_err(|e: lettre::address::AddressError| {
-                    Error::new(e.to_string()).with_category("docker")
-                })?,
-        )
-        .to(to.parse().map_err(|e: lettre::address::AddressError| {
-            Error::new(e.to_string()).with_category("docker")
-        })?)
-        .subject(subject)
-        .header(ContentType::TEXT_PLAIN)
-        .body(body)
-        .map_err(|e| Error::new(e.to_string()).with_category("docker"))?;
+    let email =
+        CreateEmailBaseOptions::new(from_addr, [to], subject).with_text(&body);
 
-    let mut builder = AsyncSmtpTransport::<Tokio1Executor>::relay(smtp_host)
-        .map_err(|e| Error::new(e.to_string()).with_category("docker"))?;
-
-    if let Some(port) = config.smtp_port {
-        builder = builder.port(port);
-    }
-    if let (Some(username), Some(password)) = (&config.smtp_username, &config.smtp_password) {
-        builder = builder.credentials(Credentials::new(username.clone(), password.clone()));
-    }
-
-    builder
-        .build()
+    Resend::new(api_key)
+        .emails
         .send(email)
         .await
         .map_err(|e| Error::new(e.to_string()).with_category("docker"))?;

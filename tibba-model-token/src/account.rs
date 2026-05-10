@@ -188,7 +188,6 @@ impl Model for TokenAccountModel {
                 Schema {
                     name: "balance".to_string(),
                     category: SchemaType::Number,
-                    read_only: true,
                     ..Default::default()
                 },
                 Schema {

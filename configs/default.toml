@@ -19,3 +19,6 @@ url = "file://~/Downloads"
 
 [diving]
 url = "http://127.0.0.1:7002"
+# Resend 发件人（需在 Resend 控制台验证发件域；测试可用 onboarding@resend.dev）
+email_from = "onboarding@resend.dev"
+# resend_api_key 推荐通过环境变量 TIBBA_WEB__DIVING__RESEND_API_KEY 注入，避免提交进仓库

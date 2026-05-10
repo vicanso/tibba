@@ -143,7 +143,7 @@ impl Model for TokenKeyModel {
                     ..Default::default()
                 },
                 Schema::new_created(),
-                Schema::new_filterable_modified(),
+                Schema::new_modified(),
             ],
             allow_edit: SchemaAllowEdit {
                 roles: vec!["su".to_string(), "admin".to_string()],

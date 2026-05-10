@@ -28,6 +28,9 @@ pub struct DockerTokenQuery {
     pub notify_type: Option<String>,
     /// 推送目标：WeCom robot key 或收件邮箱地址
     pub notify_data: Option<String>,
+    /// 强制推送：即便分析结论与上一次一致也发送通知
+    #[serde(default)]
+    pub notify_force: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -92,8 +95,16 @@ pub async fn analyze(
     let notify_data = q.notify_data.as_deref().unwrap_or_default();
 
     // 创建新的分析记录，初始状态为等待处理
-    let id = DockerAnalysisModel::insert(pool, user_id, repo_name, tag, notify_type, notify_data)
-        .await?;
+    let id = DockerAnalysisModel::insert(
+        pool,
+        user_id,
+        repo_name,
+        tag,
+        notify_type,
+        notify_data,
+        q.notify_force,
+    )
+    .await?;
 
     Ok(Json(AnalyzeResp { id }))
 }

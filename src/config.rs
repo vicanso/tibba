@@ -144,16 +144,10 @@ pub struct DivingConfig {
     pub notify_wecom: Option<String>,
     // 通知接收邮箱地址 (optional)
     pub notify_email: Option<String>,
-    // SMTP 服务器地址
-    pub smtp_host: Option<String>,
-    // SMTP 端口，默认 465
-    pub smtp_port: Option<u16>,
-    // SMTP 认证用户名
-    pub smtp_username: Option<String>,
-    // SMTP 认证密码
-    pub smtp_password: Option<String>,
-    // 发件人地址
-    pub smtp_from: Option<String>,
+    // 发件人地址（Resend 要求已验证的发件域，例如 "Diving <noreply@yourdomain>"）
+    pub email_from: Option<String>,
+    // Resend API key（re_xxx）；通过环境变量 TIBBA_WEB_DIVING_RESEND_API_KEY 注入更安全
+    pub resend_api_key: Option<String>,
 }
 
 static DIVING_CONFIG: OnceCell<DivingConfig> = OnceCell::new();
