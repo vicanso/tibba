@@ -12,7 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, SqlxSnafu, TokenRechargeInsertParams, TokenUsageInsertParams};
+use super::{
+    Error, RECHARGE_SOURCE_ADMIN, SERVICE_ADMIN_ADJUST, SqlxSnafu, TokenRechargeInsertParams,
+    TokenUsageInsertParams,
+};
 use snafu::ResultExt;
 use sqlx::{Pool, Postgres};
 
@@ -25,6 +28,10 @@ pub struct RechargeResult {
 
 pub struct ConsumeResult {
     pub usage_id: i64,
+    pub new_balance: i64,
+}
+
+pub struct AdjustResult {
     pub new_balance: i64,
 }
 
@@ -147,5 +154,61 @@ impl TokenService {
             usage_id,
             new_balance,
         })
+    }
+
+    /// 管理员调整某用户的 token 余额（保留审计流水，禁止绕过流水直接 UPDATE）：
+    /// - `amount > 0` → 调用 [`Self::recharge`]，source=`RECHARGE_SOURCE_ADMIN`，`created_by=admin_user_id`
+    /// - `amount < 0` → 调用 [`Self::consume`]，service=`SERVICE_ADMIN_ADJUST`，`biz_id=admin:<id>` 保留操作者
+    /// - `amount == 0` → 返回 [`Error::InvalidAmount`]
+    ///
+    /// `remark` 为空或空白会被替换为 "admin adjust"。
+    pub async fn adjust(
+        pool: &Pool<Postgres>,
+        user_id: i64,
+        amount: i64,
+        admin_user_id: i64,
+        remark: Option<String>,
+    ) -> Result<AdjustResult> {
+        if amount == 0 {
+            return Err(Error::InvalidAmount {
+                message: "amount must be non-zero".to_string(),
+            });
+        }
+
+        let remark = remark
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "admin adjust".to_string());
+
+        let new_balance = if amount > 0 {
+            Self::recharge(
+                pool,
+                TokenRechargeInsertParams {
+                    user_id,
+                    amount,
+                    source: RECHARGE_SOURCE_ADMIN,
+                    remark: Some(remark),
+                    created_by: Some(admin_user_id),
+                    ..Default::default()
+                },
+            )
+            .await?
+            .new_balance
+        } else {
+            Self::consume(
+                pool,
+                TokenUsageInsertParams {
+                    user_id,
+                    service: SERVICE_ADMIN_ADJUST.to_string(),
+                    amount: -amount,
+                    biz_id: Some(format!("admin:{admin_user_id}")),
+                    remark: Some(remark),
+                    ..Default::default()
+                },
+            )
+            .await?
+            .new_balance
+        };
+
+        Ok(AdjustResult { new_balance })
     }
 }

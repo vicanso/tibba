@@ -37,6 +37,8 @@ pub const SERVICE_LLM: &str = "llm";
 pub const SERVICE_API: &str = "api";
 /// 服务类型：文件存储
 pub const SERVICE_STORAGE: &str = "storage";
+/// 服务类型：管理员扣减额度（写入 token_usages.service，区别于真实消费）
+pub const SERVICE_ADMIN_ADJUST: &str = "admin_adjust";
 
 mod account;
 mod key;
