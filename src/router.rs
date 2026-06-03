@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use crate::cache::get_redis_cache;
-use crate::config::must_get_basic_config;
+use crate::config::{must_get_basic_config, must_get_token_config};
 use crate::dal::get_opendal_storage;
 use crate::docker::analyze as docker_analyze;
 use crate::sql::get_db_pool;
@@ -78,11 +78,19 @@ fn register_models() {
         "token_usage",
         Arc::new(ModelAdapter(TokenUsageModel::new())),
     );
+    let token_config = must_get_token_config();
     register_model(
         "token_price",
-        Arc::new(ModelAdapter(TokenPriceModel::new())),
+        Arc::new(ModelAdapter(
+            TokenPriceModel::new().with_model_options(token_config.models.clone()),
+        )),
     );
-    register_model("token_llm", Arc::new(ModelAdapter(TokenLlmModel::new())));
+    register_model(
+        "token_llm",
+        Arc::new(ModelAdapter(
+            TokenLlmModel::new().with_model_options(token_config.models.clone()),
+        )),
+    );
 }
 
 pub fn new_router() -> Result<Router> {

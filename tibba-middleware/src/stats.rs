@@ -80,7 +80,7 @@ pub async fn stats(
         // 从 response extensions 中提取错误信息
         res.extensions()
             .get::<Error>()
-            .map(|err| err.message.clone())
+            .map(|err| err.message().to_string())
     } else {
         None
     };

@@ -34,6 +34,7 @@ use tower_http::compression::predicate::{NotForContentType, Predicate, SizeAbove
 use tracing::{Level, error, info};
 use tracing_subscriber::FmtSubscriber;
 
+mod admin_web;
 mod cache;
 mod config;
 mod dal;
@@ -41,10 +42,8 @@ mod docker;
 mod httpstat;
 mod model;
 mod router;
-mod admin_web;
 mod sql;
 mod state;
-mod web_page_stat;
 
 // Global error handler for the application
 // Processes unhandled errors and converts them into appropriate Error responses

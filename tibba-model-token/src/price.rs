@@ -102,9 +102,24 @@ pub struct TokenPriceUpdateParams {
 }
 
 #[derive(Default)]
-pub struct TokenPriceModel {}
+pub struct TokenPriceModel {
+    /// `model` 字段下拉选项，启动时通过 [`Self::with_model_options`] 注入。
+    /// 留空时仅展示固定的 "default" 兜底项。
+    model_options: Vec<String>,
+}
 
 impl TokenPriceModel {
+    /// 注入 `model` 字段的可选下拉值。"default" 兜底项会自动加入。
+    #[must_use]
+    pub fn with_model_options<I, S>(mut self, models: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.model_options = models.into_iter().map(Into::into).collect();
+        self
+    }
+
     /// 按服务类型和模型名查询定价配置。
     /// 先精确匹配 (service, model)，找不到时退回匹配 (service, "default")。
     pub async fn get_by_service_model(
@@ -185,7 +200,18 @@ impl Model for TokenPriceModel {
                     category: SchemaType::String,
                     fixed: true,
                     filterable: true,
-                    options: Some(new_schema_options(&["default", "mimo-v2.5-pro"])),
+                    options: {
+                        // "default" 是 get_by_service_model 的兜底键，始终置顶；
+                        // 后续追加调用方注入的真实模型名，自动去重。
+                        let mut values: Vec<String> = vec!["default".to_string()];
+                        for m in &self.model_options {
+                            if !values.iter().any(|v| v == m) {
+                                values.push(m.clone());
+                            }
+                        }
+                        let refs: Vec<&str> = values.iter().map(String::as_str).collect();
+                        Some(new_schema_options(&refs))
+                    },
                     ..Default::default()
                 },
                 Schema {
@@ -332,9 +358,9 @@ impl Model for TokenPriceModel {
         Ok(rows.into_iter().map(Into::into).collect())
     }
 
-    fn push_filter_conditions<'args>(
+    fn push_filter_conditions(
         &self,
-        qb: &mut QueryBuilder<'args, Postgres>,
+        qb: &mut QueryBuilder<Postgres>,
         filters: &HashMap<String, String>,
     ) -> Result<()> {
         if let Some(service) = filters.get("service") {

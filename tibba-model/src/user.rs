@@ -216,9 +216,9 @@ impl Model for UserModel {
 
         Ok(())
     }
-    fn push_filter_conditions<'args>(
+    fn push_filter_conditions(
         &self,
-        qb: &mut QueryBuilder<'args, Postgres>,
+        qb: &mut QueryBuilder<Postgres>,
         filters: &HashMap<String, String>,
     ) -> Result<()> {
         if let Some(status) = filters.get("status").and_then(|s| s.parse::<i16>().ok()) {

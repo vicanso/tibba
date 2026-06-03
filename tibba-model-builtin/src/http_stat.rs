@@ -433,9 +433,9 @@ impl Model for HttpStatModel {
         }
     }
 
-    fn push_filter_conditions<'args>(
+    fn push_filter_conditions(
         &self,
-        qb: &mut QueryBuilder<'args, Postgres>,
+        qb: &mut QueryBuilder<Postgres>,
         filters: &HashMap<String, String>,
     ) -> Result<()> {
         if let Some(result) = filters.get("result").and_then(|s| s.parse::<i16>().ok()) {

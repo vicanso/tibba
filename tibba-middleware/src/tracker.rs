@@ -84,12 +84,12 @@ pub async fn user_tracker(
         .get::<Error>()
         .map(|err| {
             (
-                Some(err.message.clone()),
-                Some(err.category.clone()),
-                err.sub_category.clone(),
+                Some(err.message().to_string()),
+                Some(err.category().to_string()),
+                err.sub_category().map(str::to_string),
                 // true when the error originated from infrastructure
                 // (network timeout, downstream failure, etc.)
-                err.exception.unwrap_or_default(),
+                err.is_exception(),
             )
         })
         .unwrap_or((None, None, None, true));

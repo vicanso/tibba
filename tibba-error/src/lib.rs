@@ -16,19 +16,19 @@ use axum::Json;
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
-use std::ops::{Deref, DerefMut};
 
-/// 不常用的可选字段，装箱存放以控制 `Error` 的内存占用。
+/// 不常用的可选字段集合，装箱存放以控制 [`Error`] 的内存占用。
+/// 仅作为 `Error` 内部实现，不对外暴露。
 #[derive(Debug, Default, Serialize, Deserialize, Clone)]
-pub struct ErrorData {
+struct ErrorData {
     /// 错误子分类，用于在同一 category 下进一步区分错误来源。
-    pub sub_category: Option<String>,
+    sub_category: Option<String>,
     /// 业务错误码，供前端按码处理特定错误。
-    pub code: Option<String>,
+    code: Option<String>,
     /// 是否为需要告警的异常级错误。
-    pub exception: Option<bool>,
+    exception: Option<bool>,
     /// 附加信息列表，可携带多条上下文说明。
-    pub extra: Option<Vec<String>>,
+    extra: Option<Vec<String>>,
 }
 
 // 仅用于将 Error 序列化为扁平 JSON 对象的内部视图。
@@ -53,23 +53,27 @@ struct ErrorDeserialize {
 
 /// 全局 HTTP 错误类型，贯穿整个应用。
 ///
-/// `category` 与 `message` 始终存在，直接置于结构体上。
-/// 可选字段通过 `Box<ErrorData>` 装箱，将 `Err` 变体保持在
-/// `result_large_err` 的 128 字节限制以内。
+/// 所有字段均为私有，必须通过 [`Error::new`] 创建并经由链式 `with_xxx` /
+/// `add_xxx` 方法配置；读取使用同名 getter（[`Error::status`]、
+/// [`Error::category`] 等）。
+///
+/// 内部把可选字段统一装箱到 `Box<ErrorData>`，将 `Result<_, Error>` 的
+/// `Err` 变体保持在 `clippy::result_large_err` 128 字节限制以内。
 #[derive(Debug, Clone, Default)]
 pub struct Error {
-    /// HTTP 状态码，0 表示未设置，`IntoResponse` 时回退为 500。
-    pub status: u16,
+    /// HTTP 状态码，0 表示未显式设置，`IntoResponse` 时回退为 500。
+    status: u16,
     /// 错误来源模块或分类，如 "cache"、"db"。
-    pub category: String,
+    category: String,
     /// 面向用户或日志的错误描述信息。
-    pub message: String,
+    message: String,
+    /// 不常用的可选字段，装箱以控制 `Error` 大小。
     data: Box<ErrorData>,
 }
 
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.message)
+        f.write_str(&self.message)
     }
 }
 
@@ -105,23 +109,9 @@ impl<'de> Deserialize<'de> for Error {
     }
 }
 
-/// 通过 `Deref`/`DerefMut` 将 `ErrorData` 的可选字段（`sub_category`、
-/// `code`、`exception`、`extra`）直接暴露在 `Error` 上，无需手动访问 `.data`。
-impl Deref for Error {
-    type Target = ErrorData;
-    fn deref(&self) -> &Self::Target {
-        &self.data
-    }
-}
-
-impl DerefMut for Error {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.data
-    }
-}
-
 impl Error {
     /// 以错误信息创建新的 `Error` 实例，其余字段均为默认值。
+    /// `message` 接受任意 `Display` 类型，便于直接由外部错误包装。
     #[must_use]
     pub fn new(message: impl ToString) -> Self {
         Self {
@@ -130,24 +120,26 @@ impl Error {
         }
     }
 
+    // ---------- 链式 setter ----------
+
     /// 设置错误分类（模块来源），支持链式调用。
     #[must_use]
-    pub fn with_category(mut self, category: impl ToString) -> Self {
-        self.category = category.to_string();
+    pub fn with_category(mut self, category: impl Into<String>) -> Self {
+        self.category = category.into();
         self
     }
 
     /// 设置错误子分类，支持链式调用。
     #[must_use]
-    pub fn with_sub_category(mut self, sub_category: impl ToString) -> Self {
-        self.sub_category = Some(sub_category.to_string());
+    pub fn with_sub_category(mut self, sub_category: impl Into<String>) -> Self {
+        self.data.sub_category = Some(sub_category.into());
         self
     }
 
     /// 设置业务错误码，支持链式调用。
     #[must_use]
-    pub fn with_code(mut self, code: impl ToString) -> Self {
-        self.code = Some(code.to_string());
+    pub fn with_code(mut self, code: impl Into<String>) -> Self {
+        self.data.code = Some(code.into());
         self
     }
 
@@ -161,17 +153,55 @@ impl Error {
     /// 标记是否为需要告警的异常级错误，支持链式调用。
     #[must_use]
     pub fn with_exception(mut self, exception: bool) -> Self {
-        self.exception = Some(exception);
+        self.data.exception = Some(exception);
         self
     }
 
     /// 追加一条附加上下文信息，支持链式调用。
     #[must_use]
-    pub fn add_extra(mut self, value: impl ToString) -> Self {
-        self.extra
+    pub fn add_extra(mut self, value: impl Into<String>) -> Self {
+        self.data
+            .extra
             .get_or_insert_with(Vec::new)
-            .push(value.to_string());
+            .push(value.into());
         self
+    }
+
+    // ---------- getter ----------
+
+    /// HTTP 状态码；返回 0 表示未显式设置，响应时会回退到 500。
+    pub fn status(&self) -> u16 {
+        self.status
+    }
+
+    /// 错误来源模块。
+    pub fn category(&self) -> &str {
+        &self.category
+    }
+
+    /// 面向用户或日志的错误描述。
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+
+    /// 错误子分类，未设置时返回 `None`。
+    pub fn sub_category(&self) -> Option<&str> {
+        self.data.sub_category.as_deref()
+    }
+
+    /// 业务错误码，未设置时返回 `None`。
+    pub fn code(&self) -> Option<&str> {
+        self.data.code.as_deref()
+    }
+
+    /// 是否为需要告警的异常级错误；未显式设置时返回 `false`。
+    pub fn is_exception(&self) -> bool {
+        self.data.exception.unwrap_or(false)
+    }
+
+    /// 附加上下文列表，未设置时返回空切片。
+    pub fn extra(&self) -> &[String] {
+        self.data.extra.as_deref().unwrap_or(&[])
     }
 }
 
@@ -179,9 +209,10 @@ impl Error {
 impl IntoResponse for Error {
     fn into_response(self) -> Response {
         let status = StatusCode::from_u16(self.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-        // 错误响应禁止缓存
         let mut res = (status, Json(&self)).into_response();
+        // 把 Error 放入 extensions，方便日志/统计中间件读取上下文
         res.extensions_mut().insert(self);
+        // 错误响应禁止缓存
         res.headers_mut()
             .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
         res

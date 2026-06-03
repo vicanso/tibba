@@ -346,9 +346,9 @@ impl Model for TokenUsageModel {
         Ok(rows.into_iter().map(Into::into).collect())
     }
 
-    fn push_filter_conditions<'args>(
+    fn push_filter_conditions(
         &self,
-        qb: &mut QueryBuilder<'args, Postgres>,
+        qb: &mut QueryBuilder<Postgres>,
         filters: &HashMap<String, String>,
     ) -> Result<()> {
         if let Some(user_id) = filters.get("user_id") {

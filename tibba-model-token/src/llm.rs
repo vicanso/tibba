@@ -98,9 +98,24 @@ pub struct TokenLlmUpdateParams {
 }
 
 #[derive(Default)]
-pub struct TokenLlmModel {}
+pub struct TokenLlmModel {
+    /// `model` 字段下拉选项，启动时通过 [`Self::with_model_options`] 注入。
+    /// 留空表示前端不展示固定下拉，仅作自由输入。
+    model_options: Vec<String>,
+}
 
 impl TokenLlmModel {
+    /// 注入 `model` 字段的可选下拉值（如 `["mimo-v2.5-pro"]`）。
+    #[must_use]
+    pub fn with_model_options<I, S>(mut self, models: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.model_options = models.into_iter().map(Into::into).collect();
+        self
+    }
+
     /// 按 name 查询启用状态的 LLM 配置；未命中时回退到 name = "default"。
     pub async fn get_by_name(&self, pool: &Pool<Postgres>, name: &str) -> Result<Option<TokenLlm>> {
         let result = sqlx::query_as::<_, TokenLlmSchema>(
@@ -163,7 +178,13 @@ impl Model for TokenLlmModel {
                     category: SchemaType::String,
                     required: true,
                     filterable: true,
-                    options: Some(new_schema_options(&["mimo-v2.5-pro"])),
+                    options: if self.model_options.is_empty() {
+                        None
+                    } else {
+                        let refs: Vec<&str> =
+                            self.model_options.iter().map(String::as_str).collect();
+                        Some(new_schema_options(&refs))
+                    },
                     ..Default::default()
                 },
                 Schema {
@@ -307,9 +328,9 @@ impl Model for TokenLlmModel {
         Ok(rows.into_iter().map(Into::into).collect())
     }
 
-    fn push_filter_conditions<'args>(
+    fn push_filter_conditions(
         &self,
-        qb: &mut QueryBuilder<'args, Postgres>,
+        qb: &mut QueryBuilder<Postgres>,
         filters: &HashMap<String, String>,
     ) -> Result<()> {
         if let Some(name) = filters.get("name") {

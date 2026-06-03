@@ -6,8 +6,6 @@ graph TD
 
     crypto --> error
 
-    headless --> error
-
     hook --> error
 
     llm --> error

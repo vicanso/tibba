@@ -157,6 +157,27 @@ fn new_diving_config(config: &Config) -> Result<DivingConfig> {
     diving_config.validate().map_err(map_err)?;
     Ok(diving_config)
 }
+
+#[derive(Debug, Clone, Default, Validate, Deserialize)]
+pub struct TokenConfig {
+    /// 可选模型名列表，供 token_llm / token_price 的 `model` 字段下拉展示。
+    #[serde(default)]
+    pub models: Vec<String>,
+}
+
+static TOKEN_CONFIG: OnceCell<TokenConfig> = OnceCell::new();
+
+fn new_token_config(config: &Config) -> Result<TokenConfig> {
+    let token_config = config.try_deserialize::<TokenConfig>()?;
+    token_config.validate().map_err(map_err)?;
+    Ok(token_config)
+}
+
+pub fn must_get_token_config() -> &'static TokenConfig {
+    TOKEN_CONFIG
+        .get()
+        .unwrap_or_else(|| panic!("token config not initialized"))
+}
 fn new_config() -> Result<&'static Config> {
     CONFIGS.get_or_try_init(|| {
         let category = "config";
@@ -205,6 +226,10 @@ async fn init_config() -> Result<()> {
     DIVING_CONFIG
         .set(diving_config)
         .map_err(|_| map_err("diving config init failed"))?;
+    let token_config = new_token_config(&app_config.sub_config("token"))?;
+    TOKEN_CONFIG
+        .set(token_config)
+        .map_err(|_| map_err("token config init failed"))?;
     Ok(())
 }
 

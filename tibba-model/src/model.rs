@@ -43,7 +43,7 @@ impl ModelListParams {
         }
     }
 
-    pub fn push_pagination(&self, qb: &mut QueryBuilder<'_, Postgres>) {
+    pub fn push_pagination(&self, qb: &mut QueryBuilder<Postgres>) {
         let order_by = self.order_by.as_deref().unwrap_or("id");
         push_order_by(qb, order_by);
         let limit = self.limit.min(200);
@@ -53,7 +53,7 @@ impl ModelListParams {
 }
 
 /// Append a validated ORDER BY clause. Column name must be alphanumeric/underscore only.
-pub fn push_order_by(qb: &mut QueryBuilder<'_, Postgres>, order_by: &str) {
+pub fn push_order_by(qb: &mut QueryBuilder<Postgres>, order_by: &str) {
     let (col, dir) = if let Some(col) = order_by.strip_prefix('-') {
         (col, "DESC")
     } else {
@@ -74,16 +74,16 @@ pub trait Model: Send + Sync {
     fn keyword(&self) -> String {
         String::new()
     }
-    fn push_filter_conditions<'args>(
+    fn push_filter_conditions(
         &self,
-        _qb: &mut QueryBuilder<'args, Postgres>,
+        _qb: &mut QueryBuilder<Postgres>,
         _filters: &HashMap<String, String>,
     ) -> Result<()> {
         Ok(())
     }
-    fn push_conditions<'args>(
+    fn push_conditions(
         &self,
-        qb: &mut QueryBuilder<'args, Postgres>,
+        qb: &mut QueryBuilder<Postgres>,
         params: &ModelListParams,
     ) -> Result<()> {
         qb.push(" WHERE deleted_at IS NULL");

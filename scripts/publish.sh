@@ -25,7 +25,6 @@ sleep 30
 publish tibba-util
 publish tibba-config
 publish tibba-crypto
-publish tibba-headless
 publish tibba-hook
 publish tibba-scheduler
 publish tibba-model
