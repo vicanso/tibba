@@ -40,6 +40,7 @@ mod config;
 mod dal;
 mod docker;
 mod httpstat;
+mod metrics;
 mod model;
 mod router;
 mod sql;

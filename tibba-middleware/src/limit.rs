@@ -18,12 +18,17 @@ use axum::extract::State;
 use axum::middleware::Next;
 use axum::response::IntoResponse;
 use axum::response::Response;
+use metrics::gauge;
 use scopeguard::defer;
 use std::net::IpAddr;
 use std::time::Duration;
 use tibba_cache::RedisCache;
 use tibba_state::{AppState, CTX};
 use tracing::debug;
+
+/// 当前正在处理的请求数 gauge。Prometheus 端可用 `max_over_time(http_inflight[1d])`
+/// 计算历史峰值，无需在应用内维护 `peak_processing` 字段。
+const METRIC_HTTP_INFLIGHT: &str = "http_inflight";
 
 // Custom Result type that uses the application's Error type
 type Result<T> = std::result::Result<T, tibba_error::Error>;
@@ -53,22 +58,24 @@ pub async fn processing_limit(
     // Get configured processing limit from app state
     let limit = state.get_processing_limit();
 
-    // If limit is negative, processing is unlimited
+    // If limit is negative, processing is unlimited; skip inflight tracking
+    // (gauge 仅在启用流控时镜像 atomic 计数，保持二者一致)
     if limit < 0 {
-        let res = next.run(req).await;
-        if res.status().as_u16() >= 400 {
-            state.inc_error_requests();
-        }
-        return Ok(res);
+        return Ok(next.run(req).await);
     }
 
     let count = state.inc_processing();
-    defer!(state.dec_processing(););
+    gauge!(METRIC_HTTP_INFLIGHT).increment(1.0);
+    defer!({
+        state.dec_processing();
+        gauge!(METRIC_HTTP_INFLIGHT).decrement(1.0);
+    });
 
     // Check if processing limit has been exceeded
     if count > limit {
-        state.inc_error_requests();
-        // Return 429 Too Many Requests error
+        // Return 429 Too Many Requests error;
+        // 错误响应会经由 IntoResponse 流回 stats 中间件，由其统一计数到
+        // http_requests_total{status="error"}，这里不再自行递增
         return Err(Error::TooManyRequests {
             limit: limit as i64,
             current: count as i64,
@@ -76,11 +83,7 @@ pub async fn processing_limit(
         .into());
     }
 
-    let res = next.run(req).await;
-    if res.status().as_u16() >= 400 {
-        state.inc_error_requests();
-    }
-    Ok(res)
+    Ok(next.run(req).await)
 }
 
 /// Type of rate limiting to apply

@@ -17,6 +17,7 @@ use axum::extract::Request;
 use axum::extract::State;
 use axum::middleware::Next;
 use axum::response::Response;
+use metrics::counter;
 use scopeguard::defer;
 use std::borrow::Cow;
 use tibba_error::Error;
@@ -24,6 +25,21 @@ use tibba_state::{AppState, CTX};
 use tibba_util::get_header_value;
 use tracing::{debug, info};
 use urlencoding::decode;
+
+/// 累计 HTTP 请求数，按响应状态分桶。
+/// 与 `http_inflight` 一同覆盖了原 `total_requests` / `error_requests` /
+/// `peak_processing` 三个字段的统计需求。
+const METRIC_HTTP_REQUESTS_TOTAL: &str = "http_requests_total";
+
+/// 把状态码归一化为低基数桶，避免标签爆炸：
+/// 1xx / 2xx / 3xx → "ok"；4xx / 5xx → "error"；其它 → "other"。
+fn status_bucket(status: u16) -> &'static str {
+    match status {
+        100..=399 => "ok",
+        400..=599 => "error",
+        _ => "other",
+    }
+}
 
 // Custom Result type for error handling
 type Result<T> = std::result::Result<T, Error>;
@@ -74,6 +90,9 @@ pub async fn stats(
     let res = next.run(req).await;
     let status = res.status().as_u16();
     let ctx = CTX.get();
+
+    // 累计请求数，按桶记录以保持标签低基数
+    counter!(METRIC_HTTP_REQUESTS_TOTAL, "status" => status_bucket(status)).increment(1);
 
     // Extract error message for 4xx/5xx responses
     let message = if status >= 400 {

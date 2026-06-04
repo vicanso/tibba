@@ -17,6 +17,7 @@ path = "src/lib.rs"
 [dependencies]
 axum = { workspace = true }
 axum-extra = { workspace = true }
+metrics = { workspace = true }
 scopeguard = { workspace = true }
 snafu = { workspace = true }
 tibba-cache = { path = "../tibba-cache", version = "0.2.2" }

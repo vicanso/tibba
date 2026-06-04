@@ -24,6 +24,8 @@ futures = { workspace = true }
 hostname = { workspace = true }
 http = { workspace = true }
 http-stat = "0.6.2"
+metrics = { workspace = true }
+metrics-exporter-prometheus = { workspace = true }
 nanoid = { workspace = true }
 once_cell = { workspace = true }
 quick-js = "0.4.1"
@@ -137,6 +139,8 @@ resend-rs = { version = "0.25", default-features = false, features = [
 ] }
 image = "0.25.10"
 lru = "0.16.4"
+metrics = "0.24"
+metrics-exporter-prometheus = { version = "0.17", default-features = false }
 lz4_flex = "0.13.0"
 mime = "0.3.17"
 mime_guess2 = "2.3.1"

@@ -12,10 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::time::SystemTime;
 
-/// 线程安全的应用状态，包含服务标识、生命周期、并发控制和请求计数器。
+/// 线程安全的应用状态，包含服务标识、生命周期及流控所需的并发计数器。
+///
+/// 历史上的 `peak_processing` / `total_requests` / `error_requests` 等
+/// 统计字段已迁移到 Prometheus（见 `src/metrics.rs` 与 `tibba-middleware`），
+/// 这里只保留流控判断必须的 `processing` 原子计数。
 pub struct AppState {
     /// 服务名称
     name: String,
@@ -27,14 +31,9 @@ pub struct AppState {
     processing_limit: i32,
     /// 当前应用运行状态（运行中 / 已停止）
     running: AtomicBool,
-    /// 当前正在处理的请求数
+    /// 当前正在处理的请求数；用于 `processing_limit` 流控判断。
+    /// 历史峰值、累计请求数等已迁移到 Prometheus，不再在此维护。
     processing: AtomicI32,
-    /// 历史最高并发处理数
-    peak_processing: AtomicI32,
-    /// 启动以来累计处理的请求总数
-    total_requests: AtomicU64,
-    /// 启动以来累计的错误响应数（状态码 >= 400）
-    error_requests: AtomicU64,
     /// 应用启动时间戳
     started_at: SystemTime,
 }
@@ -49,9 +48,6 @@ impl AppState {
             processing_limit,
             running: AtomicBool::new(false),
             processing: AtomicI32::new(0),
-            peak_processing: AtomicI32::new(0),
-            total_requests: AtomicU64::new(0),
-            error_requests: AtomicU64::new(0),
             started_at: SystemTime::now(),
         }
     }
@@ -90,13 +86,10 @@ impl AppState {
         self.processing_limit
     }
 
-    /// 原子性地递增处理计数器，同步更新历史峰值，并累加总请求数。
-    /// 返回递增后的当前并发数。
+    /// 原子性地递增处理计数器，返回递增后的当前并发数。
+    /// 仅用于 `processing_limit` 流控判断；统计指标由 Prometheus 负责。
     pub fn inc_processing(&self) -> i32 {
-        let current = self.processing.fetch_add(1, Ordering::Relaxed) + 1;
-        self.peak_processing.fetch_max(current, Ordering::Relaxed);
-        self.total_requests.fetch_add(1, Ordering::Relaxed);
-        current
+        self.processing.fetch_add(1, Ordering::Relaxed) + 1
     }
 
     /// 原子性地递减处理计数器，返回递减后的当前并发数。
@@ -107,26 +100,6 @@ impl AppState {
     /// 返回当前正在处理的请求数。
     pub fn get_processing(&self) -> i32 {
         self.processing.load(Ordering::Relaxed)
-    }
-
-    /// 返回历史最高并发处理数。
-    pub fn get_peak_processing(&self) -> i32 {
-        self.peak_processing.load(Ordering::Relaxed)
-    }
-
-    /// 返回启动以来累计处理的请求总数。
-    pub fn get_total_requests(&self) -> u64 {
-        self.total_requests.load(Ordering::Relaxed)
-    }
-
-    /// 累加错误响应计数器。
-    pub fn inc_error_requests(&self) {
-        self.error_requests.fetch_add(1, Ordering::Relaxed);
-    }
-
-    /// 返回启动以来累计的错误响应数。
-    pub fn get_error_requests(&self) -> u64 {
-        self.error_requests.load(Ordering::Relaxed)
     }
 
     /// 返回 `true` 表示应用当前处于运行状态。

@@ -65,4 +65,10 @@ impl Storage {
     pub fn info(&self) -> OperatorInfo {
         self.dal.info()
     }
+
+    /// 探活：调用底层 OpenDAL `check()`（通常是对根路径的 stat），
+    /// 用于 readiness probe，确认存储后端可达。
+    pub async fn check(&self) -> Result<()> {
+        self.dal.check().await.context(OpenDalSnafu)
+    }
 }

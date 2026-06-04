@@ -16,11 +16,12 @@ use crate::cache::get_redis_cache;
 use crate::config::{must_get_basic_config, must_get_token_config};
 use crate::dal::get_opendal_storage;
 use crate::docker::analyze as docker_analyze;
+use crate::metrics::metrics_handler;
 use crate::sql::get_db_pool;
 use crate::state::get_app_state;
 use crate::admin_web::serve_web;
 use axum::Router;
-use axum::routing::post;
+use axum::routing::{get, post};
 use std::sync::Arc;
 use tibba_error::Error;
 use tibba_model::Model;
@@ -32,7 +33,7 @@ use tibba_model_token::{
     RECHARGE_SOURCE_GIFT, TokenAccountModel, TokenKeyModel, TokenLlmModel, TokenPriceModel,
     TokenRechargeInsertParams, TokenRechargeModel, TokenService, TokenUsageModel,
 };
-use tibba_router_common::{CommonRouterParams, new_common_router};
+use tibba_router_common::{CommonRouterParams, ReadinessCheck, new_common_router};
 use tibba_router_file::{FileRouterParams, new_file_router};
 use tibba_router_model::{ModelAdapter, ModelRouterParams, new_model_router, register_model};
 use tibba_router_user::{UserRouterParams, new_user_router};
@@ -98,9 +99,18 @@ pub fn new_router() -> Result<Router> {
 
     let basic_config = must_get_basic_config();
     let cache = get_redis_cache();
+    // readiness 探针：调用 OpenDAL `check()` 验证存储后端可达；
+    // 失败时由 /readyz 返回 503，K8s 仅摘流量不重启 Pod
+    let readiness: ReadinessCheck = Arc::new(|| {
+        Box::pin(async {
+            get_opendal_storage().check().await?;
+            Ok(())
+        })
+    });
     let common_router = new_common_router(CommonRouterParams {
         state: get_app_state(),
         cache: Some(cache),
+        readiness: Some(readiness),
     });
     let mut magic_code = String::new();
     if is_test() || is_development() {
@@ -143,7 +153,10 @@ pub fn new_router() -> Result<Router> {
         .with_state(get_db_pool());
 
     // API 路由挂在可配置的 prefix 下（如 /api），静态文件始终在根路径
+    // /metrics 走 Prometheus text exposition，挂在 API 前缀下，由部署侧通过
+    // 内网或鉴权层暴露给 Prometheus / Victoria / Grafana Agent 抓取
     let api_router = Router::new()
+        .route("/metrics", get(metrics_handler))
         .nest("/users", user_router)
         .nest("/files", file_router)
         .nest("/models", model_router)

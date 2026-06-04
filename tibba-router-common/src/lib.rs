@@ -22,13 +22,18 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use captcha::Captcha;
 use captcha::filters::{Noise, Wave};
 use serde::{Deserialize, Serialize};
+use std::future::Future;
 use std::io::Cursor;
+use std::pin::Pin;
+use std::sync::Arc;
 use std::time::Duration;
 use tibba_cache::RedisCache;
 use tibba_error::Error;
 use tibba_performance::current_process_system_info;
 use tibba_state::AppState;
 use tibba_util::{JsonResult, QueryParams, get_env, uuid};
+use tokio::time::timeout;
+use tracing::warn;
 use validator::Validate;
 
 type Result<T> = std::result::Result<T, Error>;
@@ -36,14 +41,63 @@ type Result<T> = std::result::Result<T, Error>;
 /// 错误分类标识，用于区分本路由模块产生的错误。
 const ERROR_CATEGORY: &str = "common_router";
 
-/// 存活检查接口，服务正常运行时返回 "pong"，否则返回 503。
-async fn ping(State(state): State<&'static AppState>) -> Result<&'static str> {
+/// readiness 探针超时；超过即视为未就绪，K8s 会摘流量但**不**重启 Pod。
+const READINESS_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// readiness 回调的 Future 类型。成功表示依赖可用，错误会被记录到响应。
+pub type ReadinessFuture = Pin<Box<dyn Future<Output = Result<()>> + Send + 'static>>;
+/// readiness 回调签名：无参，返回 [`ReadinessFuture`]。
+/// 由调用方在 [`CommonRouterParams::readiness`] 注入，通常包含 storage / db
+/// 等外部依赖的轻量探活；未注入时 `/readyz` 仅检查 `state.is_running()`。
+pub type ReadinessCheck = Arc<dyn Fn() -> ReadinessFuture + Send + Sync>;
+
+/// Liveness 探针：仅检查应用自身是否处于运行态，**不**做任何外部 I/O。
+/// K8s 失败时会重启 Pod，因此这里必须保持轻量、绝不依赖下游。
+async fn healthz(State(state): State<&'static AppState>) -> Result<&'static str> {
     if !state.is_running() {
-        return Err(Error::new("Server is not running")
+        return Err(Error::new("server is not running")
             .with_category(ERROR_CATEGORY)
             .with_status(503));
     }
-    Ok("pong")
+    Ok("ok")
+}
+
+/// Readiness 探针：先确认应用运行态，再调用注入的 readiness 回调（如 stat
+/// storage / ping db）；超时或失败均返回 503，由 K8s 摘流量但不重启 Pod。
+async fn readyz(
+    State((state, check)): State<(&'static AppState, Option<ReadinessCheck>)>,
+) -> Result<&'static str> {
+    if !state.is_running() {
+        return Err(Error::new("server is not running")
+            .with_category(ERROR_CATEGORY)
+            .with_status(503));
+    }
+    let Some(check) = check else {
+        // 没有注入依赖检查时，readiness 与 liveness 等价
+        return Ok("ready");
+    };
+    match timeout(READINESS_TIMEOUT, check()).await {
+        Ok(Ok(())) => Ok("ready"),
+        Ok(Err(err)) => {
+            warn!(category = ERROR_CATEGORY, error = %err, "readiness check failed");
+            Err(Error::new(format!("readiness check failed: {err}"))
+                .with_category(ERROR_CATEGORY)
+                .with_status(503))
+        }
+        Err(_) => {
+            warn!(
+                category = ERROR_CATEGORY,
+                timeout_secs = READINESS_TIMEOUT.as_secs(),
+                "readiness check timed out"
+            );
+            Err(Error::new(format!(
+                "readiness check timed out after {}s",
+                READINESS_TIMEOUT.as_secs()
+            ))
+            .with_category(ERROR_CATEGORY)
+            .with_status(503))
+        }
+    }
 }
 
 /// 应用运行时信息，包含运行时长、系统环境及进程资源使用情况。
@@ -194,15 +248,23 @@ pub struct CommonRouterParams {
     pub state: &'static AppState,
     /// Redis 缓存实例，为 `None` 时不注册验证码路由。
     pub cache: Option<&'static RedisCache>,
+    /// readiness 回调；`None` 时 `/readyz` 仅检查应用运行态。
+    /// 用于在 readiness 探针中验证外部依赖（storage / db / 第三方服务）可达。
+    pub readiness: Option<ReadinessCheck>,
 }
 
 /// 创建公共路由，包含以下端点：
-/// - `GET /ping` — 存活检查
+/// - `GET /healthz` — Liveness 探针（仅检查 `AppState`，失败由 K8s 重启 Pod）
+/// - `GET /readyz` — Readiness 探针（含依赖检查，2s 超时，失败由 K8s 摘流量）
 /// - `GET /commons/application` — 应用运行时信息
 /// - `GET /commons/captcha` — 图形验证码生成（仅当 `cache` 不为 `None` 时注册）
 pub fn new_common_router(params: CommonRouterParams) -> Router {
     let r = Router::new()
-        .route("/ping", get(ping).with_state(params.state))
+        .route("/healthz", get(healthz).with_state(params.state))
+        .route(
+            "/readyz",
+            get(readyz).with_state((params.state, params.readiness)),
+        )
         .route(
             "/commons/application",
             get(get_application_info).with_state(params.state),
