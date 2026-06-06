@@ -49,3 +49,10 @@ redirect_uri = "http://localhost:5000/api/users/oauth/google/callback"
 [token]
 # token_llm / token_price 的 `model` 字段下拉选项
 models = ["mimo-v2.5-pro"]
+
+# OTLP 分布式追踪导出。
+# 配置走 **OTel SDK 标准环境变量**（避免 init_logger 和 config 加载的时序耦合）：
+#   OTEL_EXPORTER_OTLP_ENDPOINT   collector 地址，如 http://otel-collector:4318
+#                                 未设置或空 → telemetry 完全关闭，0 网络开销
+#   OTEL_SERVICE_NAME             资源 service.name 标签；缺省 "tibba"
+# 用 HTTP/Protobuf 传输（最通用）。Jaeger / Tempo / Grafana Agent / Datadog 通用。

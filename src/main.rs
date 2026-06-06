@@ -31,8 +31,10 @@ use tokio::signal;
 use tower::ServiceBuilder;
 use tower_http::compression::CompressionLayer;
 use tower_http::compression::predicate::{NotForContentType, Predicate, SizeAbove};
+use opentelemetry_otlp::WithExportConfig;
 use tracing::{Level, error, info};
-use tracing_subscriber::FmtSubscriber;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 
 /// 应用入口模块的 tracing target。
 /// 可通过 `RUST_LOG=tibba:app=info`（或 `debug`）进行过滤。
@@ -104,6 +106,14 @@ async fn shutdown_signal() {
     }
     info!("signal received, starting graceful shutdown");
 }
+/// 初始化日志 + 可选 OTLP 分布式追踪。
+///
+/// OTel 配置走标准环境变量（与 OTel SDK 约定一致）：
+/// - `OTEL_EXPORTER_OTLP_ENDPOINT` —— OTLP collector 地址，如 `http://otel-collector:4318`。
+///   缺省 / 空时 telemetry 完全关闭，仅打 fmt 日志，0 网络开销
+/// - `OTEL_SERVICE_NAME` —— 资源 `service.name` 标签；缺省 `tibba`
+///
+/// 与既有 RUST_LOG 兼容：fmt 日志的级别仍由 RUST_LOG 决定。
 fn init_logger() {
     let mut level = Level::INFO;
     if let Ok(log_level) = env::var("RUST_LOG")
@@ -119,12 +129,56 @@ fn init_logger() {
         )
     });
 
-    let subscriber = FmtSubscriber::builder()
-        .with_max_level(level)
+    let fmt_layer = tracing_subscriber::fmt::layer()
         .with_timer(timer)
-        .with_ansi(is_development())
-        .finish();
-    tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
+        .with_ansi(is_development());
+
+    let filter = tracing_subscriber::filter::LevelFilter::from_level(level);
+
+    // OTLP layer 由环境变量决定是否启用；endpoint 为空 → 直接 None，零开销
+    let otel_layer = build_otel_layer();
+
+    tracing_subscriber::registry()
+        .with(filter)
+        .with(fmt_layer)
+        .with(otel_layer)
+        .init();
+}
+
+/// 构造 OTLP tracing layer。配置缺失 / 构造失败时返回 None，
+/// 让上游的 `.with(None)` 静默忽略——与"未启用"语义等价。
+///
+/// 用 HTTP/Protobuf 传输（最通用、最少 SDK 依赖）。
+fn build_otel_layer<S>() -> Option<tracing_opentelemetry::OpenTelemetryLayer<S, opentelemetry_sdk::trace::Tracer>>
+where
+    S: tracing::Subscriber + for<'span> tracing_subscriber::registry::LookupSpan<'span>,
+{
+    let endpoint = env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
+        .ok()
+        .filter(|s| !s.is_empty())?;
+    let service_name = env::var("OTEL_SERVICE_NAME").unwrap_or_else(|_| "tibba".to_string());
+
+    let exporter = opentelemetry_otlp::SpanExporter::builder()
+        .with_http()
+        .with_endpoint(&endpoint)
+        .build()
+        .map_err(|e| eprintln!("otlp exporter init failed (telemetry disabled): {e}"))
+        .ok()?;
+
+    let provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
+        .with_batch_exporter(exporter)
+        .with_resource(
+            opentelemetry_sdk::Resource::builder()
+                .with_service_name(service_name)
+                .build(),
+        )
+        .build();
+    let tracer = opentelemetry::trace::TracerProvider::tracer(&provider, "tibba");
+
+    // 设为全局 provider，让 opentelemetry::global::tracer(...) 也能拿到
+    opentelemetry::global::set_tracer_provider(provider);
+
+    Some(tracing_opentelemetry::layer().with_tracer(tracer))
 }
 
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
