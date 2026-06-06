@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+mod audit_log;
 mod detector_group;
 mod detector_group_user;
 mod file;
@@ -22,6 +23,7 @@ mod role_permission;
 mod user_oauth_link;
 mod web_page_detector;
 
+pub use audit_log::*;
 pub use detector_group::*;
 pub use detector_group_user::*;
 pub use file::*;

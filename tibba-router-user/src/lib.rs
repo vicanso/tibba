@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use axum::extract::State;
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::middleware::from_fn_with_state;
 use axum::routing::{delete, get, patch, post};
 use axum::{Json, Router};
@@ -29,9 +29,9 @@ use tibba_cache::RedisCache;
 use tibba_email::EmailConfig;
 use tibba_error::Error as BaseError;
 use tibba_oauth::OAuthConfig;
-use tibba_middleware::{user_tracker, validate_captcha};
+use tibba_middleware::{ClientIp, RequestId, user_tracker, validate_captcha};
 use tibba_model::{Model, ROLE_SUPER_ADMIN, UserModel, UserUpdateParams};
-use tibba_model_builtin::RolePermissionModel;
+use tibba_model_builtin::{AuditLogModel, AuditLogParams, RolePermissionModel};
 use tibba_session::{Session, SessionResponse, UserSession};
 use tibba_util::{
     JsonParams, JsonResult, generate_device_id_cookie, get_device_id_from_cookie, is_development,
@@ -190,6 +190,9 @@ struct UserMeResp {
 async fn login(
     State((secret, pool)): State<(String, &'static PgPool)>,
     session: Session,
+    request_id: RequestId,
+    ClientIp(ip): ClientIp,
+    headers: HeaderMap,
     JsonParams(params): JsonParams<LoginParams>,
 ) -> Result<SessionResponse<Json<UserMeResp>>> {
     params.validate_token(&secret)?;
@@ -225,6 +228,17 @@ async fn login(
 
     // 异步更新最后登录时间，失败不影响登录流程
     let _ = UserModel::new().update_last_login_at(pool, &account).await;
+
+    // 审计：记录登录成功事件。失败仅日志（审计不能阻断业务）
+    let _ = AuditLogModel::new()
+        .log(
+            pool,
+            AuditLogParams::new("user.login")
+                .with_user(user.id)
+                .with_target("user", user.id.to_string())
+                .with_request(request_id.as_str(), ip.to_string(), user_agent_of(&headers)),
+        )
+        .await;
 
     let info = UserMeResp {
         account,
@@ -307,6 +321,9 @@ struct RegisterResp {
 /// 注册成功后若配置了 `on_register` 回调，则异步触发；回调失败不影响注册结果。
 async fn register(
     State(state): State<RegisterState>,
+    request_id: RequestId,
+    ClientIp(ip): ClientIp,
+    headers: HeaderMap,
     JsonParams(params): JsonParams<RegisterParams>,
 ) -> JsonResult<RegisterResp> {
     let model = UserModel::new();
@@ -322,6 +339,18 @@ async fn register(
     if let Some(cb) = &state.on_register {
         cb(id as i64).await;
     }
+
+    // 审计：记录注册事件
+    let _ = AuditLogModel::new()
+        .log(
+            state.pool,
+            AuditLogParams::new("user.register")
+                .with_user(id as i64)
+                .with_target("user", id.to_string())
+                .with_request(request_id.as_str(), ip.to_string(), user_agent_of(&headers)),
+        )
+        .await;
+
     Ok(Json(RegisterResp {
         id,
         account: params.account,
@@ -338,8 +367,30 @@ async fn refresh_session(mut session: UserSession) -> Result<Session> {
     Ok(session.into())
 }
 
-/// 登出接口，清除当前 Session。
-async fn logout(mut session: Session) -> Session {
+/// 登出接口，清除当前 Session。审计 reset 之前抓 user_id，未登录态不记。
+async fn logout(
+    State(pool): State<&'static PgPool>,
+    request_id: RequestId,
+    ClientIp(ip): ClientIp,
+    headers: HeaderMap,
+    mut session: Session,
+) -> Session {
+    let user_id = session.get_user_id();
+    if user_id != 0 {
+        let _ = AuditLogModel::new()
+            .log(
+                pool,
+                AuditLogParams::new("user.logout")
+                    .with_user(user_id)
+                    .with_target("user", user_id.to_string())
+                    .with_request(
+                        request_id.as_str(),
+                        ip.to_string(),
+                        user_agent_of(&headers),
+                    ),
+            )
+            .await;
+    }
     session.reset();
     session
 }
@@ -468,7 +519,9 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
         )
         .route(
             "/logout",
-            delete(logout).layer(from_fn_with_state((name, "logout").into(), user_tracker)),
+            delete(logout)
+                .with_state(params.pool)
+                .layer(from_fn_with_state((name, "logout").into(), user_tracker)),
         )
         .route("/profile", patch(update_profile).with_state(params.pool))
         // 邮箱验证（登录态调用，request 端点带 user_tracker 防刷）
@@ -542,4 +595,14 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
                     user_tracker,
                 )),
         )
+}
+
+/// 从 HeaderMap 取 User-Agent（缺失 / 非 ASCII 时返回空串）。
+/// audit_log 的 truncate 会再做长度截断，这里只负责取值。
+fn user_agent_of(headers: &HeaderMap) -> String {
+    headers
+        .get("user-agent")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string()
 }

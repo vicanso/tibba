@@ -2,6 +2,7 @@
 \i create_permissions.sql
 \i create_role_permissions.sql
 \i create_user_oauth_links.sql
+\i create_audit_logs.sql
 \i create_configurations.sql
 \i create_files.sql
 \i create_http_detectors.sql
