@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, LOG_TARGET};
+use super::{Error, LOG_TARGET, permission_grants};
 use axum::Json;
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
@@ -111,6 +111,10 @@ struct SessionData {
     roles: Vec<String>,
     /// 用户组列表
     groups: Vec<String>,
+    /// 该用户在本次 Session 内拥有的权限码并集（登录时根据 roles 翻译并缓存）。
+    /// 用 `#[serde(default)]` 兼容旧版 Redis 中没有此字段的 Session blob。
+    #[serde(default)]
+    permissions: Vec<String>,
 }
 
 /// HTTP Session，持有 Redis 缓存引用、配置参数和当前会话数据。
@@ -180,6 +184,47 @@ impl Session {
     pub fn with_groups(mut self, groups: Vec<String>) -> Self {
         self.data.groups = groups;
         self
+    }
+
+    /// 设置该用户本次 Session 内拥有的权限码集合，支持链式调用。
+    /// 通常在登录时由路由层根据 `users.roles` 查 `role_permissions` 表得到。
+    #[must_use]
+    pub fn with_permissions(mut self, permissions: Vec<String>) -> Self {
+        self.data.permissions = permissions;
+        self
+    }
+
+    /// 返回该用户本次 Session 内的权限码列表（只读视图）。
+    pub fn get_permissions(&self) -> &[String] {
+        &self.data.permissions
+    }
+
+    /// 判断当前 Session 是否拥有 `required` 权限码。
+    ///
+    /// 通配规则：
+    /// - `"*"` 命中任何 `required`
+    /// - `"resource:*"` 命中所有 `resource:` 开头的 `required`（如 `"user:*"` 命中 `"user:read"`）
+    /// - 其余必须精确相等
+    ///
+    /// 未登录直接返回 false。
+    pub fn has_permission(&self, required: &str) -> bool {
+        if !self.is_login() {
+            return false;
+        }
+        permission_grants(&self.data.permissions, required)
+    }
+
+    /// 守卫式检查：未登录返回 401，已登录但缺权限返回 403。用于 handler 内手动鉴权。
+    pub fn require_permission(&self, required: &str) -> Result<()> {
+        self.validate_login()?;
+        if permission_grants(&self.data.permissions, required) {
+            Ok(())
+        } else {
+            Err(Error::PermissionDenied {
+                required: required.to_string(),
+            }
+            .into())
+        }
     }
 
     /// 续期：累加续期计数并更新签发时间戳。

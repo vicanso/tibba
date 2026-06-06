@@ -17,6 +17,8 @@ mod detector_group_user;
 mod file;
 mod http_detector;
 mod http_stat;
+mod permission;
+mod role_permission;
 mod web_page_detector;
 
 pub use detector_group::*;
@@ -24,6 +26,8 @@ pub use detector_group_user::*;
 pub use file::*;
 pub use http_detector::*;
 pub use http_stat::*;
+pub use permission::*;
+pub use role_permission::*;
 pub use web_page_detector::*;
 
 // 重新导出 tibba-model 的全部公开类型，消费方只需依赖本 crate 即可。

@@ -29,6 +29,7 @@ use tibba_cache::RedisCache;
 use tibba_error::Error as BaseError;
 use tibba_middleware::{user_tracker, validate_captcha};
 use tibba_model::{Model, ROLE_SUPER_ADMIN, UserModel, UserUpdateParams};
+use tibba_model_builtin::RolePermissionModel;
 use tibba_session::{Session, SessionResponse, UserSession};
 use tibba_util::{
     JsonParams, JsonResult, generate_device_id_cookie, get_device_id_from_cookie, is_development,
@@ -172,6 +173,8 @@ struct UserMeResp {
     roles: Option<Vec<String>>,
     /// 用户组列表（可选）
     groups: Option<Vec<String>>,
+    /// 权限码列表，前端可据此控制按钮可见性
+    permissions: Option<Vec<String>>,
 }
 
 /// 用户登录接口。
@@ -198,10 +201,19 @@ async fn login(
     let groups = user.groups.clone().unwrap_or_default();
     let roles = user.roles.clone().unwrap_or_default();
 
+    // 把 roles 翻译为权限码并集，缓存到 Session（避免每次 handler 重查 DB）。
+    // 失败仅记录但不阻断登录——RBAC 还未铺开时 role_permissions 可能为空，
+    // 登录主流程不应被附属表的 SQL 错误打断。
+    let permissions = RolePermissionModel::new()
+        .list_permissions_for_roles(pool, &roles)
+        .await
+        .unwrap_or_default();
+
     let session = session
         .with_account(&account, user.id)
         .with_groups(groups)
-        .with_roles(roles);
+        .with_roles(roles)
+        .with_permissions(permissions.clone());
     session.save().await?;
 
     // 异步更新最后登录时间，失败不影响登录流程
@@ -219,6 +231,7 @@ async fn login(
         avatar: user.avatar,
         roles: user.roles,
         groups: user.groups,
+        permissions: Some(permissions),
     };
 
     Ok(SessionResponse(session, Json(info)))
@@ -258,6 +271,7 @@ async fn me(
         avatar: user.avatar,
         roles: user.roles,
         groups: user.groups,
+        permissions: Some(session.get_permissions().to_vec()),
     };
 
     Ok((jar, Json(info)))

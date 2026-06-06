@@ -95,6 +95,7 @@ members = [
     "tibba-opendal",
     "tibba-performance",
     "tibba-request",
+    "tibba-rbac",
     "tibba-router-common",
     "tibba-router-file",
     "tibba-router-user",

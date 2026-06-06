@@ -25,6 +25,7 @@ tibba-cache = { path = "../tibba-cache", version = "0.2.2" }
 tibba-error = { path = "../tibba-error", version = "0.2.2" }
 tibba-middleware = { path = "../tibba-middleware", version = "0.2.2" }
 tibba-model = { path = "../tibba-model", version = "0.2.2" }
+tibba-model-builtin = { path = "../tibba-model-builtin", version = "0.2.2" }
 tibba-session = { path = "../tibba-session", version = "0.2.2" }
 tibba-util = { path = "../tibba-util", version = "0.2.2" }
 tibba-validator = { path = "../tibba-validator", version = "0.2.2" }

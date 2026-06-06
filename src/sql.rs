@@ -47,6 +47,15 @@ impl Task for SqlTask {
             let pool = new_pg_pool(&app_config.sub_config("database"), Some(stat.clone()))
                 .await
                 .map_err(Error::new)?;
+
+            // 启动期一次性应用 `./migrations/` 下的所有 SQL 迁移。
+            // sqlx 内部维护 `_sqlx_migrations` 表追踪已应用版本，幂等且只补差。
+            // 路径相对于 main crate 的 CARGO_MANIFEST_DIR，即仓库根。
+            sqlx::migrate!("./migrations")
+                .run(&pool)
+                .await
+                .map_err(|e| Error::new(format!("run migrations fail: {e}")))?;
+
             DB_POOL
                 .set(pool)
                 .map_err(|_| Error::new("set db pool fail"))?;
