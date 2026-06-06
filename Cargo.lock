@@ -5878,6 +5878,7 @@ version = "0.2.2"
 dependencies = [
  "axum",
  "axum-extra",
+ "governor",
  "metrics",
  "scopeguard",
  "serde",

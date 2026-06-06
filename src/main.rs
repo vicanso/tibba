@@ -17,13 +17,13 @@ use crate::state::get_app_state;
 use axum::BoxError;
 use axum::error_handling::HandleErrorLayer;
 use axum::http::{Method, Uri};
-use axum::middleware::from_fn_with_state;
+use axum::middleware::{from_fn, from_fn_with_state};
 use std::env;
 use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::Arc;
 use tibba_hook::{run_after_tasks, run_before_tasks};
-use tibba_middleware::{entry, processing_limit, stats};
+use tibba_middleware::{entry, processing_limit, request_id, stats};
 use tibba_scheduler::run_scheduler_jobs;
 use tibba_session::session;
 use tibba_util::is_development;
@@ -146,6 +146,9 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             .layer(HandleErrorLayer::new(handle_error))
             .layer(CompressionLayer::new().compress_when(predicate))
             .timeout(basic_config.timeout)
+            // request_id 挂在最外层（仅次于错误处理 / 压缩），保证 entry / stats /
+            // 业务 handler 都能从扩展中拿到 RequestId
+            .layer(from_fn(request_id))
             .layer(from_fn_with_state(state, entry))
             .layer(from_fn_with_state(state, stats))
             .layer(from_fn_with_state(

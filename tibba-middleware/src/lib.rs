@@ -44,6 +44,9 @@ pub enum Error {
     /// CSRF cookie 与 header token 不一致，疑似伪造请求。HTTP 403。
     #[snafu(display("csrf token mismatch"))]
     CsrfMismatch,
+    /// IP 速率限制触发。HTTP 429。
+    #[snafu(display("rate limited (quota: {quota})"))]
+    RateLimited { quota: String },
 }
 
 impl From<Error> for BaseError {
@@ -70,6 +73,10 @@ impl From<Error> for BaseError {
             Error::CsrfMismatch => BaseError::new("csrf token mismatch")
                 .with_sub_category("csrf_mismatch")
                 .with_status(403)
+                .with_exception(false),
+            Error::RateLimited { quota } => BaseError::new(format!("rate limited (quota: {quota})"))
+                .with_sub_category("rate_limited")
+                .with_status(429)
                 .with_exception(false),
         };
         err.with_category("middleware")
@@ -122,6 +129,8 @@ mod common;
 mod csrf;
 mod entry;
 mod limit;
+mod rate_limit;
+mod request_id;
 mod stats;
 mod tracker;
 
@@ -129,5 +138,7 @@ pub use common::*;
 pub use csrf::*;
 pub use entry::*;
 pub use limit::*;
+pub use rate_limit::*;
+pub use request_id::*;
 pub use stats::*;
 pub use tracker::*;

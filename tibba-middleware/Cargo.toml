@@ -17,6 +17,7 @@ path = "src/lib.rs"
 [dependencies]
 axum = { workspace = true }
 axum-extra = { workspace = true }
+governor = { workspace = true }
 metrics = { workspace = true }
 scopeguard = { workspace = true }
 serde = { workspace = true }
