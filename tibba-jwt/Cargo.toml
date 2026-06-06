@@ -1,0 +1,26 @@
+[package]
+name = "tibba-jwt"
+version = "0.2.2"
+edition = "2024"
+authors = ["Tree Xie <tree.xie@outlook.com>"]
+license = "Apache-2.0"
+homepage = "https://github.com/vicanso/tibba"
+repository = "https://github.com/vicanso/tibba"
+keywords = ["tibba", "jwt", "auth", "hs256"]
+description = "JWT (HS256) auth path for tibba — access token + opaque refresh"
+
+
+[lib]
+name = "tibba_jwt"
+path = "src/lib.rs"
+
+[dependencies]
+axum = { workspace = true }
+humantime-serde = { workspace = true }
+jsonwebtoken = { workspace = true }
+once_cell = { workspace = true }
+serde = { workspace = true }
+snafu = { workspace = true }
+tibba-error = { path = "../tibba-error", version = "0.2.2" }
+tibba-util = { path = "../tibba-util", version = "0.2.2" }
+tracing = { workspace = true }

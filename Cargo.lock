@@ -2736,6 +2736,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "jsonwebtoken"
+version = "10.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eba32bfb4ffdeaca3e34431072faf01745c9b26d25504aa7a6cf5684334fc4fc"
+dependencies = [
+ "base64 0.22.1",
+ "getrandom 0.2.17",
+ "js-sys",
+ "serde",
+ "serde_json",
+ "signature",
+ "zeroize",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5826,6 +5841,7 @@ dependencies = [
  "tibba-email",
  "tibba-error",
  "tibba-hook",
+ "tibba-jwt",
  "tibba-llm",
  "tibba-middleware",
  "tibba-model",
@@ -5931,6 +5947,21 @@ dependencies = [
  "pretty_assertions",
  "tibba-error",
  "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "tibba-jwt"
+version = "0.2.2"
+dependencies = [
+ "axum",
+ "humantime-serde",
+ "jsonwebtoken",
+ "once_cell",
+ "serde",
+ "snafu",
+ "tibba-error",
+ "tibba-util",
  "tracing",
 ]
 
@@ -6160,6 +6191,7 @@ dependencies = [
  "tibba-cache",
  "tibba-email",
  "tibba-error",
+ "tibba-jwt",
  "tibba-middleware",
  "tibba-model",
  "tibba-model-builtin",
@@ -7698,6 +7730,20 @@ name = "zeroize"
 version = "1.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b97154e67e32c85465826e8bcc1c59429aaaf107c1e4a9e53c8d8ccd5eff88d0"
+dependencies = [
+ "zeroize_derive",
+]
+
+[[package]]
+name = "zeroize_derive"
+version = "1.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "85a5b4158499876c763cb03bc4e49185d3cccbabb15b33c627f7884f43db852e"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
 
 [[package]]
 name = "zerotrie"

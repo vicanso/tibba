@@ -44,6 +44,7 @@ tibba-config = { path = "./tibba-config" }
 tibba-email = { path = "./tibba-email" }
 tibba-error = { path = "./tibba-error" }
 tibba-hook = { path = "./tibba-hook" }
+tibba-jwt = { path = "./tibba-jwt" }
 tibba-llm = { path = "./tibba-llm" }
 tibba-middleware = { path = "./tibba-middleware" }
 tibba-model = { path = "./tibba-model" }
@@ -95,6 +96,7 @@ members = [
     "tibba-email",
     "tibba-error",
     "tibba-hook",
+    "tibba-jwt",
     "tibba-middleware",
     "tibba-model",
     "tibba-model-builtin",
@@ -152,6 +154,7 @@ http = "1.4.1"
 http-body-util = "0.1.3"
 humantime = "2.3.0"
 humantime-serde = "1.1.1"
+jsonwebtoken = { version = "10.0.0", default-features = false }
 resend-rs = { version = "0.25", default-features = false, features = [
     "rustls-tls",
 ] }

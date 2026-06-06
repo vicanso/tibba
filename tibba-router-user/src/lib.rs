@@ -41,6 +41,7 @@ use tibba_validator::*;
 use validator::Validate;
 
 mod email_verify;
+mod jwt_auth;
 mod oauth_github;
 mod oauth_google;
 mod password_reset;
@@ -119,22 +120,23 @@ async fn login_token(State(secret): State<String>) -> JsonResult<LoginTokenResp>
 }
 
 /// 登录请求参数，含防重放令牌和用户凭据。
+/// `pub(crate)` 因 jwt_auth 模块需要复用同样的校验链，避免前端写两套适配。
 #[derive(Deserialize, Validate, Debug)]
-struct LoginParams {
+pub(crate) struct LoginParams {
     /// 客户端从 `/login/token` 获取的时间戳
-    ts: i64,
+    pub ts: i64,
     /// 客户端从 `/login/token` 获取的一次性令牌（UUID 格式）
     #[validate(custom(function = "x_uuid"))]
-    token: String,
+    pub token: String,
     /// 服务端对 `token` 的签名，用于校验令牌合法性（SHA-256 格式）
     #[validate(custom(function = "x_sha256"))]
-    hash: String,
+    pub hash: String,
     /// 用户账号
     #[validate(custom(function = "x_user_account"))]
-    account: String,
+    pub account: String,
     /// 经过 `sha256(hash:password)` 处理后的密码
     #[validate(custom(function = "x_user_password"))]
-    password: String,
+    pub password: String,
 }
 
 impl LoginParams {
@@ -142,7 +144,7 @@ impl LoginParams {
     /// - 开发/测试环境下 `ts <= 0` 时跳过校验；
     /// - 时间戳偏差超过 60 秒时拒绝（防重放）；
     /// - 验证 HMAC 签名是否匹配。
-    fn validate_token(&self, secret: &str) -> Result<()> {
+    pub(crate) fn validate_token(&self, secret: &str) -> Result<()> {
         // 开发/测试环境允许跳过时间戳校验
         if self.ts <= 0 && (is_development() || is_test()) {
             return Ok(());
@@ -515,6 +517,11 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
         oauth_config: params.oauth_config,
         success_redirect: params.oauth_success_redirect,
     };
+    let jwt_auth_state = jwt_auth::JwtAuthState {
+        pool: params.pool,
+        cache: params.cache,
+        secret: params.secret.clone(),
+    };
 
     Router::new()
         .route(
@@ -622,6 +629,35 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
                 .with_state(oauth_google_state)
                 .layer(from_fn_with_state(
                     (name, "oauth_google_callback").into(),
+                    user_tracker,
+                )),
+        )
+        // JWT 备选鉴权路径（与现有 Session+Cookie /login 正交）
+        // [jwt] 未配置时由 try_global_signer 返回 None → 503
+        .route(
+            "/login/jwt",
+            post(jwt_auth::login_jwt)
+                .with_state(jwt_auth_state.clone())
+                .layer(from_fn_with_state(
+                    (name, "login_jwt").into(),
+                    user_tracker,
+                )),
+        )
+        .route(
+            "/refresh/jwt",
+            post(jwt_auth::refresh_jwt)
+                .with_state(jwt_auth_state.clone())
+                .layer(from_fn_with_state(
+                    (name, "refresh_jwt").into(),
+                    user_tracker,
+                )),
+        )
+        .route(
+            "/logout/jwt",
+            delete(jwt_auth::logout_jwt)
+                .with_state(jwt_auth_state)
+                .layer(from_fn_with_state(
+                    (name, "logout_jwt").into(),
                     user_tracker,
                 )),
         )

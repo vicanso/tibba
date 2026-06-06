@@ -50,6 +50,20 @@ redirect_uri = "http://localhost:5000/api/users/oauth/google/callback"
 # token_llm / token_price 的 `model` 字段下拉选项
 models = ["mimo-v2.5-pro"]
 
+# JWT 备选鉴权（HS256）。与现有 Session+Cookie 路径正交。
+# secret 留空或整段缺失时，/login/jwt 等端点统一 503，应用照常启动。
+[jwt]
+# HS256 共享密钥，**绝不入仓**。强烈推荐通过环境变量
+#   TIBBA_WEB__JWT__SECRET
+# 注入；本字段留空作占位。
+secret = ""
+# access token TTL（humantime）；签发的 JWT 过期时间
+access_ttl = "15m"
+# refresh token（opaque UUID，存 Redis）TTL
+refresh_ttl = "7d"
+# 写进 access JWT 的 `iss` claim，多服务区分用
+issuer = "tibba"
+
 # OTLP 分布式追踪导出。
 # 配置走 **OTel SDK 标准环境变量**（避免 init_logger 和 config 加载的时序耦合）：
 #   OTEL_EXPORTER_OTLP_ENDPOINT   collector 地址，如 http://otel-collector:4318

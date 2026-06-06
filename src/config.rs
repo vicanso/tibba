@@ -185,6 +185,17 @@ fn new_oauth_config(config: &Config) -> Result<tibba_oauth::OAuthConfig> {
     }
 }
 
+// JWT 备选鉴权配置。整段缺失或 secret 为空时应用照常启动，
+// 仅 JWT 端点（/login/jwt 等）和 JwtUser extractor 返回 503。
+static JWT_CONFIG: OnceCell<tibba_jwt::JwtConfig> = OnceCell::new();
+
+fn new_jwt_config(config: &Config) -> Result<tibba_jwt::JwtConfig> {
+    match config.try_deserialize::<tibba_jwt::JwtConfig>() {
+        Ok(c) => Ok(c),
+        Err(_) => Ok(tibba_jwt::JwtConfig::default()),
+    }
+}
+
 #[derive(Debug, Clone, Default, Validate, Deserialize)]
 pub struct TokenConfig {
     /// 可选模型名列表，供 token_llm / token_price 的 `model` 字段下拉展示。
@@ -250,6 +261,14 @@ pub fn must_get_oauth_config() -> &'static tibba_oauth::OAuthConfig {
         .unwrap_or_else(|| panic!("oauth config not initialized"))
 }
 
+// 暂留 API 供后续 admin / health 端点查询 JWT 启用态；初始化只在 init_config 内部消费 JwtConfig
+#[allow(dead_code)]
+pub fn must_get_jwt_config() -> &'static tibba_jwt::JwtConfig {
+    JWT_CONFIG
+        .get()
+        .unwrap_or_else(|| panic!("jwt config not initialized"))
+}
+
 async fn init_config() -> Result<()> {
     let app_config = new_config()?;
     let basic_config = new_basic_config(&app_config.sub_config("basic"))?;
@@ -272,6 +291,17 @@ async fn init_config() -> Result<()> {
     OAUTH_CONFIG
         .set(oauth_config)
         .map_err(|_| map_err("oauth config init failed"))?;
+    let jwt_config = new_jwt_config(&app_config.sub_config("jwt"))?;
+    // 若 [jwt] 已配 secret，启动期一次性把全局 signer 初始化好；未配则跳过
+    // （延迟到首次访问 JWT 端点时由 try_global_signer 返回 None → 503）
+    if jwt_config.is_configured() {
+        let signer = tibba_jwt::JwtSigner::from_config(&jwt_config).map_err(map_err)?;
+        tibba_jwt::init_global_signer(signer)
+            .map_err(|_| map_err("jwt global signer already initialized"))?;
+    }
+    JWT_CONFIG
+        .set(jwt_config)
+        .map_err(|_| map_err("jwt config init failed"))?;
     let token_config = new_token_config(&app_config.sub_config("token"))?;
     TOKEN_CONFIG
         .set(token_config)
