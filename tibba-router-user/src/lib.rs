@@ -412,10 +412,27 @@ struct UpdateProfileParams {
 async fn update_profile(
     State(pool): State<&'static PgPool>,
     session: UserSession,
+    request_id: RequestId,
+    ClientIp(ip): ClientIp,
+    headers: HeaderMap,
     JsonParams(params): JsonParams<UpdateProfileParams>,
 ) -> Result<StatusCode> {
     let account = session.get_account();
-    let params = UserUpdateParams {
+    // 审计 detail：记录这次改了哪几个字段（不带具体值，避免审计行膨胀 / 泄敏）
+    let mut changed: Vec<&'static str> = Vec::new();
+    if params.nickname.is_some() {
+        changed.push("nickname");
+    }
+    if params.phone.is_some() {
+        changed.push("phone");
+    }
+    if params.email.is_some() {
+        changed.push("email");
+    }
+    if params.avatar.is_some() {
+        changed.push("avatar");
+    }
+    let update = UserUpdateParams {
         nickname: params.nickname,
         phone: params.phone,
         email: params.email,
@@ -423,8 +440,21 @@ async fn update_profile(
         ..Default::default()
     };
     UserModel::new()
-        .update_by_account(pool, account, params)
+        .update_by_account(pool, account, update)
         .await?;
+
+    let user_id = session.get_user_id();
+    let _ = AuditLogModel::new()
+        .log(
+            pool,
+            AuditLogParams::new("user.profile_update")
+                .with_user(user_id)
+                .with_target("user", user_id.to_string())
+                .with_request(request_id.as_str(), ip.to_string(), user_agent_of(&headers))
+                .with_detail(json!({ "changed": changed })),
+        )
+        .await;
+
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -599,7 +629,7 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
 
 /// 从 HeaderMap 取 User-Agent（缺失 / 非 ASCII 时返回空串）。
 /// audit_log 的 truncate 会再做长度截断，这里只负责取值。
-fn user_agent_of(headers: &HeaderMap) -> String {
+pub(crate) fn user_agent_of(headers: &HeaderMap) -> String {
     headers
         .get("user-agent")
         .and_then(|v| v.to_str().ok())

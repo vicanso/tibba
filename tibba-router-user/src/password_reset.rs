@@ -19,8 +19,9 @@
 //!
 //! Token 用 UUID（36 字符），存 Redis 1h，单次使用后立即 del。
 
+use crate::user_agent_of;
 use axum::extract::State;
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use serde::Deserialize;
 use snafu::{OptionExt, Snafu};
 use sqlx::PgPool;
@@ -28,7 +29,9 @@ use std::time::Duration;
 use tibba_cache::RedisCache;
 use tibba_email::EmailConfig;
 use tibba_error::Error as BaseError;
+use tibba_middleware::{ClientIp, RequestId};
 use tibba_model::{Model, UserModel};
+use tibba_model_builtin::{AuditLogModel, AuditLogParams};
 use tibba_util::JsonParams;
 use tibba_util::uuid;
 use tibba_validator::{x_user_account, x_user_password, x_uuid};
@@ -143,6 +146,9 @@ pub(crate) struct ConfirmParams {
 /// 确认：用 token 拿到 user_id，覆盖密码。
 pub(crate) async fn confirm_reset(
     State(state): State<PasswordResetState>,
+    request_id: RequestId,
+    ClientIp(ip): ClientIp,
+    headers: HeaderMap,
     JsonParams(params): JsonParams<ConfirmParams>,
 ) -> Result<StatusCode> {
     let key = format!("{REDIS_PREFIX}{}", params.token);
@@ -157,6 +163,17 @@ pub(crate) async fn confirm_reset(
     if let Err(e) = state.cache.del(&key).await {
         warn!(target: LOG_TARGET, error = %e, "delete used token failed");
     }
+
+    // 审计：密码重置成功。**detail 不带新旧密码**，仅记动作完成
+    let _ = AuditLogModel::new()
+        .log(
+            state.pool,
+            AuditLogParams::new("user.password_reset")
+                .with_user(user_id)
+                .with_target("user", user_id.to_string())
+                .with_request(request_id.as_str(), ip.to_string(), user_agent_of(&headers)),
+        )
+        .await;
 
     Ok(StatusCode::NO_CONTENT)
 }

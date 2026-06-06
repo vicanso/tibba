@@ -28,8 +28,9 @@
 //! 4. 写 `user_oauth_links` 行（provider="github" + GitHub 数字 id）
 //! 5. 拉 roles → permissions 注入 Session、save、302 回前端
 
-use crate::Result;
+use crate::{Result, user_agent_of};
 use axum::extract::{Query, State};
+use axum::http::HeaderMap;
 use axum::response::Redirect;
 use serde::Deserialize;
 use serde_json::json;
@@ -38,8 +39,11 @@ use sqlx::PgPool;
 use std::time::Duration;
 use tibba_cache::RedisCache;
 use tibba_error::Error as BaseError;
+use tibba_middleware::{ClientIp, RequestId};
 use tibba_model::{Model, ROLE_SUPER_ADMIN, UserModel};
-use tibba_model_builtin::{CreateLinkParams, RolePermissionModel, UserOauthLinkModel};
+use tibba_model_builtin::{
+    AuditLogModel, AuditLogParams, CreateLinkParams, RolePermissionModel, UserOauthLinkModel,
+};
 use tibba_oauth::{GitHubUser, OAuthConfig};
 use tibba_session::{Session, SessionResponse};
 use tibba_util::{sha256, uuid};
@@ -131,6 +135,9 @@ pub(crate) async fn start_login(State(state): State<OauthGitHubState>) -> Result
 /// `GET /oauth/github/callback` —— 校验 state、换 token、user landing、建 Session、302。
 pub(crate) async fn callback(
     State(state): State<OauthGitHubState>,
+    request_id: RequestId,
+    ClientIp(ip): ClientIp,
+    headers: HeaderMap,
     Query(params): Query<CallbackParams>,
     session: Session,
 ) -> Result<SessionResponse<Redirect>> {
@@ -172,6 +179,18 @@ pub(crate) async fn callback(
     {
         warn!(target: LOG_TARGET, error = %e, "update_last_login_at failed");
     }
+
+    // 审计：OAuth 登录成功，detail 携带 provider 用于按渠道聚合
+    let _ = AuditLogModel::new()
+        .log(
+            state.pool,
+            AuditLogParams::new("user.oauth_login")
+                .with_user(user.id)
+                .with_target("user", user.id.to_string())
+                .with_request(request_id.as_str(), ip.to_string(), user_agent_of(&headers))
+                .with_detail(json!({ "provider": "github" })),
+        )
+        .await;
 
     let target = if state.success_redirect.is_empty() {
         "/".to_string()

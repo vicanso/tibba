@@ -18,8 +18,9 @@
 //!
 //! Token 用 UUID（36 字符），存 Redis 24h，单次使用后立即 del。
 
+use crate::user_agent_of;
 use axum::extract::State;
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use serde::Deserialize;
 use snafu::{OptionExt, Snafu};
 use sqlx::PgPool;
@@ -27,7 +28,9 @@ use std::time::Duration;
 use tibba_cache::RedisCache;
 use tibba_email::EmailConfig;
 use tibba_error::Error as BaseError;
+use tibba_middleware::{ClientIp, RequestId};
 use tibba_model::{Model, UserModel};
+use tibba_model_builtin::{AuditLogModel, AuditLogParams};
 use tibba_session::UserSession;
 use tibba_util::{JsonParams, uuid};
 use tibba_validator::x_uuid;
@@ -132,6 +135,9 @@ pub(crate) struct ConfirmParams {
 /// 确认：用 token 取出 user_id，写入 `email_verified_at = NOW()`。
 pub(crate) async fn confirm_verify(
     State(state): State<EmailVerifyState>,
+    request_id: RequestId,
+    ClientIp(ip): ClientIp,
+    headers: HeaderMap,
     JsonParams(params): JsonParams<ConfirmParams>,
 ) -> Result<StatusCode> {
     let key = format!("{REDIS_PREFIX}{}", params.token);
@@ -146,6 +152,17 @@ pub(crate) async fn confirm_verify(
     if let Err(e) = state.cache.del(&key).await {
         warn!(target: LOG_TARGET, error = %e, "delete used token failed");
     }
+
+    // 审计：邮箱验证成功
+    let _ = AuditLogModel::new()
+        .log(
+            state.pool,
+            AuditLogParams::new("user.email_verify")
+                .with_user(user_id)
+                .with_target("user", user_id.to_string())
+                .with_request(request_id.as_str(), ip.to_string(), user_agent_of(&headers)),
+        )
+        .await;
 
     Ok(StatusCode::NO_CONTENT)
 }
