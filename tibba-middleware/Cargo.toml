@@ -19,6 +19,7 @@ axum = { workspace = true }
 axum-extra = { workspace = true }
 metrics = { workspace = true }
 scopeguard = { workspace = true }
+serde = { workspace = true }
 snafu = { workspace = true }
 tibba-cache = { path = "../tibba-cache", version = "0.2.2" }
 tibba-error = { path = "../tibba-error", version = "0.2.2" }

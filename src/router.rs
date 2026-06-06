@@ -24,6 +24,7 @@ use axum::Router;
 use axum::routing::{get, post};
 use std::sync::Arc;
 use tibba_error::Error;
+use tibba_middleware::csrf_token;
 use tibba_model::Model;
 use tibba_model_builtin::{
     ConfigurationModel, DetectorGroupModel, DetectorGroupUserModel, FileModel, HttpDetectorModel,
@@ -158,6 +159,8 @@ pub fn new_router() -> Result<Router> {
     // 内网或鉴权层暴露给 Prometheus / Victoria / Grafana Agent 抓取
     let api_router = Router::new()
         .route("/metrics", get(metrics_handler))
+        // 前端启动时调用一次拿 CSRF token，后续状态变更请求把 token 放进 X-CSRF-Token header
+        .route("/csrf/token", get(csrf_token))
         .nest("/users", user_router)
         .nest("/files", file_router)
         .nest("/models", model_router)

@@ -5879,6 +5879,7 @@ dependencies = [
  "axum-extra",
  "metrics",
  "scopeguard",
+ "serde",
  "snafu",
  "tibba-cache",
  "tibba-error",

@@ -35,6 +35,15 @@ pub enum Error {
     HeaderValue {
         source: axum::http::header::ToStrError,
     },
+    /// CSRF cookie 缺失（首次访问 / 客户端未先取 token）。HTTP 403。
+    #[snafu(display("csrf cookie missing"))]
+    CsrfCookieMissing,
+    /// CSRF 请求头缺失（未把 token 放进 X-CSRF-Token）。HTTP 403。
+    #[snafu(display("csrf header missing"))]
+    CsrfHeaderMissing,
+    /// CSRF cookie 与 header token 不一致，疑似伪造请求。HTTP 403。
+    #[snafu(display("csrf token mismatch"))]
+    CsrfMismatch,
 }
 
 impl From<Error> for BaseError {
@@ -49,6 +58,19 @@ impl From<Error> for BaseError {
             Error::HeaderValue { source } => {
                 BaseError::new(source).with_sub_category("header_value")
             }
+            // 三种 CSRF 失败统一 403，sub_category 区分具体原因方便排障
+            Error::CsrfCookieMissing => BaseError::new("csrf cookie missing")
+                .with_sub_category("csrf_cookie_missing")
+                .with_status(403)
+                .with_exception(false),
+            Error::CsrfHeaderMissing => BaseError::new("csrf header missing")
+                .with_sub_category("csrf_header_missing")
+                .with_status(403)
+                .with_exception(false),
+            Error::CsrfMismatch => BaseError::new("csrf token mismatch")
+                .with_sub_category("csrf_mismatch")
+                .with_status(403)
+                .with_exception(false),
         };
         err.with_category("middleware")
     }
@@ -97,12 +119,14 @@ where
 }
 
 mod common;
+mod csrf;
 mod entry;
 mod limit;
 mod stats;
 mod tracker;
 
 pub use common::*;
+pub use csrf::*;
 pub use entry::*;
 pub use limit::*;
 pub use stats::*;
