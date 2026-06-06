@@ -198,8 +198,10 @@ impl Model for DetectorGroupModel {
     }
 
     async fn delete_by_id(&self, pool: &Pool<Postgres>, id: u64) -> Result<()> {
+        // 与其他 Model（files / http_detectors 等）保持一致，加 `deleted_at IS NULL`
+        // 守卫：避免重复删除时把原始 deleted_at 覆盖成新时间，丢失审计痕迹
         sqlx::query(
-            r#"UPDATE detector_groups SET deleted_at = NOW(), modified = NOW() WHERE id = $1"#,
+            r#"UPDATE detector_groups SET deleted_at = NOW(), modified = NOW() WHERE id = $1 AND deleted_at IS NULL"#,
         )
         .bind(id as i64)
         .execute(pool)

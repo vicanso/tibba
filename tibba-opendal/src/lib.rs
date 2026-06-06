@@ -105,6 +105,23 @@ struct S3Params {
     secret_access_key: Option<String>,
 }
 
+/// 将 OpenDAL builder 组装成统一的 `Storage`：
+/// 1) 套 `MimeGuessLayer` 让对象自动带 Content-Type
+/// 2) 错误统一走 `OpenDalSnafu`
+///
+/// 各后端工厂只负责拼装自己的 builder，公共的 Operator 构造与 layer 装载
+/// 集中在这里，避免 4 处复制相同的三行模板。
+fn finalize_dal<B>(builder: B) -> Result<Storage>
+where
+    B: opendal::Builder,
+{
+    let dal = Operator::new(builder)
+        .context(OpenDalSnafu)?
+        .layer(MimeGuessLayer::default())
+        .finish();
+    Ok(Storage::new(dal))
+}
+
 /// 从 S3 兼容 URL 创建 S3 存储后端。
 fn new_s3_dal(url: &str) -> Result<Storage> {
     let parsed = parse_uri::<S3Params>(url).context(ParseUriSnafu)?;
@@ -123,23 +140,16 @@ fn new_s3_dal(url: &str) -> Result<Storage> {
     if let Some(secret_access_key) = &query.secret_access_key {
         builder = builder.secret_access_key(secret_access_key);
     }
-    let dal = opendal::Operator::new(builder)
-        .context(OpenDalSnafu)?
-        .layer(MimeGuessLayer::default())
-        .finish();
-    Ok(Storage::new(dal))
+    finalize_dal(builder)
 }
 
 /// 从 MySQL 连接字符串创建 MySQL 存储后端，使用 `objects` 表存储对象数据。
 fn new_mysql_dal(url: &str) -> Result<Storage> {
-    let builder = opendal::services::Mysql::default()
-        .connection_string(url)
-        .table("objects");
-    let dal = Operator::new(builder)
-        .context(OpenDalSnafu)?
-        .layer(MimeGuessLayer::default())
-        .finish();
-    Ok(Storage::new(dal))
+    finalize_dal(
+        opendal::services::Mysql::default()
+            .connection_string(url)
+            .table("objects"),
+    )
 }
 
 /// 将路径字符串规范化为绝对路径，支持 `~/` 家目录前缀展开。
@@ -170,22 +180,12 @@ fn new_fs_dal(url: &str) -> Result<Storage> {
             message: "root is empty".to_string(),
         });
     }
-    let builder = opendal::services::Fs::default().root(&resolve_path(root));
-    let dal = Operator::new(builder)
-        .context(OpenDalSnafu)?
-        .layer(MimeGuessLayer::default())
-        .finish();
-    Ok(Storage::new(dal))
+    finalize_dal(opendal::services::Fs::default().root(&resolve_path(root)))
 }
 
 /// 从 HTTP URL 创建只读 HTTP 存储后端。
 fn new_http_dal(url: &str) -> Result<Storage> {
-    let builder = opendal::services::Http::default().endpoint(url);
-    let dal = Operator::new(builder)
-        .context(OpenDalSnafu)?
-        .layer(MimeGuessLayer::default())
-        .finish();
-    Ok(Storage::new(dal))
+    finalize_dal(opendal::services::Http::default().endpoint(url))
 }
 
 /// 根据配置 URL 自动选择存储后端并创建 Storage 实例。

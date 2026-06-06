@@ -26,6 +26,10 @@ use tibba_util::is_production;
 use tokio::sync::RwLock;
 use tracing::info;
 
+/// 本模块所有日志事件的 tracing target。
+/// 可通过 `RUST_LOG=tibba:state=info`（或 `debug`）进行过滤。
+const LOG_TARGET: &str = "tibba:state";
+
 type Result<T> = std::result::Result<T, Error>;
 
 static STATE: OnceCell<AppState> = OnceCell::new();
@@ -68,7 +72,7 @@ async fn update_performance() {
     data.written_mb = (process_system_info.written_bytes / mb) as u32;
     data.read_mb = (process_system_info.read_bytes / mb) as u32;
     info!(
-        category = "application_performance",
+        target: LOG_TARGET,
         memory_usage = data.memory_usage_mb,
         cpu_usage = data.cpu_usage,
         cpu_time = data.cpu_time,

@@ -36,6 +36,7 @@ mime_guess2 = { workspace = true }
 rust-embed = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+snafu = { workspace = true }
 sqlx = { workspace = true }
 time = { workspace = true }
 tibba-cache = { path = "./tibba-cache" }
@@ -156,6 +157,7 @@ opendal = { version = "0.55.0", features = [
 os_info = { version = "3.14.0", default-features = false }
 parse-size = "1.1.0"
 path-absolutize = "3.1.1"
+pretty_assertions = "1.4.1"
 rand = "0.10.1"
 redis = { version = "1.2.0", features = ["tokio-comp", "aio"] }
 reqwest = { version = "0.13.4", default-features = false, features = [
@@ -198,4 +200,4 @@ validator = { version = "0.20.0", features = ["derive"] }
 zstd = "0.13.3"
 
 [dev-dependencies]
-pretty_assertions = "1.4.1"
+pretty_assertions = { workspace = true }

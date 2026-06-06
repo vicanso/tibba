@@ -211,11 +211,11 @@ impl Model for TokenKeyModel {
             if expired_at.is_empty() {
                 qb.push(", expired_at = NULL");
             } else {
-                let dt = tibba_model::parse_primitive_datetime(&expired_at).map_err(|_| {
-                    Error::NotSupported {
-                        name: "invalid expired_at".to_string(),
-                    }
-                })?;
+                // 之前把 datetime 解析失败包成 `NotSupported`——语义错位，会让客户端
+                // 看到 "not supported function: invalid expired_at" 的奇怪报错。
+                // `tibba-model` 早就有 `Error::InvalidDatetime { value }` 专门表达
+                // 这种格式问题，且 `parse_primitive_datetime` 本身就返回它，直接 `?` 透传
+                let dt = tibba_model::parse_primitive_datetime(&expired_at)?;
                 qb.push(", expired_at = ").push_bind(dt);
             }
         }

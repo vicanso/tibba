@@ -39,6 +39,14 @@ use time::OffsetDateTime;
 use tokio::sync::Semaphore;
 use tokio::time::timeout;
 use tracing::{error, info};
+
+/// HTTP 探测子任务的 tracing target。
+/// 可通过 `RUST_LOG=tibba:httpstat:detector=info` 进行过滤。
+const LOG_TARGET_DETECTOR: &str = "tibba:httpstat:detector";
+/// HTTP 探测告警子任务的 tracing target。
+/// 可通过 `RUST_LOG=tibba:httpstat:alarm=info` 进行过滤。
+const LOG_TARGET_ALARM: &str = "tibba:httpstat:alarm";
+
 static INLINE_JS: &str = include_str!("./inline.js");
 
 type Result<T> = std::result::Result<T, Error>;
@@ -310,7 +318,6 @@ async fn run_detector_stat() -> Result<(i32, i32, i32)> {
     let success = Arc::new(AtomicI32::new(0));
     let minutes = OffsetDateTime::now_utc().unix_timestamp() / 60;
 
-    let category = "http_detector";
     let mut all_task_count = 0;
 
     let limit = 100;
@@ -360,7 +367,7 @@ async fn run_detector_stat() -> Result<(i32, i32, i32)> {
                 {
                     Ok(locked) => locked,
                     Err(e) => {
-                        error!(category, lock_key, error = ?e, "lock failed");
+                        error!(target: LOG_TARGET_DETECTOR, lock_key, error = ?e, "lock failed");
                         return;
                     }
                 };
@@ -370,7 +377,7 @@ async fn run_detector_stat() -> Result<(i32, i32, i32)> {
                 count.fetch_add(1, Ordering::Relaxed);
 
                 if let Err(e) = run_http_detector(pool, detector).await {
-                    error!(category, error = ?e, "run http detector failed");
+                    error!(target: LOG_TARGET_DETECTOR, error = ?e, "run http detector failed");
                 } else {
                     success.fetch_add(1, Ordering::Relaxed);
                 }
@@ -381,7 +388,7 @@ async fn run_detector_stat() -> Result<(i32, i32, i32)> {
         let results = join_all(handles).await;
         for result in results {
             if let Err(e) = result {
-                error!(category, error = ?e, "join all handles failed");
+                error!(target: LOG_TARGET_DETECTOR, error = ?e, "join all handles failed");
             }
         }
         if done {
@@ -488,17 +495,16 @@ async fn send_alarms(alarm_params: Vec<StatAlarmParam>, alarm_config: AlarmConfi
         }?;
         Ok(())
     };
-    let category = "http_stat_alarm";
     let mut contents = vec![];
     for param in alarm_params.iter() {
         if let Some(alarm_config) = &param.alarm_config {
             if let Err(e) = send_markdown(param.to_wecom_markdown(), alarm_config.url.clone()).await
             {
-                error!(category, error = ?e, "send alarm message failed");
+                error!(target: LOG_TARGET_ALARM, error = ?e, "send alarm message failed");
             } else {
                 success += 1;
                 info!(
-                    category,
+                    target: LOG_TARGET_ALARM,
                     service = param.stat.target_name,
                     "send alarm message success"
                 );
@@ -509,10 +515,10 @@ async fn send_alarms(alarm_params: Vec<StatAlarmParam>, alarm_config: AlarmConfi
     }
     if !contents.is_empty() && !alarm_config.url.is_empty() {
         if let Err(e) = send_markdown(contents.join("\n"), alarm_config.url).await {
-            error!(category, error = ?e, "send alarm message failed");
+            error!(target: LOG_TARGET_ALARM, error = ?e, "send alarm message failed");
         } else {
             success += 1;
-            info!(category, "send alarm message success");
+            info!(target: LOG_TARGET_ALARM, "send alarm message success");
         }
     }
     success
@@ -673,7 +679,7 @@ async fn run_stat_alarm() -> Result<(i32, i32)> {
     let failed = failed_targets.len() as i32;
     if !alarm_params.is_empty() {
         let success = send_alarms(alarm_params, alarm_config).await;
-        info!(category = task, success, "send alarm message done");
+        info!(target: LOG_TARGET_ALARM, task, success, "send alarm message done");
     }
 
     if let Err(e) = get_redis_cache()
@@ -687,7 +693,7 @@ async fn run_stat_alarm() -> Result<(i32, i32)> {
         )
         .await
     {
-        error!(category = task, error = ?e, "set last check time failed");
+        error!(target: LOG_TARGET_ALARM, task, error = ?e, "set last check time failed");
     }
     Ok((failed, count))
 }
@@ -699,12 +705,11 @@ impl Task for HttpDetectorTask {
         Box::pin(async move {
             // 每分钟
             let job = Job::new_async("0 * * * * *", |_, _| {
-                let category = "http_detector";
                 Box::pin(async move {
                     match run_detector_stat().await {
                         Err(e) => {
                             error!(
-                                category,
+                                target: LOG_TARGET_DETECTOR,
                                 error = ?e,
                                 "run http detector failed"
                             );
@@ -712,7 +717,7 @@ impl Task for HttpDetectorTask {
                         Ok((success, count, all_task_count)) => {
                             if count >= 0 {
                                 info!(
-                                    category,
+                                    target: LOG_TARGET_DETECTOR,
                                     success, count, all_task_count, "run http detector success"
                                 );
                             }
@@ -737,7 +742,6 @@ impl Task for HttpStatAlarmTask {
         Box::pin(async move {
             // 每分钟
             let job = Job::new_async("30 * * * * *", |_, _| {
-                let category = "http_stat_alarm";
                 Box::pin(async move {
                     // 随机delay，为了让各机器更好的获到执行的机会
                     let delay = Duration::from_millis(rand::random::<u64>() % 2000);
@@ -745,14 +749,14 @@ impl Task for HttpStatAlarmTask {
                     match run_stat_alarm().await {
                         Err(e) => {
                             error!(
-                                category,
+                                target: LOG_TARGET_ALARM,
                                 error = ?e,
                                 "run http stat alarm failed"
                             );
                         }
                         Ok((failed, count)) => {
                             if count >= 0 {
-                                info!(category, failed, count, "run http stat alarm success");
+                                info!(target: LOG_TARGET_ALARM, failed, count, "run http stat alarm success");
                             }
                         }
                     }

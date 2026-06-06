@@ -120,10 +120,13 @@ struct RedisParams {
 fn new_redis_config(config: &Config) -> Result<RedisConfig> {
     let uri = config.get_string("uri").context(ConfigSnafu)?;
     let parsed = parse_uri::<RedisParams>(&uri).context(ParseUriSnafu)?;
+    // 保留原始 scheme（如 `rediss://` 表示 TLS）；之前硬编码 `redis://` 会
+    // 让 TLS 配置被静默降级为明文，且无任何错误或警告
+    let scheme = parsed.schema;
     let nodes = parsed
         .host_strings()
         .iter()
-        .map(|item| format!("redis://{item}"))
+        .map(|item| format!("{scheme}://{item}"))
         .collect();
     let query = parsed.query;
     let redis_config = RedisConfig {

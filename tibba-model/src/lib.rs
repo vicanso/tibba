@@ -27,6 +27,13 @@ pub fn format_datetime(datetime: PrimitiveDateTime) -> String {
     }
 }
 
+/// 返回当前 UTC 时刻的 `PrimitiveDateTime`，用于与 SQL 端 timestamp 类型比较。
+/// 之前 `get_response_headers` / `get_config` 各写了一份相同的构造逻辑，统一在此。
+pub fn now_primitive_utc() -> PrimitiveDateTime {
+    let now = OffsetDateTime::now_utc();
+    PrimitiveDateTime::new(now.date(), now.time())
+}
+
 pub fn parse_primitive_datetime(s: &str) -> Result<PrimitiveDateTime> {
     let fmt_t = format_description!("[year]-[month]-[day]T[hour]:[minute]:[second]");
     let fmt_space = format_description!("[year]-[month]-[day] [hour]:[minute]:[second]");
@@ -107,3 +114,48 @@ pub use configuration::*;
 pub use model::*;
 pub use schema::*;
 pub use user::*;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+    use time::macros::datetime;
+
+    #[test]
+    fn parse_t_separator_format() {
+        let dt = parse_primitive_datetime("2026-06-05T12:34:56").unwrap();
+        assert_eq!(dt, datetime!(2026-06-05 12:34:56));
+    }
+
+    #[test]
+    fn parse_space_separator_format() {
+        let dt = parse_primitive_datetime("2026-06-05 12:34:56").unwrap();
+        assert_eq!(dt, datetime!(2026-06-05 12:34:56));
+    }
+
+    #[test]
+    fn parse_rfc3339_converts_to_utc() {
+        // +08:00 时刻 → UTC 应减 8 小时
+        let dt = parse_primitive_datetime("2026-06-05T12:34:56+08:00").unwrap();
+        assert_eq!(dt, datetime!(2026-06-05 04:34:56));
+    }
+
+    #[test]
+    fn parse_invalid_returns_error() {
+        let err = parse_primitive_datetime("not a date").unwrap_err();
+        assert!(matches!(err, Error::InvalidDatetime { ref value } if value == "not a date"));
+    }
+
+    #[test]
+    fn now_primitive_utc_returns_close_to_chrono_now() {
+        // 与 chrono 系统时钟比较，验证「现在」差距在 1 秒内（CI 慢机也够用）
+        let ours = now_primitive_utc();
+        let chrono_now = chrono::Utc::now();
+        let ours_ts = ours.assume_utc().unix_timestamp();
+        let diff = (ours_ts - chrono_now.timestamp()).abs();
+        assert!(
+            diff <= 1,
+            "now_primitive_utc 应与系统时钟一致，差距 {diff}s"
+        );
+    }
+}

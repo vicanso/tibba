@@ -75,3 +75,39 @@ pub fn decompress(data: &[u8], algorithm: Algorithm) -> Result<Vec<u8>> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    /// 可重复运行的压缩 / 解压回路：原始字节 → 压缩 → 解压 → 与原始一致
+    fn round_trip(algo: Algorithm, payload: &[u8]) {
+        let compressed = compress(payload, algo).expect("compress should succeed");
+        let decompressed = decompress(&compressed, algo).expect("decompress should succeed");
+        assert_eq!(decompressed, payload, "round-trip 必须保留所有字节");
+    }
+
+    #[test]
+    fn lz4_round_trip() {
+        round_trip(Algorithm::Lz4, b"hello world");
+        round_trip(Algorithm::Lz4, &vec![0xAB; 1024]); // 压缩友好的重复数据
+        round_trip(Algorithm::Lz4, &[]); // 空输入
+    }
+
+    #[test]
+    fn zstd_round_trip() {
+        let algo = Algorithm::Zstd(zstd::DEFAULT_COMPRESSION_LEVEL);
+        round_trip(algo, b"hello world");
+        round_trip(algo, &vec![0xAB; 1024]);
+        round_trip(algo, &[]);
+    }
+
+    #[test]
+    fn decompress_garbage_returns_error() {
+        // 截断 / 非法的压缩数据必须报错，不能产生空字节当成功
+        let garbage = b"this is definitely not compressed data";
+        assert!(decompress(garbage, Algorithm::Lz4).is_err());
+        assert!(decompress(garbage, Algorithm::Zstd(0)).is_err());
+    }
+}

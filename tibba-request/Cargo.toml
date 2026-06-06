@@ -26,4 +26,4 @@ tibba-util = { path = "../tibba-util", version = "0.2.2" }
 tracing = { workspace = true }
 
 [dev-dependencies]
-pretty_assertions = "1.4.1"
+pretty_assertions = { workspace = true }

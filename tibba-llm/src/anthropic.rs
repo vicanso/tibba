@@ -15,10 +15,9 @@
 //! Anthropic Messages API 客户端（Claude 系列模型）。
 
 use super::{
-    BoxStream, ChatParams, ChatResponse, Error, JsonSnafu, LOG_TARGET, RequestSnafu, Role,
-    SseState, StreamChunk, Usage,
+    BoxStream, ChatParams, ChatResponse, Error, InvalidHeaderSnafu, JsonSnafu, LOG_TARGET,
+    RequestSnafu, Role, SsePoll, SseState, StreamChunk, Usage, next_sse_data_line,
 };
-use futures::StreamExt;
 use reqwest::Client as ReqwestClient;
 use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderValue};
 use serde::{Deserialize, Serialize};
@@ -109,64 +108,53 @@ struct SseData {
 
 /// 将 Anthropic SSE 字节流解析为 StreamChunk 序列。
 /// Anthropic SSE 格式：`event: <type>\ndata: <json>\n\n`
-/// 仅提取 `content_block_delta` 中 `text_delta` 类型的内容。
+/// 仅提取 `content_block_delta` 中 `text_delta` 类型的内容；
+/// 行级解析委托给 [`next_sse_data_line`]，本函数只处理 Anthropic 特有的
+/// 事件类型分发（`message_stop` / `content_block_delta` / `message_delta`）。
 fn parse_stream(response: reqwest::Response) -> BoxStream<Result<StreamChunk>> {
     let state = SseState::new(response);
 
     Box::pin(futures::stream::unfold(state, |mut state| async move {
         loop {
-            if let Some(nl) = state.buffer.find('\n') {
-                let line = state.buffer[..nl].trim_end_matches('\r').to_string();
-                state.buffer = state.buffer[nl + 1..].to_string();
+            let data = match next_sse_data_line(&mut state).await {
+                SsePoll::Data(d) => d,
+                SsePoll::Done => return None,
+                SsePoll::Err(e) => return Some((Err(e), state)),
+            };
 
-                // 跳过 event: 行，只处理 data: 行
-                let Some(data) = line.strip_prefix("data: ") else {
-                    continue;
-                };
-                if data.is_empty() {
-                    continue;
-                }
+            let sse: SseData = match serde_json::from_str(&data) {
+                Ok(v) => v,
+                Err(e) => return Some((Err(Error::Json { source: e }), state)),
+            };
 
-                let sse: SseData = match serde_json::from_str(data) {
-                    Ok(v) => v,
-                    Err(e) => return Some((Err(Error::Json { source: e }), state)),
-                };
-
-                match sse.event_type.as_str() {
-                    "message_stop" => return None,
-                    "content_block_delta" => {
-                        if let Some(delta) = sse.delta
-                            && delta.delta_type == "text_delta"
-                        {
-                            let chunk = StreamChunk {
+            match sse.event_type.as_str() {
+                "message_stop" => return None,
+                "content_block_delta" => {
+                    if let Some(delta) = sse.delta
+                        && delta.delta_type == "text_delta"
+                    {
+                        return Some((
+                            Ok(StreamChunk {
                                 delta: delta.text.unwrap_or_default(),
                                 finish_reason: None,
-                            };
-                            return Some((Ok(chunk), state));
-                        }
+                            }),
+                            state,
+                        ));
                     }
-                    "message_delta" => {
-                        // 流式结束，发一个带 finish_reason 的空 chunk
-                        let chunk = StreamChunk {
+                    // 非 text_delta 的 content_block_delta 跳过
+                    continue;
+                }
+                "message_delta" => {
+                    // 流式结束的元数据事件：发一个带 finish_reason 的空 chunk
+                    return Some((
+                        Ok(StreamChunk {
                             delta: String::new(),
                             finish_reason: Some("stop".to_string()),
-                        };
-                        return Some((Ok(chunk), state));
-                    }
-                    _ => {}
+                        }),
+                        state,
+                    ));
                 }
-                continue;
-            }
-
-            // 缓冲区内没有完整行，继续读取字节流
-            match state.inner.next().await {
-                Some(Ok(bytes)) => {
-                    state.buffer.push_str(&String::from_utf8_lossy(&bytes));
-                }
-                Some(Err(e)) => {
-                    return Some((Err(Error::Request { source: e }), state));
-                }
-                None => return None,
+                _ => continue,
             }
         }
     }))
@@ -233,9 +221,7 @@ impl AnthropicClientBuilder {
     /// 构建 `AnthropicClient`。
     pub fn build(self) -> Result<AnthropicClient> {
         let mut api_key_value =
-            HeaderValue::from_str(&self.config.api_key).map_err(|e| Error::Stream {
-                message: e.to_string(),
-            })?;
+            HeaderValue::from_str(&self.config.api_key).context(InvalidHeaderSnafu)?;
         api_key_value.set_sensitive(true);
 
         let mut headers = HeaderMap::new();

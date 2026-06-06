@@ -19,6 +19,7 @@ axum = { workspace = true }
 axum-extra = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+snafu = { workspace = true }
 sqlx = { workspace = true }
 tibba-cache = { path = "../tibba-cache", version = "0.2.2" }
 tibba-error = { path = "../tibba-error", version = "0.2.2" }

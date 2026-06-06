@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::admin_web::serve_web;
 use crate::cache::get_redis_cache;
 use crate::config::{must_get_basic_config, must_get_token_config};
 use crate::dal::get_opendal_storage;
@@ -19,7 +20,6 @@ use crate::docker::analyze as docker_analyze;
 use crate::metrics::metrics_handler;
 use crate::sql::get_db_pool;
 use crate::state::get_app_state;
-use crate::admin_web::serve_web;
 use axum::Router;
 use axum::routing::{get, post};
 use std::sync::Arc;

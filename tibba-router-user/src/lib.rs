@@ -20,12 +20,13 @@ use axum::{Json, Router};
 use axum_extra::extract::cookie::CookieJar;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use snafu::{OptionExt, Snafu};
 use sqlx::PgPool;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use tibba_cache::RedisCache;
-use tibba_error::Error;
+use tibba_error::Error as BaseError;
 use tibba_middleware::{user_tracker, validate_captcha};
 use tibba_model::{Model, ROLE_SUPER_ADMIN, UserModel, UserUpdateParams};
 use tibba_session::{Session, SessionResponse, UserSession};
@@ -48,7 +49,46 @@ struct RegisterState {
     on_register: Option<OnRegisterFn>,
 }
 
-type Result<T> = std::result::Result<T, Error>;
+/// 模块对外仍以 `tibba_error::Error` 为错误类型，本地 `Error` 仅作 snafu 上下文。
+type Result<T, E = BaseError> = std::result::Result<T, E>;
+
+const ERROR_CATEGORY: &str = "user_router";
+
+/// 用户路由模块内部错误，统一通过 `From` 转换为 `tibba_error::Error`。
+#[derive(Debug, Snafu)]
+pub(crate) enum Error {
+    /// 登录令牌过期或时间漂移超过 ±60 秒（HTTP 401）
+    #[snafu(display("timestamp is expired"))]
+    TokenExpired,
+
+    /// 账号或密码错误。统一文案，避免账号枚举攻击（HTTP 401）
+    #[snafu(display("account or password is wrong"))]
+    BadCredentials,
+
+    /// Session 中的账号在数据库中已不存在，强制客户端重登（HTTP 401）
+    #[snafu(display("user not found: {account}"))]
+    UserNotFound { account: String },
+}
+
+impl From<Error> for BaseError {
+    fn from(val: Error) -> Self {
+        let err = match val {
+            Error::TokenExpired => BaseError::new("timestamp is expired")
+                .with_sub_category("token_expired")
+                .with_status(401)
+                .with_exception(false),
+            Error::BadCredentials => BaseError::new("account or password is wrong")
+                .with_sub_category("bad_credentials")
+                .with_status(401)
+                .with_exception(false),
+            Error::UserNotFound { account } => BaseError::new(format!("user not found: {account}"))
+                .with_sub_category("user_not_found")
+                .with_status(401)
+                .with_exception(false),
+        };
+        err.with_category(ERROR_CATEGORY)
+    }
+}
 
 /// 登录令牌接口的响应结构体。
 #[derive(Serialize)]
@@ -100,7 +140,7 @@ impl LoginParams {
             return Ok(());
         }
         if (self.ts - timestamp()).abs() > 60 {
-            return Err(Error::new("timestamp is expired"));
+            return Err(Error::TokenExpired.into());
         }
         validate_timestamp_hash(self.ts, &self.token, &self.hash, secret)?;
         Ok(())
@@ -144,16 +184,15 @@ async fn login(
 ) -> Result<SessionResponse<Json<UserMeResp>>> {
     params.validate_token(&secret)?;
     let account = params.account;
-    let account_password_err = Error::new("account or password is wrong");
     let Some(user) = UserModel::new().get_by_account(pool, &account).await? else {
-        return Err(account_password_err);
+        return Err(Error::BadCredentials.into());
     };
 
     let password = user.password;
     // 密码验证：sha256(hash:存储密码) 须与客户端传入的 password 相等
     let msg = format!("{}:{password}", params.hash);
     if sha256(msg.as_bytes()) != params.password {
-        return Err(account_password_err);
+        return Err(Error::BadCredentials.into());
     }
 
     let groups = user.groups.clone().unwrap_or_default();
@@ -204,7 +243,9 @@ async fn me(
     let user = UserModel::new()
         .get_by_account(pool, account)
         .await?
-        .ok_or(Error::new("user not found"))?;
+        .context(UserNotFoundSnafu {
+            account: account.to_string(),
+        })?;
     let info = UserMeResp {
         account: account.to_string(),
         expired_at: session.get_expired_at(),

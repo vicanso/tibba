@@ -42,19 +42,26 @@ pub enum Error {
 
 impl From<Error> for BaseError {
     fn from(val: Error) -> Self {
-        let message = val.to_string();
-        let sub_category = match &val {
-            Error::Zstd { .. } => "zstd",
-            Error::Lz4Decompress { .. } => "lz4_decompress",
-            Error::InvalidHeaderName { .. } => "invalid_header_name",
-            Error::InvalidHeaderValue { .. } => "invalid_header_value",
-            Error::Axum { .. } => "axum",
-            Error::Invalid { .. } => "invalid",
-            Error::Deserialize { .. } => "deserialize",
+        // 单次 match：从 source 构造 BaseError 并打 sub_category，
+        // 与项目其他 snafu 模块（tibba-config / tibba-sql 等）保持一致
+        let err = match val {
+            Error::Zstd { source } => BaseError::new(source).with_sub_category("zstd"),
+            Error::Lz4Decompress { source } => {
+                BaseError::new(source).with_sub_category("lz4_decompress")
+            }
+            Error::InvalidHeaderName { source } => {
+                BaseError::new(source).with_sub_category("invalid_header_name")
+            }
+            Error::InvalidHeaderValue { source } => {
+                BaseError::new(source).with_sub_category("invalid_header_value")
+            }
+            Error::Axum { source } => BaseError::new(source).with_sub_category("axum"),
+            Error::Invalid { message } => BaseError::new(message).with_sub_category("invalid"),
+            Error::Deserialize { source } => {
+                BaseError::new(source).with_sub_category("deserialize")
+            }
         };
-        BaseError::new(message)
-            .with_category("util")
-            .with_sub_category(sub_category)
+        err.with_category("util")
     }
 }
 

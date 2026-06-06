@@ -33,12 +33,6 @@ pub enum Error {
     /// Session ID 格式非法（长度不足 36 字符）。
     #[snafu(display("session id is invalid"))]
     SessionIdInvalid,
-    /// Session 缓存未初始化，属于服务端配置错误。
-    #[snafu(display("session cache is not set"))]
-    SessionCacheNotSet,
-    /// Cookie 签名密钥错误。
-    #[snafu(display("{source}"))]
-    Key { source: cookie::KeyError },
     /// 请求扩展中未找到 Session，通常表示 session 中间件未挂载。
     #[snafu(display("session not found"))]
     SessionNotFound,
@@ -54,18 +48,11 @@ impl From<Error> for BaseError {
     fn from(val: Error) -> Self {
         let err = match val {
             // 服务端内部异常，返回 500
-            e @ (Error::SessionIdEmpty
-            | Error::SessionIdInvalid
-            | Error::SessionCacheNotSet
-            | Error::SessionNotFound) => BaseError::new(e.to_string())
-                .with_status(500)
-                .with_exception(true),
-
-            // Cookie 密钥错误，视为服务端异常
-            Error::Key { source } => BaseError::new(source)
-                .with_sub_category("cookie")
-                .with_status(500)
-                .with_exception(true),
+            e @ (Error::SessionIdEmpty | Error::SessionIdInvalid | Error::SessionNotFound) => {
+                BaseError::new(e.to_string())
+                    .with_status(500)
+                    .with_exception(true)
+            }
 
             // 未登录，返回 401
             Error::UserNotLogin => BaseError::new("user not login")

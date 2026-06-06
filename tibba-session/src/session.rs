@@ -218,10 +218,11 @@ impl Session {
         self.data.iat + self.params.ttl < timestamp()
     }
 
-    /// 重置 Session（登出），清除 ID 和账号信息。
+    /// 重置 Session（登出），清空所有数据。
+    /// 只清 `id` / `account` 会留下 `user_id` / `roles` / `groups` /
+    /// `renewal_count` / `iat` 等残留字段，后续读取会拿到上一登录态的脏数据。
     pub fn reset(&mut self) {
-        self.data.id = String::new();
-        self.data.account = String::new();
+        self.data = SessionData::default();
     }
 
     /// 将当前 Session 数据持久化到 Redis，TTL 与配置一致。

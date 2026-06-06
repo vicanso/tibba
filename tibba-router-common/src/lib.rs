@@ -22,13 +22,14 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use captcha::Captcha;
 use captcha::filters::{Noise, Wave};
 use serde::{Deserialize, Serialize};
+use snafu::{OptionExt, ResultExt, Snafu};
 use std::future::Future;
 use std::io::Cursor;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 use tibba_cache::RedisCache;
-use tibba_error::Error;
+use tibba_error::Error as BaseError;
 use tibba_performance::current_process_system_info;
 use tibba_state::AppState;
 use tibba_util::{JsonResult, QueryParams, get_env, uuid};
@@ -36,10 +37,39 @@ use tokio::time::timeout;
 use tracing::warn;
 use validator::Validate;
 
-type Result<T> = std::result::Result<T, Error>;
+type Result<T, E = BaseError> = std::result::Result<T, E>;
+
+/// 该 crate 所有日志事件的 tracing target。
+/// 可通过 `RUST_LOG=tibba:router:common=info`（或 `debug`）进行过滤。
+const LOG_TARGET: &str = "tibba:router:common";
 
 /// 错误分类标识，用于区分本路由模块产生的错误。
 const ERROR_CATEGORY: &str = "common_router";
+
+/// 本模块仅在 captcha 流程对外部 crate 错误进行包装，
+/// 其他错误直接用 `BaseError::new(...).with_category(...)` 即可，无需 snafu。
+#[derive(Debug, Snafu)]
+enum Error {
+    /// `captcha` crate 编码 PNG 失败（极少发生，库内部返回 `None`）。
+    #[snafu(display("captcha encode png fail"))]
+    EncodePng,
+    /// 深色主题下对 PNG 进行解码/取反/重编码时失败。
+    #[snafu(display("image process fail: {source}"))]
+    Image {
+        #[snafu(source(from(image::ImageError, Box::new)))]
+        source: Box<image::ImageError>,
+    },
+}
+
+impl From<Error> for BaseError {
+    fn from(val: Error) -> Self {
+        let err = match val {
+            Error::EncodePng => BaseError::new("captcha encode png fail"),
+            Error::Image { source } => BaseError::new(source).with_exception(true),
+        };
+        err.with_category(ERROR_CATEGORY)
+    }
+}
 
 /// readiness 探针超时；超过即视为未就绪，K8s 会摘流量但**不**重启 Pod。
 const READINESS_TIMEOUT: Duration = Duration::from_secs(2);
@@ -55,7 +85,7 @@ pub type ReadinessCheck = Arc<dyn Fn() -> ReadinessFuture + Send + Sync>;
 /// K8s 失败时会重启 Pod，因此这里必须保持轻量、绝不依赖下游。
 async fn healthz(State(state): State<&'static AppState>) -> Result<&'static str> {
     if !state.is_running() {
-        return Err(Error::new("server is not running")
+        return Err(BaseError::new("server is not running")
             .with_category(ERROR_CATEGORY)
             .with_status(503));
     }
@@ -68,7 +98,7 @@ async fn readyz(
     State((state, check)): State<(&'static AppState, Option<ReadinessCheck>)>,
 ) -> Result<&'static str> {
     if !state.is_running() {
-        return Err(Error::new("server is not running")
+        return Err(BaseError::new("server is not running")
             .with_category(ERROR_CATEGORY)
             .with_status(503));
     }
@@ -79,18 +109,18 @@ async fn readyz(
     match timeout(READINESS_TIMEOUT, check()).await {
         Ok(Ok(())) => Ok("ready"),
         Ok(Err(err)) => {
-            warn!(category = ERROR_CATEGORY, error = %err, "readiness check failed");
-            Err(Error::new(format!("readiness check failed: {err}"))
+            warn!(target: LOG_TARGET, error = %err, "readiness check failed");
+            Err(BaseError::new(format!("readiness check failed: {err}"))
                 .with_category(ERROR_CATEGORY)
                 .with_status(503))
         }
         Err(_) => {
             warn!(
-                category = ERROR_CATEGORY,
+                target: LOG_TARGET,
                 timeout_secs = READINESS_TIMEOUT.as_secs(),
                 "readiness check timed out"
             );
-            Err(Error::new(format!(
+            Err(BaseError::new(format!(
                 "readiness check timed out after {}s",
                 READINESS_TIMEOUT.as_secs()
             ))
@@ -209,15 +239,15 @@ async fn captcha(
         if is_dark {
             c.set_color([60, 60, 60]);
         }
-        let buffer = c.as_png().unwrap_or_default();
+        // as_png 失败时显式上抛，避免 unwrap_or_default 把空 PNG 静默发给客户端
+        let buffer = c.as_png().context(EncodePngSnafu)?;
         if is_dark {
             // 深色主题：对 PNG 图片进行颜色取反处理
-            let mut img = image::load_from_memory(&buffer)
-                .map_err(|e| Error::new(e.to_string()).with_exception(true))?;
+            let mut img = image::load_from_memory(&buffer).context(ImageSnafu)?;
             img.invert();
             let mut buffer: Vec<u8> = Vec::new();
             img.write_to(&mut Cursor::new(&mut buffer), image::ImageFormat::Png)
-                .map_err(|e| Error::new(e.to_string()).with_exception(true))?;
+                .context(ImageSnafu)?;
             (c.chars_as_string(), buffer)
         } else {
             (c.chars_as_string(), buffer)

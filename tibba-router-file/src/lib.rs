@@ -20,12 +20,13 @@ use axum::http::HeaderValue;
 use axum::http::header;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
-use imageoptimize::{ProcessImage, run_with_image};
+use imageoptimize::{ImageProcessingError, ProcessImage, run_with_image};
 use serde::Deserialize;
+use snafu::{OptionExt, ResultExt, Snafu};
 use sqlx::PgPool;
 use std::collections::HashMap;
 use std::path::Path;
-use tibba_error::Error;
+use tibba_error::Error as BaseError;
 use tibba_model_builtin::{ConfigurationModel, FileInsertParams, FileModel, Model};
 use tibba_opendal::Storage;
 use tibba_session::UserSession;
@@ -33,9 +34,55 @@ use tibba_util::{JsonResult, QueryParams, uuid};
 use tibba_validator::{x_file_group, x_file_name, x_image_format, x_image_quality};
 use validator::Validate;
 
-type Result<T> = std::result::Result<T, Error>;
+/// 模块对外仍返回 `tibba_error::Error`，本地 `Error` 仅用于 snafu 上下文捕获。
+type Result<T, E = BaseError> = std::result::Result<T, E>;
 
 const ERROR_CATEGORY: &str = "file_router";
+
+/// 文件路由模块内部错误，统一通过 `From` 转换为 `tibba_error::Error`。
+#[derive(Debug, Snafu)]
+enum Error {
+    /// 数据库中找不到指定文件（HTTP 404）
+    #[snafu(display("file not found: {name}"))]
+    FileNotFound { name: String },
+
+    /// multipart 表单字段读取失败
+    #[snafu(display("multipart read fail: {source}"))]
+    Multipart {
+        source: axum::extract::multipart::MultipartError,
+    },
+
+    /// 图片格式探测 / 解码失败（来自 `image` crate）
+    #[snafu(display("image decode fail: {source}"))]
+    Image {
+        // `image::ImageError` 体积较大，统一装箱避免 enum 膨胀
+        #[snafu(source(from(image::ImageError, Box::new)))]
+        source: Box<image::ImageError>,
+    },
+
+    /// 图片优化任务失败（来自 `imageoptimize` crate）
+    #[snafu(display("optimize fail: {source}"))]
+    Optimize {
+        // `ImageProcessingError` 内含 image / io / utf 多源，体积较大需装箱
+        #[snafu(source(from(ImageProcessingError, Box::new)))]
+        source: Box<ImageProcessingError>,
+    },
+}
+
+impl From<Error> for BaseError {
+    fn from(val: Error) -> Self {
+        let err = match val {
+            Error::FileNotFound { name } => BaseError::new(format!("file not found: {name}"))
+                .with_sub_category("not_found")
+                .with_status(404)
+                .with_exception(false),
+            Error::Multipart { source } => BaseError::new(source).with_sub_category("multipart"),
+            Error::Image { source } => BaseError::new(source).with_sub_category("image"),
+            Error::Optimize { source } => BaseError::new(source).with_sub_category("optimize"),
+        };
+        err.with_category(ERROR_CATEGORY)
+    }
+}
 
 #[derive(Debug, Deserialize, Clone, Validate)]
 struct CreateFileParams {
@@ -50,11 +97,7 @@ async fn create_file(
     mut multipart: Multipart,
 ) -> JsonResult<HashMap<String, String>> {
     let mut files = HashMap::new();
-    while let Some(field) = multipart
-        .next_field()
-        .await
-        .map_err(|e| Error::new(e).with_category(ERROR_CATEGORY))?
-    {
+    while let Some(field) = multipart.next_field().await.context(MultipartSnafu)? {
         let name = field.name().unwrap_or_default().to_string();
         let file_name = field.file_name().unwrap_or_default().to_string();
         if name.is_empty() && file_name.is_empty() {
@@ -69,10 +112,7 @@ async fn create_file(
         }
         let file = format!("{}.{}", uuid(), ext);
 
-        let data = field
-            .bytes()
-            .await
-            .map_err(|e| Error::new(e).with_category(ERROR_CATEGORY))?;
+        let data = field.bytes().await.context(MultipartSnafu)?;
         let content_type = mime_guess2::from_path(&file_name).first_or_octet_stream();
         let mut params = FileInsertParams {
             group: create_file_params.group.clone(),
@@ -84,19 +124,17 @@ async fn create_file(
         };
 
         if content_type.type_() == "image" {
-            let format = image::guess_format(&data)
-                .map_err(|e| Error::new(e).with_category(ERROR_CATEGORY))?;
+            let format = image::guess_format(&data).context(ImageSnafu)?;
             params.content_type = format.to_mime_type().to_string();
-            let image = image::load_from_memory_with_format(&data, format)
-                .map_err(|e| Error::new(e).with_category(ERROR_CATEGORY))?;
+            let image = image::load_from_memory_with_format(&data, format).context(ImageSnafu)?;
             params.width = Some(image.width() as i32);
             params.height = Some(image.height() as i32);
         };
 
-        let _ = storage.write_with(&file, data.clone(), vec![]).await?;
-        let _ = FileModel::new().insert_file(pool, params).await?;
+        storage.write_with(&file, data.clone(), vec![]).await?;
+        FileModel::new().insert_file(pool, params).await?;
 
-        files.insert(name.to_string(), file);
+        files.insert(name, file);
     }
     Ok(Json(files))
 }
@@ -121,15 +159,17 @@ async fn get_file(
     let file = FileModel::new()
         .get_by_name(pool, &params.name)
         .await?
-        .ok_or(Error::new("file not found").with_category(ERROR_CATEGORY))?;
+        .context(FileNotFoundSnafu {
+            name: params.name.clone(),
+        })?;
     let mut data = storage.read(&params.name).await?;
     let mut content_type = file.content_type.clone();
-    let ext = content_type.split("/").last().unwrap_or_default();
-    let format = params.format.unwrap_or(ext.to_string());
+    // mime 形如 `image/png`，取斜杠后一段作为扩展名；无斜杠时返回原串
+    let ext = content_type.split('/').next_back().unwrap_or_default();
+    let format = params.format.clone().unwrap_or_else(|| ext.to_string());
     let mut headers = header::HeaderMap::with_capacity(8);
     if params.optimize.unwrap_or(true) && content_type.starts_with("image") {
-        let image = ProcessImage::new(data.to_vec(), ext)
-            .map_err(|e| Error::new(e).with_category(ERROR_CATEGORY))?;
+        let image = ProcessImage::new(data.to_vec(), ext).context(OptimizeSnafu)?;
         let mut tasks = vec![];
         if params.width.is_some() || params.height.is_some() {
             tasks.push(vec![
@@ -146,9 +186,7 @@ async fn get_file(
         ]);
         tasks.push(vec!["diff".to_string()]);
 
-        let image = run_with_image(image, tasks)
-            .await
-            .map_err(|e| Error::new(e).with_category(ERROR_CATEGORY))?;
+        let image = run_with_image(image, tasks).await.context(OptimizeSnafu)?;
 
         if let Ok(diff) = HeaderValue::from_str(&format!("{:.2}", image.diff)) {
             headers.insert("X-Diff", diff);
@@ -156,7 +194,7 @@ async fn get_file(
 
         data = image
             .get_buffer()
-            .map_err(|e| Error::new(e).with_category(ERROR_CATEGORY))?
+            .context(OptimizeSnafu)?
             .into_owned()
             .into();
         if let Some(mime_type) = mime_guess2::from_ext(format.as_str()).first() {
@@ -174,14 +212,12 @@ async fn get_file(
     if let Some(metadata) = file.get_metadata() {
         headers.extend(metadata);
     }
-    let Some(response_headers) = ConfigurationModel::new()
+    if let Some(response_headers) = ConfigurationModel::new()
         .get_response_headers(pool, &file.group)
         .await?
-    else {
-        return Ok((headers, data.to_bytes()));
-    };
-    headers.extend(response_headers);
-
+    {
+        headers.extend(response_headers);
+    }
     Ok((headers, data.to_bytes()))
 }
 

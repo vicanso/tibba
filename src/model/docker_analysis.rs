@@ -18,9 +18,10 @@ use ctor::ctor;
 use resend_rs::Resend;
 use resend_rs::types::CreateEmailBaseOptions;
 use serde::{Deserialize, Serialize};
+use snafu::{OptionExt, ResultExt, Snafu};
 use sqlx::{FromRow, PgPool};
 use std::sync::Arc;
-use tibba_error::Error;
+use tibba_error::Error as BaseError;
 use tibba_hook::{BoxFuture, Task, register_task};
 use tibba_llm::{Backend, LlmCall, Usage as LlmUsage};
 use tibba_model_token::{
@@ -30,7 +31,91 @@ use tibba_model_token::{
 use tibba_scheduler::{Job, register_job_task};
 use tracing::{error, info, warn};
 
-type Result<T> = std::result::Result<T, Error>;
+/// 该模块所有日志事件的 tracing target。
+/// 可通过 `RUST_LOG=tibba:docker_analysis=info`（或 `debug`）进行过滤。
+const LOG_TARGET: &str = "tibba:docker_analysis";
+const ERROR_CATEGORY: &str = "docker";
+
+type Result<T, E = BaseError> = std::result::Result<T, E>;
+
+/// docker_analysis 模块内部错误。所有外部错误源在此统一捕获，转换为带
+/// `category = "docker"` 的 `tibba_error::Error`。
+#[derive(Debug, Snafu)]
+enum Error {
+    /// 数据库操作失败
+    #[snafu(display("sqlx: {source}"))]
+    Sqlx { source: sqlx::Error },
+
+    /// HTTP 调用（diving / 企业微信 webhook）失败
+    #[snafu(display("http: {source}"))]
+    Http {
+        // reqwest::Error 体积较大，装箱避免 enum 膨胀
+        #[snafu(source(from(reqwest::Error, Box::new)))]
+        source: Box<reqwest::Error>,
+    },
+
+    /// diving 服务返回非 2xx 状态
+    #[snafu(display("{message}"))]
+    Diving { message: String },
+
+    /// UTF-8 解码 diving 响应失败
+    #[snafu(display("utf8: {source}"))]
+    Utf8 { source: std::string::FromUtf8Error },
+
+    /// token 计费 / 余额操作失败（tibba_model）
+    #[snafu(display("token: {source}"))]
+    Token { source: tibba_model::Error },
+
+    /// LLM 调用失败
+    #[snafu(display("llm: {source}"))]
+    Llm {
+        // tibba_llm::Error 内含 reqwest::Error，装箱避免 enum 膨胀
+        #[snafu(source(from(tibba_llm::Error, Box::new)))]
+        source: Box<tibba_llm::Error>,
+    },
+
+    /// 数据库 token_llms 表中找不到 name='default' 的 LLM 配置
+    #[snafu(display("no enabled token_llms record found (expect name='default')"))]
+    LlmConfigMissing,
+
+    /// Resend 邮件 API 调用失败
+    #[snafu(display("resend: {source}"))]
+    Resend {
+        #[snafu(source(from(resend_rs::Error, Box::new)))]
+        source: Box<resend_rs::Error>,
+    },
+
+    /// 关键配置缺失（启动期 / 调用期配置校验）
+    #[snafu(display("{key} not configured"))]
+    ConfigMissing { key: &'static str },
+
+    /// 注册定时任务失败
+    #[snafu(display("scheduler register fail: {message}"))]
+    Scheduler { message: String },
+}
+
+impl From<Error> for BaseError {
+    fn from(val: Error) -> Self {
+        let err = match val {
+            Error::Sqlx { source } => BaseError::new(source).with_sub_category("sqlx"),
+            Error::Http { source } => BaseError::new(source).with_sub_category("http"),
+            Error::Diving { message } => BaseError::new(message).with_sub_category("diving"),
+            Error::Utf8 { source } => BaseError::new(source).with_sub_category("utf8"),
+            Error::Token { source } => BaseError::new(source).with_sub_category("token"),
+            Error::Llm { source } => BaseError::new(source).with_sub_category("llm"),
+            Error::LlmConfigMissing => {
+                BaseError::new("no enabled token_llms record found (expect name='default')")
+                    .with_sub_category("llm_config_missing")
+            }
+            Error::Resend { source } => BaseError::new(source).with_sub_category("resend"),
+            Error::ConfigMissing { key } => {
+                BaseError::new(format!("{key} not configured")).with_sub_category("config_missing")
+            }
+            Error::Scheduler { message } => BaseError::new(message).with_sub_category("scheduler"),
+        };
+        err.with_category(ERROR_CATEGORY)
+    }
+}
 
 /// docker_analyses.status 枚举值
 pub const STATUS_WAITING: i16 = 0;
@@ -86,7 +171,7 @@ impl DockerAnalysisModel {
         .bind(&[STATUS_WAITING, STATUS_PROCESSING][..])
         .fetch_optional(pool)
         .await
-        .map_err(|e| Error::new(e.to_string()).with_category("docker"))?;
+        .context(SqlxSnafu)?;
         Ok(row.map(|r| r.0))
     }
 
@@ -112,7 +197,7 @@ impl DockerAnalysisModel {
         .bind(notify_force)
         .fetch_one(pool)
         .await
-        .map_err(|e| Error::new(e.to_string()).with_category("docker"))?;
+        .context(SqlxSnafu)?;
         Ok(row.0)
     }
 
@@ -127,7 +212,7 @@ impl DockerAnalysisModel {
         .bind(STATUS_WAITING)
         .fetch_all(pool)
         .await
-        .map_err(|e| Error::new(e.to_string()).with_category("docker"))?;
+        .context(SqlxSnafu)?;
         Ok(rows.into_iter().map(|r| r.0).collect())
     }
 
@@ -148,7 +233,7 @@ impl DockerAnalysisModel {
         .bind(STATUS_WAITING)
         .fetch_optional(pool)
         .await
-        .map_err(|e| Error::new(e.to_string()).with_category("docker"))?;
+        .context(SqlxSnafu)?;
         Ok(record)
     }
 
@@ -164,7 +249,7 @@ impl DockerAnalysisModel {
         .bind(id)
         .execute(pool)
         .await
-        .map_err(|e| Error::new(e.to_string()).with_category("docker"))?;
+        .context(SqlxSnafu)?;
         Ok(())
     }
 
@@ -188,7 +273,7 @@ impl DockerAnalysisModel {
         .bind(exclude_id)
         .fetch_optional(pool)
         .await
-        .map_err(|e| Error::new(e.to_string()).with_category("docker"))?;
+        .context(SqlxSnafu)?;
 
         let llm_result = row
             .and_then(|r| r.0)
@@ -213,7 +298,7 @@ impl DockerAnalysisModel {
         .bind(id)
         .execute(pool)
         .await
-        .map_err(|e| Error::new(e.to_string()).with_category("docker"))?;
+        .context(SqlxSnafu)?;
         Ok(())
     }
 }
@@ -237,7 +322,7 @@ async fn run_docker_analysis() -> Result<usize> {
             Ok(result) => {
                 let json = serde_json::to_string(&result).unwrap_or_else(|_| String::from("{}"));
                 if let Err(e) = DockerAnalysisModel::mark_completed(pool, id, &json).await {
-                    error!(id, error = %e, "mark docker analysis completed failed");
+                    error!(target: LOG_TARGET, id, error = %e, "mark docker analysis completed failed");
                 } else {
                     completed += 1;
                     // 默认仅在结论变化时通知；notify_force=true 时无条件触发
@@ -247,7 +332,7 @@ async fn run_docker_analysis() -> Result<usize> {
                 }
             }
             Err(e) => {
-                error!(id, error = %e, "docker image analysis failed");
+                error!(target: LOG_TARGET, id, error = %e, "docker image analysis failed");
                 let _ = DockerAnalysisModel::mark_failed(pool, id, &e.to_string()).await;
             }
         }
@@ -307,13 +392,10 @@ async fn fetch_diving_result(record: &DockerAnalysisRecord) -> Result<String> {
         ])
         .send()
         .await
-        .map_err(|e| Error::new(e.to_string()).with_category("docker"))?;
+        .context(HttpSnafu)?;
 
     let status = resp.status().as_u16();
-    let bytes = resp
-        .bytes()
-        .await
-        .map_err(|e| Error::new(e.to_string()).with_category("docker"))?;
+    let bytes = resp.bytes().await.context(HttpSnafu)?;
 
     if status >= 400 {
         // 优先按约定的 HTTPError JSON 解析；解析失败则回退到原始响应文本
@@ -329,10 +411,11 @@ async fn fetch_diving_result(record: &DockerAnalysisRecord) -> Result<String> {
         } else {
             format!("diving({}/{}): {}", report_status, err.code, err.message)
         };
-        return Err(Error::new(message).with_category("docker"));
+        return Err(Error::Diving { message }.into());
     }
 
-    String::from_utf8(bytes.to_vec()).map_err(|e| Error::new(e.to_string()).with_category("docker"))
+    let s = String::from_utf8(bytes.to_vec()).context(Utf8Snafu)?;
+    Ok(s)
 }
 
 /// 根据 LLM 返回的 token 用量计费并写入 token_usages、扣减账户余额。
@@ -347,11 +430,13 @@ async fn consume_tokens(
     let Some(price) = TokenPriceModel::default()
         .get_by_service_model(pool, SERVICE_LLM, model)
         .await
-        .map_err(|e| Error::new(e.to_string()).with_category("docker"))?
+        .context(TokenSnafu)?
     else {
         warn!(
+            target: LOG_TARGET,
             id = record.id,
-            model, "no token price configured, skip consume"
+            model,
+            "no token price configured, skip consume"
         );
         return Ok(());
     };
@@ -380,9 +465,10 @@ async fn consume_tokens(
         },
     )
     .await
-    .map_err(|e| Error::new(e.to_string()).with_category("docker"))?;
+    .context(TokenSnafu)?;
 
     info!(
+        target: LOG_TARGET,
         id = record.id,
         model,
         amount,
@@ -397,7 +483,7 @@ async fn consume_tokens(
 async fn analyze_image(record: &DockerAnalysisRecord) -> Result<DockerAnalysisResult> {
     let diving_result = fetch_diving_result(record).await?;
 
-    info!(id = record.id, "diving image success");
+    info!(target: LOG_TARGET, id = record.id, "diving image success");
 
     let pool = get_db_pool();
     let prev_llm =
@@ -424,11 +510,8 @@ async fn analyze_image(record: &DockerAnalysisRecord) -> Result<DockerAnalysisRe
     let llm_config = TokenLlmModel::default()
         .get_by_name(pool, "default")
         .await
-        .map_err(|e| Error::new(e.to_string()).with_category("docker"))?
-        .ok_or_else(|| {
-            Error::new("no enabled token_llms record found (expect name='default')")
-                .with_category("docker")
-        })?;
+        .context(TokenSnafu)?
+        .context(LlmConfigMissingSnafu)?;
 
     // 仅 "anthropic" 走 Anthropic 协议；其余（含空字符串、"openai"、未知值）默认 OpenAI
     let backend = if llm_config.provider == LLM_PROVIDER_ANTHROPIC {
@@ -444,10 +527,11 @@ async fn analyze_image(record: &DockerAnalysisRecord) -> Result<DockerAnalysisRe
         .with_system_message(ANALYSIS_SYSTEM_PROMPT)
         .chat()
         .await
-        .map_err(|e| Error::new(e.to_string()).with_category("docker"))?;
+        .context(LlmSnafu)?;
     let elapsed_ms = llm_start.elapsed().as_millis();
 
     info!(
+        target: LOG_TARGET,
         id = record.id,
         model = resp.model,
         input_tokens = resp.usage.as_ref().map(|u| u.input_tokens).unwrap_or(0),
@@ -456,13 +540,13 @@ async fn analyze_image(record: &DockerAnalysisRecord) -> Result<DockerAnalysisRe
         "docker image llm analysis done",
     );
     // 记录 token 用量并扣减用户余额（失败仅日志告警，不阻断主流程）
-    if let Some(usage) = resp.usage.as_ref() {
-        if let Err(e) = consume_tokens(pool, record, &resp.model, usage, elapsed_ms).await {
-            error!(id = record.id, error = %e, "consume tokens failed");
-        }
+    if let Some(usage) = resp.usage.as_ref()
+        && let Err(e) = consume_tokens(pool, record, &resp.model, usage, elapsed_ms).await
+    {
+        error!(target: LOG_TARGET, id = record.id, error = %e, "consume tokens failed");
     }
     if resp.content.is_empty() {
-        warn!(id = record.id, "llm returned empty content");
+        warn!(target: LOG_TARGET, id = record.id, "llm returned empty content");
     }
 
     // LLM 返回"与上次一致"且确实有历史结论时，直接复用上次的 llm_result
@@ -472,7 +556,7 @@ async fn analyze_image(record: &DockerAnalysisRecord) -> Result<DockerAnalysisRe
         _ => (resp.content, false),
     };
 
-    info!(id = record.id, is_same_as_last, "llm analysis success");
+    info!(target: LOG_TARGET, id = record.id, is_same_as_last, "llm analysis success");
 
     Ok(DockerAnalysisResult {
         diving_result,
@@ -508,7 +592,7 @@ async fn send_wecom_notification(
         .json(&body)
         .send()
         .await
-        .map_err(|e| Error::new(e.to_string()).with_category("docker"))?;
+        .context(HttpSnafu)?;
     Ok(())
 }
 
@@ -521,11 +605,13 @@ async fn send_email_notification(
     let from_addr = config
         .email_from
         .as_deref()
-        .ok_or_else(|| Error::new("email_from not configured").with_category("docker"))?;
+        .context(ConfigMissingSnafu { key: "email_from" })?;
     let api_key = config
         .resend_api_key
         .as_deref()
-        .ok_or_else(|| Error::new("resend_api_key not configured").with_category("docker"))?;
+        .context(ConfigMissingSnafu {
+            key: "resend_api_key",
+        })?;
 
     let subject = format!("Docker Analysis: {}:{}", record.repo_name, record.tag);
     let body = format!(
@@ -538,14 +624,13 @@ async fn send_email_notification(
         result.diving_result,
     );
 
-    let email =
-        CreateEmailBaseOptions::new(from_addr, [to], subject).with_text(&body);
+    let email = CreateEmailBaseOptions::new(from_addr, [to], subject).with_text(&body);
 
     Resend::new(api_key)
         .emails
         .send(email)
         .await
-        .map_err(|e| Error::new(e.to_string()).with_category("docker"))?;
+        .context(ResendSnafu)?;
     Ok(())
 }
 
@@ -557,18 +642,19 @@ async fn notify_result(record: &DockerAnalysisRecord, result: &DockerAnalysisRes
         match record.notify_type.as_str() {
             "wecom" => {
                 if let Err(e) = send_wecom_notification(&record.notify_data, record, result).await {
-                    error!(id = record.id, error = %e, "send wecom notification failed");
+                    error!(target: LOG_TARGET, id = record.id, error = %e, "send wecom notification failed");
                 }
             }
             "email" => {
                 if let Err(e) =
                     send_email_notification(config, &record.notify_data, record, result).await
                 {
-                    error!(id = record.id, error = %e, "send email notification failed");
+                    error!(target: LOG_TARGET, id = record.id, error = %e, "send email notification failed");
                 }
             }
             other => {
                 warn!(
+                    target: LOG_TARGET,
                     id = record.id,
                     notify_type = other,
                     "unknown notify_type, skipped"
@@ -579,15 +665,15 @@ async fn notify_result(record: &DockerAnalysisRecord, result: &DockerAnalysisRes
     }
 
     // 回退到全局配置
-    if let Some(token) = &config.notify_wecom {
-        if let Err(e) = send_wecom_notification(token, record, result).await {
-            error!(id = record.id, error = %e, "send wecom notification failed");
-        }
+    if let Some(token) = &config.notify_wecom
+        && let Err(e) = send_wecom_notification(token, record, result).await
+    {
+        error!(target: LOG_TARGET, id = record.id, error = %e, "send wecom notification failed");
     }
-    if let Some(email) = &config.notify_email {
-        if let Err(e) = send_email_notification(config, email, record, result).await {
-            error!(id = record.id, error = %e, "send email notification failed");
-        }
+    if let Some(email) = &config.notify_email
+        && let Err(e) = send_email_notification(config, email, record, result).await
+    {
+        error!(target: LOG_TARGET, id = record.id, error = %e, "send email notification failed");
     }
 }
 
@@ -598,19 +684,20 @@ impl Task for DockerAnalysisTask {
         Box::pin(async move {
             // 每分钟执行一次
             let job = Job::new_async("0 * * * * *", |_, _| {
-                let category = "docker_analysis";
                 Box::pin(async move {
                     match run_docker_analysis().await {
                         Err(e) => {
-                            error!(category, error = %e, "run docker analysis failed");
+                            error!(target: LOG_TARGET, error = %e, "run docker analysis failed");
                         }
                         Ok(completed) => {
-                            info!(category, completed, "run docker analysis success");
+                            info!(target: LOG_TARGET, completed, "run docker analysis success");
                         }
                     }
                 })
             })
-            .map_err(Error::new)?;
+            .map_err(|e| Error::Scheduler {
+                message: e.to_string(),
+            })?;
             register_job_task("docker_analysis", job);
             Ok(true)
         })

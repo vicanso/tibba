@@ -5741,6 +5741,7 @@ dependencies = [
  "rust-embed",
  "serde",
  "serde_json",
+ "snafu",
  "sqlx 0.9.0",
  "substring",
  "tibba-cache",
@@ -5813,8 +5814,10 @@ dependencies = [
 name = "tibba-crypto"
 version = "0.2.2"
 dependencies = [
+ "arc-swap",
  "hex",
  "hmac 0.13.0",
+ "pretty_assertions",
  "sha2 0.11.0",
  "snafu",
  "tibba-error",
@@ -5833,7 +5836,9 @@ name = "tibba-hook"
 version = "0.2.2"
 dependencies = [
  "dashmap",
+ "pretty_assertions",
  "tibba-error",
+ "tokio",
  "tracing",
 ]
 
@@ -5843,11 +5848,13 @@ version = "0.2.2"
 dependencies = [
  "bytes",
  "futures",
+ "pretty_assertions",
  "reqwest 0.13.4",
  "serde",
  "serde_json",
  "snafu",
  "tibba-error",
+ "tokio",
  "tracing",
 ]
 
@@ -5875,6 +5882,7 @@ version = "0.2.3"
 dependencies = [
  "chrono",
  "http",
+ "pretty_assertions",
  "serde",
  "serde_json",
  "snafu",
@@ -5968,6 +5976,7 @@ dependencies = [
  "image 0.25.10",
  "os_info",
  "serde",
+ "snafu",
  "tibba-cache",
  "tibba-error",
  "tibba-performance",
@@ -5987,6 +5996,7 @@ dependencies = [
  "imageoptimize",
  "mime_guess2",
  "serde",
+ "snafu",
  "sqlx 0.9.0",
  "tibba-error",
  "tibba-model-builtin",
@@ -6004,6 +6014,7 @@ dependencies = [
  "axum",
  "serde",
  "serde_json",
+ "snafu",
  "sqlx 0.9.0",
  "tibba-error",
  "tibba-hook",
@@ -6022,6 +6033,7 @@ dependencies = [
  "axum-extra",
  "serde",
  "serde_json",
+ "snafu",
  "sqlx 0.9.0",
  "tibba-cache",
  "tibba-error",

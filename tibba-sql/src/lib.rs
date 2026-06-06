@@ -192,9 +192,12 @@ fn new_database_config(config: &Config) -> Result<DatabaseConfig> {
 /// 原子性地记录新建连接数、取出次数和连接空闲时间。
 pub async fn new_pg_pool(config: &Config, pool_stat: Option<Arc<PoolStat>>) -> Result<PgPool> {
     let database_config = new_database_config(config)?;
-    // 日志中脱敏密码
-    let password = database_config.password.clone().unwrap_or_default();
-    let url = database_config.url.replace(&password, "***");
+    // 日志中脱敏密码：仅在确实存在非空密码时替换；
+    // 否则 `String::replace("", "***")` 会在原 URL 每个字符间插入 "***" 把日志写成乱码
+    let url = match database_config.password.as_deref() {
+        Some(pwd) if !pwd.is_empty() => database_config.url.replace(pwd, "***"),
+        _ => database_config.url.clone(),
+    };
     info!(target: LOG_TARGET, url, "connect to database");
 
     let mut options = PgPoolOptions::new()

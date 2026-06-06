@@ -15,10 +15,9 @@
 //! OpenAI 兼容格式客户端（也支持 DeepSeek、Qwen、Llama 等 OpenAI 兼容接口）。
 
 use super::{
-    BoxStream, ChatParams, ChatResponse, Error, JsonSnafu, LOG_TARGET, RequestSnafu, Role,
-    SseState, StreamChunk, Usage,
+    BoxStream, ChatParams, ChatResponse, Error, InvalidHeaderSnafu, JsonSnafu, LOG_TARGET,
+    RequestSnafu, Role, SsePoll, SseState, StreamChunk, Usage, next_sse_data_line,
 };
-use futures::StreamExt;
 use reqwest::Client as ReqwestClient;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
 use serde::{Deserialize, Serialize};
@@ -106,51 +105,38 @@ struct ErrDetail {
 
 /// 将 SSE 字节流解析为 OpenAI StreamChunk 序列。
 /// 格式：`data: <json>\n\n`，结束标志：`data: [DONE]\n\n`。
+/// 行级解析委托给 [`next_sse_data_line`]，本函数只处理 OpenAI 特有的
+/// `[DONE]` 终止和 `StreamResp` JSON 解码。
 fn parse_stream(response: reqwest::Response) -> BoxStream<Result<StreamChunk>> {
     let state = SseState::new(response);
 
     Box::pin(futures::stream::unfold(state, |mut state| async move {
         loop {
-            if let Some(nl) = state.buffer.find('\n') {
-                let line = state.buffer[..nl].trim_end_matches('\r').to_string();
-                state.buffer = state.buffer[nl + 1..].to_string();
+            let data = match next_sse_data_line(&mut state).await {
+                SsePoll::Data(d) => d,
+                SsePoll::Done => return None,
+                SsePoll::Err(e) => return Some((Err(e), state)),
+            };
 
-                let Some(data) = line.strip_prefix("data: ") else {
-                    continue;
-                };
+            if data == "[DONE]" {
+                return None;
+            }
 
-                if data == "[DONE]" {
-                    return None;
-                }
-                if data.is_empty() {
-                    continue;
-                }
-
-                let chunk = match serde_json::from_str::<StreamResp>(data) {
-                    Ok(resp) => {
-                        if let Some(choice) = resp.choices.into_iter().next() {
+            match serde_json::from_str::<StreamResp>(&data) {
+                Ok(resp) => {
+                    if let Some(choice) = resp.choices.into_iter().next() {
+                        return Some((
                             Ok(StreamChunk {
                                 delta: choice.delta.content.unwrap_or_default(),
                                 finish_reason: choice.finish_reason,
-                            })
-                        } else {
-                            continue;
-                        }
+                            }),
+                            state,
+                        ));
                     }
-                    Err(e) => Err(Error::Json { source: e }),
-                };
-                return Some((chunk, state));
-            }
-
-            // 缓冲区内没有完整行，继续读取字节流
-            match state.inner.next().await {
-                Some(Ok(bytes)) => {
-                    state.buffer.push_str(&String::from_utf8_lossy(&bytes));
+                    // 空 choices 的事件直接跳过，继续读下一行
+                    continue;
                 }
-                Some(Err(e)) => {
-                    return Some((Err(Error::Request { source: e }), state));
-                }
-                None => return None,
+                Err(e) => return Some((Err(Error::Json { source: e }), state)),
             }
         }
     }))
@@ -217,9 +203,7 @@ impl OpenAiClientBuilder {
     /// 构建 `OpenAiClient`。
     pub fn build(self) -> Result<OpenAiClient> {
         let mut auth_value = HeaderValue::from_str(&format!("Bearer {}", self.config.api_key))
-            .map_err(|e| Error::Stream {
-                message: e.to_string(),
-            })?;
+            .context(InvalidHeaderSnafu)?;
         auth_value.set_sensitive(true);
 
         let mut headers = HeaderMap::new();

@@ -34,6 +34,10 @@ use tower_http::compression::predicate::{NotForContentType, Predicate, SizeAbove
 use tracing::{Level, error, info};
 use tracing_subscriber::FmtSubscriber;
 
+/// 应用入口模块的 tracing target。
+/// 可通过 `RUST_LOG=tibba:app=info`（或 `debug`）进行过滤。
+const LOG_TARGET: &str = "tibba:app";
+
 mod admin_web;
 mod cache;
 mod config;
@@ -166,17 +170,17 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 async fn start() {
     // only use unwrap in run function
     if let Err(e) = run().await {
-        error!(category = "launch_app", message = ?e)
+        error!(target: LOG_TARGET, event = "launch_app", message = ?e)
     }
     if let Err(e) = run_after_tasks().await {
-        error!(category = "run_after_tasks", message = ?e,);
+        error!(target: LOG_TARGET, event = "run_after_tasks", message = ?e);
     }
 }
 
 fn main() {
     std::panic::set_hook(Box::new(|e| {
         // TODO send alert
-        error!(category = "panic", message = e.to_string(),);
+        error!(target: LOG_TARGET, event = "panic", message = e.to_string());
         std::process::exit(1);
     }));
     init_logger();

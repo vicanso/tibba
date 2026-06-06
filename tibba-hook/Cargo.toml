@@ -17,3 +17,7 @@ path = "src/lib.rs"
 dashmap = { workspace = true }
 tibba-error = { path = "../tibba-error", version = "0.2.2" }
 tracing = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt"] }

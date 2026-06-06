@@ -46,7 +46,7 @@ fn json_value_to_string(v: &Value) -> String {
 ///   - Value cannot be converted to string
 ///
 /// # Examples
-/// ```
+/// ```ignore
 /// let json = r#"{"name": "John", "age": 30}"#.as_bytes();
 /// let results = json_get_strings(json, &["name", "age", "missing"]);
 /// assert_eq!(vec!["John", "30", ""], results);
@@ -82,7 +82,7 @@ pub fn json_get_strings(data: &[u8], keys: &[&str]) -> Vec<String> {
 ///   - Value cannot be converted to string
 ///
 /// # Examples
-/// ```
+/// ```ignore
 /// let json = r#"{"name": "John", "age": 30, "null_value": null}"#.as_bytes();
 /// assert_eq!("John", json_get(json, "name"));
 /// assert_eq!("30", json_get(json, "age"));
@@ -114,4 +114,52 @@ pub fn json_get(data: &[u8], key: &str) -> String {
 ///   - Value cannot be converted to string
 pub fn get_map_string(data: &Map<String, Value>, key: &str) -> String {
     data.get(key).map_or(String::new(), json_value_to_string)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn json_get_returns_string_value_directly() {
+        let json = br#"{"name": "John"}"#;
+        assert_eq!(json_get(json, "name"), "John");
+    }
+
+    #[test]
+    fn json_get_stringifies_non_string_values() {
+        let json = br#"{"age": 30, "active": true}"#;
+        assert_eq!(json_get(json, "age"), "30");
+        assert_eq!(json_get(json, "active"), "true");
+    }
+
+    #[test]
+    fn json_get_null_and_missing_return_empty() {
+        let json = br#"{"x": null}"#;
+        assert_eq!(json_get(json, "x"), "");
+        assert_eq!(json_get(json, "nonexistent"), "");
+    }
+
+    #[test]
+    fn json_get_invalid_json_returns_empty() {
+        assert_eq!(json_get(b"not json", "any"), "");
+    }
+
+    #[test]
+    fn json_get_strings_preserves_key_order_and_count() {
+        let json = br#"{"name": "John", "age": 30}"#;
+        assert_eq!(
+            json_get_strings(json, &["name", "age", "missing"]),
+            vec!["John".to_string(), "30".to_string(), String::new(),]
+        );
+    }
+
+    #[test]
+    fn json_get_strings_invalid_json_returns_all_empty() {
+        // 长度仍与 keys 数量一致，调用方可放心按下标访问
+        let out = json_get_strings(b"garbage", &["a", "b", "c"]);
+        assert_eq!(out.len(), 3);
+        assert!(out.iter().all(|s| s.is_empty()));
+    }
 }

@@ -23,6 +23,7 @@ humantime = { workspace = true }
 image = { workspace = true }
 os_info = { workspace = true }
 serde = { workspace = true }
+snafu = { workspace = true }
 tibba-cache = { path = "../tibba-cache", version = "0.2.2" }
 tibba-error = { path = "../tibba-error", version = "0.2.2" }
 tibba-performance = { path = "../tibba-performance", version = "0.2.2" }

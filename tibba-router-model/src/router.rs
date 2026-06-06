@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::get_registered_model;
+use crate::{RecordNotFoundSnafu, get_registered_model};
 use axum::Json;
 use axum::Router;
 use axum::extract::State;
@@ -20,6 +20,7 @@ use axum::http::StatusCode;
 use axum::routing::{delete, get, patch, post};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use snafu::OptionExt;
 use sqlx::PgPool;
 use tibba_error::Error;
 use tibba_model::{ModelListParams, SchemaOption, SchemaView};
@@ -91,7 +92,10 @@ async fn get_detail(
     let data = model
         .get_by_id(pool, params.id)
         .await?
-        .ok_or_else(|| Error::new("The record is not found"))?;
+        .context(RecordNotFoundSnafu {
+            model: params.model.clone(),
+            id: params.id,
+        })?;
     Ok(Json(data))
 }
 

@@ -26,6 +26,10 @@ use tibba_session::SessionParams;
 use tracing::info;
 use validator::{Validate, ValidationError};
 
+/// 本模块所有日志事件的 tracing target。
+/// 可通过 `RUST_LOG=tibba:config=info`（或 `debug`）进行过滤。
+const LOG_TARGET: &str = "tibba:config";
+
 type Result<T, E = Error> = std::result::Result<T, E>;
 static CONFIGS: OnceCell<Config> = OnceCell::new();
 
@@ -180,13 +184,12 @@ pub fn must_get_token_config() -> &'static TokenConfig {
 }
 fn new_config() -> Result<&'static Config> {
     CONFIGS.get_or_try_init(|| {
-        let category = "config";
         let mut arr = vec![];
         for name in ["default.toml", &format!("{}.toml", tibba_util::get_env())] {
             let data = Configs::get(name)
                 .ok_or(map_err(format!("{name} not found")))?
                 .data;
-            info!(category, "load config from {name}");
+            info!(target: LOG_TARGET, "load config from {name}");
             arr.push(std::string::String::from_utf8_lossy(&data).to_string());
         }
 

@@ -110,47 +110,38 @@ pub async fn validate_captcha(
     req: Request,
     next: Next,
 ) -> Result<Response, tibba_error::Error> {
-    // Category name for error handling
-    let category = "captcha";
+    // 构造统一的 captcha 错误，避免 4 处重复同样的 struct 字面量
+    let make_err = |msg: &str| -> Error {
+        Error::Captcha {
+            message: msg.to_string(),
+        }
+    };
 
-    // Extract and parse the X-Captcha header
+    // 解析 X-Captcha 头
     let value = req
         .headers()
         .get("X-Captcha")
-        .ok_or(Error::Common {
-            message: "captcha is required".to_string(),
-            category: category.to_string(),
-        })?
+        .ok_or_else(|| make_err("captcha is required"))?
         .to_str()
         .context(HeaderValueSnafu)?;
 
-    let (key, user_code) = value.split_once(':').ok_or_else(|| Error::Common {
-        message: "captcha parameter is invalid, expect 'key:code'".to_string(),
-        category: category.to_string(),
-    })?;
+    let (key, user_code) = value
+        .split_once(':')
+        .ok_or_else(|| make_err("captcha parameter is invalid, expect 'key:code'"))?;
 
-    // Check if this is a mock request using the magic code
+    // magic code 用于测试环境绕过实际验证
     if !magic_code.is_empty() && user_code == magic_code {
         return Ok(next.run(req).await);
     }
 
-    // Retrieve and delete the stored code from cache using the key (arr[1])
+    // 一次性读取并删除存储的验证码
     let code: Option<String> = cache.get_del(key).await?;
     let Some(code) = code else {
-        return Err(Error::Common {
-            message: "captcha is expired".to_string(),
-            category: category.to_string(),
-        }
-        .into());
+        return Err(make_err("captcha is expired").into());
     };
 
-    // Compare the provided code against the stored code
     if code != user_code {
-        return Err(Error::Common {
-            message: "captcha is invalid".to_string(),
-            category: category.to_string(),
-        }
-        .into());
+        return Err(make_err("captcha is invalid").into());
     }
 
     Ok(next.run(req).await)

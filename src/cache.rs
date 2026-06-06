@@ -24,24 +24,27 @@ use tibba_scheduler::{Job, register_job_task};
 use tibba_util::Stopwatch;
 use tracing::{error, info};
 
+/// 本模块所有日志事件的 tracing target。
+/// 可通过 `RUST_LOG=tibba:redis=info`（或 `debug`）进行过滤。
+const LOG_TARGET: &str = "tibba:redis";
+
 type Result<T> = std::result::Result<T, Error>;
 static REDIS_CACHE: OnceCell<RedisCache> = OnceCell::new();
 static REDIS_CLIENT: OnceCell<RedisClient> = OnceCell::new();
 
 fn cmd_stat(stat: RedisCmdStat) {
     let elapsed = stat.elapsed.as_millis();
-    let category = "redis_cmd_stat";
 
     if let Some(error) = stat.error {
         error!(
-            category,
+            target: LOG_TARGET,
             cmd = stat.cmd,
             elapsed,
             error = error,
             "redis error cmd"
         );
     } else if elapsed > 10 {
-        info!(category, cmd = stat.cmd, elapsed, "redis slow cmd");
+        info!(target: LOG_TARGET, cmd = stat.cmd, elapsed, "redis slow cmd");
     }
 }
 
@@ -63,12 +66,11 @@ pub fn get_redis_cache() -> &'static RedisCache {
 }
 
 async fn redis_health_check() {
-    let category = "redis_health_check";
     let stopwatch = Stopwatch::new();
     if let Err(e) = get_redis_cache().ping().await {
-        error!(category, elapsed = stopwatch.elapsed_ms(), error = %e, "redis unhealthy");
+        error!(target: LOG_TARGET, elapsed = stopwatch.elapsed_ms(), error = %e, "redis unhealthy");
     } else {
-        info!(category, elapsed = stopwatch.elapsed_ms(), "redis healthy");
+        info!(target: LOG_TARGET, elapsed = stopwatch.elapsed_ms(), "redis healthy");
     }
 }
 
@@ -89,7 +91,7 @@ impl Task for RedisTask {
                 if let Ok(client) = get_redis_client() {
                     let stat = client.stat();
                     info!(
-                        category = "redis_client_stat",
+                        target: LOG_TARGET,
                         pool_max_size = stat.pool_max_size,
                         pool_size = stat.pool_size,
                         pool_available = stat.pool_available,

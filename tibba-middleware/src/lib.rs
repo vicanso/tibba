@@ -18,16 +18,19 @@ use snafu::Snafu;
 use std::net::{IpAddr, SocketAddr};
 use tibba_error::Error as BaseError;
 
-/// Tracing target for all log events in this crate.
-/// Use `RUST_LOG=tibba-middleware=info` (or `debug`) to filter these logs.
+/// 该 crate 所有日志事件的 tracing target。
+/// 可通过 `RUST_LOG=tibba:middleware=info`（或 `debug`）进行过滤。
 pub(crate) const LOG_TARGET: &str = "tibba:middleware";
 
 #[derive(Debug, Snafu)]
 pub enum Error {
+    /// 验证码校验失败（缺失、过期或不匹配）。
     #[snafu(display("{message}"))]
-    Common { message: String, category: String },
+    Captcha { message: String },
+    /// 并发请求或频次超限，对应 HTTP 429。
     #[snafu(display("too many requests, limit: {limit}, current: {current}"))]
     TooManyRequests { limit: i64, current: i64 },
+    /// 请求头转字符串失败（非 ASCII / 控制字符）。
     #[snafu(display("{source}"))]
     HeaderValue {
         source: axum::http::header::ToStrError,
@@ -37,9 +40,7 @@ pub enum Error {
 impl From<Error> for BaseError {
     fn from(val: Error) -> Self {
         let err = match val {
-            Error::Common { message, category } => {
-                BaseError::new(&message).with_sub_category(&category)
-            }
+            Error::Captcha { message } => BaseError::new(message).with_sub_category("captcha"),
             Error::TooManyRequests { limit, current } => BaseError::new(format!(
                 "too many requests, limit: {limit}, current: {current}"
             ))

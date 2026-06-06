@@ -16,7 +16,8 @@ use super::Model;
 use super::user::{ROLE_ADMIN, ROLE_SUPER_ADMIN};
 use super::{
     Error, JsonSnafu, ModelListParams, Schema, SchemaAllowCreate, SchemaAllowEdit, SchemaType,
-    SchemaView, SqlxSnafu, Status, format_datetime, new_schema_options, parse_primitive_datetime,
+    SchemaView, SqlxSnafu, Status, format_datetime, new_schema_options, now_primitive_utc,
+    parse_primitive_datetime,
 };
 use http::header::{HeaderMap, HeaderName, HeaderValue};
 use serde::de::DeserializeOwned;
@@ -27,7 +28,7 @@ use sqlx::types::Json;
 use sqlx::{Pool, Postgres, QueryBuilder};
 use std::collections::HashMap;
 use std::str::FromStr;
-use time::{OffsetDateTime, PrimitiveDateTime};
+use time::PrimitiveDateTime;
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -282,8 +283,7 @@ impl ConfigurationModel {
         pool: &Pool<Postgres>,
         name: &str,
     ) -> Result<Option<HeaderMap>> {
-        let now_utc = OffsetDateTime::now_utc();
-        let now = PrimitiveDateTime::new(now_utc.date(), now_utc.time());
+        let now = now_primitive_utc();
         let configurations = sqlx::query_as::<_, ConfigurationSchema>(
             r#"SELECT * FROM configurations
                WHERE category = 'response_headers'
@@ -301,11 +301,16 @@ impl ConfigurationModel {
         .await
         .context(SqlxSnafu)?;
 
-        let mut headers = HeaderMap::new();
+        // 之前无论是否查到记录都返回 Some(empty_map)，让调用方的 let-else None
+        // 分支变成死代码（tibba-router-file/src/lib.rs:177-182）。这里改成
+        // 真的没匹配就返回 None，调用方的「无 headers 配置就早返回」逻辑生效
+        if configurations.is_empty() {
+            return Ok(None);
+        }
 
+        let mut headers = HeaderMap::new();
         for configuration in configurations {
-            let data = configuration.data;
-            let Some(data) = data.as_object() else {
+            let Some(data) = configuration.data.as_object() else {
                 continue;
             };
             for (key, value) in data.iter() {
@@ -332,8 +337,7 @@ impl ConfigurationModel {
     where
         T: DeserializeOwned,
     {
-        let now_utc = OffsetDateTime::now_utc();
-        let now = PrimitiveDateTime::new(now_utc.date(), now_utc.time());
+        let now = now_primitive_utc();
         let configuration = sqlx::query_as::<_, ConfigurationSchema>(
             r#"SELECT * FROM configurations
                WHERE category = $1
@@ -355,12 +359,10 @@ impl ConfigurationModel {
         let Some(configuration) = configuration else {
             return Ok(None);
         };
-        let data = configuration.data;
-        let Some(data) = data.as_object() else {
-            return Err(Error::NotFound);
-        };
-        let data: T =
-            serde_json::from_value(serde_json::Value::Object(data.clone())).context(JsonSnafu)?;
+        // 之前先 `as_object` 再 `Value::Object(map.clone())` 套回再反序列化，
+        // 既多一次 Map clone，又把「数据形状不对」误报成 NotFound。
+        // 直接消费内层 Value 一次反序列化即可——形状错误自然走 JsonSnafu
+        let data: T = serde_json::from_value(configuration.data.0).context(JsonSnafu)?;
         Ok(Some(data))
     }
 }

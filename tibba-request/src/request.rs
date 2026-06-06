@@ -30,7 +30,7 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 use tibba_util::{Stopwatch, json_get};
-use tracing::info;
+use tracing::{info, warn};
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -110,6 +110,29 @@ pub trait HttpInterceptor: Send + Sync {
     /// 请求完成后（无论成功或失败）的回调，可用于打印日志或上报指标。
     fn on_done(&self, _stats: &HttpStats, _err: Option<&Error>) -> BoxFuture<'_, Result<()>> {
         Box::pin(async { Ok(()) })
+    }
+}
+
+/// 跑完所有拦截器的 `on_done` 钩子；以 best-effort 方式处理钩子内部错误。
+///
+/// 之前 `on_done` 用 `?` 把拦截器错误向上传播，会覆盖原始请求结果：
+/// 一个日志/统计回调失败就把成功的 HTTP 响应变成 Err，调用方拿到的
+/// 是观测层的错误而不是真实业务结果。observability 的失败不应改写
+/// business outcome——所以这里改成 warn! 记下来、继续跑下一个拦截器。
+async fn run_on_done(config: &ClientConfig, stats: &HttpStats, err: Option<&Error>) {
+    let Some(interceptors) = &config.interceptors else {
+        return;
+    };
+    for interceptor in interceptors {
+        if let Err(e) = interceptor.on_done(stats, err).await {
+            warn!(
+                target: LOG_TARGET,
+                service = config.service,
+                path = stats.path,
+                error = %e,
+                "on_done interceptor failed; original request result preserved",
+            );
+        }
     }
 }
 
@@ -493,12 +516,7 @@ impl Client {
         let done = Stopwatch::new();
         let result = self.do_request(&mut stats, params).await;
         stats.total = done.elapsed_ms();
-        let err = result.as_ref().err();
-        if let Some(interceptors) = &self.config.interceptors {
-            for interceptor in interceptors {
-                interceptor.on_done(&stats, err).await?;
-            }
-        }
+        run_on_done(&self.config, &stats, result.as_ref().err()).await;
         result
     }
 
@@ -512,12 +530,7 @@ impl Client {
         let done = Stopwatch::new();
         let result = self.raw(&mut stats, params).await;
         stats.total = done.elapsed_ms();
-        let err = result.as_ref().err();
-        if let Some(interceptors) = &self.config.interceptors {
-            for interceptor in interceptors {
-                interceptor.on_done(&stats, err).await?;
-            }
-        }
+        run_on_done(&self.config, &stats, result.as_ref().err()).await;
         result
     }
 
