@@ -49,6 +49,7 @@ tibba-middleware = { path = "./tibba-middleware" }
 tibba-model = { path = "./tibba-model" }
 tibba-model-builtin = { path = "./tibba-model-builtin" }
 tibba-model-token = { path = "./tibba-model-token" }
+tibba-oauth = { path = "./tibba-oauth" }
 tibba-opendal = { path = "./tibba-opendal" }
 tibba-request = { path = "./tibba-request" }
 tibba-router-common = { path = "./tibba-router-common" }
@@ -97,6 +98,7 @@ members = [
     "tibba-opendal",
     "tibba-performance",
     "tibba-request",
+    "tibba-oauth",
     "tibba-rbac",
     "tibba-router-common",
     "tibba-router-file",
@@ -167,6 +169,7 @@ reqwest = { version = "0.13.4", default-features = false, features = [
     "rustls",
     "query",
     "json",
+    "form",
 ] }
 rust-embed = { version = "8.11.0", features = ["include-exclude"] }
 scopeguard = "1.2.0"

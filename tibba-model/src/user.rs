@@ -364,6 +364,28 @@ impl UserModel {
         Ok(())
     }
 
+    /// 按邮箱查询用户（不含已软删除）。
+    /// 用于 OAuth 自动合并：第三方提供已验证邮箱时按邮箱寻找本地账号。
+    /// **注意**：本地 `users.email` 没有 UNIQUE 约束，理论上可能多条匹配——
+    /// 返回 `LIMIT 1` 的第一条（按 id 升序，最早注册者优先）。
+    pub async fn get_by_email(
+        &self,
+        pool: &Pool<Postgres>,
+        email: &str,
+    ) -> Result<Option<User>> {
+        let row: Option<UserSchema> = sqlx::query_as(
+            r#"SELECT * FROM users
+               WHERE email = $1 AND deleted_at IS NULL
+               ORDER BY id ASC
+               LIMIT 1"#,
+        )
+        .bind(email)
+        .fetch_optional(pool)
+        .await
+        .context(SqlxSnafu)?;
+        Ok(row.map(User::from))
+    }
+
     /// 登录成功后更新 last_login_at 为当前时间。
     pub async fn update_last_login_at(&self, pool: &Pool<Postgres>, account: &str) -> Result<()> {
         sqlx::query(

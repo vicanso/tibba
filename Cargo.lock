@@ -5754,6 +5754,7 @@ dependencies = [
  "tibba-model",
  "tibba-model-builtin",
  "tibba-model-token",
+ "tibba-oauth",
  "tibba-opendal",
  "tibba-performance",
  "tibba-request",
@@ -5938,6 +5939,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "tibba-oauth"
+version = "0.2.2"
+dependencies = [
+ "reqwest 0.13.4",
+ "serde",
+ "serde_json",
+ "snafu",
+ "tibba-error",
+ "tracing",
+ "urlencoding",
+]
+
+[[package]]
 name = "tibba-opendal"
 version = "0.2.3"
 dependencies = [
@@ -6068,6 +6082,7 @@ dependencies = [
  "tibba-middleware",
  "tibba-model",
  "tibba-model-builtin",
+ "tibba-oauth",
  "tibba-session",
  "tibba-util",
  "tibba-validator",

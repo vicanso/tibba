@@ -28,6 +28,7 @@ use std::sync::Arc;
 use tibba_cache::RedisCache;
 use tibba_email::EmailConfig;
 use tibba_error::Error as BaseError;
+use tibba_oauth::OAuthConfig;
 use tibba_middleware::{user_tracker, validate_captcha};
 use tibba_model::{Model, ROLE_SUPER_ADMIN, UserModel, UserUpdateParams};
 use tibba_model_builtin::RolePermissionModel;
@@ -40,6 +41,8 @@ use tibba_validator::*;
 use validator::Validate;
 
 mod email_verify;
+mod oauth_github;
+mod oauth_google;
 mod password_reset;
 
 /// 注册成功回调的 Future 类型
@@ -386,6 +389,10 @@ pub struct UserRouterParams {
     pub cache: &'static RedisCache,
     /// 全局邮件配置——被邮箱验证 / 密码重置端点用来构造 EmailService
     pub email_config: &'static EmailConfig,
+    /// 全局 OAuth 配置——被 `/oauth/github/*` 端点使用
+    pub oauth_config: &'static OAuthConfig,
+    /// OAuth 登录成功后跳回的前端地址；空串时跳 `/`
+    pub oauth_success_redirect: String,
     /// 注册成功后的回调，可选。失败不影响注册流程。
     pub on_register: Option<OnRegisterFn>,
 }
@@ -414,6 +421,18 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
         pool: params.pool,
         cache: params.cache,
         email_config: params.email_config,
+    };
+    let oauth_github_state = oauth_github::OauthGitHubState {
+        pool: params.pool,
+        cache: params.cache,
+        oauth_config: params.oauth_config,
+        success_redirect: params.oauth_success_redirect.clone(),
+    };
+    let oauth_google_state = oauth_google::OauthGoogleState {
+        pool: params.pool,
+        cache: params.cache,
+        oauth_config: params.oauth_config,
+        success_redirect: params.oauth_success_redirect,
     };
 
     Router::new()
@@ -482,6 +501,44 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
                 .with_state(password_reset_state)
                 .layer(from_fn_with_state(
                     (name, "password_reset_confirm").into(),
+                    user_tracker,
+                )),
+        )
+        // GitHub OAuth：start 生成 state 跳 GitHub；callback 拿 code 后落地用户 + 建 Session
+        .route(
+            "/oauth/github/start",
+            get(oauth_github::start_login)
+                .with_state(oauth_github_state.clone())
+                .layer(from_fn_with_state(
+                    (name, "oauth_github_start").into(),
+                    user_tracker,
+                )),
+        )
+        .route(
+            "/oauth/github/callback",
+            get(oauth_github::callback)
+                .with_state(oauth_github_state)
+                .layer(from_fn_with_state(
+                    (name, "oauth_github_callback").into(),
+                    user_tracker,
+                )),
+        )
+        // Google OAuth：与 GitHub 对称，差异在 provider endpoint / userinfo JSON
+        .route(
+            "/oauth/google/start",
+            get(oauth_google::start_login)
+                .with_state(oauth_google_state.clone())
+                .layer(from_fn_with_state(
+                    (name, "oauth_google_start").into(),
+                    user_tracker,
+                )),
+        )
+        .route(
+            "/oauth/google/callback",
+            get(oauth_google::callback)
+                .with_state(oauth_google_state)
+                .layer(from_fn_with_state(
+                    (name, "oauth_google_callback").into(),
                     user_tracker,
                 )),
         )

@@ -30,6 +30,22 @@ from = "onboarding@resend.dev"
 # 可选 Reply-To：
 # reply_to = "support@example.com"
 
+# 第三方 OAuth provider 配置（可选；整段缺失 / 字段缺失不影响应用启动）
+# 配置完整后 GET /api/users/oauth/github/start 即可走 GitHub 登录流程
+[oauth.github]
+# client_id 和 client_secret 在 GitHub Settings → Developer settings → OAuth Apps 创建
+# client_secret 推荐通过环境变量 TIBBA_WEB__OAUTH__GITHUB__CLIENT_SECRET 注入
+client_id = ""
+# redirect_uri 必须与 GitHub OAuth App 后台「Authorization callback URL」完全一致
+redirect_uri = "http://localhost:5000/api/users/oauth/github/callback"
+
+[oauth.google]
+# Google Cloud Console → APIs & Services → Credentials → OAuth 2.0 Client IDs（Web App 类型）
+# client_secret 推荐通过环境变量 TIBBA_WEB__OAUTH__GOOGLE__CLIENT_SECRET 注入
+client_id = ""
+# redirect_uri 必须在 Google Cloud Console 客户端的「Authorized redirect URIs」列表内
+redirect_uri = "http://localhost:5000/api/users/oauth/google/callback"
+
 [token]
 # token_llm / token_price 的 `model` 字段下拉选项
 models = ["mimo-v2.5-pro"]

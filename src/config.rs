@@ -174,6 +174,17 @@ fn new_email_config(config: &Config) -> Result<tibba_email::EmailConfig> {
     }
 }
 
+// OAuth 全 provider 聚合配置。同样容忍 `[oauth]` 段缺失（→ Default::default()），
+// 真正用 OAuth 时由 `GitHubConfig::build_provider` 校验非空，缺失返回 503。
+static OAUTH_CONFIG: OnceCell<tibba_oauth::OAuthConfig> = OnceCell::new();
+
+fn new_oauth_config(config: &Config) -> Result<tibba_oauth::OAuthConfig> {
+    match config.try_deserialize::<tibba_oauth::OAuthConfig>() {
+        Ok(c) => Ok(c),
+        Err(_) => Ok(tibba_oauth::OAuthConfig::default()),
+    }
+}
+
 #[derive(Debug, Clone, Default, Validate, Deserialize)]
 pub struct TokenConfig {
     /// 可选模型名列表，供 token_llm / token_price 的 `model` 字段下拉展示。
@@ -233,6 +244,12 @@ pub fn must_get_email_config() -> &'static tibba_email::EmailConfig {
         .unwrap_or_else(|| panic!("email config not initialized"))
 }
 
+pub fn must_get_oauth_config() -> &'static tibba_oauth::OAuthConfig {
+    OAUTH_CONFIG
+        .get()
+        .unwrap_or_else(|| panic!("oauth config not initialized"))
+}
+
 async fn init_config() -> Result<()> {
     let app_config = new_config()?;
     let basic_config = new_basic_config(&app_config.sub_config("basic"))?;
@@ -251,6 +268,10 @@ async fn init_config() -> Result<()> {
     EMAIL_CONFIG
         .set(email_config)
         .map_err(|_| map_err("email config init failed"))?;
+    let oauth_config = new_oauth_config(&app_config.sub_config("oauth"))?;
+    OAUTH_CONFIG
+        .set(oauth_config)
+        .map_err(|_| map_err("oauth config init failed"))?;
     let token_config = new_token_config(&app_config.sub_config("token"))?;
     TOKEN_CONFIG
         .set(token_config)
