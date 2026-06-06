@@ -6062,6 +6062,7 @@ dependencies = [
  "snafu",
  "sqlx 0.9.0",
  "tibba-cache",
+ "tibba-email",
  "tibba-error",
  "tibba-middleware",
  "tibba-model",
@@ -6069,6 +6070,7 @@ dependencies = [
  "tibba-session",
  "tibba-util",
  "tibba-validator",
+ "tracing",
  "validator",
 ]
 

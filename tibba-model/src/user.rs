@@ -45,6 +45,8 @@ struct UserSchema {
     email: Option<String>,
     avatar: Option<String>,
     last_login_at: Option<PrimitiveDateTime>,
+    /// 邮箱验证通过时间；NULL 表示未验证
+    email_verified_at: Option<PrimitiveDateTime>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -64,6 +66,8 @@ pub struct User {
     pub email: Option<String>,
     pub avatar: Option<String>,
     pub last_login_at: Option<String>,
+    /// 邮箱验证通过时间；None 表示未验证
+    pub email_verified_at: Option<String>,
 }
 
 impl From<UserSchema> for User {
@@ -83,6 +87,7 @@ impl From<UserSchema> for User {
             email: user.email,
             avatar: user.avatar,
             last_login_at: user.last_login_at.map(format_datetime),
+            email_verified_at: user.email_verified_at.map(format_datetime),
         }
     }
 }
@@ -365,6 +370,40 @@ impl UserModel {
             r#"UPDATE users SET last_login_at = CURRENT_TIMESTAMP WHERE account = $1 AND deleted_at IS NULL"#,
         )
         .bind(account)
+        .execute(pool)
+        .await
+        .context(SqlxSnafu)?;
+        Ok(())
+    }
+
+    /// 邮箱验证通过：写入 `email_verified_at = NOW()`。
+    /// 用户已被软删除时不更新（仍返回 Ok 以保持 idempotency 语义）。
+    pub async fn mark_email_verified(&self, pool: &Pool<Postgres>, user_id: i64) -> Result<()> {
+        sqlx::query(
+            r#"UPDATE users SET email_verified_at = NOW(), modified = NOW()
+               WHERE id = $1 AND deleted_at IS NULL"#,
+        )
+        .bind(user_id)
+        .execute(pool)
+        .await
+        .context(SqlxSnafu)?;
+        Ok(())
+    }
+
+    /// 重置密码：直接覆盖 password 列。调用方负责传入客户端已 sha256 处理的字符串
+    /// （与 register 一致），本方法不做哈希。
+    pub async fn update_password(
+        &self,
+        pool: &Pool<Postgres>,
+        user_id: i64,
+        password: &str,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"UPDATE users SET password = $1, modified = NOW()
+               WHERE id = $2 AND deleted_at IS NULL"#,
+        )
+        .bind(password)
+        .bind(user_id)
         .execute(pool)
         .await
         .context(SqlxSnafu)?;

@@ -21,7 +21,9 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 snafu = { workspace = true }
 sqlx = { workspace = true }
+tracing = { workspace = true }
 tibba-cache = { path = "../tibba-cache", version = "0.2.2" }
+tibba-email = { path = "../tibba-email", version = "0.2.2" }
 tibba-error = { path = "../tibba-error", version = "0.2.2" }
 tibba-middleware = { path = "../tibba-middleware", version = "0.2.2" }
 tibba-model = { path = "../tibba-model", version = "0.2.2" }

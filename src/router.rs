@@ -14,7 +14,7 @@
 
 use crate::admin_web::serve_web;
 use crate::cache::get_redis_cache;
-use crate::config::{must_get_basic_config, must_get_token_config};
+use crate::config::{must_get_basic_config, must_get_email_config, must_get_token_config};
 use crate::dal::get_opendal_storage;
 use crate::docker::analyze as docker_analyze;
 use crate::metrics::metrics_handler;
@@ -121,6 +121,7 @@ pub fn new_router() -> Result<Router> {
         magic_code,
         pool: get_db_pool(),
         cache,
+        email_config: must_get_email_config(),
         on_register: Some(Arc::new(|user_id| {
             Box::pin(async move {
                 if let Err(e) = TokenService::recharge(

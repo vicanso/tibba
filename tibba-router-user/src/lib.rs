@@ -26,6 +26,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use tibba_cache::RedisCache;
+use tibba_email::EmailConfig;
 use tibba_error::Error as BaseError;
 use tibba_middleware::{user_tracker, validate_captcha};
 use tibba_model::{Model, ROLE_SUPER_ADMIN, UserModel, UserUpdateParams};
@@ -37,6 +38,9 @@ use tibba_util::{
 };
 use tibba_validator::*;
 use validator::Validate;
+
+mod email_verify;
+mod password_reset;
 
 /// 注册成功回调的 Future 类型
 pub type OnRegisterFuture = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
@@ -378,22 +382,39 @@ pub struct UserRouterParams {
     pub magic_code: String,
     /// 数据库连接池
     pub pool: &'static PgPool,
-    /// Redis 缓存（存储验证码答案）
+    /// Redis 缓存（存储验证码答案、邮箱验证 token、密码重置 token）
     pub cache: &'static RedisCache,
+    /// 全局邮件配置——被邮箱验证 / 密码重置端点用来构造 EmailService
+    pub email_config: &'static EmailConfig,
     /// 注册成功后的回调，可选。失败不影响注册流程。
     pub on_register: Option<OnRegisterFn>,
 }
 
 /// 创建用户相关路由，包含以下端点：
-/// - `GET  /login/token` — 获取登录令牌（带频率限制中间件）
-/// - `POST /login`       — 用户登录（带验证码校验 + 频率限制中间件）
-/// - `GET  /me`          — 获取当前用户信息
-/// - `PATCH /refresh`    — 刷新 Session 有效期
-/// - `POST /register`    — 注册新用户（带频率限制中间件）
-/// - `DELETE /logout`    — 登出（带频率限制中间件）
-/// - `PATCH /profile`    — 更新个人资料
+/// - `GET  /login/token`              — 获取登录令牌（带频率限制中间件）
+/// - `POST /login`                    — 用户登录（带验证码校验 + 频率限制中间件）
+/// - `GET  /me`                       — 获取当前用户信息
+/// - `PATCH /refresh`                 — 刷新 Session 有效期
+/// - `POST /register`                 — 注册新用户（带频率限制中间件）
+/// - `DELETE /logout`                 — 登出（带频率限制中间件）
+/// - `PATCH /profile`                 — 更新个人资料
+/// - `POST /email/verify/request`     — 登录态触发邮箱验证（发送验证码）
+/// - `POST /email/verify/confirm`     — 用 token 完成邮箱验证
+/// - `POST /password/reset/request`   — 匿名按账号请求重置（总是返回 204）
+/// - `POST /password/reset/confirm`   — 用 token + 新密码完成重置
 pub fn new_user_router(params: UserRouterParams) -> Router {
     let name = "user";
+
+    let email_verify_state = email_verify::EmailVerifyState {
+        pool: params.pool,
+        cache: params.cache,
+        email_config: params.email_config,
+    };
+    let password_reset_state = password_reset::PasswordResetState {
+        pool: params.pool,
+        cache: params.cache,
+        email_config: params.email_config,
+    };
 
     Router::new()
         .route(
@@ -431,4 +452,37 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
             delete(logout).layer(from_fn_with_state((name, "logout").into(), user_tracker)),
         )
         .route("/profile", patch(update_profile).with_state(params.pool))
+        // 邮箱验证（登录态调用，request 端点带 user_tracker 防刷）
+        .route(
+            "/email/verify/request",
+            post(email_verify::request_verify)
+                .with_state(email_verify_state.clone())
+                .layer(from_fn_with_state(
+                    (name, "email_verify_request").into(),
+                    user_tracker,
+                )),
+        )
+        .route(
+            "/email/verify/confirm",
+            post(email_verify::confirm_verify).with_state(email_verify_state),
+        )
+        // 密码重置（匿名调用，request 端点强烈防刷以缓解枚举/扫描）
+        .route(
+            "/password/reset/request",
+            post(password_reset::request_reset)
+                .with_state(password_reset_state.clone())
+                .layer(from_fn_with_state(
+                    (name, "password_reset_request").into(),
+                    user_tracker,
+                )),
+        )
+        .route(
+            "/password/reset/confirm",
+            post(password_reset::confirm_reset)
+                .with_state(password_reset_state)
+                .layer(from_fn_with_state(
+                    (name, "password_reset_confirm").into(),
+                    user_tracker,
+                )),
+        )
 }
