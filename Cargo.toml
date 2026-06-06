@@ -50,6 +50,7 @@ tibba-middleware = { path = "./tibba-middleware" }
 tibba-model = { path = "./tibba-model" }
 tibba-model-builtin = { path = "./tibba-model-builtin" }
 tibba-model-token = { path = "./tibba-model-token" }
+tibba-notify = { path = "./tibba-notify" }
 tibba-oauth = { path = "./tibba-oauth" }
 tibba-opendal = { path = "./tibba-opendal" }
 tibba-request = { path = "./tibba-request" }
@@ -101,6 +102,7 @@ members = [
     "tibba-model",
     "tibba-model-builtin",
     "tibba-model-token",
+    "tibba-notify",
     "tibba-opendal",
     "tibba-performance",
     "tibba-request",

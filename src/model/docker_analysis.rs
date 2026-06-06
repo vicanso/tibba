@@ -16,6 +16,7 @@ use crate::config::{must_get_diving_config, must_get_email_config};
 use crate::sql::get_db_pool;
 use ctor::ctor;
 use serde::{Deserialize, Serialize};
+use tibba_notify::{EmailNotifier, MultiNotifier, Notifier, NotifyMessage, WecomRobotNotifier};
 use snafu::{OptionExt, ResultExt, Snafu};
 use sqlx::{FromRow, PgPool};
 use std::sync::Arc;
@@ -549,41 +550,11 @@ async fn analyze_image(record: &DockerAnalysisRecord) -> Result<DockerAnalysisRe
     })
 }
 
-async fn send_wecom_notification(
-    token: &str,
+/// 从 record + result 构造统一 NotifyMessage。Email / WeCom impl 各自挑用 subject 与 text。
+fn build_notify_message(
     record: &DockerAnalysisRecord,
     result: &DockerAnalysisResult,
-) -> Result<()> {
-    let content = format!(
-        "**Docker Image Analysis Completed**\n\
-         - Image: `{}:{}`\n\
-         - Analysis ID: {}\n\
-         - Elapsed: {}ms\n\n\
-         {}",
-        record.repo_name, record.tag, record.id, result.elapsed_ms, result.llm_result
-    );
-    let url = format!(
-        "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key={}",
-        token
-    );
-    let body = serde_json::json!({
-        "msgtype": "markdown",
-        "markdown": { "content": content }
-    });
-    reqwest::Client::new()
-        .post(&url)
-        .json(&body)
-        .send()
-        .await
-        .context(HttpSnafu)?;
-    Ok(())
-}
-
-async fn send_email_notification(
-    to: &str,
-    record: &DockerAnalysisRecord,
-    result: &DockerAnalysisResult,
-) -> Result<()> {
+) -> NotifyMessage {
     let subject = format!("Docker Analysis: {}:{}", record.repo_name, record.tag);
     let body = format!(
         "Image: {}:{}\nAnalysis ID: {}\nElapsed: {}ms\n\n{}\n\n---\nDiving Result:\n{}",
@@ -594,25 +565,31 @@ async fn send_email_notification(
         result.llm_result,
         result.diving_result,
     );
-    must_get_email_config()
-        .build_service()
-        .send_text(to, &subject, &body)
-        .await
+    NotifyMessage::new(subject, body)
 }
 
 async fn notify_result(record: &DockerAnalysisRecord, result: &DockerAnalysisResult) {
     let config = must_get_diving_config();
+    let msg = build_notify_message(record, result);
 
-    // 优先使用记录中存储的推送方式
+    // ─ 档一：record 显式指定推送方式（单通道）
     if !record.notify_type.is_empty() && !record.notify_data.is_empty() {
         match record.notify_type.as_str() {
-            "wecom" => {
-                if let Err(e) = send_wecom_notification(&record.notify_data, record, result).await {
-                    error!(target: LOG_TARGET, id = record.id, error = %e, "send wecom notification failed");
+            "wecom" => match WecomRobotNotifier::new() {
+                Ok(n) => {
+                    if let Err(e) = n.send(&record.notify_data, &msg).await {
+                        error!(target: LOG_TARGET, id = record.id, error = %e, "send wecom notification failed");
+                    }
                 }
-            }
+                Err(e) => {
+                    error!(target: LOG_TARGET, id = record.id, error = %e, "init wecom notifier failed");
+                }
+            },
             "email" => {
-                if let Err(e) = send_email_notification(&record.notify_data, record, result).await
+                let svc = must_get_email_config().build_service();
+                if let Err(e) = EmailNotifier::new(svc)
+                    .send(&record.notify_data, &msg)
+                    .await
                 {
                     error!(target: LOG_TARGET, id = record.id, error = %e, "send email notification failed");
                 }
@@ -629,16 +606,35 @@ async fn notify_result(record: &DockerAnalysisRecord, result: &DockerAnalysisRes
         return;
     }
 
-    // 回退到全局配置
-    if let Some(token) = &config.notify_wecom
-        && let Err(e) = send_wecom_notification(token, record, result).await
-    {
-        error!(target: LOG_TARGET, id = record.id, error = %e, "send wecom notification failed");
+    // ─ 档二：回退全局配置，用 MultiNotifier 一次扇出
+    //   逐通道失败仅日志，不影响其它通道（Q1=B：整体不 Err）
+    let mut multi = MultiNotifier::new();
+    if let Some(token) = &config.notify_wecom {
+        match WecomRobotNotifier::new() {
+            Ok(n) => multi = multi.add(n, token.clone()),
+            Err(e) => {
+                warn!(target: LOG_TARGET, id = record.id, error = %e, "init wecom notifier failed");
+            }
+        }
     }
-    if let Some(email) = &config.notify_email
-        && let Err(e) = send_email_notification(email, record, result).await
-    {
-        error!(target: LOG_TARGET, id = record.id, error = %e, "send email notification failed");
+    if let Some(email) = &config.notify_email {
+        let svc = must_get_email_config().build_service();
+        multi = multi.add(EmailNotifier::new(svc), email.clone());
+    }
+    if multi.is_empty() {
+        return;
+    }
+    for r in multi.send_all(&msg).await {
+        if !r.ok {
+            error!(
+                target: LOG_TARGET,
+                id = record.id,
+                kind = r.kind,
+                target = %r.target,
+                error = ?r.error,
+                "notify failed"
+            );
+        }
     }
 }
 

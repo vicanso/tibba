@@ -5847,6 +5847,7 @@ dependencies = [
  "tibba-model",
  "tibba-model-builtin",
  "tibba-model-token",
+ "tibba-notify",
  "tibba-oauth",
  "tibba-opendal",
  "tibba-performance",
@@ -6048,6 +6049,18 @@ dependencies = [
  "tibba-model",
  "time",
  "uuid",
+]
+
+[[package]]
+name = "tibba-notify"
+version = "0.2.2"
+dependencies = [
+ "serde",
+ "snafu",
+ "tibba-email",
+ "tibba-error",
+ "tibba-request",
+ "tracing",
 ]
 
 [[package]]
