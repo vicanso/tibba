@@ -41,6 +41,7 @@ sqlx = { workspace = true }
 time = { workspace = true }
 tibba-cache = { path = "./tibba-cache" }
 tibba-config = { path = "./tibba-config" }
+tibba-email = { path = "./tibba-email" }
 tibba-error = { path = "./tibba-error" }
 tibba-hook = { path = "./tibba-hook" }
 tibba-llm = { path = "./tibba-llm" }
@@ -86,6 +87,7 @@ members = [
     "tibba-cache",
     "tibba-config",
     "tibba-crypto",
+    "tibba-email",
     "tibba-error",
     "tibba-hook",
     "tibba-middleware",

@@ -146,12 +146,8 @@ pub struct DivingConfig {
     pub url: String,
     // WeCom robot webhook key (optional)
     pub notify_wecom: Option<String>,
-    // 通知接收邮箱地址 (optional)
+    // 通知接收邮箱地址 (optional)；具体发件 by `tibba_email::EmailService`，配置见 `[email]`
     pub notify_email: Option<String>,
-    // 发件人地址（Resend 要求已验证的发件域，例如 "Diving <noreply@yourdomain>"）
-    pub email_from: Option<String>,
-    // Resend API key（re_xxx）；通过环境变量 TIBBA_WEB_DIVING_RESEND_API_KEY 注入更安全
-    pub resend_api_key: Option<String>,
 }
 
 static DIVING_CONFIG: OnceCell<DivingConfig> = OnceCell::new();
@@ -160,6 +156,22 @@ fn new_diving_config(config: &Config) -> Result<DivingConfig> {
     let diving_config = config.try_deserialize::<DivingConfig>()?;
     diving_config.validate().map_err(map_err)?;
     Ok(diving_config)
+}
+
+// 应用全局邮件配置。原 DivingConfig 的 email_from / resend_api_key 抽到此处统一管理，
+// 邮箱验证 / 密码重置 / 通知告警等所有发送方共用一份 [email] 配置。
+//
+// 该段可在 default.toml 中缺失：此时返回 `EmailConfig::default()`（全空），
+// 应用照常启动；真正调用 `EmailService::send` 时再以 `Error::Invalid` 报错，
+// 避免没用到邮件功能的部署也被强制配置。
+static EMAIL_CONFIG: OnceCell<tibba_email::EmailConfig> = OnceCell::new();
+
+fn new_email_config(config: &Config) -> Result<tibba_email::EmailConfig> {
+    match config.try_deserialize::<tibba_email::EmailConfig>() {
+        Ok(c) => Ok(c),
+        // tibba_config 在该段缺失或为空时会报 "missing field"/"not found"，吞掉走默认
+        Err(_) => Ok(tibba_email::EmailConfig::default()),
+    }
 }
 
 #[derive(Debug, Clone, Default, Validate, Deserialize)]
@@ -215,6 +227,12 @@ pub fn must_get_diving_config() -> &'static DivingConfig {
         .unwrap_or_else(|| panic!("diving config not initialized"))
 }
 
+pub fn must_get_email_config() -> &'static tibba_email::EmailConfig {
+    EMAIL_CONFIG
+        .get()
+        .unwrap_or_else(|| panic!("email config not initialized"))
+}
+
 async fn init_config() -> Result<()> {
     let app_config = new_config()?;
     let basic_config = new_basic_config(&app_config.sub_config("basic"))?;
@@ -229,6 +247,10 @@ async fn init_config() -> Result<()> {
     DIVING_CONFIG
         .set(diving_config)
         .map_err(|_| map_err("diving config init failed"))?;
+    let email_config = new_email_config(&app_config.sub_config("email"))?;
+    EMAIL_CONFIG
+        .set(email_config)
+        .map_err(|_| map_err("email config init failed"))?;
     let token_config = new_token_config(&app_config.sub_config("token"))?;
     TOKEN_CONFIG
         .set(token_config)

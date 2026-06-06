@@ -5746,6 +5746,7 @@ dependencies = [
  "substring",
  "tibba-cache",
  "tibba-config",
+ "tibba-email",
  "tibba-error",
  "tibba-hook",
  "tibba-llm",
@@ -5821,6 +5822,18 @@ dependencies = [
  "sha2 0.11.0",
  "snafu",
  "tibba-error",
+]
+
+[[package]]
+name = "tibba-email"
+version = "0.2.2"
+dependencies = [
+ "resend-rs",
+ "serde",
+ "snafu",
+ "tibba-config",
+ "tibba-error",
+ "tracing",
 ]
 
 [[package]]
@@ -5948,6 +5961,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "tibba-rbac"
+version = "0.2.2"
+dependencies = [
+ "axum",
+ "http-body-util",
+ "snafu",
+ "tibba-error",
+ "tibba-session",
+ "tokio",
+ "tower",
+]
+
+[[package]]
 name = "tibba-request"
 version = "0.2.2"
 dependencies = [
@@ -6039,6 +6065,7 @@ dependencies = [
  "tibba-error",
  "tibba-middleware",
  "tibba-model",
+ "tibba-model-builtin",
  "tibba-session",
  "tibba-util",
  "tibba-validator",

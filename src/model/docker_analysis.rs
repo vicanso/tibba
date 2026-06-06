@@ -12,11 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::config::{DivingConfig, must_get_diving_config};
+use crate::config::{must_get_diving_config, must_get_email_config};
 use crate::sql::get_db_pool;
 use ctor::ctor;
-use resend_rs::Resend;
-use resend_rs::types::CreateEmailBaseOptions;
 use serde::{Deserialize, Serialize};
 use snafu::{OptionExt, ResultExt, Snafu};
 use sqlx::{FromRow, PgPool};
@@ -78,17 +76,6 @@ enum Error {
     #[snafu(display("no enabled token_llms record found (expect name='default')"))]
     LlmConfigMissing,
 
-    /// Resend 邮件 API 调用失败
-    #[snafu(display("resend: {source}"))]
-    Resend {
-        #[snafu(source(from(resend_rs::Error, Box::new)))]
-        source: Box<resend_rs::Error>,
-    },
-
-    /// 关键配置缺失（启动期 / 调用期配置校验）
-    #[snafu(display("{key} not configured"))]
-    ConfigMissing { key: &'static str },
-
     /// 注册定时任务失败
     #[snafu(display("scheduler register fail: {message}"))]
     Scheduler { message: String },
@@ -106,10 +93,6 @@ impl From<Error> for BaseError {
             Error::LlmConfigMissing => {
                 BaseError::new("no enabled token_llms record found (expect name='default')")
                     .with_sub_category("llm_config_missing")
-            }
-            Error::Resend { source } => BaseError::new(source).with_sub_category("resend"),
-            Error::ConfigMissing { key } => {
-                BaseError::new(format!("{key} not configured")).with_sub_category("config_missing")
             }
             Error::Scheduler { message } => BaseError::new(message).with_sub_category("scheduler"),
         };
@@ -597,22 +580,10 @@ async fn send_wecom_notification(
 }
 
 async fn send_email_notification(
-    config: &DivingConfig,
     to: &str,
     record: &DockerAnalysisRecord,
     result: &DockerAnalysisResult,
 ) -> Result<()> {
-    let from_addr = config
-        .email_from
-        .as_deref()
-        .context(ConfigMissingSnafu { key: "email_from" })?;
-    let api_key = config
-        .resend_api_key
-        .as_deref()
-        .context(ConfigMissingSnafu {
-            key: "resend_api_key",
-        })?;
-
     let subject = format!("Docker Analysis: {}:{}", record.repo_name, record.tag);
     let body = format!(
         "Image: {}:{}\nAnalysis ID: {}\nElapsed: {}ms\n\n{}\n\n---\nDiving Result:\n{}",
@@ -623,15 +594,10 @@ async fn send_email_notification(
         result.llm_result,
         result.diving_result,
     );
-
-    let email = CreateEmailBaseOptions::new(from_addr, [to], subject).with_text(&body);
-
-    Resend::new(api_key)
-        .emails
-        .send(email)
+    must_get_email_config()
+        .build_service()
+        .send_text(to, &subject, &body)
         .await
-        .context(ResendSnafu)?;
-    Ok(())
 }
 
 async fn notify_result(record: &DockerAnalysisRecord, result: &DockerAnalysisResult) {
@@ -646,8 +612,7 @@ async fn notify_result(record: &DockerAnalysisRecord, result: &DockerAnalysisRes
                 }
             }
             "email" => {
-                if let Err(e) =
-                    send_email_notification(config, &record.notify_data, record, result).await
+                if let Err(e) = send_email_notification(&record.notify_data, record, result).await
                 {
                     error!(target: LOG_TARGET, id = record.id, error = %e, "send email notification failed");
                 }
@@ -671,7 +636,7 @@ async fn notify_result(record: &DockerAnalysisRecord, result: &DockerAnalysisRes
         error!(target: LOG_TARGET, id = record.id, error = %e, "send wecom notification failed");
     }
     if let Some(email) = &config.notify_email
-        && let Err(e) = send_email_notification(config, email, record, result).await
+        && let Err(e) = send_email_notification(email, record, result).await
     {
         error!(target: LOG_TARGET, id = record.id, error = %e, "send email notification failed");
     }

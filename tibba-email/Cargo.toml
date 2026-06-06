@@ -1,0 +1,23 @@
+[package]
+name = "tibba-email"
+version = "0.2.2"
+edition = "2024"
+authors = ["Tree Xie <tree.xie@outlook.com>"]
+license = "Apache-2.0"
+homepage = "https://github.com/vicanso/tibba"
+repository = "https://github.com/vicanso/tibba"
+keywords = ["tibba", "email", "resend"]
+description = "email service abstraction for tibba"
+
+
+[lib]
+name = "tibba_email"
+path = "src/lib.rs"
+
+[dependencies]
+resend-rs = { workspace = true }
+serde = { workspace = true }
+snafu = { workspace = true }
+tibba-config = { path = "../tibba-config", version = "0.2.2" }
+tibba-error = { path = "../tibba-error", version = "0.2.2" }
+tracing = { workspace = true }
