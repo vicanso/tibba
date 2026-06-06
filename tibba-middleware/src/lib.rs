@@ -47,6 +47,9 @@ pub enum Error {
     /// IP 速率限制触发。HTTP 429。
     #[snafu(display("rate limited (quota: {quota})"))]
     RateLimited { quota: String },
+    /// 响应 body 超过 idempotency 缓存上限，无法安全缓存。HTTP 503。
+    #[snafu(display("idempotency body too large (limit {limit_bytes} bytes)"))]
+    IdempotencyBodyTooLarge { limit_bytes: usize },
 }
 
 impl From<Error> for BaseError {
@@ -78,6 +81,12 @@ impl From<Error> for BaseError {
                 .with_sub_category("rate_limited")
                 .with_status(429)
                 .with_exception(false),
+            Error::IdempotencyBodyTooLarge { limit_bytes } => BaseError::new(format!(
+                "idempotency body too large (limit {limit_bytes} bytes)"
+            ))
+            .with_sub_category("idempotency_body_too_large")
+            .with_status(503)
+            .with_exception(true),
         };
         err.with_category("middleware")
     }
@@ -128,6 +137,7 @@ where
 mod common;
 mod csrf;
 mod entry;
+mod idempotency;
 mod limit;
 mod rate_limit;
 mod request_id;
@@ -137,6 +147,7 @@ mod tracker;
 pub use common::*;
 pub use csrf::*;
 pub use entry::*;
+pub use idempotency::*;
 pub use limit::*;
 pub use rate_limit::*;
 pub use request_id::*;

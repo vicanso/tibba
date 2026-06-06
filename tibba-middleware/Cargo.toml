@@ -22,8 +22,10 @@ metrics = { workspace = true }
 scopeguard = { workspace = true }
 serde = { workspace = true }
 snafu = { workspace = true }
+serde_json = { workspace = true }
 tibba-cache = { path = "../tibba-cache", version = "0.2.2" }
 tibba-error = { path = "../tibba-error", version = "0.2.2" }
+tibba-session = { path = "../tibba-session", version = "0.2.2" }
 tibba-state = { path = "../tibba-state", version = "0.2.2" }
 tibba-util = { path = "../tibba-util", version = "0.2.2" }
 tokio = { workspace = true }
