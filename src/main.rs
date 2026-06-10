@@ -48,6 +48,7 @@ mod docker;
 mod httpstat;
 mod metrics;
 mod model;
+mod openapi;
 mod router;
 mod sql;
 mod state;

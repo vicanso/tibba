@@ -15,6 +15,7 @@
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::middleware::from_fn_with_state;
+use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, patch, post};
 use axum::{Json, Router};
 use axum_extra::extract::cookie::CookieJar;
@@ -30,7 +31,7 @@ use tibba_email::EmailConfig;
 use tibba_error::Error as BaseError;
 use tibba_oauth::OAuthConfig;
 use tibba_middleware::{ClientIp, RequestId, user_tracker, validate_captcha};
-use tibba_model::{Model, ROLE_SUPER_ADMIN, UserModel, UserUpdateParams};
+use tibba_model::{Model, ROLE_SUPER_ADMIN, User, UserModel, UserUpdateParams};
 use tibba_model_builtin::{AuditLogModel, AuditLogParams, RolePermissionModel};
 use tibba_session::{Session, SessionResponse, UserSession};
 use tibba_util::{
@@ -38,6 +39,7 @@ use tibba_util::{
     is_test, now, sha256, timestamp, timestamp_hash, uuid, validate_timestamp_hash,
 };
 use tibba_validator::*;
+use utoipa::{OpenApi, ToSchema};
 use validator::Validate;
 
 mod email_verify;
@@ -45,6 +47,7 @@ mod jwt_auth;
 mod oauth_github;
 mod oauth_google;
 mod password_reset;
+mod totp;
 
 /// 注册成功回调的 Future 类型
 pub type OnRegisterFuture = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
@@ -100,7 +103,7 @@ impl From<Error> for BaseError {
 }
 
 /// 登录令牌接口的响应结构体。
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 struct LoginTokenResp {
     /// 服务端生成时的 Unix 时间戳（秒），用于防重放校验。
     ts: i64,
@@ -112,6 +115,12 @@ struct LoginTokenResp {
 
 /// 生成登录令牌，返回 `{ ts, hash, token }`。
 /// 客户端须在 60 秒内使用该令牌完成登录，超时后服务端拒绝。
+#[utoipa::path(
+    get,
+    path = "/users/login/token",
+    tag = "user",
+    responses((status = 200, description = "防重放登录令牌", body = LoginTokenResp))
+)]
 async fn login_token(State(secret): State<String>) -> JsonResult<LoginTokenResp> {
     let token = uuid();
     let (ts, hash) = timestamp_hash(&token, &secret);
@@ -121,7 +130,7 @@ async fn login_token(State(secret): State<String>) -> JsonResult<LoginTokenResp>
 
 /// 登录请求参数，含防重放令牌和用户凭据。
 /// `pub(crate)` 因 jwt_auth 模块需要复用同样的校验链，避免前端写两套适配。
-#[derive(Deserialize, Validate, Debug)]
+#[derive(Deserialize, Validate, Debug, ToSchema)]
 pub(crate) struct LoginParams {
     /// 客户端从 `/login/token` 获取的时间戳
     pub ts: i64,
@@ -158,7 +167,7 @@ impl LoginParams {
 }
 
 /// `/me` 及登录接口的用户信息响应体。
-#[derive(Debug, Clone, Serialize, Default)]
+#[derive(Debug, Clone, Serialize, Default, ToSchema)]
 struct UserMeResp {
     /// 用户账号
     account: String,
@@ -186,36 +195,85 @@ struct UserMeResp {
     permissions: Option<Vec<String>>,
 }
 
+/// 2FA 登录挑战响应：密码已过但需第二步验证时返回，**不**建立 Session。
+#[derive(Serialize, ToSchema)]
+struct LoginChallenge {
+    /// 恒为 `true`，客户端据此进入第二步（调用 `/login/mfa`）。
+    mfa_required: bool,
+    /// 一次性挑战令牌（5 分钟有效），与动态码一起提交完成登录。
+    mfa_token: String,
+}
+
 /// 用户登录接口。
-/// 校验令牌合法性后，比对密码（`sha256(hash:stored_password)`），
-/// 通过后创建 Session 并返回用户信息。
+/// 校验令牌合法性后，比对密码（`sha256(hash:stored_password)`）。
+/// 若用户已启用 2FA，则返回 [`LoginChallenge`] 而不建立 Session；
+/// 否则直接创建 Session 并返回用户信息。
+#[utoipa::path(
+    post,
+    path = "/users/login",
+    tag = "user",
+    request_body = LoginParams,
+    responses(
+        (status = 200, description = "登录成功返回用户信息（UserMeResp）；已启用 2FA 时返回 { mfa_required, mfa_token }"),
+        (status = 401, description = "账号或密码错误 / 令牌过期")
+    )
+)]
 async fn login(
-    State((secret, pool)): State<(String, &'static PgPool)>,
+    State((secret, pool, cache)): State<(String, &'static PgPool, &'static RedisCache)>,
     session: Session,
     request_id: RequestId,
     ClientIp(ip): ClientIp,
     headers: HeaderMap,
     JsonParams(params): JsonParams<LoginParams>,
-) -> Result<SessionResponse<Json<UserMeResp>>> {
+) -> Result<Response> {
     params.validate_token(&secret)?;
     let account = params.account;
     let Some(user) = UserModel::new().get_by_account(pool, &account).await? else {
         return Err(Error::BadCredentials.into());
     };
 
-    let password = user.password;
     // 密码验证：sha256(hash:存储密码) 须与客户端传入的 password 相等
-    let msg = format!("{}:{password}", params.hash);
+    let msg = format!("{}:{}", params.hash, user.password);
     if sha256(msg.as_bytes()) != params.password {
         return Err(Error::BadCredentials.into());
     }
 
+    // 2FA 闸门：已启用则不建会话，签发挑战令牌要求第二步
+    let totp = UserModel::new().get_totp_state(pool, user.id).await?;
+    if totp.enabled {
+        let mfa_token =
+            totp::create_mfa_challenge(cache, totp::MFA_PREFIX_SESSION, user.id).await?;
+        return Ok(Json(LoginChallenge {
+            mfa_required: true,
+            mfa_token,
+        })
+        .into_response());
+    }
+
+    let resp =
+        establish_session(session, user, pool, &request_id, ip.to_string(), &headers, "user.login")
+            .await?;
+    Ok(resp.into_response())
+}
+
+/// 密码（及可能的二步）校验通过后建立 Session 并返回用户信息响应。
+/// `action` 用于审计区分 `user.login` / `user.login_mfa`。`login` 与
+/// `login_mfa` 共用本助手，避免会话建立逻辑两处漂移。
+async fn establish_session(
+    session: Session,
+    user: User,
+    pool: &'static PgPool,
+    request_id: &RequestId,
+    ip: String,
+    headers: &HeaderMap,
+    action: &'static str,
+) -> Result<SessionResponse<Json<UserMeResp>>> {
+    let account = user.account.clone();
     let groups = user.groups.clone().unwrap_or_default();
     let roles = user.roles.clone().unwrap_or_default();
 
     // 把 roles 翻译为权限码并集，缓存到 Session（避免每次 handler 重查 DB）。
-    // 失败仅记录但不阻断登录——RBAC 还未铺开时 role_permissions 可能为空，
-    // 登录主流程不应被附属表的 SQL 错误打断。
+    // 失败仅记录但不阻断登录——RBAC 还未铺开时 role_permissions 可能为空。
     let permissions = RolePermissionModel::new()
         .list_permissions_for_roles(pool, &roles)
         .await
@@ -235,10 +293,10 @@ async fn login(
     let _ = AuditLogModel::new()
         .log(
             pool,
-            AuditLogParams::new("user.login")
+            AuditLogParams::new(action)
                 .with_user(user.id)
                 .with_target("user", user.id.to_string())
-                .with_request(request_id.as_str(), ip.to_string(), user_agent_of(&headers)),
+                .with_request(request_id.as_str(), ip, user_agent_of(headers)),
         )
         .await;
 
@@ -260,9 +318,73 @@ async fn login(
     Ok(SessionResponse(session, Json(info)))
 }
 
+/// 第二步登录参数：挑战令牌 + 动态码/恢复码。
+#[derive(Debug, Deserialize, Validate, ToSchema)]
+struct LoginMfaParams {
+    /// `/login` 返回的一次性挑战令牌（UUID）
+    #[validate(custom(function = "x_uuid"))]
+    mfa_token: String,
+    /// TOTP 动态码（6 位）或恢复码（`xxxxx-xxxxx`）
+    #[validate(length(min = 6, max = 32))]
+    code: String,
+}
+
+/// `POST /login/mfa` —— 完成 2FA 登录第二步。
+/// 挑战令牌为一次性：无论校验成败都已消费，验证失败需重新 `/login`。
+#[utoipa::path(
+    post,
+    path = "/users/login/mfa",
+    tag = "user",
+    request_body = LoginMfaParams,
+    responses(
+        (status = 200, description = "二步通过，建立 Session 并返回用户信息", body = UserMeResp),
+        (status = 401, description = "挑战令牌失效或动态码/恢复码错误")
+    )
+)]
+async fn login_mfa(
+    State((secret, pool, cache)): State<(String, &'static PgPool, &'static RedisCache)>,
+    session: Session,
+    request_id: RequestId,
+    ClientIp(ip): ClientIp,
+    headers: HeaderMap,
+    JsonParams(params): JsonParams<LoginMfaParams>,
+) -> Result<SessionResponse<Json<UserMeResp>>> {
+    let user_id = totp::consume_mfa_challenge(cache, totp::MFA_PREFIX_SESSION, &params.mfa_token)
+        .await?
+        .ok_or(totp::Error::InvalidChallenge)?;
+
+    if !totp::verify_second_factor(pool, &secret, user_id, params.code.trim()).await? {
+        return Err(totp::Error::BadCode.into());
+    }
+
+    let user = UserModel::new()
+        .get_by_id(pool, user_id as u64)
+        .await?
+        .context(UserNotFoundSnafu {
+            account: user_id.to_string(),
+        })?;
+
+    establish_session(
+        session,
+        user,
+        pool,
+        &request_id,
+        ip.to_string(),
+        &headers,
+        "user.login_mfa",
+    )
+    .await
+}
+
 /// 获取当前登录用户信息。
 /// 若 Cookie 中无 device_id，则自动生成并写入；
 /// 未登录时返回空的 `UserMeResp`。
+#[utoipa::path(
+    get,
+    path = "/users/me",
+    tag = "user",
+    responses((status = 200, description = "当前用户信息；未登录时各字段为空", body = UserMeResp))
+)]
 async fn me(
     State(pool): State<&'static PgPool>,
     mut jar: CookieJar,
@@ -301,7 +423,7 @@ async fn me(
 }
 
 /// 注册请求参数。
-#[derive(Deserialize, Validate)]
+#[derive(Deserialize, Validate, ToSchema)]
 struct RegisterParams {
     #[validate(custom(function = "x_user_account"))]
     account: String,
@@ -310,7 +432,7 @@ struct RegisterParams {
 }
 
 /// 注册成功响应体。
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 struct RegisterResp {
     /// 新用户 ID
     id: u64,
@@ -321,6 +443,13 @@ struct RegisterResp {
 /// 注册新用户接口。
 /// 第一个注册成功的用户（id=1）自动授予超级管理员角色。
 /// 注册成功后若配置了 `on_register` 回调，则异步触发；回调失败不影响注册结果。
+#[utoipa::path(
+    post,
+    path = "/users/register",
+    tag = "user",
+    request_body = RegisterParams,
+    responses((status = 200, description = "注册成功，返回新用户 id 与账号", body = RegisterResp))
+)]
 async fn register(
     State(state): State<RegisterState>,
     request_id: RequestId,
@@ -360,6 +489,12 @@ async fn register(
 }
 
 /// 刷新 Session 有效期。仅当 Session 满足续期条件时才执行续期操作。
+#[utoipa::path(
+    patch,
+    path = "/users/refresh",
+    tag = "user",
+    responses((status = 200, description = "已续期（或不满足续期条件时原样返回）"))
+)]
 async fn refresh_session(mut session: UserSession) -> Result<Session> {
     if !session.can_renew() {
         return Ok(session.into());
@@ -370,6 +505,12 @@ async fn refresh_session(mut session: UserSession) -> Result<Session> {
 }
 
 /// 登出接口，清除当前 Session。审计 reset 之前抓 user_id，未登录态不记。
+#[utoipa::path(
+    delete,
+    path = "/users/logout",
+    tag = "user",
+    responses((status = 200, description = "已登出，Session 已清空"))
+)]
 async fn logout(
     State(pool): State<&'static PgPool>,
     request_id: RequestId,
@@ -398,7 +539,7 @@ async fn logout(
 }
 
 /// 更新用户资料的请求参数（所有字段均为可选）。
-#[derive(Deserialize, Validate)]
+#[derive(Deserialize, Validate, ToSchema)]
 struct UpdateProfileParams {
     #[validate(length(max = 100))]
     nickname: Option<String>,
@@ -411,6 +552,13 @@ struct UpdateProfileParams {
 }
 
 /// 更新当前登录用户的个人资料（邮箱、头像），成功返回 204 No Content。
+#[utoipa::path(
+    patch,
+    path = "/users/profile",
+    tag = "user",
+    request_body = UpdateProfileParams,
+    responses((status = 204, description = "资料更新成功"))
+)]
 async fn update_profile(
     State(pool): State<&'static PgPool>,
     session: UserSession,
@@ -492,6 +640,12 @@ pub struct UserRouterParams {
 /// - `POST /email/verify/confirm`     — 用 token 完成邮箱验证
 /// - `POST /password/reset/request`   — 匿名按账号请求重置（总是返回 204）
 /// - `POST /password/reset/confirm`   — 用 token + 新密码完成重置
+/// - `POST /login/mfa`                — 2FA 登录第二步（Session 路径）
+/// - `POST /totp/enroll`              — 生成 TOTP 密钥（返回 otpauth URI，待激活）
+/// - `POST /totp/activate`            — 验码激活 2FA，返回一次性恢复码
+/// - `POST /totp/disable`             — 验码关闭 2FA
+/// - `GET  /totp/status`              — 查询 2FA 状态
+/// - `POST /login/jwt/mfa`            — 2FA 登录第二步（JWT 路径）
 pub fn new_user_router(params: UserRouterParams) -> Router {
     let name = "user";
 
@@ -522,6 +676,10 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
         cache: params.cache,
         secret: params.secret.clone(),
     };
+    let totp_state = totp::TotpRouterState {
+        pool: params.pool,
+        secret: params.secret.clone(),
+    };
 
     Router::new()
         .route(
@@ -536,12 +694,19 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
         .route(
             "/login",
             post(login)
-                .with_state((params.secret, params.pool))
+                .with_state((params.secret.clone(), params.pool, params.cache))
                 .layer(from_fn_with_state(
                     (params.magic_code, params.cache),
                     validate_captcha,
                 ))
                 .layer(from_fn_with_state((name, "login").into(), user_tracker)),
+        )
+        // 2FA 登录第二步：凭挑战令牌 + 动态码完成（带频率限制，无需再过验证码）
+        .route(
+            "/login/mfa",
+            post(login_mfa)
+                .with_state((params.secret.clone(), params.pool, params.cache))
+                .layer(from_fn_with_state((name, "login_mfa").into(), user_tracker)),
         )
         .route("/me", get(me).with_state(params.pool))
         .route("/refresh", patch(refresh_session))
@@ -632,6 +797,32 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
                     user_tracker,
                 )),
         )
+        // TOTP 两步验证（均需登录态）：enroll 生成密钥 → activate 激活 → disable 关闭
+        .route(
+            "/totp/enroll",
+            post(totp::enroll)
+                .with_state(totp_state.clone())
+                .layer(from_fn_with_state((name, "totp_enroll").into(), user_tracker)),
+        )
+        .route(
+            "/totp/activate",
+            post(totp::activate)
+                .with_state(totp_state.clone())
+                .layer(from_fn_with_state(
+                    (name, "totp_activate").into(),
+                    user_tracker,
+                )),
+        )
+        .route(
+            "/totp/disable",
+            post(totp::disable)
+                .with_state(totp_state.clone())
+                .layer(from_fn_with_state(
+                    (name, "totp_disable").into(),
+                    user_tracker,
+                )),
+        )
+        .route("/totp/status", get(totp::status).with_state(totp_state))
         // JWT 备选鉴权路径（与现有 Session+Cookie /login 正交）
         // [jwt] 未配置时由 try_global_signer 返回 None → 503
         .route(
@@ -640,6 +831,16 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
                 .with_state(jwt_auth_state.clone())
                 .layer(from_fn_with_state(
                     (name, "login_jwt").into(),
+                    user_tracker,
+                )),
+        )
+        // JWT 登录 2FA 第二步（带频率限制）
+        .route(
+            "/login/jwt/mfa",
+            post(jwt_auth::login_jwt_mfa)
+                .with_state(jwt_auth_state.clone())
+                .layer(from_fn_with_state(
+                    (name, "login_jwt_mfa").into(),
                     user_tracker,
                 )),
         )
@@ -661,6 +862,47 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
                     user_tracker,
                 )),
         )
+}
+
+/// 本路由模块的 OpenAPI 文档片段（路径相对 `/users` 已在各注解里写全）。
+///
+/// 聚合 lib.rs 主流程 + email_verify / password_reset / jwt_auth / totp / oauth
+/// 各子模块的端点；schema 由 utoipa 从各 path 的 request_body / responses 自动收集。
+#[derive(OpenApi)]
+#[openapi(
+    paths(
+        login_token,
+        login,
+        me,
+        refresh_session,
+        register,
+        logout,
+        update_profile,
+        login_mfa,
+        email_verify::request_verify,
+        email_verify::confirm_verify,
+        password_reset::request_reset,
+        password_reset::confirm_reset,
+        jwt_auth::login_jwt,
+        jwt_auth::login_jwt_mfa,
+        jwt_auth::refresh_jwt,
+        jwt_auth::logout_jwt,
+        totp::enroll,
+        totp::activate,
+        totp::disable,
+        totp::status,
+        oauth_github::start_login,
+        oauth_github::callback,
+        oauth_google::start_login,
+        oauth_google::callback
+    ),
+    tags((name = "user", description = "用户认证、资料、2FA、OAuth 与 JWT 备选鉴权"))
+)]
+struct UserApiDoc;
+
+/// 返回 user 路由的 OpenAPI 文档片段，供主 crate 合并进全局文档。
+pub fn openapi() -> utoipa::openapi::OpenApi {
+    UserApiDoc::openapi()
 }
 
 /// 从 HeaderMap 取 User-Agent（缺失 / 非 ASCII 时返回空串）。

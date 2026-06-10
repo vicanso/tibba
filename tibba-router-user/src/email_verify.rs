@@ -35,6 +35,7 @@ use tibba_session::UserSession;
 use tibba_util::{JsonParams, uuid};
 use tibba_validator::x_uuid;
 use tracing::warn;
+use utoipa::ToSchema;
 use validator::Validate;
 
 type Result<T, E = BaseError> = std::result::Result<T, E>;
@@ -79,6 +80,15 @@ pub(crate) struct EmailVerifyState {
 }
 
 /// 触发：登录态调用，向用户绑定邮箱发送验证码。
+#[utoipa::path(
+    post,
+    path = "/users/email/verify/request",
+    tag = "user",
+    responses(
+        (status = 204, description = "验证邮件已发送"),
+        (status = 400, description = "账号未绑定邮箱")
+    )
+)]
 pub(crate) async fn request_verify(
     State(state): State<EmailVerifyState>,
     session: UserSession,
@@ -125,7 +135,8 @@ pub(crate) async fn request_verify(
     Ok(StatusCode::NO_CONTENT)
 }
 
-#[derive(Debug, Deserialize, Validate)]
+#[derive(Debug, Deserialize, Validate, ToSchema)]
+#[schema(as = EmailVerifyConfirm)]
 pub(crate) struct ConfirmParams {
     /// 验证 token（UUID 格式）
     #[validate(custom(function = "x_uuid"))]
@@ -133,6 +144,16 @@ pub(crate) struct ConfirmParams {
 }
 
 /// 确认：用 token 取出 user_id，写入 `email_verified_at = NOW()`。
+#[utoipa::path(
+    post,
+    path = "/users/email/verify/confirm",
+    tag = "user",
+    request_body = ConfirmParams,
+    responses(
+        (status = 204, description = "邮箱验证成功"),
+        (status = 401, description = "token 无效或已过期")
+    )
+)]
 pub(crate) async fn confirm_verify(
     State(state): State<EmailVerifyState>,
     request_id: RequestId,

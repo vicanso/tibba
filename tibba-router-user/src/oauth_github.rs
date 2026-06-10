@@ -48,6 +48,7 @@ use tibba_oauth::{GitHubUser, OAuthConfig};
 use tibba_session::{Session, SessionResponse};
 use tibba_util::{sha256, uuid};
 use tracing::warn;
+use utoipa::IntoParams;
 
 const ERROR_CATEGORY: &str = "oauth_github";
 const LOG_TARGET: &str = "tibba:oauth_github";
@@ -109,14 +110,27 @@ pub(crate) struct OauthGitHubState {
     pub success_redirect: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub(crate) struct CallbackParams {
+    /// GitHub 回调授权码
     code: Option<String>,
+    /// 防 CSRF 的 state（须与 start 阶段发放的一致）
     state: Option<String>,
 }
 
 /// `GET /oauth/github/start` —— 生成 state 存 Redis，302 → GitHub。
 /// provider 未配置时返回 503（带明确 sub_category），不静默失败。
+#[utoipa::path(
+    get,
+    path = "/users/oauth/github/start",
+    tag = "user",
+    operation_id = "oauth_github_start",
+    responses(
+        (status = 307, description = "302/307 重定向到 GitHub 授权页"),
+        (status = 503, description = "GitHub OAuth 未配置")
+    )
+)]
 pub(crate) async fn start_login(State(state): State<OauthGitHubState>) -> Result<Redirect> {
     let provider = state.oauth_config.github.build_provider()?;
     let csrf_state = uuid();
@@ -133,6 +147,17 @@ pub(crate) async fn start_login(State(state): State<OauthGitHubState>) -> Result
 }
 
 /// `GET /oauth/github/callback` —— 校验 state、换 token、user landing、建 Session、302。
+#[utoipa::path(
+    get,
+    path = "/users/oauth/github/callback",
+    tag = "user",
+    operation_id = "oauth_github_callback",
+    params(CallbackParams),
+    responses(
+        (status = 307, description = "登录成功，302/307 重定向回前端"),
+        (status = 401, description = "state 无效或参数缺失")
+    )
+)]
 pub(crate) async fn callback(
     State(state): State<OauthGitHubState>,
     request_id: RequestId,

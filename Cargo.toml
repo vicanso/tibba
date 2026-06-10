@@ -74,6 +74,8 @@ tower-http = { version = "0.6.11", features = [
 tracing = { workspace = true }
 tracing-opentelemetry = { workspace = true }
 tracing-subscriber = { version = "0.3.23", features = ["local-time"] }
+utoipa = { workspace = true }
+utoipa-swagger-ui = { workspace = true }
 opentelemetry = { workspace = true }
 opentelemetry-otlp = { workspace = true }
 opentelemetry_sdk = { workspace = true }
@@ -119,11 +121,13 @@ members = [
     "tibba-session",
     "tibba-router-model",
     "tibba-llm",
+    "tibba-totp",
     "tibba-scaffold",
 ]
 
 
 [workspace.dependencies]
+aes-gcm = "0.10.3"
 anyhow = "1"
 arc-swap = "1.9.1"
 axum = { version = "0.8.9", features = ["multipart"] }
@@ -194,6 +198,7 @@ serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
 serde_path_to_error = "0.1.20"
 serde_urlencoded = "0.7.1"
+sha1 = "0.11.0"
 sha2 = "0.11.0"
 snafu = "0.9.0"
 sqlx = { version = "0.9.0", features = [
@@ -203,6 +208,7 @@ sqlx = { version = "0.9.0", features = [
     "chrono",
 ] }
 strum = { version = "0.28.0", features = ["derive"] }
+subtle = "2.6.1"
 substring = "1.4.5"
 sysinfo = "0.38.4"
 time = { version = "0.3.47", features = ["serde"] }
@@ -216,6 +222,9 @@ tokio = { version = "1.52.3", features = [
 tokio-cron-scheduler = { version = "0.15.1", features = ["signal", "english"] }
 tower = { version = "0.5.3", features = ["timeout"] }
 tracing = "0.1.44"
+# OpenAPI 文档：utoipa 注解 + Swagger UI（仅 dev/test 环境挂载）
+utoipa = { version = "5.5.0", features = ["axum_extras", "chrono"] }
+utoipa-swagger-ui = { version = "9.0.2", features = ["axum"] }
 tracing-opentelemetry = "0.32.0"
 url = "2.5.8"
 urlencoding = "2.1.3"

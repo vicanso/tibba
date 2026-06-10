@@ -36,6 +36,7 @@ use tibba_util::JsonParams;
 use tibba_util::uuid;
 use tibba_validator::{x_user_account, x_user_password, x_uuid};
 use tracing::warn;
+use utoipa::ToSchema;
 use validator::Validate;
 
 type Result<T, E = BaseError> = std::result::Result<T, E>;
@@ -71,7 +72,7 @@ pub(crate) struct PasswordResetState {
     pub email_config: &'static EmailConfig,
 }
 
-#[derive(Debug, Deserialize, Validate)]
+#[derive(Debug, Deserialize, Validate, ToSchema)]
 pub(crate) struct RequestParams {
     /// 账号
     #[validate(custom(function = "x_user_account"))]
@@ -83,6 +84,13 @@ pub(crate) struct RequestParams {
 /// **安全性**：无论账号是否存在、是否绑定邮箱、邮件是否发送成功，
 /// 端点都返回 204。失败原因只写入服务端日志，**绝不**透传给客户端，
 /// 避免攻击者用响应差异枚举有效账号。
+#[utoipa::path(
+    post,
+    path = "/users/password/reset/request",
+    tag = "user",
+    request_body = RequestParams,
+    responses((status = 204, description = "总是返回 204（防账号枚举），不透传账号是否存在"))
+)]
 pub(crate) async fn request_reset(
     State(state): State<PasswordResetState>,
     JsonParams(params): JsonParams<RequestParams>,
@@ -133,7 +141,8 @@ async fn try_send_reset_email(state: &PasswordResetState, account: &str) -> Resu
     Ok(())
 }
 
-#[derive(Debug, Deserialize, Validate)]
+#[derive(Debug, Deserialize, Validate, ToSchema)]
+#[schema(as = PasswordResetConfirm)]
 pub(crate) struct ConfirmParams {
     /// 重置 token（UUID 格式）
     #[validate(custom(function = "x_uuid"))]
@@ -144,6 +153,16 @@ pub(crate) struct ConfirmParams {
 }
 
 /// 确认：用 token 拿到 user_id，覆盖密码。
+#[utoipa::path(
+    post,
+    path = "/users/password/reset/confirm",
+    tag = "user",
+    request_body = ConfirmParams,
+    responses(
+        (status = 204, description = "密码重置成功"),
+        (status = 401, description = "token 无效或已过期")
+    )
+)]
 pub(crate) async fn confirm_reset(
     State(state): State<PasswordResetState>,
     request_id: RequestId,

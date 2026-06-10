@@ -35,6 +35,7 @@ use tibba_state::AppState;
 use tibba_util::{JsonResult, QueryParams, get_env, uuid};
 use tokio::time::timeout;
 use tracing::warn;
+use utoipa::{IntoParams, OpenApi, ToSchema};
 use validator::Validate;
 
 type Result<T, E = BaseError> = std::result::Result<T, E>;
@@ -83,6 +84,15 @@ pub type ReadinessCheck = Arc<dyn Fn() -> ReadinessFuture + Send + Sync>;
 
 /// Liveness 探针：仅检查应用自身是否处于运行态，**不**做任何外部 I/O。
 /// K8s 失败时会重启 Pod，因此这里必须保持轻量、绝不依赖下游。
+#[utoipa::path(
+    get,
+    path = "/healthz",
+    tag = "common",
+    responses(
+        (status = 200, description = "服务存活", body = String),
+        (status = 503, description = "服务未处于运行态")
+    )
+)]
 async fn healthz(State(state): State<&'static AppState>) -> Result<&'static str> {
     if !state.is_running() {
         return Err(BaseError::new("server is not running")
@@ -94,6 +104,15 @@ async fn healthz(State(state): State<&'static AppState>) -> Result<&'static str>
 
 /// Readiness 探针：先确认应用运行态，再调用注入的 readiness 回调（如 stat
 /// storage / ping db）；超时或失败均返回 503，由 K8s 摘流量但不重启 Pod。
+#[utoipa::path(
+    get,
+    path = "/readyz",
+    tag = "common",
+    responses(
+        (status = 200, description = "依赖就绪", body = String),
+        (status = 503, description = "未运行 / 依赖检查失败 / 超时")
+    )
+)]
 async fn readyz(
     State((state, check)): State<(&'static AppState, Option<ReadinessCheck>)>,
 ) -> Result<&'static str> {
@@ -131,7 +150,7 @@ async fn readyz(
 }
 
 /// 应用运行时信息，包含运行时长、系统环境及进程资源使用情况。
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 struct ApplicationInfo {
     /// 应用运行时长（人类可读格式，保留最大两个单位，如 "2h 15m"）
     uptime: String,
@@ -171,6 +190,14 @@ fn format_uptime_approx(duration: Duration) -> String {
 }
 
 /// 返回应用运行时信息，包含运行时长、OS/架构、CPU/内存占用及磁盘读写量。
+#[utoipa::path(
+    get,
+    path = "/commons/application",
+    tag = "common",
+    responses(
+        (status = 200, description = "应用运行时信息", body = ApplicationInfo)
+    )
+)]
 async fn get_application_info(
     State(state): State<&'static AppState>,
 ) -> JsonResult<ApplicationInfo> {
@@ -199,7 +226,8 @@ async fn get_application_info(
 }
 
 /// 验证码接口的查询参数。
-#[derive(Debug, Deserialize, Clone, Validate)]
+#[derive(Debug, Deserialize, Clone, Validate, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct CaptchaParams {
     /// 为 `true` 时直接返回 PNG 图片（开发预览用），不写入 Redis。
     pub preview: Option<bool>,
@@ -208,7 +236,7 @@ pub struct CaptchaParams {
 }
 
 /// 验证码接口的 JSON 响应体。
-#[derive(Debug, Clone, Serialize, Default)]
+#[derive(Debug, Clone, Serialize, Default, ToSchema)]
 struct CaptchaInfo {
     /// 验证码唯一标识，用于后续校验时从 Redis 取出正确答案。
     id: String,
@@ -222,6 +250,15 @@ struct CaptchaInfo {
 /// - 默认：生成 4 位纯数字验证码（排除 '0' 以避免与字母 'O' 混淆），
 ///   将答案以 UUID 为键存入 Redis（TTL 5 分钟），返回 `{ id, data }` JSON。
 /// - `theme=dark`：生成后对图片颜色取反，适配深色主题。
+#[utoipa::path(
+    get,
+    path = "/commons/captcha",
+    tag = "common",
+    params(CaptchaParams),
+    responses(
+        (status = 200, description = "默认返回 { id, data } JSON；preview=true 时直接返回 PNG", body = CaptchaInfo)
+    )
+)]
 async fn captcha(
     State(cache): State<&'static RedisCache>,
     QueryParams(params): QueryParams<CaptchaParams>,
@@ -303,4 +340,21 @@ pub fn new_common_router(params: CommonRouterParams) -> Router {
         return r;
     };
     r.route("/commons/captcha", get(captcha).with_state(cache))
+}
+
+/// 本路由模块的 OpenAPI 文档片段。
+///
+/// 仅聚合 common 路由自身的端点与 schema；主 crate 通过
+/// [`openapi`] 取出后合并进全局文档（见 `src/openapi.rs`）。
+#[derive(OpenApi)]
+#[openapi(
+    paths(healthz, readyz, get_application_info, captcha),
+    components(schemas(ApplicationInfo, CaptchaInfo)),
+    tags((name = "common", description = "健康探针、运行时信息与图形验证码"))
+)]
+struct CommonApiDoc;
+
+/// 返回 common 路由的 OpenAPI 文档片段，供主 crate 合并进全局文档。
+pub fn openapi() -> utoipa::openapi::OpenApi {
+    CommonApiDoc::openapi()
 }

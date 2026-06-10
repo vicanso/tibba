@@ -31,6 +31,8 @@ tibba-model = { path = "../tibba-model", version = "0.2.2" }
 tibba-model-builtin = { path = "../tibba-model-builtin", version = "0.2.2" }
 tibba-oauth = { path = "../tibba-oauth", version = "0.2.2" }
 tibba-session = { path = "../tibba-session", version = "0.2.2" }
+tibba-totp = { path = "../tibba-totp", version = "0.2.2" }
 tibba-util = { path = "../tibba-util", version = "0.2.2" }
 tibba-validator = { path = "../tibba-validator", version = "0.2.2" }
+utoipa = { workspace = true }
 validator = { workspace = true }

@@ -42,6 +42,7 @@ use tibba_oauth::{GoogleUser, OAuthConfig};
 use tibba_session::{Session, SessionResponse};
 use tibba_util::{sha256, uuid};
 use tracing::warn;
+use utoipa::IntoParams;
 
 const ERROR_CATEGORY: &str = "oauth_google";
 const LOG_TARGET: &str = "tibba:oauth_google";
@@ -98,13 +99,26 @@ pub(crate) struct OauthGoogleState {
     pub success_redirect: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub(crate) struct CallbackParams {
+    /// Google 回调授权码
     code: Option<String>,
+    /// 防 CSRF 的 state（须与 start 阶段发放的一致）
     state: Option<String>,
 }
 
 /// `GET /oauth/google/start` —— 生成 state 存 Redis，302 → Google。
+#[utoipa::path(
+    get,
+    path = "/users/oauth/google/start",
+    tag = "user",
+    operation_id = "oauth_google_start",
+    responses(
+        (status = 307, description = "302/307 重定向到 Google 授权页"),
+        (status = 503, description = "Google OAuth 未配置")
+    )
+)]
 pub(crate) async fn start_login(State(state): State<OauthGoogleState>) -> Result<Redirect> {
     let provider = state.oauth_config.google.build_provider()?;
     let csrf_state = uuid();
@@ -120,6 +134,17 @@ pub(crate) async fn start_login(State(state): State<OauthGoogleState>) -> Result
 }
 
 /// `GET /oauth/google/callback` —— 校验 state、换 token、user landing、建 Session、302。
+#[utoipa::path(
+    get,
+    path = "/users/oauth/google/callback",
+    tag = "user",
+    operation_id = "oauth_google_callback",
+    params(CallbackParams),
+    responses(
+        (status = 307, description = "登录成功，302/307 重定向回前端"),
+        (status = 401, description = "state 无效或参数缺失")
+    )
+)]
 pub(crate) async fn callback(
     State(state): State<OauthGoogleState>,
     request_id: RequestId,

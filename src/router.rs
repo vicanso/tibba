@@ -178,6 +178,10 @@ pub fn new_router() -> Result<Router> {
         api_router
     };
 
+    // dev/test 环境挂载 Swagger UI（/swagger-ui + /api-docs/openapi.json）；
+    // 生产环境原样返回，不暴露 API 表面。servers 用 API 前缀拼出可用的「Try it out」地址。
+    let app = crate::openapi::mount_swagger(app, basic_config.prefix.as_deref());
+
     let web_prefix = basic_config.web_prefix.clone().unwrap_or_default();
     Ok(app.fallback(move |uri| {
         let prefix = web_prefix.clone();

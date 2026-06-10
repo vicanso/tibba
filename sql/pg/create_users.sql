@@ -12,6 +12,9 @@ CREATE TABLE users (
   avatar VARCHAR(1024) NOT NULL DEFAULT '',
   last_login_at TIMESTAMP DEFAULT NULL,
   email_verified_at TIMESTAMP DEFAULT NULL,
+  totp_secret TEXT DEFAULT NULL,
+  totp_enabled_at TIMESTAMP DEFAULT NULL,
+  totp_recovery_codes JSONB DEFAULT NULL,
   created TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   modified TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   deleted_at TIMESTAMP DEFAULT NULL
@@ -30,6 +33,9 @@ COMMENT ON COLUMN users.nickname IS '用户昵称';
 COMMENT ON COLUMN users.phone IS '手机号';
 COMMENT ON COLUMN users.last_login_at IS '最后登录时间';
 COMMENT ON COLUMN users.email_verified_at IS '邮箱验证通过时间，NULL 表示未验证';
+COMMENT ON COLUMN users.totp_secret IS 'TOTP 密钥，AES-256-GCM 加密后 base64；NULL 表示未注册 2FA';
+COMMENT ON COLUMN users.totp_enabled_at IS '2FA 激活时间；NULL 表示未启用';
+COMMENT ON COLUMN users.totp_recovery_codes IS '一次性恢复码的 SHA-256(base64) 数组';
 COMMENT ON COLUMN users.remark IS '备注';
 COMMENT ON COLUMN users.email IS '用户邮箱';
 COMMENT ON COLUMN users.avatar IS '用户头像';

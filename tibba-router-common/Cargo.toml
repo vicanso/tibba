@@ -31,4 +31,5 @@ tibba-state = { path = "../tibba-state", version = "0.2.2" }
 tibba-util = { path = "../tibba-util", version = "0.2.2" }
 tokio = { workspace = true }
 tracing = { workspace = true }
+utoipa = { workspace = true }
 validator = { workspace = true }

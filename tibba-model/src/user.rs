@@ -103,6 +103,28 @@ pub struct UserUpdateParams {
     pub status: Option<i16>,
 }
 
+/// TOTP 两步验证的最小鉴权态。
+///
+/// 刻意与对外序列化的 [`User`] 隔离——密钥与恢复码哈希绝不进入 `User`，
+/// 避免经 `/me`、admin model 视图等任何 JSON 出口泄漏。
+#[derive(Debug, Clone, Default)]
+pub struct TotpState {
+    /// 加密后的密钥 base64；`None` 表示未注册 2FA。
+    pub secret_cipher: Option<String>,
+    /// 是否已激活（`totp_enabled_at` 非空）。
+    pub enabled: bool,
+    /// 一次性恢复码哈希列表（未启用或无剩余时为空）。
+    pub recovery_hashes: Vec<String>,
+}
+
+/// 仅用于读取 users 表 TOTP 三列的 FromRow 目标。
+#[derive(FromRow)]
+struct TotpRow {
+    totp_secret: Option<String>,
+    totp_enabled_at: Option<PrimitiveDateTime>,
+    totp_recovery_codes: Option<Json<Vec<String>>>,
+}
+
 pub struct UserModel {}
 
 impl Model for UserModel {
@@ -430,5 +452,105 @@ impl UserModel {
         .await
         .context(SqlxSnafu)?;
         Ok(())
+    }
+
+    /// 读取用户的 TOTP 鉴权态（密钥密文 / 是否启用 / 恢复码哈希）。
+    /// 用户不存在或未注册时返回默认值（未启用）。
+    pub async fn get_totp_state(&self, pool: &Pool<Postgres>, user_id: i64) -> Result<TotpState> {
+        let row: Option<TotpRow> = sqlx::query_as(
+            r#"SELECT totp_secret, totp_enabled_at, totp_recovery_codes
+               FROM users WHERE id = $1 AND deleted_at IS NULL"#,
+        )
+        .bind(user_id)
+        .fetch_optional(pool)
+        .await
+        .context(SqlxSnafu)?;
+
+        let Some(row) = row else {
+            return Ok(TotpState::default());
+        };
+        Ok(TotpState {
+            secret_cipher: row.totp_secret,
+            enabled: row.totp_enabled_at.is_some(),
+            recovery_hashes: row.totp_recovery_codes.map(|j| j.0).unwrap_or_default(),
+        })
+    }
+
+    /// 写入待激活密钥：存密文，并把 `enabled_at` / 恢复码清空（重新注册时覆盖旧态）。
+    pub async fn set_totp_pending(
+        &self,
+        pool: &Pool<Postgres>,
+        user_id: i64,
+        secret_cipher: &str,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"UPDATE users
+               SET totp_secret = $1, totp_enabled_at = NULL, totp_recovery_codes = NULL, modified = NOW()
+               WHERE id = $2 AND deleted_at IS NULL"#,
+        )
+        .bind(secret_cipher)
+        .bind(user_id)
+        .execute(pool)
+        .await
+        .context(SqlxSnafu)?;
+        Ok(())
+    }
+
+    /// 激活 2FA：置 `enabled_at = NOW()` 并写入恢复码哈希。
+    /// 仅当已有待激活密钥（`totp_secret IS NOT NULL`）时生效。
+    pub async fn activate_totp(
+        &self,
+        pool: &Pool<Postgres>,
+        user_id: i64,
+        recovery_hashes: &[String],
+    ) -> Result<()> {
+        sqlx::query(
+            r#"UPDATE users
+               SET totp_enabled_at = NOW(), totp_recovery_codes = $1, modified = NOW()
+               WHERE id = $2 AND deleted_at IS NULL AND totp_secret IS NOT NULL"#,
+        )
+        .bind(Json(recovery_hashes.to_vec()))
+        .bind(user_id)
+        .execute(pool)
+        .await
+        .context(SqlxSnafu)?;
+        Ok(())
+    }
+
+    /// 关闭 2FA：清空密钥 / 激活时间 / 恢复码三列。
+    pub async fn disable_totp(&self, pool: &Pool<Postgres>, user_id: i64) -> Result<()> {
+        sqlx::query(
+            r#"UPDATE users
+               SET totp_secret = NULL, totp_enabled_at = NULL, totp_recovery_codes = NULL, modified = NOW()
+               WHERE id = $1 AND deleted_at IS NULL"#,
+        )
+        .bind(user_id)
+        .execute(pool)
+        .await
+        .context(SqlxSnafu)?;
+        Ok(())
+    }
+
+    /// 原子消费一个恢复码哈希：存在则从数组移除并返回 `true`，否则 `false`。
+    /// 用 `jsonb_exists` 判断包含、`-` 运算符移除元素，单条 UPDATE 保证原子性，
+    /// 避免「校验—移除」两步之间的并发重放。
+    pub async fn consume_recovery_code(
+        &self,
+        pool: &Pool<Postgres>,
+        user_id: i64,
+        code_hash: &str,
+    ) -> Result<bool> {
+        let row: Option<(i64,)> = sqlx::query_as(
+            r#"UPDATE users
+               SET totp_recovery_codes = totp_recovery_codes - $1, modified = NOW()
+               WHERE id = $2 AND deleted_at IS NULL AND jsonb_exists(totp_recovery_codes, $1)
+               RETURNING id"#,
+        )
+        .bind(code_hash)
+        .bind(user_id)
+        .fetch_optional(pool)
+        .await
+        .context(SqlxSnafu)?;
+        Ok(row.is_some())
     }
 }

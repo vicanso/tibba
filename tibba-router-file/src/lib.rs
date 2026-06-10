@@ -32,6 +32,7 @@ use tibba_opendal::Storage;
 use tibba_session::UserSession;
 use tibba_util::{JsonResult, QueryParams, uuid};
 use tibba_validator::{x_file_group, x_file_name, x_image_format, x_image_quality};
+use utoipa::{IntoParams, OpenApi};
 use validator::Validate;
 
 /// 模块对外仍返回 `tibba_error::Error`，本地 `Error` 仅用于 snafu 上下文捕获。
@@ -84,12 +85,24 @@ impl From<Error> for BaseError {
     }
 }
 
-#[derive(Debug, Deserialize, Clone, Validate)]
+#[derive(Debug, Deserialize, Clone, Validate, IntoParams)]
+#[into_params(parameter_in = Query)]
 struct CreateFileParams {
+    /// 文件所属分组（决定存储路径与响应头策略）
     #[validate(custom(function = "x_file_group"))]
     group: String,
 }
 
+#[utoipa::path(
+    post,
+    path = "/files/upload",
+    tag = "file",
+    params(CreateFileParams),
+    request_body(content_type = "multipart/form-data", description = "一个或多个文件字段（multipart/form-data）"),
+    responses(
+        (status = 200, description = "上传成功，返回 字段名 → 存储文件名 的映射", body = HashMap<String, String>)
+    )
+)]
 async fn create_file(
     QueryParams(create_file_params): QueryParams<CreateFileParams>,
     State((storage, pool)): State<(&'static Storage, &'static PgPool)>,
@@ -139,19 +152,36 @@ async fn create_file(
     Ok(Json(files))
 }
 
-#[derive(Debug, Deserialize, Clone, Validate)]
+#[derive(Debug, Deserialize, Clone, Validate, IntoParams)]
+#[into_params(parameter_in = Query)]
 struct GetFileParams {
+    /// 存储文件名
     #[validate(custom(function = "x_file_name"))]
     name: String,
+    /// 目标图片格式（如 webp/avif），缺省沿用原格式
     #[validate(custom(function = "x_image_format"))]
     format: Option<String>,
+    /// 图片质量 1-100，缺省 80
     #[validate(custom(function = "x_image_quality"))]
     quality: Option<u8>,
+    /// 是否对图片做优化/压缩，缺省 true
     optimize: Option<bool>,
+    /// 缩放目标宽度（像素）
     width: Option<u32>,
+    /// 缩放目标高度（像素）
     height: Option<u32>,
 }
 
+#[utoipa::path(
+    get,
+    path = "/files/preview",
+    tag = "file",
+    params(GetFileParams),
+    responses(
+        (status = 200, description = "文件内容（图片可按参数优化/缩放），二进制流"),
+        (status = 404, description = "文件不存在")
+    )
+)]
 async fn get_file(
     State((storage, pool)): State<(&'static Storage, &'static PgPool)>,
     QueryParams(params): QueryParams<GetFileParams>,
@@ -236,4 +266,17 @@ pub fn new_file_router(params: FileRouterParams) -> Router {
             "/preview",
             get(get_file).with_state((params.storage, params.pool)),
         )
+}
+
+/// 本路由模块的 OpenAPI 文档片段（路径相对 `/files` 已在注解里写全）。
+#[derive(OpenApi)]
+#[openapi(
+    paths(create_file, get_file),
+    tags((name = "file", description = "文件上传与预览"))
+)]
+struct FileApiDoc;
+
+/// 返回 file 路由的 OpenAPI 文档片段，供主 crate 合并进全局文档。
+pub fn openapi() -> utoipa::openapi::OpenApi {
+    FileApiDoc::openapi()
 }
