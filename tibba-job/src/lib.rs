@@ -40,6 +40,7 @@
 //! - **崩溃回收**：worker 崩在半路的行（`status=1` 且 `locked_at` 超时）由 reaper 重排。
 
 use dashmap::DashMap;
+use metrics::gauge;
 use snafu::{ResultExt, Snafu};
 use sqlx::types::Json;
 use sqlx::{FromRow, PgPool, Postgres, Transaction};
@@ -48,6 +49,7 @@ use std::pin::Pin;
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 use tibba_error::Error as BaseError;
+use time::PrimitiveDateTime;
 use tracing::{error, info, warn};
 
 /// 本 crate 所有日志事件的 tracing target。
@@ -79,6 +81,20 @@ const REAP_INTERVAL: Duration = Duration::from_secs(60);
 const VISIBILITY_TIMEOUT: Duration = Duration::from_secs(300);
 /// `last_error` 截断长度，避免异常长报错撑爆列。
 const MAX_ERROR_LEN: usize = 2000;
+/// 队列深度指标的采样间隔（worker 之外单独一条循环周期性上报）。
+const METRICS_INTERVAL: Duration = Duration::from_secs(15);
+
+// 任务状态码（与 jobs.status 列一致）：成功的行直接删除，故无「成功」态。
+/// 待跑（可被认领）。
+const STATUS_PENDING: i16 = 0;
+/// 执行中（已认领未 ack）。
+const STATUS_RUNNING: i16 = 1;
+/// 死信（超过 max_attempts，保留供排查 / 重放）。
+const STATUS_DEAD: i16 = 3;
+
+/// 队列深度 gauge 名；按 `status` label 拆分 pending / running / dead 三条时间线。
+/// Prometheus 查询示例：`job_queue_depth{status="dead"}`。
+const METRIC_QUEUE_DEPTH: &str = "job_queue_depth";
 
 // ── Handler 注册表 ────────────────────────────────────────────────────────
 
@@ -174,6 +190,42 @@ struct ClaimedJob {
     payload: Json<serde_json::Value>,
     attempts: i32,
     max_attempts: i32,
+}
+
+/// 队列深度快照：按状态分别计数（成功的行已删除，不在统计内）。
+/// 供 `/metrics` 上报与 admin 概览复用。
+#[derive(Debug, Clone, Default)]
+pub struct QueueStats {
+    /// 待跑条数。
+    pub pending: i64,
+    /// 执行中条数。
+    pub running: i64,
+    /// 死信条数。
+    pub dead: i64,
+}
+
+/// 死信任务行（admin 端点展示 / 重放用）。datetime 保留原始类型，
+/// 由调用方决定格式化方式（与项目内 `format_datetime` 约定保持一致）。
+#[derive(Debug, FromRow)]
+pub struct DeadJob {
+    /// 任务 id。
+    pub id: i64,
+    /// 队列名。
+    pub queue: String,
+    /// 任务类型。
+    pub job_type: String,
+    /// 入队 payload。
+    pub payload: Json<serde_json::Value>,
+    /// 已尝试次数。
+    pub attempts: i32,
+    /// 重试上限。
+    pub max_attempts: i32,
+    /// 最近一次失败信息（截断存储）。
+    pub last_error: Option<String>,
+    /// 转入死信前最后一次计划执行时间。
+    pub run_at: PrimitiveDateTime,
+    /// 入队时间。
+    pub created: PrimitiveDateTime,
 }
 
 // ── 队列读写 ──────────────────────────────────────────────────────────────
@@ -282,6 +334,69 @@ impl JobQueue {
         .context(SqlxSnafu)?;
         Ok(result.rows_affected())
     }
+
+    /// 队列深度快照：一次 `GROUP BY status` 聚合出各状态条数。
+    /// 供指标上报与 admin 概览使用（成功的行已删除，不计入）。
+    pub async fn stats(&self) -> Result<QueueStats> {
+        let rows: Vec<(i16, i64)> =
+            sqlx::query_as("SELECT status, count(*)::bigint FROM jobs GROUP BY status")
+                .fetch_all(self.pool)
+                .await
+                .context(SqlxSnafu)?;
+        let mut stats = QueueStats::default();
+        for (status, count) in rows {
+            match status {
+                STATUS_PENDING => stats.pending = count,
+                STATUS_RUNNING => stats.running = count,
+                STATUS_DEAD => stats.dead = count,
+                _ => {}
+            }
+        }
+        Ok(stats)
+    }
+
+    /// 分页列出死信任务（按 id 倒序，最近的在前）。`limit` 已由调用方收敛上限。
+    pub async fn list_dead(&self, limit: i64, offset: i64) -> Result<Vec<DeadJob>> {
+        let rows = sqlx::query_as(
+            r#"SELECT id, queue, job_type, payload, attempts, max_attempts, last_error, run_at, created
+                 FROM jobs
+                WHERE status = 3
+                ORDER BY id DESC
+                LIMIT $1 OFFSET $2"#,
+        )
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(self.pool)
+        .await
+        .context(SqlxSnafu)?;
+        Ok(rows)
+    }
+
+    /// 重放一条死信：`status` 3 → 0、重置 `attempts`、`run_at=now()`、清空错误，
+    /// 使其可被立即重新认领。仅作用于死信行；命中返回 `true`。
+    pub async fn retry_dead(&self, id: i64) -> Result<bool> {
+        let result = sqlx::query(
+            r#"UPDATE jobs
+                  SET status = 0, attempts = 0, run_at = now(),
+                      locked_at = NULL, locked_by = NULL, last_error = NULL
+                WHERE id = $1 AND status = 3"#,
+        )
+        .bind(id)
+        .execute(self.pool)
+        .await
+        .context(SqlxSnafu)?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// 永久删除一条死信（确认无需重放后清理）。仅作用于死信行；命中返回 `true`。
+    pub async fn purge_dead(&self, id: i64) -> Result<bool> {
+        let result = sqlx::query("DELETE FROM jobs WHERE id = $1 AND status = 3")
+            .bind(id)
+            .execute(self.pool)
+            .await
+            .context(SqlxSnafu)?;
+        Ok(result.rows_affected() > 0)
+    }
 }
 
 /// 入队的实际 INSERT，泛型化 executor 以同时支持连接池与事务。
@@ -328,6 +443,7 @@ pub fn start(pool: &'static PgPool, concurrency: usize) {
         tokio::spawn(worker_loop(pool, worker_id));
     }
     tokio::spawn(reaper_loop(pool));
+    tokio::spawn(metrics_loop(pool));
     info!(target: LOG_TARGET, workers, "job workers started");
 }
 
@@ -392,6 +508,25 @@ async fn reaper_loop(pool: &'static PgPool) {
             Ok(n) if n > 0 => warn!(target: LOG_TARGET, requeued = n, "reaped stale running jobs"),
             Ok(_) => {}
             Err(e) => error!(target: LOG_TARGET, error = %e, "reap stale jobs failed"),
+        }
+    }
+}
+
+/// 指标主循环：周期性把队列深度按状态上报为 gauge，供 Prometheus 抓取。
+///
+/// 单独一条循环（而非塞进 reaper）以便用更短的采样间隔；查询很轻（一次
+/// 部分索引可覆盖的聚合）。采样失败仅 warn，不影响任务执行。
+async fn metrics_loop(pool: &'static PgPool) {
+    let queue = JobQueue::new(pool);
+    loop {
+        tokio::time::sleep(METRICS_INTERVAL).await;
+        match queue.stats().await {
+            Ok(stats) => {
+                gauge!(METRIC_QUEUE_DEPTH, "status" => "pending").set(stats.pending as f64);
+                gauge!(METRIC_QUEUE_DEPTH, "status" => "running").set(stats.running as f64);
+                gauge!(METRIC_QUEUE_DEPTH, "status" => "dead").set(stats.dead as f64);
+            }
+            Err(e) => warn!(target: LOG_TARGET, error = %e, "sample queue depth failed"),
         }
     }
 }

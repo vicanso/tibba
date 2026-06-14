@@ -19,10 +19,20 @@
 //! **失败会自动重试**（多次失败转死信），不再静默丢分。
 
 use crate::sql::get_db_pool;
+use axum::Json;
+use axum::Router;
+use axum::extract::{Path, Query};
+use axum::http::StatusCode;
+use axum::routing::{delete, get, post};
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tibba_error::Error as BaseError;
-use tibba_job::{BoxFuture, JobContext, JobHandler, register_handler};
+use tibba_job::{BoxFuture, DeadJob, JobContext, JobHandler, JobQueue, register_handler};
+use tibba_model::format_datetime;
 use tibba_model_token::{RECHARGE_SOURCE_GIFT, TokenRechargeInsertParams, TokenService};
+use tibba_session::AdminSession;
+
+type Result<T> = std::result::Result<T, BaseError>;
 
 /// 任务类型名：注册赠积分。入队与 handler 须用同一常量，避免拼写漂移。
 pub const JOB_GIFT_POINTS: &str = "gift_points";
@@ -72,4 +82,128 @@ impl JobHandler for GiftPointsHandler {
 /// 注册所有应用级任务 handler。须在 `tibba_job::start` 之前调用。
 pub fn register_job_handlers() {
     register_handler(Arc::new(GiftPointsHandler));
+}
+
+// ── 任务队列 admin 路由（挂载于 `/jobs`，全部需 Admin 角色）─────────────────
+//
+// - GET    /jobs/stats              队列深度概览（pending / running / dead）
+// - GET    /jobs/dead?limit&offset  分页列出死信任务
+// - POST   /jobs/dead/{id}/retry    重放一条死信
+// - DELETE /jobs/dead/{id}          永久删除一条死信
+//
+// 队列深度同时由 worker 侧周期性上报为 `job_queue_depth` gauge 供 Prometheus 抓取；
+// 这些端点用于人工排查与处置死信，与 `/features` 同属应用级 admin 管理面。
+
+/// 死信列表单页默认条数（未传 `limit` 时用）。
+const DEAD_LIST_DEFAULT_LIMIT: i64 = 50;
+/// 死信列表单页上限，防止一次拉取过多。
+const DEAD_LIST_MAX_LIMIT: i64 = 200;
+
+/// 死信列表分页参数。
+#[derive(Debug, Deserialize)]
+struct DeadListQuery {
+    /// 本页条数，缺省 50，收敛至 [1, 200]。
+    limit: Option<i64>,
+    /// 偏移量，缺省 0。
+    offset: Option<i64>,
+}
+
+/// 队列深度概览响应。
+#[derive(Debug, Serialize)]
+struct QueueStatsResp {
+    /// 待跑条数。
+    pending: i64,
+    /// 执行中条数。
+    running: i64,
+    /// 死信条数。
+    dead: i64,
+}
+
+/// 单条死信任务（对外展示，datetime 已格式化为本地时区字符串）。
+#[derive(Debug, Serialize)]
+struct DeadJobItem {
+    id: i64,
+    queue: String,
+    job_type: String,
+    payload: serde_json::Value,
+    attempts: i32,
+    max_attempts: i32,
+    last_error: Option<String>,
+    run_at: String,
+    created: String,
+}
+
+impl From<DeadJob> for DeadJobItem {
+    fn from(d: DeadJob) -> Self {
+        Self {
+            id: d.id,
+            queue: d.queue,
+            job_type: d.job_type,
+            payload: d.payload.0,
+            attempts: d.attempts,
+            max_attempts: d.max_attempts,
+            last_error: d.last_error,
+            run_at: format_datetime(d.run_at),
+            created: format_datetime(d.created),
+        }
+    }
+}
+
+/// 死信 id 未命中（已被重放 / 删除 / 本就不存在）时的 404。
+fn dead_not_found(id: i64) -> BaseError {
+    BaseError::new(format!("dead job not found: id={id}"))
+        .with_category("job")
+        .with_sub_category("dead_job_not_found")
+        .with_status(404)
+}
+
+/// `GET /jobs/stats` —— 队列深度概览（Admin）。
+async fn queue_stats(_admin: AdminSession) -> Result<Json<QueueStatsResp>> {
+    let stats = JobQueue::new(get_db_pool()).stats().await?;
+    Ok(Json(QueueStatsResp {
+        pending: stats.pending,
+        running: stats.running,
+        dead: stats.dead,
+    }))
+}
+
+/// `GET /jobs/dead` —— 分页列出死信任务（Admin）。
+async fn list_dead_jobs(
+    _admin: AdminSession,
+    Query(query): Query<DeadListQuery>,
+) -> Result<Json<Vec<DeadJobItem>>> {
+    let limit = query
+        .limit
+        .unwrap_or(DEAD_LIST_DEFAULT_LIMIT)
+        .clamp(1, DEAD_LIST_MAX_LIMIT);
+    let offset = query.offset.unwrap_or(0).max(0);
+    let jobs = JobQueue::new(get_db_pool()).list_dead(limit, offset).await?;
+    Ok(Json(jobs.into_iter().map(DeadJobItem::from).collect()))
+}
+
+/// `POST /jobs/dead/{id}/retry` —— 重放一条死信（Admin）。命中 204，否则 404。
+async fn retry_dead_job(_admin: AdminSession, Path(id): Path<i64>) -> Result<StatusCode> {
+    if JobQueue::new(get_db_pool()).retry_dead(id).await? {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(dead_not_found(id))
+    }
+}
+
+/// `DELETE /jobs/dead/{id}` —— 永久删除一条死信（Admin）。命中 204，否则 404。
+async fn purge_dead_job(_admin: AdminSession, Path(id): Path<i64>) -> Result<StatusCode> {
+    if JobQueue::new(get_db_pool()).purge_dead(id).await? {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(dead_not_found(id))
+    }
+}
+
+/// 构造任务队列 admin 路由（由 `router.rs` 以 `/jobs` 前缀挂载）。
+pub fn new_job_router() -> Router {
+    Router::new()
+        .route("/stats", get(queue_stats))
+        .route("/dead", get(list_dead_jobs))
+        .route("/dead/{id}/retry", post(retry_dead_job))
+        .route("/dead/{id}", delete(purge_dead_job))
 }
