@@ -135,8 +135,10 @@ where
 }
 
 mod common;
+mod cors;
 mod csrf;
 mod entry;
+mod http_cache;
 mod idempotency;
 mod limit;
 mod rate_limit;
@@ -146,8 +148,10 @@ mod stats;
 mod tracker;
 
 pub use common::*;
+pub use cors::*;
 pub use csrf::*;
 pub use entry::*;
+pub use http_cache::*;
 pub use idempotency::*;
 pub use limit::*;
 pub use rate_limit::*;

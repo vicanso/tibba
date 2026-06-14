@@ -24,7 +24,8 @@ use std::str::FromStr;
 use std::sync::Arc;
 use tibba_hook::{run_after_tasks, run_before_tasks};
 use tibba_middleware::{
-    SecurityHeaders, entry, processing_limit, request_id, security_headers, stats,
+    Cors, HttpCache, SecurityHeaders, cors, entry, http_cache, processing_limit, request_id,
+    security_headers, stats,
 };
 use tibba_router_user::api_key_auth;
 use tibba_scheduler::run_scheduler_jobs;
@@ -219,6 +220,13 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             // 默认基线（HSTS / nosniff / X-Frame-Options DENY / Referrer-Policy）；
             // CSP 需按前端资源定制，故默认留空，由部署侧 with_content_security_policy 开启。
             .layer(from_fn_with_state(SecurityHeaders::default(), security_headers))
+            // CORS：紧随安全头。预检（OPTIONS）在此短路返回 204，不进入下方 entry/stats/
+            // session 与业务 handler。默认任意来源、无凭据；生产应 add_allow_origin 收敛来源、
+            // 并按需 with_allow_credentials(true) 以支持携带 cookie 的跨域请求。
+            .layer(from_fn_with_state(Arc::new(Cors::default()), cors))
+            // HTTP 缓存：为 GET 响应自动生成 ETag 并处理 If-None-Match → 304。挂在压缩层
+            // 内侧，对未压缩响应体计算 ETag；默认 Cache-Control: no-cache（每次带 ETag 回源校验）。
+            .layer(from_fn_with_state(HttpCache::default(), http_cache))
             .layer(from_fn_with_state(state, entry))
             .layer(from_fn_with_state(state, stats))
             .layer(from_fn_with_state(

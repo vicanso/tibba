@@ -23,6 +23,8 @@ serde_json = { workspace = true }
 snafu = { workspace = true }
 tibba-error = { path = "../tibba-error", version = "0.2.2" }
 tibba-util = { path = "../tibba-util", version = "0.2.2" }
+# 重试退避需要定时器，workspace 默认未启用 tokio 的 time 特性，这里单独开启
+tokio = { workspace = true, features = ["time"] }
 tracing = { workspace = true }
 
 [dev-dependencies]

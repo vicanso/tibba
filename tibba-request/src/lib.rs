@@ -26,6 +26,9 @@ pub enum Error {
     /// 服务返回业务错误（状态码 ≥400 且响应体包含 message 字段）。
     #[snafu(display("{service} request fail, {message}"))]
     Common { service: String, message: String },
+    /// 熔断器处于打开状态，未发起请求直接快速失败（保护持续故障的下游）。
+    #[snafu(display("{service} circuit breaker open"))]
+    CircuitOpen { service: String },
     /// 构建 reqwest 请求失败（如非法 URL、头部格式错误等）。
     #[snafu(display("{service} build http request fail, {source}"))]
     Build {
@@ -57,6 +60,13 @@ impl From<Error> for BaseError {
     fn from(val: Error) -> Self {
         let (service, err) = match val {
             Error::Common { service, message } => (service, BaseError::new(message)),
+            Error::CircuitOpen { service } => {
+                // 熔断快速失败属基础设施保护态，503 + 标记 exception 触发告警
+                let err = BaseError::new(format!("{service} circuit breaker open"))
+                    .with_status(503)
+                    .with_exception(true);
+                (service, err)
+            }
             Error::Build { service, source } => (service, BaseError::new(source)),
             Error::Uri { service, source } => (service, BaseError::new(source)),
             Error::Request {

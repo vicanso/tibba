@@ -27,8 +27,9 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::net::SocketAddr;
 use std::pin::Pin;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tibba_util::{Stopwatch, json_get};
 use tracing::{info, warn};
 
@@ -204,6 +205,93 @@ impl HttpInterceptor for CommonInterceptor {
     }
 }
 
+/// 幂等方法可安全重复发送（GET/HEAD/PUT/DELETE/OPTIONS）；POST/PATCH 视为非幂等。
+fn is_idempotent(method: &Method) -> bool {
+    matches!(
+        *method,
+        Method::GET | Method::HEAD | Method::PUT | Method::DELETE | Method::OPTIONS
+    )
+}
+
+/// 网络层错误是否重试。连接未建立时服务端必然没收到，任何方法都可安全重试；
+/// 超时 / 发送中断对非幂等方法不安全（可能已被处理），仅幂等方法重试。
+fn should_retry_error(err: &reqwest::Error, idempotent: bool) -> bool {
+    if err.is_connect() {
+        true
+    } else if err.is_timeout() || err.is_request() {
+        idempotent
+    } else {
+        false
+    }
+}
+
+/// 是否因响应状态码重试：仅对幂等方法，且状态为 429 或 5xx。
+fn is_retryable_status(status: u16, idempotent: bool) -> bool {
+    idempotent && (status == 429 || (500..=599).contains(&status))
+}
+
+/// 指数退避：`base * 2^attempt`，指数封顶 2^6（64 倍）防止过长等待。
+fn retry_backoff(base: Duration, attempt: u32) -> Duration {
+    let factor = 1u32 << attempt.min(6);
+    base.saturating_mul(factor)
+}
+
+/// 简单熔断器：连续失败达 `threshold` 即打开，`cooldown` 内对请求快速失败；冷却结束后
+/// 自动恢复（下一次失败会再次打开）。非严格 half-open，MVP 足够。状态用原子 + 极短临界区
+/// 维护，**不跨 await 持锁**。
+struct CircuitBreaker {
+    /// 连续失败计数。
+    failures: AtomicU32,
+    /// 打开阈值（连续失败次数）。
+    threshold: u32,
+    /// 打开后的冷却时长。
+    cooldown: Duration,
+    /// 打开截止时刻；`None` 表示关闭。临界区极短，不跨 await。
+    open_until: Mutex<Option<Instant>>,
+}
+
+impl CircuitBreaker {
+    fn new(threshold: u32, cooldown: Duration) -> Self {
+        Self {
+            failures: AtomicU32::new(0),
+            threshold: threshold.max(1),
+            cooldown,
+            open_until: Mutex::new(None),
+        }
+    }
+
+    /// 是否放行本次请求。处于打开窗口内 → `false`；冷却结束 → 复位并放行。
+    fn allow(&self) -> bool {
+        let mut guard = self.open_until.lock().unwrap_or_else(|e| e.into_inner());
+        match *guard {
+            Some(until) if Instant::now() < until => false,
+            // 冷却结束，恢复放行（失败再开）
+            Some(_) => {
+                *guard = None;
+                true
+            }
+            None => true,
+        }
+    }
+
+    /// 记一次成功：清零失败计数并关闭熔断。
+    fn record_success(&self) {
+        self.failures.store(0, Ordering::Relaxed);
+        let mut guard = self.open_until.lock().unwrap_or_else(|e| e.into_inner());
+        *guard = None;
+    }
+
+    /// 记一次失败：达阈值则打开熔断（设置冷却截止时刻）。
+    fn record_failure(&self) {
+        let failures = self.failures.fetch_add(1, Ordering::Relaxed) + 1;
+        if failures >= self.threshold {
+            let until = Instant::now() + self.cooldown;
+            let mut guard = self.open_until.lock().unwrap_or_else(|e| e.into_inner());
+            *guard = Some(until);
+        }
+    }
+}
+
 /// HTTP 客户端内部配置，由 `ClientBuilder` 填充后转移给 `Client`。
 struct ClientConfig {
     /// 服务名称，用于日志和错误标识
@@ -228,6 +316,12 @@ struct ClientConfig {
     dns_overrides: Option<HashMap<String, Vec<SocketAddr>>>,
     /// 请求拦截器链，按注册顺序依次执行
     interceptors: Option<Vec<Box<dyn HttpInterceptor>>>,
+    /// 最大重试次数（0 = 不重试，保持原有行为）
+    max_retries: u32,
+    /// 重试退避基数（按指数增长）
+    retry_base_delay: Duration,
+    /// 可选熔断器：连续失败达阈值后在冷却期内快速失败
+    circuit_breaker: Option<CircuitBreaker>,
 }
 
 /// HTTP 客户端构建器，通过链式调用配置后调用 `.build()` 生成 `Client`。
@@ -251,6 +345,9 @@ impl ClientBuilder {
                 interceptors: None,
                 max_processing: None,
                 dns_overrides: None,
+                max_retries: 0,
+                retry_base_delay: Duration::from_millis(100),
+                circuit_breaker: None,
             },
         }
     }
@@ -332,6 +429,22 @@ impl ClientBuilder {
     #[must_use]
     pub fn with_dns_overrides(mut self, dns_overrides: HashMap<String, Vec<SocketAddr>>) -> Self {
         self.config.dns_overrides = Some(dns_overrides);
+        self
+    }
+
+    /// 启用自动重试：`max_retries` 为最大重试次数，`base_delay` 为退避基数（指数增长）。
+    /// 仅幂等方法按状态码 / 超时重试；非幂等方法仅在「连接未建立」时重试。默认不重试。
+    #[must_use]
+    pub fn with_retry(mut self, max_retries: u32, base_delay: Duration) -> Self {
+        self.config.max_retries = max_retries;
+        self.config.retry_base_delay = base_delay;
+        self
+    }
+
+    /// 启用熔断：连续失败达 `threshold` 次后打开，`cooldown` 内对请求快速失败。默认关闭。
+    #[must_use]
+    pub fn with_circuit_breaker(mut self, threshold: u32, cooldown: Duration) -> Self {
+        self.config.circuit_breaker = Some(CircuitBreaker::new(threshold, cooldown));
         self
     }
 
@@ -425,6 +538,8 @@ impl Client {
         stats.path = uri.path().to_string();
         stats.method = params.method.to_string();
 
+        // 幂等性决定重试策略（在 match 消费前先算好）
+        let idempotent = is_idempotent(&params.method);
         let mut req = match params.method {
             Method::POST => self.client.post(url),
             Method::PUT => self.client.put(url),
@@ -447,27 +562,104 @@ impl Client {
                 req = interceptor.request(req).await?;
             }
         }
-        let process_done = Stopwatch::new();
-        let res = req.send().await.context(RequestSnafu {
-            service: self.config.service.clone(),
-            path: stats.path.clone(),
-        })?;
-
-        stats.processing = process_done.elapsed_ms();
-
-        if let Some(remote_addr) = res.remote_addr() {
-            stats.remote_addr = remote_addr.to_string();
+        // 熔断器打开 → 快速失败，不发起请求，保护持续故障的下游
+        if let Some(cb) = &self.config.circuit_breaker
+            && !cb.allow()
+        {
+            return Err(Error::CircuitOpen {
+                service: self.config.service.clone(),
+            });
         }
 
-        let status = res.status().as_u16();
-        let transfer_done = Stopwatch::new();
-        let mut full = res.bytes().await.context(RequestSnafu {
-            service: self.config.service.clone(),
-            path: stats.path.clone(),
-        })?;
-        stats.transfer = transfer_done.elapsed_ms();
+        // 重试循环：失败按指数退避重排，达上限后返回最后一次结果 / 错误
+        let max_retries = self.config.max_retries;
+        let mut attempt: u32 = 0;
+        let (status, mut full) = loop {
+            // 预克隆以备下次重试；流式 body 不可克隆 → None（此请求不再重试）
+            let retry_candidate = if attempt < max_retries {
+                req.try_clone()
+            } else {
+                None
+            };
+
+            let process_done = Stopwatch::new();
+            match req.send().await {
+                Ok(res) => {
+                    stats.processing = process_done.elapsed_ms();
+                    if let Some(remote_addr) = res.remote_addr() {
+                        stats.remote_addr = remote_addr.to_string();
+                    }
+                    let status = res.status().as_u16();
+                    let transfer_done = Stopwatch::new();
+                    let body = res.bytes().await.context(RequestSnafu {
+                        service: self.config.service.clone(),
+                        path: stats.path.clone(),
+                    })?;
+                    stats.transfer = transfer_done.elapsed_ms();
+
+                    // 5xx / 429 且仍可重试 → 退避后重试
+                    if is_retryable_status(status, idempotent)
+                        && let Some(next) = retry_candidate
+                    {
+                        let delay = retry_backoff(self.config.retry_base_delay, attempt);
+                        warn!(
+                            target: LOG_TARGET,
+                            service = self.config.service,
+                            path = stats.path,
+                            status,
+                            attempt = attempt + 1,
+                            delay_ms = delay.as_millis() as u64,
+                            "retry on server error",
+                        );
+                        tokio::time::sleep(delay).await;
+                        req = next;
+                        attempt += 1;
+                        continue;
+                    }
+                    break (status, body);
+                }
+                Err(e) => {
+                    // 网络层错误：按方法幂等性决定是否重试
+                    if should_retry_error(&e, idempotent)
+                        && let Some(next) = retry_candidate
+                    {
+                        let delay = retry_backoff(self.config.retry_base_delay, attempt);
+                        warn!(
+                            target: LOG_TARGET,
+                            service = self.config.service,
+                            path = stats.path,
+                            attempt = attempt + 1,
+                            delay_ms = delay.as_millis() as u64,
+                            error = %e,
+                            "retry on network error",
+                        );
+                        tokio::time::sleep(delay).await;
+                        req = next;
+                        attempt += 1;
+                        continue;
+                    }
+                    // 重试耗尽 / 不可重试 → 记一次熔断失败后返回网络错误
+                    if let Some(cb) = &self.config.circuit_breaker {
+                        cb.record_failure();
+                    }
+                    return Err(e).context(RequestSnafu {
+                        service: self.config.service.clone(),
+                        path: stats.path.clone(),
+                    });
+                }
+            }
+        };
         stats.content_length = full.len();
         stats.status = status;
+
+        // 熔断计数：拿到响应后按状态码更新（5xx 计失败、其余视为恢复）
+        if let Some(cb) = &self.config.circuit_breaker {
+            if status >= 500 {
+                cb.record_failure();
+            } else {
+                cb.record_success();
+            }
+        }
 
         if let Some(interceptors) = &self.config.interceptors {
             // 状态码 ≥400 时触发各拦截器的 fail 钩子
@@ -648,5 +840,54 @@ impl Client {
     /// 获取当前在途请求数。
     pub fn get_processing(&self) -> u32 {
         self.processing.load(Ordering::Relaxed)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 退避按 2 的幂增长，并在 2^6 处封顶。
+    #[test]
+    fn backoff_grows_and_caps() {
+        let base = Duration::from_millis(100);
+        assert_eq!(retry_backoff(base, 0), Duration::from_millis(100));
+        assert_eq!(retry_backoff(base, 1), Duration::from_millis(200));
+        assert_eq!(retry_backoff(base, 3), Duration::from_millis(800));
+        // 指数封顶 2^6 = 64
+        assert_eq!(retry_backoff(base, 10), Duration::from_millis(100 * 64));
+    }
+
+    /// 幂等性分类：GET/PUT 幂等，POST/PATCH 非幂等。
+    #[test]
+    fn idempotency_classification() {
+        assert!(is_idempotent(&Method::GET));
+        assert!(is_idempotent(&Method::PUT));
+        assert!(!is_idempotent(&Method::POST));
+        assert!(!is_idempotent(&Method::PATCH));
+    }
+
+    /// 仅幂等方法按 429 / 5xx 重试。
+    #[test]
+    fn retryable_status_only_for_idempotent() {
+        assert!(is_retryable_status(503, true));
+        assert!(is_retryable_status(429, true));
+        assert!(!is_retryable_status(503, false));
+        assert!(!is_retryable_status(404, true));
+    }
+
+    /// 熔断器：达阈值打开、冷却内拒绝、冷却后恢复、成功清零。
+    #[test]
+    fn circuit_breaker_opens_and_recovers() {
+        let cb = CircuitBreaker::new(2, Duration::from_millis(50));
+        assert!(cb.allow());
+        cb.record_failure(); // 1 次，未达阈值
+        assert!(cb.allow());
+        cb.record_failure(); // 达阈值 → 打开
+        assert!(!cb.allow()); // 冷却窗口内快速失败
+        std::thread::sleep(Duration::from_millis(60));
+        assert!(cb.allow()); // 冷却结束恢复
+        cb.record_success(); // 成功清零计数
+        assert!(cb.allow());
     }
 }
