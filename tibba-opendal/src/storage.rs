@@ -15,8 +15,40 @@
 use super::{Error, OpenDalSnafu};
 use opendal::{Buffer, Metadata, OperatorInfo};
 use snafu::ResultExt;
+use std::time::Duration;
 
 type Result<T, E = Error> = std::result::Result<T, E>;
+
+/// 预签名请求结果：客户端可据此**直接**向存储后端发起请求（上传 / 下载），
+/// 无需经应用服务器中转，省带宽且降时延。
+///
+/// 仅 S3 等具备 presign 能力的后端可用；`fs` 等本地后端调用会返回
+/// OpenDAL `Unsupported` 错误。字段刻意用基础类型，方便上层直接序列化为 JSON。
+#[derive(Debug, Clone)]
+pub struct PresignResult {
+    /// HTTP 方法：下载为 `GET`，上传为 `PUT`。
+    pub method: String,
+    /// 预签名 URL（已含鉴权查询参数，到期自动失效）。
+    pub url: String,
+    /// 客户端发起请求时须一并带上的头（如 `host` / `content-type`）。
+    pub headers: Vec<(String, String)>,
+}
+
+impl From<opendal::raw::PresignedRequest> for PresignResult {
+    fn from(req: opendal::raw::PresignedRequest) -> Self {
+        // 头值理论上均为 ASCII；个别非法值降级为空串，不影响主流程
+        let headers = req
+            .header()
+            .iter()
+            .map(|(k, v)| (k.as_str().to_string(), v.to_str().unwrap_or_default().to_string()))
+            .collect();
+        Self {
+            method: req.method().as_str().to_string(),
+            url: req.uri().to_string(),
+            headers,
+        }
+    }
+}
 
 /// 统一存储抽象，封装 OpenDAL `Operator`，对上层屏蔽具体后端实现。
 pub struct Storage {
@@ -70,5 +102,27 @@ impl Storage {
     /// 用于 readiness probe，确认存储后端可达。
     pub async fn check(&self) -> Result<()> {
         self.dal.check().await.context(OpenDalSnafu)
+    }
+
+    /// 生成「下载」预签名请求：客户端可凭返回 URL 在 `expire` 内直接 `GET` 对象，
+    /// 不经应用中转。仅 S3 等支持 presign 的后端可用，否则返回 `Unsupported` 错误。
+    pub async fn presign_read(&self, path: &str, expire: Duration) -> Result<PresignResult> {
+        let req = self
+            .dal
+            .presign_read(path, expire)
+            .await
+            .context(OpenDalSnafu)?;
+        Ok(req.into())
+    }
+
+    /// 生成「上传」预签名请求：客户端可凭返回 URL 在 `expire` 内直接 `PUT` 对象。
+    /// 仅 S3 等支持 presign 的后端可用，否则返回 `Unsupported` 错误。
+    pub async fn presign_write(&self, path: &str, expire: Duration) -> Result<PresignResult> {
+        let req = self
+            .dal
+            .presign_write(path, expire)
+            .await
+            .context(OpenDalSnafu)?;
+        Ok(req.into())
     }
 }

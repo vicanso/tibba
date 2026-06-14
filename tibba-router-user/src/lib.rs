@@ -42,12 +42,17 @@ use tibba_validator::*;
 use utoipa::{OpenApi, ToSchema};
 use validator::Validate;
 
+mod api_key;
 mod email_verify;
 mod jwt_auth;
+mod login_guard;
 mod oauth_github;
 mod oauth_google;
 mod password_reset;
 mod totp;
+
+// API Key 鉴权中间件，供主 crate 全局挂载（session 中间件之后）。
+pub use api_key::api_key_auth;
 
 /// 注册成功回调的 Future 类型
 pub type OnRegisterFuture = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
@@ -80,6 +85,10 @@ pub(crate) enum Error {
     /// Session 中的账号在数据库中已不存在，强制客户端重登（HTTP 401）
     #[snafu(display("user not found: {account}"))]
     UserNotFound { account: String },
+
+    /// 登录失败次数过多，账号或来源 IP 被临时锁定（HTTP 429）
+    #[snafu(display("too many failed login attempts, please retry later"))]
+    TooManyAttempts,
 }
 
 impl From<Error> for BaseError {
@@ -97,6 +106,12 @@ impl From<Error> for BaseError {
                 .with_sub_category("user_not_found")
                 .with_status(401)
                 .with_exception(false),
+            Error::TooManyAttempts => {
+                BaseError::new("too many failed login attempts, please retry later")
+                    .with_sub_category("too_many_attempts")
+                    .with_status(429)
+                    .with_exception(false)
+            }
         };
         err.with_category(ERROR_CATEGORY)
     }
@@ -228,15 +243,25 @@ async fn login(
 ) -> Result<Response> {
     params.validate_token(&secret)?;
     let account = params.account;
+    let ip_str = ip.to_string();
+
+    // 暴力破解闸门：账号 / IP 在窗口内失败过多则直接 429，连密码都不再比对
+    login_guard::ensure_not_locked(cache, &account, &ip_str).await?;
+
     let Some(user) = UserModel::new().get_by_account(pool, &account).await? else {
+        login_guard::record_failure(cache, &account, &ip_str).await;
         return Err(Error::BadCredentials.into());
     };
 
     // 密码验证：sha256(hash:存储密码) 须与客户端传入的 password 相等
     let msg = format!("{}:{}", params.hash, user.password);
     if sha256(msg.as_bytes()) != params.password {
+        login_guard::record_failure(cache, &account, &ip_str).await;
         return Err(Error::BadCredentials.into());
     }
+
+    // 凭证正确：清账号失败计数（IP 计数保留，到期自动解锁）
+    login_guard::clear_failures(cache, &account).await;
 
     // 2FA 闸门：已启用则不建会话，签发挑战令牌要求第二步
     let totp = UserModel::new().get_totp_state(pool, user.id).await?;
@@ -726,6 +751,17 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
                 .layer(from_fn_with_state((name, "logout").into(), user_tracker)),
         )
         .route("/profile", patch(update_profile).with_state(params.pool))
+        // API Key / 个人访问令牌（PAT）：登录态自助管理；明文令牌仅创建时返回一次
+        .route(
+            "/api-keys",
+            post(api_key::create_api_key)
+                .get(api_key::list_api_keys)
+                .with_state(params.pool),
+        )
+        .route(
+            "/api-keys/{id}",
+            delete(api_key::revoke_api_key).with_state(params.pool),
+        )
         // 邮箱验证（登录态调用，request 端点带 user_tracker 防刷）
         .route(
             "/email/verify/request",
@@ -879,6 +915,9 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
         logout,
         update_profile,
         login_mfa,
+        api_key::create_api_key,
+        api_key::list_api_keys,
+        api_key::revoke_api_key,
         email_verify::request_verify,
         email_verify::confirm_verify,
         password_reset::request_reset,

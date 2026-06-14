@@ -43,7 +43,9 @@ tibba-cache = { path = "./tibba-cache" }
 tibba-config = { path = "./tibba-config" }
 tibba-email = { path = "./tibba-email" }
 tibba-error = { path = "./tibba-error" }
+tibba-feature = { path = "./tibba-feature" }
 tibba-hook = { path = "./tibba-hook" }
+tibba-job = { path = "./tibba-job" }
 tibba-jwt = { path = "./tibba-jwt" }
 tibba-llm = { path = "./tibba-llm" }
 tibba-middleware = { path = "./tibba-middleware" }
@@ -98,7 +100,9 @@ members = [
     "tibba-crypto",
     "tibba-email",
     "tibba-error",
+    "tibba-feature",
     "tibba-hook",
+    "tibba-job",
     "tibba-jwt",
     "tibba-middleware",
     "tibba-model",

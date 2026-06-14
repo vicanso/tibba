@@ -5946,7 +5946,9 @@ dependencies = [
  "tibba-config",
  "tibba-email",
  "tibba-error",
+ "tibba-feature",
  "tibba-hook",
+ "tibba-job",
  "tibba-jwt",
  "tibba-llm",
  "tibba-middleware",
@@ -6049,11 +6051,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "tibba-feature"
+version = "0.2.2"
+dependencies = [
+ "serde",
+ "tibba-cache",
+ "tibba-error",
+]
+
+[[package]]
 name = "tibba-hook"
 version = "0.2.2"
 dependencies = [
  "dashmap",
  "pretty_assertions",
+ "tibba-error",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "tibba-job"
+version = "0.2.2"
+dependencies = [
+ "dashmap",
+ "serde_json",
+ "snafu",
+ "sqlx 0.9.0",
  "tibba-error",
  "tokio",
  "tracing",

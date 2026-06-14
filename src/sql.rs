@@ -35,6 +35,18 @@ pub fn get_db_pool() -> &'static PgPool {
         .unwrap_or_else(|| panic!("db pool not initialized"))
 }
 
+/// readiness 探针用：`SELECT 1` 验证连接池能取到连接且数据库后端可达。
+///
+/// 与 [`tibba_cache::RedisCache::ping`] 对称，供 `/readyz` 深检数据库依赖；
+/// 任一环节失败即返回错误，由探针转成 503。
+pub async fn ping_db() -> Result<()> {
+    sqlx::query("SELECT 1")
+        .execute(get_db_pool())
+        .await
+        .map_err(Error::new)?;
+    Ok(())
+}
+
 struct SqlTask {
     running: AtomicBool,
 }

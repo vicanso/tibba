@@ -21,18 +21,19 @@ use axum::http::header;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use imageoptimize::{ImageProcessingError, ProcessImage, run_with_image};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use snafu::{OptionExt, ResultExt, Snafu};
 use sqlx::PgPool;
 use std::collections::HashMap;
 use std::path::Path;
+use std::time::Duration;
 use tibba_error::Error as BaseError;
 use tibba_model_builtin::{ConfigurationModel, FileInsertParams, FileModel, Model};
-use tibba_opendal::Storage;
+use tibba_opendal::{PresignResult, Storage};
 use tibba_session::UserSession;
 use tibba_util::{JsonResult, QueryParams, uuid};
 use tibba_validator::{x_file_group, x_file_name, x_image_format, x_image_quality};
-use utoipa::{IntoParams, OpenApi};
+use utoipa::{IntoParams, OpenApi, ToSchema};
 use validator::Validate;
 
 /// 模块对外仍返回 `tibba_error::Error`，本地 `Error` 仅用于 snafu 上下文捕获。
@@ -68,6 +69,10 @@ enum Error {
         #[snafu(source(from(ImageProcessingError, Box::new)))]
         source: Box<ImageProcessingError>,
     },
+
+    /// 预签名上传的文件名缺少扩展名，无法据此生成存储键（HTTP 400）
+    #[snafu(display("invalid filename (missing extension): {name}"))]
+    InvalidFilename { name: String },
 }
 
 impl From<Error> for BaseError {
@@ -80,6 +85,12 @@ impl From<Error> for BaseError {
             Error::Multipart { source } => BaseError::new(source).with_sub_category("multipart"),
             Error::Image { source } => BaseError::new(source).with_sub_category("image"),
             Error::Optimize { source } => BaseError::new(source).with_sub_category("optimize"),
+            Error::InvalidFilename { name } => {
+                BaseError::new(format!("invalid filename (missing extension): {name}"))
+                    .with_sub_category("invalid_filename")
+                    .with_status(400)
+                    .with_exception(false)
+            }
         };
         err.with_category(ERROR_CATEGORY)
     }
@@ -251,6 +262,120 @@ async fn get_file(
     Ok((headers, data.to_bytes()))
 }
 
+/// 预签名 URL 有效期：15 分钟，够客户端完成一次直传/直下，又不过长暴露。
+const PRESIGN_EXPIRE: Duration = Duration::from_secs(15 * 60);
+
+/// 预签名请求响应：客户端据此直接向存储后端发起上传/下载，不经应用中转。
+#[derive(Debug, Serialize, ToSchema)]
+struct PresignResp {
+    /// 存储对象键（上传为服务端新分配的 `{uuid}.{ext}`，下载即请求的 name）
+    key: String,
+    /// HTTP 方法：上传 `PUT`，下载 `GET`
+    method: String,
+    /// 预签名 URL（含鉴权参数，到期失效）
+    url: String,
+    /// 客户端发起请求时须带上的头（如 host）
+    headers: HashMap<String, String>,
+    /// 有效期（秒）
+    expires_in: u64,
+}
+
+/// 把存储层 [`PresignResult`] 连同对象键组装成 API 响应。
+fn presign_resp(key: String, result: PresignResult) -> PresignResp {
+    PresignResp {
+        key,
+        method: result.method,
+        url: result.url,
+        headers: result.headers.into_iter().collect(),
+        expires_in: PRESIGN_EXPIRE.as_secs(),
+    }
+}
+
+#[derive(Debug, Deserialize, Clone, Validate, IntoParams)]
+#[into_params(parameter_in = Query)]
+struct PresignUploadParams {
+    /// 文件所属分组（决定存储路径策略）
+    #[validate(custom(function = "x_file_group"))]
+    group: String,
+    /// 原始文件名，仅用于提取扩展名；最终存储键为 `{uuid}.{ext}`
+    #[validate(length(min = 1, max = 255))]
+    filename: String,
+}
+
+/// `GET /files/presign/upload` —— 为「直传」签发预签名 PUT URL。
+///
+/// 仅登录用户可调用。服务端按扩展名分配存储键并返回预签名 URL，客户端凭此
+/// 直接 PUT 到对象存储，无需经应用中转。仅 S3 等支持 presign 的后端可用。
+#[utoipa::path(
+    get,
+    path = "/files/presign/upload",
+    tag = "file",
+    params(PresignUploadParams),
+    responses(
+        (status = 200, description = "返回预签名上传请求（key/method/url/headers/expires_in）", body = PresignResp),
+        (status = 400, description = "文件名缺少扩展名"),
+        (status = 401, description = "未登录")
+    )
+)]
+async fn presign_upload(
+    State((storage, _pool)): State<(&'static Storage, &'static PgPool)>,
+    _session: UserSession,
+    QueryParams(params): QueryParams<PresignUploadParams>,
+) -> JsonResult<PresignResp> {
+    let ext = Path::new(&params.filename)
+        .extension()
+        .unwrap_or_default()
+        .to_string_lossy();
+    if ext.is_empty() {
+        return Err(Error::InvalidFilename {
+            name: params.filename.clone(),
+        }
+        .into());
+    }
+    let key = format!("{}.{}", uuid(), ext);
+    let result = storage.presign_write(&key, PRESIGN_EXPIRE).await?;
+    Ok(Json(presign_resp(key, result)))
+}
+
+#[derive(Debug, Deserialize, Clone, Validate, IntoParams)]
+#[into_params(parameter_in = Query)]
+struct PresignDownloadParams {
+    /// 存储对象键
+    #[validate(custom(function = "x_file_name"))]
+    name: String,
+}
+
+/// `GET /files/presign/download` —— 为「直下」签发预签名 GET URL。
+///
+/// 仅登录用户可调用，且仅对数据库中登记过的对象签名（杜绝对任意键的探测）。
+/// 仅 S3 等支持 presign 的后端可用。
+#[utoipa::path(
+    get,
+    path = "/files/presign/download",
+    tag = "file",
+    params(PresignDownloadParams),
+    responses(
+        (status = 200, description = "返回预签名下载请求（key/method/url/headers/expires_in）", body = PresignResp),
+        (status = 401, description = "未登录"),
+        (status = 404, description = "对象不存在")
+    )
+)]
+async fn presign_download(
+    State((storage, pool)): State<(&'static Storage, &'static PgPool)>,
+    _session: UserSession,
+    QueryParams(params): QueryParams<PresignDownloadParams>,
+) -> JsonResult<PresignResp> {
+    // 仅对已登记对象签名：未登记直接 404，避免被用来探测存储桶
+    FileModel::new()
+        .get_by_name(pool, &params.name)
+        .await?
+        .context(FileNotFoundSnafu {
+            name: params.name.clone(),
+        })?;
+    let result = storage.presign_read(&params.name, PRESIGN_EXPIRE).await?;
+    Ok(Json(presign_resp(params.name, result)))
+}
+
 pub struct FileRouterParams {
     pub storage: &'static Storage,
     pub pool: &'static PgPool,
@@ -266,12 +391,21 @@ pub fn new_file_router(params: FileRouterParams) -> Router {
             "/preview",
             get(get_file).with_state((params.storage, params.pool)),
         )
+        .route(
+            "/presign/upload",
+            get(presign_upload).with_state((params.storage, params.pool)),
+        )
+        .route(
+            "/presign/download",
+            get(presign_download).with_state((params.storage, params.pool)),
+        )
 }
 
 /// 本路由模块的 OpenAPI 文档片段（路径相对 `/files` 已在注解里写全）。
 #[derive(OpenApi)]
 #[openapi(
-    paths(create_file, get_file),
+    paths(create_file, get_file, presign_upload, presign_download),
+    components(schemas(PresignResp)),
     tags((name = "file", description = "文件上传与预览"))
 )]
 struct FileApiDoc;

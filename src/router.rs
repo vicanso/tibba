@@ -20,7 +20,7 @@ use crate::config::{
 use crate::dal::get_opendal_storage;
 use crate::docker::analyze as docker_analyze;
 use crate::metrics::metrics_handler;
-use crate::sql::get_db_pool;
+use crate::sql::{get_db_pool, ping_db};
 use crate::state::get_app_state;
 use axum::Router;
 use axum::routing::{get, post};
@@ -33,8 +33,8 @@ use tibba_model_builtin::{
     HttpStatModel, UserModel, WebPageDetectorModel,
 };
 use tibba_model_token::{
-    RECHARGE_SOURCE_GIFT, TokenAccountModel, TokenKeyModel, TokenLlmModel, TokenPriceModel,
-    TokenRechargeInsertParams, TokenRechargeModel, TokenService, TokenUsageModel,
+    TokenAccountModel, TokenKeyModel, TokenLlmModel, TokenPriceModel, TokenRechargeModel,
+    TokenUsageModel,
 };
 use tibba_router_common::{CommonRouterParams, ReadinessCheck, new_common_router};
 use tibba_router_file::{FileRouterParams, new_file_router};
@@ -102,10 +102,13 @@ pub fn new_router() -> Result<Router> {
 
     let basic_config = must_get_basic_config();
     let cache = get_redis_cache();
-    // readiness 探针：调用 OpenDAL `check()` 验证存储后端可达；
-    // 失败时由 /readyz 返回 503，K8s 仅摘流量不重启 Pod
+    // readiness 深检：依次探测 数据库 → Redis → 对象存储，任一不可达即由 /readyz
+    // 返回 503，K8s 仅摘流量不重启 Pod。顺序由「请求路径强依赖」到「按接口可选」：
+    // DB / Redis 几乎所有请求都要用，最该先验；storage 仅部分接口依赖，放最后。
     let readiness: ReadinessCheck = Arc::new(|| {
         Box::pin(async {
+            ping_db().await?;
+            get_redis_cache().ping().await?;
             get_opendal_storage().check().await?;
             Ok(())
         })
@@ -130,19 +133,14 @@ pub fn new_router() -> Result<Router> {
         oauth_success_redirect: String::new(),
         on_register: Some(Arc::new(|user_id| {
             Box::pin(async move {
-                if let Err(e) = TokenService::recharge(
-                    get_db_pool(),
-                    TokenRechargeInsertParams {
-                        user_id,
-                        amount: 1_000_000,
-                        source: RECHARGE_SOURCE_GIFT,
-                        remark: Some("注册赠送".to_string()),
-                        ..Default::default()
-                    },
-                )
-                .await
-                {
-                    error!(user_id, error = %e, "注册赠送积分失败");
+                // 入队 gift_points 任务：充值由 worker 异步执行，失败自动重试，
+                // 不再 fire-and-forget 丢分（handler 见 crate::job::GiftPointsHandler）
+                let job = tibba_job::Job::new(
+                    crate::job::JOB_GIFT_POINTS,
+                    serde_json::json!({ "user_id": user_id }),
+                );
+                if let Err(e) = tibba_job::JobQueue::new(get_db_pool()).enqueue(&job).await {
+                    error!(user_id, error = %e, "入队注册赠积分任务失败");
                 }
             })
         })),
@@ -159,6 +157,9 @@ pub fn new_router() -> Result<Router> {
         .route("/analyze", post(docker_analyze))
         .with_state(get_db_pool());
 
+    // 特性开关管理路由（Admin 角色），挂在 /features
+    let feature_router = crate::feature::new_feature_router();
+
     // API 路由挂在可配置的 prefix 下（如 /api），静态文件始终在根路径
     // /metrics 走 Prometheus text exposition，挂在 API 前缀下，由部署侧通过
     // 内网或鉴权层暴露给 Prometheus / Victoria / Grafana Agent 抓取
@@ -170,6 +171,7 @@ pub fn new_router() -> Result<Router> {
         .nest("/files", file_router)
         .nest("/models", model_router)
         .nest("/docker", docker_router)
+        .nest("/features", feature_router)
         .merge(common_router);
 
     let app = if let Some(prefix) = &basic_config.prefix {

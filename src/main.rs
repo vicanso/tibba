@@ -23,7 +23,10 @@ use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::Arc;
 use tibba_hook::{run_after_tasks, run_before_tasks};
-use tibba_middleware::{entry, processing_limit, request_id, stats};
+use tibba_middleware::{
+    SecurityHeaders, entry, processing_limit, request_id, security_headers, stats,
+};
+use tibba_router_user::api_key_auth;
 use tibba_scheduler::run_scheduler_jobs;
 use tibba_session::session;
 use tibba_util::is_development;
@@ -45,7 +48,9 @@ mod cache;
 mod config;
 mod dal;
 mod docker;
+mod feature;
 mod httpstat;
+mod job;
 mod metrics;
 mod model;
 mod openapi;
@@ -186,6 +191,11 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     run_before_tasks().await?;
     run_scheduler_jobs().await?;
 
+    // 注册异步任务 handler 并启动 worker（DB 池已在 run_before_tasks 中初始化）。
+    // 并发 worker 数 = 同时执行的任务上限，按需调整。
+    job::register_job_handlers();
+    tibba_job::start(sql::get_db_pool(), 4);
+
     let basic_config = config::must_get_basic_config();
     let app = new_router()?;
 
@@ -194,7 +204,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         .and(NotForContentType::IMAGES)
         .and(NotForContentType::SSE);
     let state = get_app_state();
-    let session_params = config::get_session_params()?;
+    // 包成 Arc 以便 session 与 api_key_auth 两个中间件共享同一份配置
+    let session_params = Arc::new(config::get_session_params()?);
     let app = app.layer(
         // service build layer execute by add order
         ServiceBuilder::new()
@@ -204,11 +215,26 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             // request_id 挂在最外层（仅次于错误处理 / 压缩），保证 entry / stats /
             // 业务 handler 都能从扩展中拿到 RequestId
             .layer(from_fn(request_id))
+            // 安全响应头：紧随 request_id，覆盖所有正常业务响应（含静态资源 / JSON）。
+            // 默认基线（HSTS / nosniff / X-Frame-Options DENY / Referrer-Policy）；
+            // CSP 需按前端资源定制，故默认留空，由部署侧 with_content_security_policy 开启。
+            .layer(from_fn_with_state(SecurityHeaders::default(), security_headers))
             .layer(from_fn_with_state(state, entry))
             .layer(from_fn_with_state(state, stats))
             .layer(from_fn_with_state(
-                (cache::get_redis_cache(), Arc::new(session_params)),
+                (cache::get_redis_cache(), session_params.clone()),
                 session,
+            ))
+            // API Key 鉴权：紧随 session（更内层）。带有效 tibba_ 令牌时注入已登录
+            // Session，覆盖 session 中间件放入的空 Session，使 UserSession/AdminSession
+            // 提取器对 API Key 请求透明工作；无令牌/无效令牌则原样放行（按未登录处理）
+            .layer(from_fn_with_state(
+                (
+                    sql::get_db_pool(),
+                    cache::get_redis_cache(),
+                    session_params.clone(),
+                ),
+                api_key_auth,
             ))
             .layer(from_fn_with_state(state, processing_limit)),
     );

@@ -135,14 +135,23 @@ pub(crate) async fn login_jwt(
 
     // 2. 账号 + 密码（hash:stored_password 的 sha256 比对）
     let account = params.account.clone();
-    let user = UserModel::new()
-        .get_by_account(state.pool, &account)
-        .await?
-        .ok_or(crate::Error::BadCredentials)?;
+    let ip_str = ip.to_string();
+
+    // 暴力破解闸门：与表单 /login 同策略，防攻击者改走 JWT 路径绕过锁定
+    crate::login_guard::ensure_not_locked(state.cache, &account, &ip_str).await?;
+
+    let Some(user) = UserModel::new().get_by_account(state.pool, &account).await? else {
+        crate::login_guard::record_failure(state.cache, &account, &ip_str).await;
+        return Err(crate::Error::BadCredentials.into());
+    };
     let msg = format!("{}:{}", params.hash, user.password);
     if sha256(msg.as_bytes()) != params.password {
+        crate::login_guard::record_failure(state.cache, &account, &ip_str).await;
         return Err(crate::Error::BadCredentials.into());
     }
+
+    // 凭证正确：清账号失败计数
+    crate::login_guard::clear_failures(state.cache, &account).await;
 
     // 3. 2FA 闸门：已启用则不签 token，签发挑战令牌（与 Session 路径前缀隔离）
     let totp_state = UserModel::new().get_totp_state(state.pool, user.id).await?;

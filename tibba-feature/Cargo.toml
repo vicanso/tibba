@@ -1,0 +1,19 @@
+[package]
+name = "tibba-feature"
+version = "0.2.2"
+edition = "2024"
+authors = ["Tree Xie <tree.xie@outlook.com>"]
+license = "Apache-2.0"
+homepage = "https://github.com/vicanso/tibba"
+repository = "https://github.com/vicanso/tibba"
+keywords = ["tibba", "feature", "flags"]
+description = "Redis-backed feature flags for tibba"
+
+[lib]
+name = "tibba_feature"
+path = "src/lib.rs"
+
+[dependencies]
+serde = { workspace = true }
+tibba-cache = { path = "../tibba-cache", version = "0.2.2" }
+tibba-error = { path = "../tibba-error", version = "0.2.2" }

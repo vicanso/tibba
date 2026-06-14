@@ -1,0 +1,23 @@
+[package]
+name = "tibba-job"
+version = "0.2.2"
+edition = "2024"
+authors = ["Tree Xie <tree.xie@outlook.com>"]
+license = "Apache-2.0"
+homepage = "https://github.com/vicanso/tibba"
+repository = "https://github.com/vicanso/tibba"
+keywords = ["tibba", "job", "queue", "worker"]
+description = "PostgreSQL SKIP LOCKED async job queue for tibba"
+
+[lib]
+name = "tibba_job"
+path = "src/lib.rs"
+
+[dependencies]
+dashmap = { workspace = true }
+serde_json = { workspace = true }
+snafu = { workspace = true }
+sqlx = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tibba-error = { path = "../tibba-error", version = "0.2.2" }
