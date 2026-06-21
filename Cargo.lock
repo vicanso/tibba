@@ -5969,6 +5969,7 @@ dependencies = [
  "tibba-sql",
  "tibba-state",
  "tibba-util",
+ "tibba-webhook",
  "time",
  "tokio",
  "toml",
@@ -6461,6 +6462,24 @@ name = "tibba-validator"
 version = "0.2.2"
 dependencies = [
  "validator",
+]
+
+[[package]]
+name = "tibba-webhook"
+version = "0.2.2"
+dependencies = [
+ "http",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "snafu",
+ "sqlx 0.9.0",
+ "tibba-crypto",
+ "tibba-error",
+ "tibba-job",
+ "tibba-request",
+ "tibba-util",
+ "tracing",
 ]
 
 [[package]]

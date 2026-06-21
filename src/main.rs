@@ -198,7 +198,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // 注册异步任务 handler 并启动 worker（DB 池已在 run_before_tasks 中初始化）。
     // 并发 worker 数 = 同时执行的任务上限，按需调整。
-    job::register_job_handlers();
+    job::register_job_handlers()?;
     // 持有句柄以便进程退出前优雅排空在途任务（见下方 serve 之后的 shutdown）
     let job_workers = tibba_job::start(sql::get_db_pool(), 4);
 

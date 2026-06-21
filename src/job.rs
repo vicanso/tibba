@@ -18,6 +18,7 @@
 //! 改为入队的 `gift_points` 任务：注册流程只负责入队，真正充值由 worker 执行，
 //! **失败会自动重试**（多次失败转死信），不再静默丢分。
 
+use crate::config::must_get_webhook_config;
 use crate::sql::get_db_pool;
 use axum::Json;
 use axum::Router;
@@ -31,6 +32,7 @@ use tibba_job::{BoxFuture, DeadJob, JobContext, JobHandler, JobQueue, register_h
 use tibba_model::format_datetime;
 use tibba_model_token::{RECHARGE_SOURCE_GIFT, TokenRechargeInsertParams, TokenService};
 use tibba_session::AdminSession;
+use tibba_webhook::{WebhookDelivery, WebhookHandler};
 
 type Result<T> = std::result::Result<T, BaseError>;
 
@@ -80,8 +82,14 @@ impl JobHandler for GiftPointsHandler {
 }
 
 /// 注册所有应用级任务 handler。须在 `tibba_job::start` 之前调用。
-pub fn register_job_handlers() {
+pub fn register_job_handlers() -> Result<()> {
     register_handler(Arc::new(GiftPointsHandler));
+    // 出站 webhook：用配置的签名密钥构建 handler（密钥为空则投递不签名）
+    let webhook_handler = WebhookHandler::builder()
+        .with_secret(must_get_webhook_config().secret.clone())
+        .build()?;
+    register_handler(Arc::new(webhook_handler));
+    Ok(())
 }
 
 // ── 任务队列 admin 路由（挂载于 `/jobs`，全部需 Admin 角色）─────────────────
@@ -199,6 +207,42 @@ async fn purge_dead_job(_admin: AdminSession, Path(id): Path<i64>) -> Result<Sta
     }
 }
 
+/// `POST /jobs/webhooks/test` 请求体：入队一条测试 webhook 投递。
+#[derive(Debug, Deserialize)]
+struct WebhookTestReq {
+    /// 目标 URL（接收方 endpoint）。
+    url: String,
+    /// 事件类型，缺省 `test`。
+    #[serde(default = "default_webhook_event")]
+    event: String,
+    /// 业务数据，缺省 null。
+    #[serde(default)]
+    payload: serde_json::Value,
+}
+
+fn default_webhook_event() -> String {
+    "test".to_string()
+}
+
+/// 入队 webhook 测试投递的响应：返回新任务 id（可据此到 `/jobs/dead` 排查投递结果）。
+#[derive(Debug, Serialize)]
+struct WebhookTestResp {
+    job_id: i64,
+}
+
+/// `POST /jobs/webhooks/test` —— 入队一条测试 webhook 投递（Admin）。
+///
+/// 便于联调接收方与验签：worker 取出后签名 + POST。注意会让服务端向请求体给定的
+/// URL 发起出站 POST（与 httpstat 探测同类的管理员可触发出站请求），故仅 Admin 可用。
+async fn enqueue_webhook_test(
+    _admin: AdminSession,
+    Json(req): Json<WebhookTestReq>,
+) -> Result<Json<WebhookTestResp>> {
+    let delivery = WebhookDelivery::new(req.url, req.event, req.payload);
+    let job_id = tibba_webhook::enqueue(get_db_pool(), &delivery).await?;
+    Ok(Json(WebhookTestResp { job_id }))
+}
+
 /// 构造任务队列 admin 路由（由 `router.rs` 以 `/jobs` 前缀挂载）。
 pub fn new_job_router() -> Router {
     Router::new()
@@ -206,4 +250,5 @@ pub fn new_job_router() -> Router {
         .route("/dead", get(list_dead_jobs))
         .route("/dead/{id}/retry", post(retry_dead_job))
         .route("/dead/{id}", delete(purge_dead_job))
+        .route("/webhooks/test", post(enqueue_webhook_test))
 }

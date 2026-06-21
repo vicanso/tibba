@@ -65,6 +65,7 @@ tibba-session = { path = "./tibba-session" }
 tibba-sql = { path = "./tibba-sql" }
 tibba-state = { path = "./tibba-state" }
 tibba-util = { path = "./tibba-util" }
+tibba-webhook = { path = "./tibba-webhook" }
 tibba-performance = { path = "./tibba-performance" }
 tokio = { workspace = true }
 tower = { workspace = true }
@@ -127,6 +128,7 @@ members = [
     "tibba-llm",
     "tibba-totp",
     "tibba-scaffold",
+    "tibba-webhook",
 ]
 
 

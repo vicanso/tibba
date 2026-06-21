@@ -216,6 +216,31 @@ pub fn must_get_token_config() -> &'static TokenConfig {
         .get()
         .unwrap_or_else(|| panic!("token config not initialized"))
 }
+
+// 出站 webhook 配置。整段缺失或 secret 为空时应用照常启动，投递不签名。
+#[derive(Debug, Clone, Default, Validate, Deserialize)]
+pub struct WebhookConfig {
+    /// 出站 webhook 的 HMAC-SHA256 签名密钥；为空则投递不签名。
+    /// 经环境变量 `TIBBA_WEB__WEBHOOK__SECRET` 注入，切勿写入仓库。
+    #[serde(default)]
+    pub secret: String,
+}
+
+static WEBHOOK_CONFIG: OnceCell<WebhookConfig> = OnceCell::new();
+
+fn new_webhook_config(config: &Config) -> Result<WebhookConfig> {
+    // 整段缺失视为未配置（不签名），与 jwt / oauth 的可选语义一致
+    match config.try_deserialize::<WebhookConfig>() {
+        Ok(c) => Ok(c),
+        Err(_) => Ok(WebhookConfig::default()),
+    }
+}
+
+pub fn must_get_webhook_config() -> &'static WebhookConfig {
+    WEBHOOK_CONFIG
+        .get()
+        .unwrap_or_else(|| panic!("webhook config not initialized"))
+}
 fn new_config() -> Result<&'static Config> {
     CONFIGS.get_or_try_init(|| {
         let mut arr = vec![];
@@ -306,6 +331,10 @@ async fn init_config() -> Result<()> {
     TOKEN_CONFIG
         .set(token_config)
         .map_err(|_| map_err("token config init failed"))?;
+    let webhook_config = new_webhook_config(&app_config.sub_config("webhook"))?;
+    WEBHOOK_CONFIG
+        .set(webhook_config)
+        .map_err(|_| map_err("webhook config init failed"))?;
     Ok(())
 }
 
