@@ -5948,6 +5948,7 @@ dependencies = [
  "tibba-error",
  "tibba-feature",
  "tibba-hook",
+ "tibba-i18n",
  "tibba-job",
  "tibba-jwt",
  "tibba-llm",
@@ -6069,6 +6070,16 @@ dependencies = [
  "tibba-error",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "tibba-i18n"
+version = "0.2.2"
+dependencies = [
+ "axum",
+ "pretty_assertions",
+ "serde_json",
+ "tibba-error",
 ]
 
 [[package]]

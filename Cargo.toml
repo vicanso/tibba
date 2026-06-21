@@ -45,6 +45,7 @@ tibba-email = { path = "./tibba-email" }
 tibba-error = { path = "./tibba-error" }
 tibba-feature = { path = "./tibba-feature" }
 tibba-hook = { path = "./tibba-hook" }
+tibba-i18n = { path = "./tibba-i18n" }
 tibba-job = { path = "./tibba-job" }
 tibba-jwt = { path = "./tibba-jwt" }
 tibba-llm = { path = "./tibba-llm" }
@@ -129,6 +130,7 @@ members = [
     "tibba-totp",
     "tibba-scaffold",
     "tibba-webhook",
+    "tibba-i18n",
 ]
 
 

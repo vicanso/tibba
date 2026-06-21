@@ -1,0 +1,22 @@
+[package]
+name = "tibba-i18n"
+version = "0.2.2"
+edition = "2024"
+authors = ["Tree Xie <tree.xie@outlook.com>"]
+license = "Apache-2.0"
+homepage = "https://github.com/vicanso/tibba"
+repository = "https://github.com/vicanso/tibba"
+keywords = ["tibba", "i18n", "l10n"]
+description = "Accept-Language negotiation and error-message localization for tibba"
+
+[lib]
+name = "tibba_i18n"
+path = "src/lib.rs"
+
+[dependencies]
+axum = { workspace = true }
+serde_json = { workspace = true }
+tibba-error = { path = "../tibba-error", version = "0.2.2" }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }

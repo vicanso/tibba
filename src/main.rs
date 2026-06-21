@@ -55,6 +55,7 @@ mod dal;
 mod docker;
 mod feature;
 mod httpstat;
+mod i18n;
 mod job;
 mod metrics;
 mod model;
@@ -199,6 +200,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // 注册异步任务 handler 并启动 worker（DB 池已在 run_before_tasks 中初始化）。
     // 并发 worker 数 = 同时执行的任务上限，按需调整。
     job::register_job_handlers()?;
+    // 注册 i18n 本地化目录（按 Accept-Language 本地化错误响应 message）
+    i18n::init();
     // 持有句柄以便进程退出前优雅排空在途任务（见下方 serve 之后的 shutdown）
     let job_workers = tibba_job::start(sql::get_db_pool(), 4);
 
@@ -232,6 +235,9 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             // HTTP 缓存：为 GET 响应自动生成 ETag 并处理 If-None-Match → 304。挂在压缩层
             // 内侧，对未压缩响应体计算 ETag；默认 Cache-Control: no-cache（每次带 ETag 回源校验）。
             .layer(from_fn_with_state(HttpCache::default(), http_cache))
+            // i18n：按 Accept-Language 本地化错误响应 message。挂在 http_cache 内侧，
+            // 使 ETag 基于本地化后的响应体计算；未注册目录 / 无匹配翻译时零开销透传。
+            .layer(from_fn(tibba_i18n::i18n))
             .layer(from_fn_with_state(state, entry))
             .layer(from_fn_with_state(state, stats))
             .layer(from_fn_with_state(
