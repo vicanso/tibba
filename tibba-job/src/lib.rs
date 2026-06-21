@@ -50,6 +50,8 @@ use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 use tibba_error::Error as BaseError;
 use time::PrimitiveDateTime;
+use tokio::sync::watch;
+use tokio::task::JoinHandle;
 use tracing::{error, info, warn};
 
 /// 本 crate 所有日志事件的 tracing target。
@@ -431,28 +433,78 @@ fn backoff_secs(attempt: i32, id: i64) -> f64 {
 
 // ── Worker / Reaper ───────────────────────────────────────────────────────
 
-/// 启动后台 worker 与 reaper（非阻塞，spawn 后立即返回）。
+/// 后台 worker 句柄：持有关停信道与各循环的 [`JoinHandle`]，用于优雅排空。
 ///
-/// `concurrency` 为并发 worker 数（即同时执行的任务上限）。须在 [`register_handler`]
-/// 之后调用。注意：MVP 不做优雅排空——进程退出时在跑的任务由 reaper 在
-/// 可见性超时后重排（依赖 handler 幂等）。
-pub fn start(pool: &'static PgPool, concurrency: usize) {
-    let workers = concurrency.max(1);
-    for i in 0..workers {
-        let worker_id = format!("w-{i}");
-        tokio::spawn(worker_loop(pool, worker_id));
-    }
-    tokio::spawn(reaper_loop(pool));
-    tokio::spawn(metrics_loop(pool));
-    info!(target: LOG_TARGET, workers, "job workers started");
+/// 由 [`start`] 返回。调用方应在进程退出前调用 [`JobWorkers::shutdown`]，让在途任务
+/// 跑完再退出，而非被进程退出腰斩。
+pub struct JobWorkers {
+    /// 关停信号：`send(true)` 通知所有循环停止认领 / 轮询。
+    shutdown_tx: watch::Sender<bool>,
+    /// worker + reaper + metrics 各循环的句柄；shutdown 时逐一 await 以确认排空完毕。
+    handles: Vec<JoinHandle<()>>,
 }
 
-/// 单个 worker 主循环：认领 → 分发 → ack / fail。
-async fn worker_loop(pool: &'static PgPool, worker_id: String) {
+impl JobWorkers {
+    /// 优雅排空：通知所有 worker 停止认领新任务、跑完手头在途任务后退出，最多等 `timeout`。
+    ///
+    /// 超时则停止等待并返回（不强杀任务）：残留在途任务依赖可见性超时由 reaper 重排，
+    /// 故 handler 幂等是前提（与「至少一次」语义一致）。
+    pub async fn shutdown(self, timeout: Duration) {
+        // 通知所有循环停止；接收端可能已全部退出，send 失败可忽略
+        let _ = self.shutdown_tx.send(true);
+        let drain = async {
+            for handle in self.handles {
+                // 单个任务 panic 不应阻断其余任务排空，忽略 join 错误
+                let _ = handle.await;
+            }
+        };
+        if tokio::time::timeout(timeout, drain).await.is_err() {
+            warn!(
+                target: LOG_TARGET,
+                timeout_secs = timeout.as_secs(),
+                "job workers drain timed out; in-flight jobs will be reaped after visibility timeout"
+            );
+        } else {
+            info!(target: LOG_TARGET, "job workers drained");
+        }
+    }
+}
+
+/// 启动后台 worker / reaper / metrics 循环（非阻塞，spawn 后立即返回句柄）。
+///
+/// `concurrency` 为并发 worker 数（即同时执行的任务上限）。须在 [`register_handler`]
+/// 之后调用。返回的 [`JobWorkers`] 用于优雅排空：进程退出前调用其 `shutdown`，在途任务
+/// 会跑完再退出；若丢弃句柄则退化为旧行为——在途任务由 reaper 在可见性超时后重排
+/// （依赖 handler 幂等）。
+#[must_use = "持有句柄并在退出前调用 shutdown() 才能优雅排空；丢弃则在途任务会被进程退出腰斩"]
+pub fn start(pool: &'static PgPool, concurrency: usize) -> JobWorkers {
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let workers = concurrency.max(1);
+    let mut handles = Vec::with_capacity(workers + 2);
+    for i in 0..workers {
+        let worker_id = format!("w-{i}");
+        handles.push(tokio::spawn(worker_loop(pool, worker_id, shutdown_rx.clone())));
+    }
+    handles.push(tokio::spawn(reaper_loop(pool, shutdown_rx.clone())));
+    handles.push(tokio::spawn(metrics_loop(pool, shutdown_rx)));
+    info!(target: LOG_TARGET, workers, "job workers started");
+    JobWorkers {
+        shutdown_tx,
+        handles,
+    }
+}
+
+/// 单个 worker 主循环：认领 → 分发 → ack / fail。收到关停信号后跑完手头任务即退出。
+async fn worker_loop(pool: &'static PgPool, worker_id: String, mut shutdown: watch::Receiver<bool>) {
     let queue = JobQueue::new(pool);
     loop {
+        // 关停后停止认领新任务即视为已排空（在途任务已在下方 await 跑完）
+        if *shutdown.borrow() {
+            break;
+        }
         match queue.claim(&worker_id).await {
             Ok(Some(job)) => {
+                // 一旦认领就跑完、不中途丢弃：保证关停时在途任务不被腰斩
                 let outcome = match dispatch(&job).await {
                     Ok(()) => queue.ack(job.id).await,
                     Err(e) => {
@@ -471,12 +523,20 @@ async fn worker_loop(pool: &'static PgPool, worker_id: String) {
                     error!(target: LOG_TARGET, job_id = job.id, error = %e, "persist job state failed");
                 }
             }
-            // 无活：短睡后再轮询
-            Ok(None) => tokio::time::sleep(IDLE_POLL).await,
-            // 认领失败（多为 DB 抖动）：退避后重试，避免空转刷错误日志
+            // 无活：短睡后再轮询；关停信号可立即唤醒，不必干等满 IDLE_POLL
+            Ok(None) => {
+                tokio::select! {
+                    _ = tokio::time::sleep(IDLE_POLL) => {}
+                    _ = shutdown.changed() => {}
+                }
+            }
+            // 认领失败（多为 DB 抖动）：退避后重试，避免空转刷错误日志（关停亦可立即唤醒）
             Err(e) => {
                 error!(target: LOG_TARGET, worker = worker_id, error = %e, "claim job failed");
-                tokio::time::sleep(CLAIM_ERROR_BACKOFF).await;
+                tokio::select! {
+                    _ = tokio::time::sleep(CLAIM_ERROR_BACKOFF) => {}
+                    _ = shutdown.changed() => {}
+                }
             }
         }
     }
@@ -499,11 +559,14 @@ async fn dispatch(job: &ClaimedJob) -> Result<()> {
     handler.handle(ctx).await
 }
 
-/// reaper 主循环：周期性回收可见性超时的执行中任务。
-async fn reaper_loop(pool: &'static PgPool) {
+/// reaper 主循环：周期性回收可见性超时的执行中任务。收到关停信号即退出。
+async fn reaper_loop(pool: &'static PgPool, mut shutdown: watch::Receiver<bool>) {
     let queue = JobQueue::new(pool);
     loop {
-        tokio::time::sleep(REAP_INTERVAL).await;
+        tokio::select! {
+            _ = tokio::time::sleep(REAP_INTERVAL) => {}
+            _ = shutdown.changed() => break,
+        }
         match queue.reap_stale(VISIBILITY_TIMEOUT).await {
             Ok(n) if n > 0 => warn!(target: LOG_TARGET, requeued = n, "reaped stale running jobs"),
             Ok(_) => {}
@@ -512,14 +575,17 @@ async fn reaper_loop(pool: &'static PgPool) {
     }
 }
 
-/// 指标主循环：周期性把队列深度按状态上报为 gauge，供 Prometheus 抓取。
+/// 指标主循环：周期性把队列深度按状态上报为 gauge，供 Prometheus 抓取。收到关停信号即退出。
 ///
 /// 单独一条循环（而非塞进 reaper）以便用更短的采样间隔；查询很轻（一次
 /// 部分索引可覆盖的聚合）。采样失败仅 warn，不影响任务执行。
-async fn metrics_loop(pool: &'static PgPool) {
+async fn metrics_loop(pool: &'static PgPool, mut shutdown: watch::Receiver<bool>) {
     let queue = JobQueue::new(pool);
     loop {
-        tokio::time::sleep(METRICS_INTERVAL).await;
+        tokio::select! {
+            _ = tokio::time::sleep(METRICS_INTERVAL) => {}
+            _ = shutdown.changed() => break,
+        }
         match queue.stats().await {
             Ok(stats) => {
                 gauge!(METRIC_QUEUE_DEPTH, "status" => "pending").set(stats.pending as f64);
@@ -580,5 +646,44 @@ mod tests {
         assert_eq!(job.queue, "email");
         assert_eq!(job.max_attempts, 3);
         assert_eq!(job.delay, Duration::from_secs(30));
+    }
+
+    /// 关停信号能唤醒正在长睡眠的循环并 join 退出，远早于 timeout。
+    /// 用合成的「监听关停即退出」循环模拟 worker，验证排空机制本身（不依赖 DB）。
+    #[tokio::test]
+    async fn shutdown_wakes_and_joins_loops() {
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        let mut handles = Vec::new();
+        for _ in 0..3 {
+            let mut rx = shutdown_rx.clone();
+            handles.push(tokio::spawn(async move {
+                // 故意睡很久：若关停信号无法唤醒，shutdown 必然超时
+                tokio::select! {
+                    _ = tokio::time::sleep(Duration::from_secs(3600)) => {}
+                    _ = rx.changed() => {}
+                }
+            }));
+        }
+        drop(shutdown_rx);
+        let workers = JobWorkers {
+            shutdown_tx,
+            handles,
+        };
+        // 超时给足 5s，但循环应被信号立即唤醒并瞬间 join——能返回即证明已全部排空
+        workers.shutdown(Duration::from_secs(5)).await;
+    }
+
+    /// 卡死的任务（无视关停信号）不应让 shutdown 永久阻塞：超时后返回。
+    #[tokio::test]
+    async fn shutdown_times_out_on_hung_task() {
+        let (shutdown_tx, _rx) = watch::channel(false);
+        // 永不完成的任务：忽略关停信号，模拟卡死的 handler
+        let handles = vec![tokio::spawn(std::future::pending::<()>())];
+        let workers = JobWorkers {
+            shutdown_tx,
+            handles,
+        };
+        // 不会永久挂起：到 50ms 超时即放弃等待并返回
+        workers.shutdown(Duration::from_millis(50)).await;
     }
 }

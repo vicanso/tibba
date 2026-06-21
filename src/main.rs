@@ -44,6 +44,10 @@ use tracing_subscriber::util::SubscriberInitExt;
 /// 可通过 `RUST_LOG=tibba:app=info`（或 `debug`）进行过滤。
 const LOG_TARGET: &str = "tibba:app";
 
+/// 进程退出时等待异步任务队列排空的上限：HTTP 优雅关闭后通知 worker 跑完在途任务，
+/// 超过此时长则放弃等待，残留在途任务由 reaper 在可见性超时后重排。
+const JOB_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 mod admin_web;
 mod cache;
 mod config;
@@ -195,7 +199,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // 注册异步任务 handler 并启动 worker（DB 池已在 run_before_tasks 中初始化）。
     // 并发 worker 数 = 同时执行的任务上限，按需调整。
     job::register_job_handlers();
-    tibba_job::start(sql::get_db_pool(), 4);
+    // 持有句柄以便进程退出前优雅排空在途任务（见下方 serve 之后的 shutdown）
+    let job_workers = tibba_job::start(sql::get_db_pool(), 4);
 
     let basic_config = config::must_get_basic_config();
     let app = new_router()?;
@@ -256,6 +261,10 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     )
     .with_graceful_shutdown(shutdown_signal())
     .await?;
+
+    // HTTP 已优雅排空（不再有新请求入队任务），再排空在途异步任务：
+    // 通知 worker 停止认领、跑完手头任务后退出，最多等 JOB_DRAIN_TIMEOUT
+    job_workers.shutdown(JOB_DRAIN_TIMEOUT).await;
     Ok(())
 }
 
