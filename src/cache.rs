@@ -20,9 +20,9 @@ use std::time::Duration;
 use tibba_cache::{RedisCache, RedisClient, RedisCmdStat, new_redis_client};
 use tibba_error::Error;
 use tibba_hook::{BoxFuture, Task, register_task};
-use tibba_scheduler::{Job, register_job_task};
+use tibba_scheduler::{Job, LockFuture, TryLock, register_job_task};
 use tibba_util::Stopwatch;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 /// 本模块所有日志事件的 tracing target。
 /// 可通过 `RUST_LOG=tibba:redis=info`（或 `debug`）进行过滤。
@@ -62,6 +62,30 @@ pub fn get_redis_cache() -> &'static RedisCache {
         let pool =
             get_redis_client().unwrap_or_else(|e| panic!("redis client not initialized: {e:?}"));
         RedisCache::new(pool)
+    })
+}
+
+/// 返回基于全局 Redis 的分布式锁获取回调，供 scheduler 的 `singleton_cron_job` 使用。
+///
+/// 多副本部署时，仅抢到锁（SET NX）的实例执行该次定时任务，其余实例跳过本次触发。
+/// 抢锁失败（通常意味着 Redis 不可用）时返回 `false`：本次全体跳过，
+/// 「宁可少跑一次，也不要多副本重复执行」，并打 warn 便于排障。
+pub fn redis_try_lock() -> TryLock {
+    Arc::new(|key: String, ttl: Duration| -> LockFuture {
+        Box::pin(async move {
+            match get_redis_cache().lock(&key, Some(ttl)).await {
+                Ok(acquired) => acquired,
+                Err(e) => {
+                    warn!(
+                        target: LOG_TARGET,
+                        key,
+                        error = %e,
+                        "acquire singleton job lock failed; skipping this tick"
+                    );
+                    false
+                }
+            }
+        })
     })
 }
 

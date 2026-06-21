@@ -34,7 +34,7 @@ use tibba_model::{AlarmConfig, ConfigurationModel, Model, ResultValue};
 use tibba_model_builtin::{
     HttpDetector, HttpDetectorModel, HttpStat, HttpStatInsertParams, HttpStatModel, REGION_ANY,
 };
-use tibba_scheduler::{Job, register_job_task};
+use tibba_scheduler::{register_job_task, singleton_cron_job};
 use time::OffsetDateTime;
 use tokio::sync::Semaphore;
 use tokio::time::timeout;
@@ -703,9 +703,14 @@ struct HttpDetectorTask;
 impl Task for HttpDetectorTask {
     fn before(&self) -> BoxFuture<'_, Result<bool>> {
         Box::pin(async move {
-            // 每分钟
-            let job = Job::new_async("0 * * * * *", |_, _| {
-                Box::pin(async move {
+            // 每分钟；多副本部署下用分布式锁保证仅抢到锁的实例执行，
+            // 其余实例跳过本次触发（锁 TTL 50s 略小于 60s 触发间隔）
+            let job = singleton_cron_job(
+                "0 * * * * *",
+                crate::cache::redis_try_lock(),
+                "http_detector",
+                Duration::from_secs(50),
+                || async {
                     match run_detector_stat().await {
                         Err(e) => {
                             error!(
@@ -723,8 +728,8 @@ impl Task for HttpDetectorTask {
                             }
                         }
                     };
-                })
-            })
+                },
+            )
             .map_err(Error::new)?;
             register_job_task("http_detector", job);
             Ok(true)
@@ -740,12 +745,14 @@ struct HttpStatAlarmTask;
 impl Task for HttpStatAlarmTask {
     fn before(&self) -> BoxFuture<'_, Result<bool>> {
         Box::pin(async move {
-            // 每分钟
-            let job = Job::new_async("30 * * * * *", |_, _| {
-                Box::pin(async move {
-                    // 随机delay，为了让各机器更好的获到执行的机会
-                    let delay = Duration::from_millis(rand::random::<u64>() % 2000);
-                    tokio::time::sleep(delay).await;
+            // 每分钟的第 30 秒；多副本部署下用分布式锁保证仅抢到锁的实例执行。
+            // 原先靠随机 delay 让各机器错峰抢执行（治标），现由分布式锁替代，去掉随机延迟。
+            let job = singleton_cron_job(
+                "30 * * * * *",
+                crate::cache::redis_try_lock(),
+                "http_stat_alarm",
+                Duration::from_secs(50),
+                || async {
                     match run_stat_alarm().await {
                         Err(e) => {
                             error!(
@@ -760,8 +767,8 @@ impl Task for HttpStatAlarmTask {
                             }
                         }
                     }
-                })
-            })
+                },
+            )
             .map_err(Error::new)?;
             register_job_task("http_stat_alarm", job);
             Ok(true)

@@ -14,7 +14,10 @@
 
 use dashmap::DashMap;
 use snafu::{ResultExt, Snafu};
-use std::sync::LazyLock;
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::{Arc, LazyLock};
+use std::time::Duration;
 use tibba_error::Error as BaseError;
 pub use tokio_cron_scheduler::Job;
 use tokio_cron_scheduler::{JobScheduler, JobSchedulerError};
@@ -53,6 +56,55 @@ impl From<Error> for BaseError {
         };
         err.with_category("scheduler")
     }
+}
+
+/// 分布式锁获取回调返回的 Future：`true` = 本实例抢到锁（应执行任务），
+/// `false` = 未抢到（集群中已有实例在跑，跳过本次触发）。
+pub type LockFuture = Pin<Box<dyn Future<Output = bool> + Send + 'static>>;
+
+/// 分布式锁获取回调：入参为锁键与 TTL，返回 [`LockFuture`]。
+///
+/// 由调用方注入（通常以 `RedisCache::lock` 实现），让本 crate 不直接依赖 Redis——
+/// 与 `tibba-router-common` 中 `ReadinessCheck` 的注入方式一致。
+pub type TryLock = Arc<dyn Fn(String, Duration) -> LockFuture + Send + Sync>;
+
+/// 构造一个「全集群单实例」的 cron 异步任务。
+///
+/// 每次触发先用注入的分布式锁 `lock` 抢占 `lock_key`，仅抢到锁的实例执行 `body`，
+/// 其余实例跳过本次触发——解决多副本部署时同一定时任务被每个副本重复执行的问题。
+///
+/// `lock_ttl` 的取值需同时满足：
+/// - **小于** cron 触发间隔：使锁在下次触发前过期，各实例可重新公平竞争；
+/// - **大于** `body` 的预期执行时长：避免执行中途锁过期被另一实例并发接管。
+///
+/// 与异步任务队列一致，`body` 仍应保持幂等：锁基于 TTL，执行时长超过 TTL 的极端
+/// 情况下仍可能并发。`lock` 获取失败（如 Redis 不可用）时由注入方决定返回值，
+/// 返回 `false` 即本次全体跳过——「宁可少跑一次，也不要多实例重复执行」。
+pub fn singleton_cron_job<F, Fut>(
+    schedule: &str,
+    lock: TryLock,
+    lock_key: impl Into<String>,
+    lock_ttl: Duration,
+    body: F,
+) -> std::result::Result<Job, JobSchedulerError>
+where
+    F: Fn() -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = ()> + Send + 'static,
+{
+    let lock_key = lock_key.into();
+    // body 可能被多次触发调用，用 Arc 在每次闭包调用时共享而非移动消耗
+    let body = Arc::new(body);
+    Job::new_async(schedule, move |_uuid, _scheduler| {
+        let lock = lock.clone();
+        let lock_key = lock_key.clone();
+        let body = body.clone();
+        Box::pin(async move {
+            // 抢到分布式锁的实例才执行；未抢到说明集群中已有实例在跑，跳过本次触发
+            if lock(lock_key, lock_ttl).await {
+                body().await;
+            }
+        })
+    })
 }
 
 /// 全局任务注册表，键为任务名称，值为 cron Job 实例。

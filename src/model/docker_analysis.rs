@@ -20,6 +20,7 @@ use tibba_notify::{EmailNotifier, MultiNotifier, Notifier, NotifyMessage, WecomR
 use snafu::{OptionExt, ResultExt, Snafu};
 use sqlx::{FromRow, PgPool};
 use std::sync::Arc;
+use std::time::Duration;
 use tibba_error::Error as BaseError;
 use tibba_hook::{BoxFuture, Task, register_task};
 use tibba_llm::{Backend, LlmCall, Usage as LlmUsage};
@@ -27,7 +28,7 @@ use tibba_model_token::{
     LLM_PROVIDER_ANTHROPIC, SERVICE_LLM, TokenLlmModel, TokenPriceModel, TokenService,
     TokenUsageInsertParams,
 };
-use tibba_scheduler::{Job, register_job_task};
+use tibba_scheduler::{register_job_task, singleton_cron_job};
 use tracing::{error, info, warn};
 
 /// 该模块所有日志事件的 tracing target。
@@ -643,9 +644,14 @@ struct DockerAnalysisTask;
 impl Task for DockerAnalysisTask {
     fn before(&self) -> BoxFuture<'_, Result<bool>> {
         Box::pin(async move {
-            // 每分钟执行一次
-            let job = Job::new_async("0 * * * * *", |_, _| {
-                Box::pin(async move {
+            // 每分钟执行一次；多副本部署下用分布式锁保证仅抢到锁的实例执行，
+            // 其余实例跳过本次触发（锁 TTL 50s 略小于 60s 触发间隔，下次触发前过期可重新竞争）
+            let job = singleton_cron_job(
+                "0 * * * * *",
+                crate::cache::redis_try_lock(),
+                "docker_analysis",
+                Duration::from_secs(50),
+                || async {
                     match run_docker_analysis().await {
                         Err(e) => {
                             error!(target: LOG_TARGET, error = %e, "run docker analysis failed");
@@ -654,8 +660,8 @@ impl Task for DockerAnalysisTask {
                             info!(target: LOG_TARGET, completed, "run docker analysis success");
                         }
                     }
-                })
-            })
+                },
+            )
             .map_err(|e| Error::Scheduler {
                 message: e.to_string(),
             })?;
