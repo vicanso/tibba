@@ -5969,6 +5969,7 @@ dependencies = [
  "tibba-session",
  "tibba-sql",
  "tibba-state",
+ "tibba-tenant",
  "tibba-util",
  "tibba-webhook",
  "time",
@@ -6425,6 +6426,15 @@ version = "0.2.2"
 dependencies = [
  "arc-swap",
  "tokio",
+]
+
+[[package]]
+name = "tibba-tenant"
+version = "0.2.2"
+dependencies = [
+ "axum",
+ "snafu",
+ "tibba-error",
 ]
 
 [[package]]

@@ -163,6 +163,9 @@ pub fn new_router() -> Result<Router> {
     // 异步任务队列 admin 路由（Admin 角色），挂在 /jobs：队列深度概览 + 死信处置
     let job_router = crate::job::new_job_router();
 
+    // 行级多租户演示路由，挂在 /tenant：基于 X-Tenant-Id 的租户隔离 CRUD（见 src/tenant.rs）
+    let tenant_router = crate::tenant::new_tenant_router();
+
     // API 路由挂在可配置的 prefix 下（如 /api），静态文件始终在根路径
     // /metrics 走 Prometheus text exposition，挂在 API 前缀下，由部署侧通过
     // 内网或鉴权层暴露给 Prometheus / Victoria / Grafana Agent 抓取
@@ -176,6 +179,7 @@ pub fn new_router() -> Result<Router> {
         .nest("/docker", docker_router)
         .nest("/features", feature_router)
         .nest("/jobs", job_router)
+        .nest("/tenant", tenant_router)
         .merge(common_router);
 
     let app = if let Some(prefix) = &basic_config.prefix {

@@ -65,6 +65,7 @@ tibba-scheduler = { path = "./tibba-scheduler" }
 tibba-session = { path = "./tibba-session" }
 tibba-sql = { path = "./tibba-sql" }
 tibba-state = { path = "./tibba-state" }
+tibba-tenant = { path = "./tibba-tenant" }
 tibba-util = { path = "./tibba-util" }
 tibba-webhook = { path = "./tibba-webhook" }
 tibba-performance = { path = "./tibba-performance" }
@@ -131,6 +132,7 @@ members = [
     "tibba-scaffold",
     "tibba-webhook",
     "tibba-i18n",
+    "tibba-tenant",
 ]
 
 

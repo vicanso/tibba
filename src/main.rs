@@ -63,6 +63,7 @@ mod openapi;
 mod router;
 mod sql;
 mod state;
+mod tenant;
 
 // Global error handler for the application
 // Processes unhandled errors and converts them into appropriate Error responses
