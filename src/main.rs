@@ -16,6 +16,7 @@ use crate::router::new_router;
 use crate::state::get_app_state;
 use axum::BoxError;
 use axum::error_handling::HandleErrorLayer;
+use axum::extract::DefaultBodyLimit;
 use axum::http::{Method, Uri};
 use axum::middleware::{from_fn, from_fn_with_state};
 use std::env;
@@ -47,6 +48,11 @@ const LOG_TARGET: &str = "tibba:app";
 /// 进程退出时等待异步任务队列排空的上限：HTTP 优雅关闭后通知 worker 跑完在途任务，
 /// 超过此时长则放弃等待，残留在途任务由 reaper 在可见性超时后重排。
 const JOB_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// 全局请求体上限（2 MiB）：保护 JSON / 表单等缓冲型端点免受超大请求体 DoS。
+/// 文件上传（multipart 流式）在路由层用 `DefaultBodyLimit::disable()` 豁免此限，
+/// 改由 file 路由内部按其 `MAX_UPLOAD_BYTES` 逐块校验。
+const GLOBAL_BODY_LIMIT: usize = 2 * 1024 * 1024;
 
 mod admin_web;
 mod cache;
@@ -222,6 +228,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             .layer(HandleErrorLayer::new(handle_error))
             .layer(CompressionLayer::new().compress_when(predicate))
             .timeout(basic_config.timeout)
+            // 全局请求体上限，防超大请求体 DoS；上传路由用 DefaultBodyLimit::disable() 豁免
+            .layer(DefaultBodyLimit::max(GLOBAL_BODY_LIMIT))
             // request_id 挂在最外层（仅次于错误处理 / 压缩），保证 entry / stats /
             // 业务 handler 都能从扩展中拿到 RequestId
             .layer(from_fn(request_id))

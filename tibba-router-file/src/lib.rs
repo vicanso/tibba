@@ -14,6 +14,7 @@
 
 use axum::Json;
 use axum::Router;
+use axum::extract::DefaultBodyLimit;
 use axum::extract::Multipart;
 use axum::extract::State;
 use axum::http::header;
@@ -40,6 +41,10 @@ use validator::Validate;
 type Result<T, E = BaseError> = std::result::Result<T, E>;
 
 const ERROR_CATEGORY: &str = "file_router";
+
+/// 单次上传单个文件的内容上限（50 MiB）。流式分支累计超过即中止写入并返回 413；
+/// 图片分支按此上限收集，避免超大「图片」撑爆内存。部署如需更大可调整此常量。
+const MAX_UPLOAD_BYTES: usize = 50 * 1024 * 1024;
 
 /// 文件路由模块内部错误，统一通过 `From` 转换为 `tibba_error::Error`。
 #[derive(Debug, Snafu)]
@@ -73,6 +78,10 @@ enum Error {
     /// 预签名上传的文件名缺少扩展名，无法据此生成存储键（HTTP 400）
     #[snafu(display("invalid filename (missing extension): {name}"))]
     InvalidFilename { name: String },
+
+    /// 上传内容超过单文件上限（HTTP 413）
+    #[snafu(display("upload too large (max {max} bytes)"))]
+    PayloadTooLarge { max: usize },
 }
 
 impl From<Error> for BaseError {
@@ -89,6 +98,12 @@ impl From<Error> for BaseError {
                 BaseError::new(format!("invalid filename (missing extension): {name}"))
                     .with_sub_category("invalid_filename")
                     .with_status(400)
+                    .with_exception(false)
+            }
+            Error::PayloadTooLarge { max } => {
+                BaseError::new(format!("upload too large (max {max} bytes)"))
+                    .with_sub_category("payload_too_large")
+                    .with_status(413)
                     .with_exception(false)
             }
         };
@@ -147,8 +162,18 @@ async fn create_file(
         };
 
         if guessed.type_() == "image" {
-            // 图片：需解码取宽高，且预览/优化链路本就要整图，故缓冲读取（图片体积有界）
-            let data = field.bytes().await.context(MultipartSnafu)?;
+            // 图片：需解码取宽高，且预览/优化链路本就要整图，故缓冲读取。按上限收集，
+            // 超限即 413，避免超大「图片」撑爆内存（图片体积本应有界）
+            let mut data = Vec::new();
+            while let Some(chunk) = field.chunk().await.context(MultipartSnafu)? {
+                if data.len() + chunk.len() > MAX_UPLOAD_BYTES {
+                    return Err(Error::PayloadTooLarge {
+                        max: MAX_UPLOAD_BYTES,
+                    }
+                    .into());
+                }
+                data.extend_from_slice(&chunk);
+            }
             let format = image::guess_format(&data).context(ImageSnafu)?;
             params.content_type = format.to_mime_type().to_string();
             let image = image::load_from_memory_with_format(&data, format).context(ImageSnafu)?;
@@ -162,6 +187,14 @@ async fn create_file(
             let mut size: i64 = 0;
             while let Some(chunk) = field.chunk().await.context(MultipartSnafu)? {
                 size += chunk.len() as i64;
+                // 累计超过上限：中止写入（清理半截对象）并返回 413，不再继续收流
+                if size > MAX_UPLOAD_BYTES as i64 {
+                    let _ = writer.abort().await;
+                    return Err(Error::PayloadTooLarge {
+                        max: MAX_UPLOAD_BYTES,
+                    }
+                    .into());
+                }
                 if let Err(e) = writer.write(chunk).await {
                     // 写入失败：尽量中止以清理半截对象，再上抛
                     let _ = writer.abort().await;
@@ -549,7 +582,11 @@ pub fn new_file_router(params: FileRouterParams) -> Router {
     Router::new()
         .route(
             "/upload",
-            post(create_file).with_state((params.storage, params.pool)),
+            // 上传走 multipart 流式，关闭全局请求体上限（由 create_file 内部按 MAX_UPLOAD_BYTES
+            // 逐块校验并在超限时中止+413），避免被全局 DefaultBodyLimit 在 handler 之前截断
+            post(create_file)
+                .layer(DefaultBodyLimit::disable())
+                .with_state((params.storage, params.pool)),
         )
         .route(
             "/preview",
