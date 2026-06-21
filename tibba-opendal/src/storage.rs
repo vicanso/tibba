@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use super::{Error, OpenDalSnafu};
-use opendal::{Buffer, Metadata, OperatorInfo};
+use opendal::{Buffer, Metadata, OperatorInfo, Writer};
 use snafu::ResultExt;
 use std::time::Duration;
 
@@ -47,6 +47,33 @@ impl From<opendal::raw::PresignedRequest> for PresignResult {
             url: req.uri().to_string(),
             headers,
         }
+    }
+}
+
+/// 流式写入器：包装 OpenDAL [`Writer`]，让调用方分块写入大文件而无需先将整个内容读入内存。
+///
+/// 错误统一转换为本 crate 的 [`Error`]，对上层屏蔽 OpenDAL 细节。典型用法：
+/// `writer.write(chunk).await?` 循环写入，正常结束调用 [`StorageWriter::close`] 提交，
+/// 中途失败调用 [`StorageWriter::abort`] 尽量清理半截对象。
+pub struct StorageWriter {
+    inner: Writer,
+}
+
+impl StorageWriter {
+    /// 追加写入一块数据。
+    pub async fn write(&mut self, bs: impl Into<Buffer>) -> Result<()> {
+        self.inner.write(bs).await.context(OpenDalSnafu)
+    }
+
+    /// 结束写入并提交对象，返回写入后的元数据。
+    pub async fn close(mut self) -> Result<Metadata> {
+        self.inner.close().await.context(OpenDalSnafu)
+    }
+
+    /// 中止写入：尽量丢弃已写入的分片（如 S3 abort multipart upload），
+    /// 避免上传中途失败时残留半截对象。
+    pub async fn abort(mut self) -> Result<()> {
+        self.inner.abort().await.context(OpenDalSnafu)
     }
 }
 
@@ -86,6 +113,23 @@ impl Storage {
     /// 读取指定路径的完整内容，返回字节缓冲区。
     pub async fn read(&self, path: &str) -> Result<Buffer> {
         self.dal.read(path).await.context(OpenDalSnafu)
+    }
+
+    /// 读取对象的指定字节区间 `[offset, offset + len)`，用于 HTTP Range 下载，
+    /// 避免为响应一个分片而把整个对象读入内存。
+    pub async fn read_range(&self, path: &str, offset: u64, len: u64) -> Result<Buffer> {
+        self.dal
+            .read_with(path)
+            .range(offset..offset + len)
+            .await
+            .context(OpenDalSnafu)
+    }
+
+    /// 打开一个流式写入器，用于大文件分块上传（恒定内存占用）。
+    /// 返回的 [`StorageWriter`] 需在写完后 `close`，失败时 `abort`。
+    pub async fn writer(&self, path: &str) -> Result<StorageWriter> {
+        let inner = self.dal.writer(path).await.context(OpenDalSnafu)?;
+        Ok(StorageWriter { inner })
     }
 
     /// 获取指定路径的对象元数据（大小、内容类型、修改时间等）。
