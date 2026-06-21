@@ -63,6 +63,9 @@ where
     pub body: Option<&'a P>,
     /// 请求 URL（绝对地址或相对于 base_url 的路径）
     pub url: &'a str,
+    /// 单次请求附加头（如 webhook 签名、幂等键、追踪头）；在拦截器之前应用，
+    /// 仍可被后续拦截器覆盖。`None` 则不附加。
+    pub headers: Option<&'a HeaderMap>,
 }
 
 /// 单次 HTTP 请求的性能统计，各时间字段单位为毫秒。
@@ -556,6 +559,11 @@ impl Client {
         if let Some(value) = params.body {
             req = req.json(value);
         }
+        // 调用方注入的单次请求头（如 webhook 签名 / 幂等键）；置于拦截器之前，
+        // 仍可被后续拦截器的 request 钩子覆盖
+        if let Some(headers) = params.headers {
+            req = req.headers(headers.clone());
+        }
         // 依次调用各拦截器的 request 钩子（如注入鉴权头）
         if let Some(interceptors) = &self.config.interceptors {
             for interceptor in interceptors {
@@ -733,6 +741,7 @@ impl Client {
     {
         self.request(Params {
             timeout: None,
+            headers: None,
             method: Method::GET,
             url,
             query: EMPTY_QUERY,
@@ -749,6 +758,7 @@ impl Client {
     {
         self.request(Params {
             timeout: None,
+            headers: None,
             method: Method::GET,
             url,
             query: Some(query),
@@ -765,6 +775,7 @@ impl Client {
     {
         self.request(Params {
             timeout: None,
+            headers: None,
             method: Method::POST,
             url,
             query: EMPTY_QUERY,
@@ -782,6 +793,7 @@ impl Client {
     {
         self.request(Params {
             timeout: None,
+            headers: None,
             method: Method::POST,
             url,
             query: Some(query),
@@ -798,6 +810,7 @@ impl Client {
     {
         self.request(Params {
             timeout: None,
+            headers: None,
             method: Method::PUT,
             url,
             query: EMPTY_QUERY,
@@ -814,6 +827,7 @@ impl Client {
     {
         self.request(Params {
             timeout: None,
+            headers: None,
             method: Method::PATCH,
             url,
             query: EMPTY_QUERY,
@@ -829,6 +843,7 @@ impl Client {
     {
         self.request(Params {
             timeout: None,
+            headers: None,
             method: Method::DELETE,
             url,
             query: EMPTY_QUERY,
