@@ -26,6 +26,9 @@ tibba-util = { path = "../tibba-util", version = "0.2.2" }
 # 重试退避需要定时器，workspace 默认未启用 tokio 的 time 特性，这里单独开启
 tokio = { workspace = true, features = ["time"] }
 tracing = { workspace = true }
+# 出站请求注入 W3C traceparent，串联下游服务调用链（分布式追踪）
+opentelemetry = { workspace = true }
+tracing-opentelemetry = { workspace = true }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }

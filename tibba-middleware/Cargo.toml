@@ -30,4 +30,7 @@ tibba-state = { path = "../tibba-state", version = "0.2.2" }
 tibba-util = { path = "../tibba-util", version = "0.2.2" }
 tokio = { workspace = true }
 tracing = { workspace = true }
+# 入站请求创建服务端 span 并提取上游 W3C trace 上下文（分布式追踪）
+opentelemetry = { workspace = true }
+tracing-opentelemetry = { workspace = true }
 urlencoding = { workspace = true }

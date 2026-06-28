@@ -25,8 +25,8 @@ use std::str::FromStr;
 use std::sync::Arc;
 use tibba_hook::{run_after_tasks, run_before_tasks};
 use tibba_middleware::{
-    Cors, HttpCache, SecurityHeaders, cors, entry, http_cache, processing_limit, request_id,
-    security_headers, stats,
+    Cors, HttpCache, SecurityHeaders, cors, entry, http_cache, otel_trace, processing_limit,
+    request_id, security_headers, stats,
 };
 use tibba_router_user::api_key_auth;
 use tibba_scheduler::run_scheduler_jobs;
@@ -196,6 +196,12 @@ where
 
     // 设为全局 provider，让 opentelemetry::global::tracer(...) 也能拿到
     opentelemetry::global::set_tracer_provider(provider);
+    // 注册 W3C Trace Context 全局 propagator：入站 otel_trace 中间件据此提取上游
+    // traceparent，出站 tibba-request 据此注入，二者共用同一传播格式串起跨服务调用链。
+    // 仅在 OTLP 启用时设置，关闭时沿用默认 no-op propagator，提取 / 注入均零开销。
+    opentelemetry::global::set_text_map_propagator(
+        opentelemetry_sdk::propagation::TraceContextPropagator::new(),
+    );
 
     Some(tracing_opentelemetry::layer().with_tracer(tracer))
 }
@@ -233,6 +239,9 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             // request_id 挂在最外层（仅次于错误处理 / 压缩），保证 entry / stats /
             // 业务 handler 都能从扩展中拿到 RequestId
             .layer(from_fn(request_id))
+            // 分布式追踪：紧随 request_id，为每个请求建立服务端 span 并提取上游 trace 上下文，
+            // 使 span 覆盖后续所有中间件与 handler；未启用 OTLP 时退化为轻量 no-op
+            .layer(from_fn(otel_trace))
             // 安全响应头：紧随 request_id，覆盖所有正常业务响应（含静态资源 / JSON）。
             // 默认基线（HSTS / nosniff / X-Frame-Options DENY / Referrer-Policy）；
             // CSP 需按前端资源定制，故默认留空，由部署侧 with_content_security_policy 开启。

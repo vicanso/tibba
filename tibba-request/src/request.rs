@@ -14,7 +14,7 @@
 
 use super::{BuildSnafu, Error, LOG_TARGET, RequestSnafu, SerdeSnafu, UriSnafu};
 use axum::http::Method;
-use axum::http::header::HeaderMap;
+use axum::http::header::{HeaderMap, HeaderName, HeaderValue};
 use axum::http::uri::Uri;
 use bytes::Bytes;
 use reqwest::Client as ReqwestClient;
@@ -32,11 +32,26 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 use tibba_util::{Stopwatch, json_get};
 use tracing::{info, warn};
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 type Result<T> = std::result::Result<T, Error>;
 
 /// 装箱的异步 Future，用于 trait object 场景下的异步方法返回类型。
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+
+/// 把 OpenTelemetry 上下文写入 `HeaderMap` 的适配器，供全局 propagator 注入
+/// W3C `traceparent` / `tracestate` 等追踪头。键 / 值非法时静默跳过（best-effort）。
+struct HeaderInjector<'a>(&'a mut HeaderMap);
+
+impl opentelemetry::propagation::Injector for HeaderInjector<'_> {
+    fn set(&mut self, key: &str, value: String) {
+        if let Ok(name) = HeaderName::from_bytes(key.as_bytes())
+            && let Ok(val) = HeaderValue::from_str(&value)
+        {
+            self.0.insert(name, val);
+        }
+    }
+}
 
 /// crate 版本号，注入 User-Agent。
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -563,6 +578,16 @@ impl Client {
         // 仍可被后续拦截器的 request 钩子覆盖
         if let Some(headers) = params.headers {
             req = req.headers(headers.clone());
+        }
+        // 注入当前 span 的 W3C trace 上下文（traceparent），让下游服务延续同一条调用链。
+        // 无活跃 span 或未启用 OTel 时上下文为空，propagator 不写入任何头，零额外开销。
+        let cx = tracing::Span::current().context();
+        let mut trace_headers = HeaderMap::new();
+        opentelemetry::global::get_text_map_propagator(|propagator| {
+            propagator.inject_context(&cx, &mut HeaderInjector(&mut trace_headers));
+        });
+        if !trace_headers.is_empty() {
+            req = req.headers(trace_headers);
         }
         // 依次调用各拦截器的 request 钩子（如注入鉴权头）
         if let Some(interceptors) = &self.config.interceptors {

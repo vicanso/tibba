@@ -145,6 +145,7 @@ mod rate_limit;
 mod request_id;
 mod security_headers;
 mod stats;
+mod trace;
 mod tracker;
 
 pub use common::*;
@@ -158,4 +159,5 @@ pub use rate_limit::*;
 pub use request_id::*;
 pub use security_headers::*;
 pub use stats::*;
+pub use trace::*;
 pub use tracker::*;

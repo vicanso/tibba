@@ -6137,6 +6137,7 @@ dependencies = [
  "axum-extra",
  "governor",
  "metrics",
+ "opentelemetry",
  "scopeguard",
  "serde",
  "serde_json",
@@ -6148,6 +6149,7 @@ dependencies = [
  "tibba-util",
  "tokio",
  "tracing",
+ "tracing-opentelemetry",
  "urlencoding",
 ]
 
@@ -6266,6 +6268,7 @@ version = "0.2.2"
 dependencies = [
  "axum",
  "bytes",
+ "opentelemetry",
  "pretty_assertions",
  "reqwest 0.13.4",
  "scopeguard",
@@ -6276,6 +6279,7 @@ dependencies = [
  "tibba-util",
  "tokio",
  "tracing",
+ "tracing-opentelemetry",
 ]
 
 [[package]]
