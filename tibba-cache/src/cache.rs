@@ -148,19 +148,19 @@ impl RedisCache {
     }
 
     /// 原子性地将计数器累加 delta，返回累加后的值。
-    /// 键不存在时先用 SET NX 初始化为 0 再执行 INCRBY。
+    /// INCRBY 在键不存在时自动创建（初值 0），随后 `EXPIRE ... NX` 仅在键尚无 TTL
+    /// （即刚创建）时设置过期，避免每次累加都刷新 TTL。用 pipeline 保证两条命令原子执行。
     pub async fn incr(&self, key: &str, delta: i64, ttl: Option<Duration>) -> Result<i64> {
         let mut conn = self.conn().await?;
         let k = self.get_key(key);
-        // 这里的逻辑逻辑更加自然
         let (count, _) = pipe()
             .cmd("INCRBY")
             .arg(&k)
-            .arg(delta) // 1. 先累加（不存在会自动创建，且无 TTL）
+            .arg(delta) // 1. 累加（键不存在自动创建，初值 0，此时无 TTL）
             .cmd("EXPIRE")
             .arg(&k)
             .arg(self.get_ttl(ttl))
-            .arg("NX") // 2. 只有它没有 TTL 时（即刚创建时）才设 TTL
+            .arg("NX") // 2. 仅当键尚无 TTL（刚创建）时才设，避免每次累加刷新过期
             .query_async::<(i64, bool)>(&mut conn)
             .await
             .context(RedisSnafu { category: "incr" })?;

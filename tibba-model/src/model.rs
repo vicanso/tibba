@@ -46,7 +46,8 @@ impl ModelListParams {
     pub fn push_pagination(&self, qb: &mut QueryBuilder<Postgres>) {
         let order_by = self.order_by.as_deref().unwrap_or("id");
         push_order_by(qb, order_by);
-        let limit = self.limit.min(200);
+        // clamp 到 [1, 200]：加下限 1，避免 limit 缺省 / 传 0 时生成 `LIMIT 0` 静默返回空结果
+        let limit = self.limit.clamp(1, 200);
         let offset = (self.page.max(1) - 1) * limit;
         qb.push(format!(" LIMIT {limit} OFFSET {offset}"));
     }

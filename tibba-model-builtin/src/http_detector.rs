@@ -201,8 +201,10 @@ impl HttpDetectorModel {
         let detectors = sqlx::query_as::<_, HttpDetectorSchema>(
             r#"SELECT * FROM http_detectors WHERE deleted_at IS NULL AND status = 1 AND (jsonb_array_length(regions) = 0 OR regions @> $1::jsonb OR regions @> $2::jsonb) ORDER BY id ASC LIMIT $3 OFFSET $4"#,
         )
-        .bind(format!("[{:?}]", region))
-        .bind(format!("[{:?}]", REGION_ANY))
+        // 用 sqlx Json 序列化为合法 jsonb 数组；此前 format!("[{:?}]", ..) 依赖 Rust Debug
+        // 转义，遇控制字符 / unicode 会产出非法 JSON 被 Postgres 拒绝
+        .bind(sqlx::types::Json(vec![region.as_str()]))
+        .bind(sqlx::types::Json(vec![REGION_ANY]))
         .bind(limit as i64)
         .bind(offset as i64)
         .fetch_all(pool)

@@ -111,7 +111,11 @@ fn interpolate(template: &str, args: &[(&str, &str)]) -> String {
 ///
 /// 解析规则：按 q 值降序遍历语言标签；标签本身受支持则直接采用，否则尝试主语言回退
 /// （`zh-CN` 不支持时退到 `zh`）。`*` 通配符跳过。所有比较在小写下进行。
-fn negotiate_locale(accept_language: &str, fallback: &str, supported: impl Fn(&str) -> bool) -> String {
+fn negotiate_locale(
+    accept_language: &str,
+    fallback: &str,
+    supported: impl Fn(&str) -> bool,
+) -> String {
     let mut tags: Vec<(String, f32)> = accept_language
         .split(',')
         .filter_map(|part| {
@@ -126,7 +130,11 @@ fn negotiate_locale(accept_language: &str, fallback: &str, supported: impl Fn(&s
             }
             // q 值缺省 1.0；非法 q 当作 1.0
             let q = it
-                .find_map(|p| p.trim().strip_prefix("q=").and_then(|q| q.parse::<f32>().ok()))
+                .find_map(|p| {
+                    p.trim()
+                        .strip_prefix("q=")
+                        .and_then(|q| q.parse::<f32>().ok())
+                })
                 .unwrap_or(1.0);
             Some((tag, q))
         })
@@ -258,7 +266,10 @@ mod tests {
     #[test]
     fn translate_hits_locale_then_fallback() {
         let c = demo();
-        assert_eq!(c.translate("zh", "too_many_requests", &[]).as_deref(), Some("请求过于频繁。"));
+        assert_eq!(
+            c.translate("zh", "too_many_requests", &[]).as_deref(),
+            Some("请求过于频繁。")
+        );
         // de 无此 locale → 回退 fallback en 的译文
         assert_eq!(
             c.translate("de", "too_many_requests", &[]).as_deref(),
@@ -272,7 +283,8 @@ mod tests {
     fn translate_interpolates_placeholders() {
         let c = demo();
         assert_eq!(
-            c.translate("zh", "greeting", &[("name", "世界")]).as_deref(),
+            c.translate("zh", "greeting", &[("name", "世界")])
+                .as_deref(),
             Some("你好 世界。")
         );
     }

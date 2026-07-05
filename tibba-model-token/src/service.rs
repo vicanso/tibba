@@ -174,6 +174,12 @@ impl TokenService {
                 message: "amount must be non-zero".to_string(),
             });
         }
+        // i64::MIN 无法取负（`-i64::MIN` 溢出），提前拒绝，避免下方 `-amount` 溢出
+        if amount == i64::MIN {
+            return Err(Error::InvalidAmount {
+                message: "amount out of range".to_string(),
+            });
+        }
 
         let remark = remark
             .filter(|s| !s.trim().is_empty())

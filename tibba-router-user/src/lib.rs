@@ -28,16 +28,16 @@ use std::num::NonZeroU32;
 use std::pin::Pin;
 use std::sync::Arc;
 use tibba_cache::RedisCache;
+use tibba_crypto::{PasswordCheck, verify_password};
 use tibba_email::EmailConfig;
 use tibba_error::Error as BaseError;
-use tibba_oauth::OAuthConfig;
 use tibba_middleware::{
     ClientIp, IpRateLimitState, RequestId, ip_rate_limit, user_tracker, validate_captcha,
 };
 use tibba_model::{Model, ROLE_SUPER_ADMIN, User, UserModel, UserUpdateParams};
 use tibba_model_builtin::{AuditLogModel, AuditLogParams, RolePermissionModel};
+use tibba_oauth::OAuthConfig;
 use tibba_session::{Session, SessionResponse, UserSession};
-use tibba_crypto::{PasswordCheck, verify_password};
 use tibba_util::{
     JsonParams, JsonResult, generate_device_id_cookie, get_device_id_from_cookie, is_development,
     is_test, now, timestamp, timestamp_hash, uuid, validate_timestamp_hash,
@@ -306,9 +306,16 @@ async fn login(
         .into_response());
     }
 
-    let resp =
-        establish_session(session, user, pool, &request_id, ip.to_string(), &headers, "user.login")
-            .await?;
+    let resp = establish_session(
+        session,
+        user,
+        pool,
+        &request_id,
+        ip.to_string(),
+        &headers,
+        "user.login",
+    )
+    .await?;
     Ok(resp.into_response())
 }
 
@@ -409,7 +416,7 @@ async fn login_mfa(
         .await?
         .ok_or(totp::Error::InvalidChallenge)?;
 
-    if !totp::verify_second_factor(pool, &secret, user_id, params.code.trim()).await? {
+    if !totp::verify_second_factor(pool, cache, &secret, user_id, params.code.trim()).await? {
         return Err(totp::Error::BadCode.into());
     }
 
@@ -582,11 +589,7 @@ async fn logout(
                 AuditLogParams::new("user.logout")
                     .with_user(user_id)
                     .with_target("user", user_id.to_string())
-                    .with_request(
-                        request_id.as_str(),
-                        ip.to_string(),
-                        user_agent_of(&headers),
-                    ),
+                    .with_request(request_id.as_str(), ip.to_string(), user_agent_of(&headers)),
             )
             .await;
     }
@@ -734,6 +737,7 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
     };
     let totp_state = totp::TotpRouterState {
         pool: params.pool,
+        cache: params.cache,
         secret: params.secret.clone(),
     };
 
@@ -806,7 +810,10 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
             post(email_verify::request_verify)
                 .with_state(email_verify_state.clone())
                 // 发信端点：IP 限流挡邮件轰炸；先于 user_tracker（更外层）执行
-                .layer(from_fn_with_state(email_endpoint_limit.clone(), ip_rate_limit))
+                .layer(from_fn_with_state(
+                    email_endpoint_limit.clone(),
+                    ip_rate_limit,
+                ))
                 .layer(from_fn_with_state(
                     (name, "email_verify_request").into(),
                     user_tracker,
@@ -822,7 +829,10 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
             post(password_reset::request_reset)
                 .with_state(password_reset_state.clone())
                 // 发信端点：IP 限流挡邮件轰炸 / 枚举扫描
-                .layer(from_fn_with_state(email_endpoint_limit.clone(), ip_rate_limit))
+                .layer(from_fn_with_state(
+                    email_endpoint_limit.clone(),
+                    ip_rate_limit,
+                ))
                 .layer(from_fn_with_state(
                     (name, "password_reset_request").into(),
                     user_tracker,
@@ -880,7 +890,10 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
             "/totp/enroll",
             post(totp::enroll)
                 .with_state(totp_state.clone())
-                .layer(from_fn_with_state((name, "totp_enroll").into(), user_tracker)),
+                .layer(from_fn_with_state(
+                    (name, "totp_enroll").into(),
+                    user_tracker,
+                )),
         )
         .route(
             "/totp/activate",
@@ -912,10 +925,7 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
                     (params.magic_code.clone(), params.cache),
                     validate_captcha,
                 ))
-                .layer(from_fn_with_state(
-                    (name, "login_jwt").into(),
-                    user_tracker,
-                )),
+                .layer(from_fn_with_state((name, "login_jwt").into(), user_tracker)),
         )
         // JWT 登录 2FA 第二步（带频率限制）
         .route(

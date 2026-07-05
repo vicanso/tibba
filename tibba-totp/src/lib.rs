@@ -143,25 +143,33 @@ pub fn otpauth_uri(secret_b32: &str, account: &str, issuer: &str) -> String {
     )
 }
 
-/// 校验用户输入的动态码是否匹配当前时间窗（含 ±[`SKEW`] 容差）。
-/// `unix_time` 由调用方传入当前 Unix 秒，保持本 crate 不依赖时钟。
+/// 校验动态码并返回匹配的 HOTP 计数器（step）；不匹配返回 `None`。
+/// 调用方可据返回的计数器做**防重放**：标记该 step 已消费，拒绝同一 step 再次使用。
 ///
+/// `unix_time` 由调用方传入当前 Unix 秒，保持本 crate 不依赖时钟。
 /// 比较使用常量时间，避免对攻击者可控输入产生计时侧信道。
-pub fn verify_code(secret: &[u8], code: &str, unix_time: i64) -> bool {
+pub fn verify_code_step(secret: &[u8], code: &str, unix_time: i64) -> Option<u64> {
     let code = code.trim();
     // 位数不符直接拒绝（也保证 ct 比较两侧等长）
     if code.len() != DIGITS as usize || !code.bytes().all(|b| b.is_ascii_digit()) {
-        return false;
+        return None;
     }
     let step = unix_time / PERIOD as i64;
     for delta in -SKEW..=SKEW {
         let counter = (step + delta).max(0) as u64;
         let expected = format!("{:0width$}", hotp(secret, counter), width = DIGITS as usize);
         if bool::from(expected.as_bytes().ct_eq(code.as_bytes())) {
-            return true;
+            return Some(counter);
         }
     }
-    false
+    None
+}
+
+/// 校验用户输入的动态码是否匹配当前时间窗（含 ±[`SKEW`] 容差）。
+/// 不关心具体匹配的 step（如注册激活场景）时用本函数；需防重放请用
+/// [`verify_code_step`] 拿到计数器再做已消费标记。
+pub fn verify_code(secret: &[u8], code: &str, unix_time: i64) -> bool {
+    verify_code_step(secret, code, unix_time).is_some()
 }
 
 /// HOTP（RFC 4226）：对计数器做 HMAC-SHA1 + 动态截断，取 [`DIGITS`] 位。
@@ -308,7 +316,11 @@ mod tests {
             755224, 287082, 359152, 969429, 338314, 254676, 287922, 162583, 399871, 520489,
         ];
         for (counter, want) in expected.iter().enumerate() {
-            assert_eq!(hotp_digits(secret, counter as u64, 6), *want, "counter={counter}");
+            assert_eq!(
+                hotp_digits(secret, counter as u64, 6),
+                *want,
+                "counter={counter}"
+            );
         }
     }
 

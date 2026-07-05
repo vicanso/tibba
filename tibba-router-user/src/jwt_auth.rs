@@ -33,12 +33,12 @@ use serde::{Deserialize, Serialize};
 use snafu::{OptionExt, Snafu};
 use sqlx::PgPool;
 use tibba_cache::RedisCache;
+use tibba_crypto::{PasswordCheck, verify_password};
 use tibba_error::Error as BaseError;
 use tibba_jwt::JwtSigner;
 use tibba_middleware::{ClientIp, RequestId};
 use tibba_model::{Model, User, UserModel};
 use tibba_model_builtin::{AuditLogModel, AuditLogParams, RolePermissionModel};
-use tibba_crypto::{PasswordCheck, verify_password};
 use tibba_util::{JsonParams, JsonResult, uuid};
 use tibba_validator::x_uuid;
 use tracing::warn;
@@ -141,7 +141,10 @@ pub(crate) async fn login_jwt(
     // 暴力破解闸门：与表单 /login 同策略，防攻击者改走 JWT 路径绕过锁定
     crate::login_guard::ensure_not_locked(state.cache, &account, &ip_str).await?;
 
-    let Some(user) = UserModel::new().get_by_account(state.pool, &account).await? else {
+    let Some(user) = UserModel::new()
+        .get_by_account(state.pool, &account)
+        .await?
+    else {
         crate::login_guard::record_failure(state.cache, &account, &ip_str).await;
         return Err(crate::Error::BadCredentials.into());
     };
@@ -286,7 +289,15 @@ pub(crate) async fn login_jwt_mfa(
         .await?
         .ok_or(totp::Error::InvalidChallenge)?;
 
-    if !totp::verify_second_factor(state.pool, &state.secret, user_id, params.code.trim()).await? {
+    if !totp::verify_second_factor(
+        state.pool,
+        state.cache,
+        &state.secret,
+        user_id,
+        params.code.trim(),
+    )
+    .await?
+    {
         return Err(totp::Error::BadCode.into());
     }
 

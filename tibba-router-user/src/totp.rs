@@ -61,6 +61,8 @@ pub(crate) const MFA_TTL: Duration = Duration::from_secs(5 * 60);
 pub(crate) const MFA_PREFIX_SESSION: &str = "mfa_login:";
 /// JWT 登录挑战的 Redis 前缀（与 Session 隔离，令牌不可跨路径复用）。
 pub(crate) const MFA_PREFIX_JWT: &str = "mfa_login_jwt:";
+/// TOTP 已消费 step 的标记 TTL：覆盖动态码有效窗（±SKEW × PERIOD ≈ 90s），到期自动清理。
+const TOTP_REPLAY_TTL: Duration = Duration::from_secs(90);
 
 #[derive(Debug, Snafu)]
 pub(crate) enum Error {
@@ -113,6 +115,7 @@ impl From<Error> for BaseError {
 #[derive(Clone)]
 pub(crate) struct TotpRouterState {
     pub pool: &'static PgPool,
+    pub cache: &'static RedisCache,
     pub secret: String,
 }
 
@@ -260,7 +263,15 @@ pub(crate) async fn disable(
         return Err(Error::NotEnabled.into());
     }
 
-    if !verify_second_factor(state.pool, &state.secret, user_id, params.code.trim()).await? {
+    if !verify_second_factor(
+        state.pool,
+        state.cache,
+        &state.secret,
+        user_id,
+        params.code.trim(),
+    )
+    .await?
+    {
         return Err(Error::BadCode.into());
     }
 
@@ -313,6 +324,7 @@ pub(crate) async fn status(
 /// 6 位动态码不会误命中恢复码哈希，反之亦然，故两路顺序尝试无副作用。
 pub(crate) async fn verify_second_factor(
     pool: &PgPool,
+    cache: &RedisCache,
     app_secret: &str,
     user_id: i64,
     code: &str,
@@ -322,8 +334,12 @@ pub(crate) async fn verify_second_factor(
     if let Some(secret_cipher) = &totp.secret_cipher {
         let cipher = SecretCipher::from_app_secret(app_secret);
         let secret = cipher.decrypt(secret_cipher)?;
-        if tibba_totp::verify_code(&secret, code, timestamp()) {
-            return Ok(true);
+        if let Some(counter) = tibba_totp::verify_code_step(&secret, code, timestamp()) {
+            // 防重放：同一 step 只接受一次。incr 原子自增并在首次设 TTL（覆盖有效窗），
+            // count==1 为首次使用（接受），>1 说明该 step 已用过（重放，拒绝）。
+            let used_key = format!("totp_used:{user_id}:{counter}");
+            let count = cache.incr(&used_key, 1, Some(TOTP_REPLAY_TTL)).await?;
+            return Ok(count == 1);
         }
     }
     // 2) 恢复码（原子消费）
