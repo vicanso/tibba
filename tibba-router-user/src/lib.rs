@@ -24,23 +24,43 @@ use serde_json::json;
 use snafu::{OptionExt, Snafu};
 use sqlx::PgPool;
 use std::future::Future;
+use std::num::NonZeroU32;
 use std::pin::Pin;
 use std::sync::Arc;
 use tibba_cache::RedisCache;
 use tibba_email::EmailConfig;
 use tibba_error::Error as BaseError;
 use tibba_oauth::OAuthConfig;
-use tibba_middleware::{ClientIp, RequestId, user_tracker, validate_captcha};
+use tibba_middleware::{
+    ClientIp, IpRateLimitState, RequestId, ip_rate_limit, user_tracker, validate_captcha,
+};
 use tibba_model::{Model, ROLE_SUPER_ADMIN, User, UserModel, UserUpdateParams};
 use tibba_model_builtin::{AuditLogModel, AuditLogParams, RolePermissionModel};
 use tibba_session::{Session, SessionResponse, UserSession};
+use tibba_crypto::{PasswordCheck, verify_password};
 use tibba_util::{
     JsonParams, JsonResult, generate_device_id_cookie, get_device_id_from_cookie, is_development,
-    is_test, now, sha256, timestamp, timestamp_hash, uuid, validate_timestamp_hash,
+    is_test, now, timestamp, timestamp_hash, uuid, validate_timestamp_hash,
 };
 use tibba_validator::*;
+use tracing::warn;
 use utoipa::{OpenApi, ToSchema};
 use validator::Validate;
+
+/// 本 crate 日志 target；`RUST_LOG=tibba:router_user=info` 可过滤。
+const LOG_TARGET: &str = "tibba:router_user";
+
+/// 发信端点（邮箱验证 / 密码重置）每 IP 每分钟上限，缓解邮件轰炸与账号枚举。
+/// 用 const match 而非 `.unwrap()` 构造 NonZeroU32，遵守 no-unwrap 约定。
+const EMAIL_ENDPOINT_RATE_PER_MIN: NonZeroU32 = match NonZeroU32::new(5) {
+    Some(n) => n,
+    None => NonZeroU32::MIN,
+};
+/// 注册端点每 IP 每分钟上限，缓解批量注册 / 枚举。
+const REGISTER_RATE_PER_MIN: NonZeroU32 = match NonZeroU32::new(10) {
+    Some(n) => n,
+    None => NonZeroU32::MIN,
+};
 
 mod api_key;
 mod email_verify;
@@ -158,7 +178,7 @@ pub(crate) struct LoginParams {
     /// 用户账号
     #[validate(custom(function = "x_user_account"))]
     pub account: String,
-    /// 经过 `sha256(hash:password)` 处理后的密码
+    /// 客户端对明文口令做 `sha256` 的结果；服务端再与库中 Argon2 哈希比对
     #[validate(custom(function = "x_user_password"))]
     pub password: String,
 }
@@ -220,7 +240,7 @@ struct LoginChallenge {
 }
 
 /// 用户登录接口。
-/// 校验令牌合法性后，比对密码（`sha256(hash:stored_password)`）。
+/// 校验令牌合法性后，用 Argon2 比对密码（`verify_password`，兼容旧 sha256 存量并无感升级）。
 /// 若用户已启用 2FA，则返回 [`LoginChallenge`] 而不建立 Session；
 /// 否则直接创建 Session 并返回用户信息。
 #[utoipa::path(
@@ -253,11 +273,22 @@ async fn login(
         return Err(Error::BadCredentials.into());
     };
 
-    // 密码验证：sha256(hash:存储密码) 须与客户端传入的 password 相等
-    let msg = format!("{}:{}", params.hash, user.password);
-    if sha256(msg.as_bytes()) != params.password {
-        login_guard::record_failure(cache, &account, &ip_str).await;
-        return Err(Error::BadCredentials.into());
+    // 密码验证：客户端传入 sha256(明文)，服务端与库中 Argon2 哈希比对
+    match verify_password(&user.password, params.password.as_bytes())? {
+        PasswordCheck::Mismatch => {
+            login_guard::record_failure(cache, &account, &ip_str).await;
+            return Err(Error::BadCredentials.into());
+        }
+        // 命中旧式明文 sha256 存量：借本次成功登录升级为 Argon2；升级失败仅记日志，不阻断登录
+        PasswordCheck::MatchedNeedsRehash => {
+            if let Err(err) = UserModel::new()
+                .update_password(pool, user.id, &params.password)
+                .await
+            {
+                warn!(target: LOG_TARGET, account, error = %BaseError::from(err), "password rehash to argon2 failed");
+            }
+        }
+        PasswordCheck::Matched => {}
     }
 
     // 凭证正确：清账号失败计数（IP 计数保留，到期自动解锁）
@@ -706,6 +737,11 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
         secret: params.secret.clone(),
     };
 
+    // IP 维度限流器：发信端点严格限、注册端点略宽。governor 内存计数，跨实例不共享，
+    // 但足以挡单机高频刷；分布式强一致限流可后续接 Redis 令牌桶。
+    let email_endpoint_limit = IpRateLimitState::per_minute(EMAIL_ENDPOINT_RATE_PER_MIN);
+    let register_limit = IpRateLimitState::per_minute(REGISTER_RATE_PER_MIN);
+
     Router::new()
         .route(
             "/login/token",
@@ -721,7 +757,7 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
             post(login)
                 .with_state((params.secret.clone(), params.pool, params.cache))
                 .layer(from_fn_with_state(
-                    (params.magic_code, params.cache),
+                    (params.magic_code.clone(), params.cache),
                     validate_captcha,
                 ))
                 .layer(from_fn_with_state((name, "login").into(), user_tracker)),
@@ -742,6 +778,8 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
                     pool: params.pool,
                     on_register: params.on_register,
                 })
+                // IP 限流：挡批量注册 / 账号枚举
+                .layer(from_fn_with_state(register_limit.clone(), ip_rate_limit))
                 .layer(from_fn_with_state((name, "register").into(), user_tracker)),
         )
         .route(
@@ -767,6 +805,8 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
             "/email/verify/request",
             post(email_verify::request_verify)
                 .with_state(email_verify_state.clone())
+                // 发信端点：IP 限流挡邮件轰炸；先于 user_tracker（更外层）执行
+                .layer(from_fn_with_state(email_endpoint_limit.clone(), ip_rate_limit))
                 .layer(from_fn_with_state(
                     (name, "email_verify_request").into(),
                     user_tracker,
@@ -781,6 +821,8 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
             "/password/reset/request",
             post(password_reset::request_reset)
                 .with_state(password_reset_state.clone())
+                // 发信端点：IP 限流挡邮件轰炸 / 枚举扫描
+                .layer(from_fn_with_state(email_endpoint_limit.clone(), ip_rate_limit))
                 .layer(from_fn_with_state(
                     (name, "password_reset_request").into(),
                     user_tracker,
@@ -865,6 +907,11 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
             "/login/jwt",
             post(jwt_auth::login_jwt)
                 .with_state(jwt_auth_state.clone())
+                // 与表单 /login 同策略挂 CAPTCHA，防攻击者改走 JWT 路径绕过验证码撞库
+                .layer(from_fn_with_state(
+                    (params.magic_code.clone(), params.cache),
+                    validate_captcha,
+                ))
                 .layer(from_fn_with_state(
                     (name, "login_jwt").into(),
                     user_tracker,

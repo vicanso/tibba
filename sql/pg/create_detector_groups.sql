@@ -11,7 +11,7 @@ CREATE TABLE detector_groups (
   deleted_at TIMESTAMP DEFAULT NULL
 );
 
-CREATE UNIQUE INDEX uk_code ON detector_groups (code, deleted_at);
+CREATE UNIQUE INDEX uk_code ON detector_groups (code) WHERE deleted_at IS NULL;
 CREATE INDEX idx_detector_groups_deleted_at ON detector_groups (deleted_at);
 CREATE INDEX idx_owner_id ON detector_groups (owner_id);
 

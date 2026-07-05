@@ -20,7 +20,7 @@ CREATE TABLE users (
   deleted_at TIMESTAMP DEFAULT NULL
 );
 
-CREATE UNIQUE INDEX user_account ON users (account, deleted_at);
+CREATE UNIQUE INDEX user_account ON users (account) WHERE deleted_at IS NULL;
 CREATE INDEX idx_users_deleted_at ON users (deleted_at);
 
 COMMENT ON TABLE users IS '用户表';

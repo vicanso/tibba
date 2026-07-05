@@ -105,32 +105,57 @@ where
         parts: &mut Parts,
         _state: &S,
     ) -> std::result::Result<Self, Self::Rejection> {
-        let client_ip = parts
-            .headers
-            .get("X-Forwarded-For")
-            .and_then(|header| header.to_str().ok())
-            .and_then(|s| s.split(',').next())
-            .map(|s| s.trim())
-            .and_then(|s| s.parse::<IpAddr>().ok())
-            .or_else(|| {
-                parts
-                    .headers
-                    .get("X-Real-Ip")
-                    .and_then(|header| header.to_str().ok())
-                    .map(|s| s.trim())
-                    .and_then(|s| s.parse::<IpAddr>().ok())
-            })
-            .or_else(|| {
-                parts
-                    .extensions
-                    .get::<ConnectInfo<SocketAddr>>()
-                    .map(|ConnectInfo(addr)| addr.ip())
-            });
+        // 直连对端 IP（TCP 层，客户端无法伪造）
+        let peer_ip = parts
+            .extensions
+            .get::<ConnectInfo<SocketAddr>>()
+            .map(|ConnectInfo(addr)| addr.ip());
+
+        // 仅当直连对端是可信来源（回环 / 私网，通常是自己的反向代理 / ingress）时，才采信
+        // 客户端可伪造的 X-Forwarded-For / X-Real-Ip；直连来自公网时一律用对端 IP，
+        // 防止攻击者伪造转发头绕过基于 IP 的限流 / 暴力破解锁定 / 审计记录。
+        let client_ip = if peer_ip.map(is_trusted_proxy).unwrap_or(false) {
+            parts
+                .headers
+                .get("X-Forwarded-For")
+                .and_then(|header| header.to_str().ok())
+                .and_then(|s| s.split(',').next())
+                .map(|s| s.trim())
+                .and_then(|s| s.parse::<IpAddr>().ok())
+                .or_else(|| {
+                    parts
+                        .headers
+                        .get("X-Real-Ip")
+                        .and_then(|header| header.to_str().ok())
+                        .map(|s| s.trim())
+                        .and_then(|s| s.parse::<IpAddr>().ok())
+                })
+                .or(peer_ip)
+        } else {
+            peer_ip
+        };
 
         // if all attempts fail (result is None), return error
         client_ip
             .map(ClientIp)
             .ok_or_else(|| BaseError::new("Client IP address could not be determined"))
+    }
+}
+
+/// 判断直连对端是否为可信反向代理：回环或私网地址视为可信（自有基础设施），
+/// 才据其转发头解析真实客户端 IP。公网对端返回 false，不采信任何转发头。
+///
+/// IPv6 的 ULA（fc00::/7）与 link-local（fe80::/10）用前缀手判，兼容 MSRV 1.83
+/// （`Ipv6Addr::is_unique_local` 等在更高版本才稳定）。
+fn is_trusted_proxy(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => v4.is_loopback() || v4.is_private() || v4.is_link_local(),
+        IpAddr::V6(v6) => {
+            let first = v6.segments()[0];
+            v6.is_loopback()
+                || (first & 0xfe00) == 0xfc00 // fc00::/7 唯一本地地址
+                || (first & 0xffc0) == 0xfe80 // fe80::/10 链路本地
+        }
     }
 }
 
@@ -161,3 +186,36 @@ pub use security_headers::*;
 pub use stats::*;
 pub use trace::*;
 pub use tracker::*;
+
+#[cfg(test)]
+mod tests {
+    use super::is_trusted_proxy;
+    use std::net::IpAddr;
+
+    #[test]
+    fn trusted_proxy_recognizes_private_and_loopback() {
+        // 可信：回环 / 私网 / 链路本地
+        for ip in [
+            "127.0.0.1",
+            "::1",
+            "10.1.2.3",
+            "172.16.5.6",
+            "192.168.0.1",
+            "169.254.1.1",
+            "fd00::1",       // ULA
+            "fe80::1",       // link-local
+        ] {
+            let parsed: IpAddr = ip.parse().unwrap();
+            assert!(is_trusted_proxy(parsed), "{ip} 应视为可信对端");
+        }
+    }
+
+    #[test]
+    fn public_peer_is_not_trusted() {
+        // 公网对端：不采信转发头
+        for ip in ["1.1.1.1", "8.8.8.8", "203.0.113.7", "2606:4700::1111"] {
+            let parsed: IpAddr = ip.parse().unwrap();
+            assert!(!is_trusted_proxy(parsed), "{ip} 不应视为可信对端");
+        }
+    }
+}

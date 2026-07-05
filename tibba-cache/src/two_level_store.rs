@@ -130,9 +130,13 @@ impl<T: Clone + Serialize + DeserializeOwned> TwoLevelStore<T> {
     }
 
     /// 从两层缓存中删除指定键。
+    ///
+    /// 先删 Redis 再清 LRU：若反过来，并发 `get()` 可能在「LRU 已清、Redis 未删」的窗口
+    /// 读到 Redis 旧值并回填 LRU，使陈旧数据在内存中复活并存活到下次 TTL 到期。
     pub async fn del(&self, key: &str) -> Result<()> {
+        self.redis.del(key).await?;
         self.lru.del(key).await;
-        self.redis.del(key).await
+        Ok(())
     }
 
     /// 清除内存 LRU 中的过期条目，应定期调用以释放内存。

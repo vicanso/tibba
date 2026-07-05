@@ -56,9 +56,16 @@ impl<'a, Q> ParsedUri<'a, Q> {
         format!("{}://{}", self.schema, self.host_strings()[0])
     }
     pub fn url(&self) -> Result<Url> {
+        // 无 host：返回错误而非 panic（此前 else 分支 arr[0] 会越界，畸形 uri 致启动崩溃）
+        if self.hosts.is_empty() {
+            return Err(Error::Invalid {
+                message: "uri has no host".to_string(),
+            });
+        }
         let url = if self.hosts.len() == 1 {
             self.origin_uri.to_string()
         } else {
+            // len >= 2，arr[0] 必然存在
             let arr = self.host_strings();
             let hosts = arr.join(",");
             self.origin_uri.replace(&hosts, &arr[0]).to_string()

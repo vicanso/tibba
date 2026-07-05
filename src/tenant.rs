@@ -15,24 +15,28 @@
 //! 行级多租户演示：基于 `tenant_notes` 表的租户隔离 CRUD。
 //!
 //! 演示要点（隔离模式，业务可照搬到自己的多租户表）：
-//! - 当前租户由 [`tibba_tenant::TenantId`] 提取器从 `X-Tenant-Id` 头 / 请求扩展解析；
+//! - 当前租户由 [`derive_tenant_from_session`] 中间件从**鉴权身份**派生并注入请求扩展，
+//!   [`tibba_tenant::TenantId`] 提取器优先采用扩展，从而不信任客户端 `X-Tenant-Id` 头；
 //! - 写入恒带 `tenant_id`，读取 / 删除恒 `WHERE tenant_id = $T`；
 //! - 单行读写用 `id = $1 AND tenant_id = $2` 做**纵深防御**：即便猜到别的租户的行 id，
 //!   也读不到 / 删不掉，避免越权（IDOR）。
 //!
-//! 挂载于 `/tenant`（见 `router.rs`），所有端点都需带租户标识。
+//! 挂载于 `/tenant`（见 `router.rs`），所有端点都需登录；租户来自身份而非请求头。
 
 use crate::sql::get_db_pool;
 use axum::Json;
 use axum::Router;
-use axum::extract::Path;
+use axum::extract::{FromRequestParts, Path, Request};
 use axum::http::StatusCode;
+use axum::middleware::{Next, from_fn};
+use axum::response::Response;
 use axum::routing::{get, post};
 use serde::{Deserialize, Serialize};
 use snafu::{ResultExt, Snafu};
 use time::PrimitiveDateTime;
 use tibba_error::Error as BaseError;
 use tibba_model::format_datetime;
+use tibba_session::UserSession;
 use tibba_tenant::TenantId;
 
 type Result<T> = std::result::Result<T, BaseError>;
@@ -192,9 +196,25 @@ async fn delete_note(tenant: TenantId, Path(id): Path<i64>) -> Result<StatusCode
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// 中间件：要求登录，并从**鉴权身份**派生租户注入请求扩展。
+///
+/// 安全要点：`TenantId` 提取器优先采用请求扩展，此处注入后即**忽略客户端可伪造的
+/// `X-Tenant-Id` 头**，杜绝匿名 / 越权访问他人租户数据。demo 简单取 `u{user_id}` 作租户；
+/// 真实业务应据 `user → tenant` 映射（成员表 / JWT claim）派生。
+async fn derive_tenant_from_session(req: Request, next: Next) -> Result<Response> {
+    let (mut parts, body) = req.into_parts();
+    // 未登录 → 401（UserSession 提取器负责校验登录态）
+    let user = UserSession::from_request_parts(&mut parts, &()).await?;
+    let tenant = TenantId::parse(format!("u{}", user.get_user_id()))?;
+    parts.extensions.insert(tenant);
+    Ok(next.run(Request::from_parts(parts, body)).await)
+}
+
 /// 构造多租户演示路由（由 `router.rs` 以 `/tenant` 前缀挂载）。
+/// 所有端点先过 [`derive_tenant_from_session`]：必须登录，且租户来自身份而非请求头。
 pub fn new_tenant_router() -> Router {
     Router::new()
         .route("/notes", post(create_note).get(list_notes))
         .route("/notes/{id}", get(get_note).delete(delete_note))
+        .layer(from_fn(derive_tenant_from_session))
 }

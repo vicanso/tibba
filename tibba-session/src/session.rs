@@ -18,13 +18,13 @@ use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
 use axum::response::{IntoResponse, Response};
 use axum_extra::extract::cookie::{Key, SignedCookieJar};
-use cookie::CookieBuilder;
+use cookie::{CookieBuilder, SameSite};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
 use tibba_cache::RedisCache;
 use tibba_state::CTX;
-use tibba_util::{from_timestamp, timestamp, uuid};
+use tibba_util::{from_timestamp, is_development, timestamp, uuid};
 use tracing::debug;
 
 type Result<T, E = tibba_error::Error> = std::result::Result<T, E>;
@@ -295,6 +295,10 @@ impl TryFrom<&Session> for SignedCookieJar {
         let mut c = CookieBuilder::new(se.params.cookie.clone(), se.data.id.clone())
             .path("/")
             .http_only(true)
+            // SameSite=Lax：跨站请求不携带会话，缓解 CSRF，同时不影响顶层导航保持登录态。
+            // 生产环境强制 Secure，禁止明文 HTTP 传输会话；dev 允许 http 调试。
+            .same_site(SameSite::Lax)
+            .secure(!is_development())
             .max_age(time::Duration::seconds(se.params.ttl));
 
         if se.data.id.is_empty() {

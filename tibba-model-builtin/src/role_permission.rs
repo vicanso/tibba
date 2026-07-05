@@ -61,7 +61,9 @@ impl RolePermissionModel {
         Self
     }
 
-    /// 给指定角色授予权限码。已存在时静默忽略（幂等）。
+    /// 给指定角色授予权限码。已存在活跃行时静默忽略（幂等）。ON CONFLICT 谓词须与
+    /// `uk_role_permission (role, permission_code) WHERE deleted_at IS NULL` 一致，
+    /// 否则无法匹配部分索引（42P10）。
     pub async fn grant(
         &self,
         pool: &Pool<Postgres>,
@@ -71,8 +73,7 @@ impl RolePermissionModel {
         sqlx::query(
             r#"INSERT INTO role_permissions (role, permission_code)
                VALUES ($1, $2)
-               ON CONFLICT (role, permission_code) DO UPDATE
-                 SET deleted_at = NULL"#,
+               ON CONFLICT (role, permission_code) WHERE deleted_at IS NULL DO NOTHING"#,
         )
         .bind(role)
         .bind(permission_code)

@@ -31,6 +31,7 @@ use std::time::Duration;
 use tibba_cache::RedisCache;
 use tibba_error::Error as BaseError;
 use tibba_performance::current_process_system_info;
+use tibba_session::AdminSession;
 use tibba_state::AppState;
 use tibba_util::{JsonResult, QueryParams, get_env, uuid};
 use tokio::time::timeout;
@@ -199,6 +200,8 @@ fn format_uptime_approx(duration: Duration) -> String {
     )
 )]
 async fn get_application_info(
+    // 要求 Admin：该端点暴露 hostname / commit / OS / 内存 CPU 等内部信息，不对匿名开放
+    _admin: AdminSession,
     State(state): State<&'static AppState>,
 ) -> JsonResult<ApplicationInfo> {
     let uptime = state.get_started_at().elapsed().unwrap_or_default();

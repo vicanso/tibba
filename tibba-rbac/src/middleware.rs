@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use axum::extract::{Request, State};
+use axum::extract::{FromRequestParts, Request, State};
 use axum::middleware::Next;
 use axum::response::Response;
 use tibba_error::Error as BaseError;
@@ -32,25 +32,16 @@ type Result<T, E = BaseError> = std::result::Result<T, E>;
 /// 鉴权失败时直接返回 `tibba_error::Error`（未登录 → 401，缺权限 → 403），
 /// 由全局错误处理统一渲染响应。
 ///
-/// Session 从请求扩展中获取，因此调用方必须先在外层挂 `tibba_session::session` 中间件。
+/// Session 经 `Session` 提取器加载，因此调用方必须先在外层挂 `tibba_session::session` 中间件。
 pub async fn require_permission(
     State(required): State<&'static str>,
     req: Request,
     next: Next,
 ) -> Result<Response> {
-    // Session 由上游 session 中间件注入请求扩展；此处只读不改
-    let session = req
-        .extensions()
-        .get::<Session>()
-        .cloned()
-        .ok_or_else(|| {
-            // 这一分支表示路由配置错误：require_permission 必须挂在 session 中间件之后
-            BaseError::new("session middleware not mounted before require_permission")
-                .with_category("rbac")
-                .with_status(500)
-                .with_exception(true)
-        })?;
-
+    let (mut parts, body) = req.into_parts();
+    // 必须用 Session 提取器：它会从签名 cookie / Redis 实际加载会话数据。直接读 extensions
+    // 里的 Session 只会拿到 session 中间件放入的空壳（iat==0），导致已登录用户也恒被拒（fail-closed）。
+    let session = Session::from_request_parts(&mut parts, &()).await?;
     session.require_permission(required)?;
-    Ok(next.run(req).await)
+    Ok(next.run(Request::from_parts(parts, body)).await)
 }

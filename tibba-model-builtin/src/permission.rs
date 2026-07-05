@@ -94,8 +94,9 @@ impl PermissionModel {
         Ok(row.map(Permission::from))
     }
 
-    /// 注册新的权限点；已存在（含软删除态）时按 code 唯一约束触发 ON CONFLICT，
-    /// 描述字段会被覆盖更新，软删除态会被恢复。
+    /// 注册新的权限点；已存在活跃行（同 code）时按部分唯一索引触发 ON CONFLICT，
+    /// 覆盖更新描述字段。ON CONFLICT 谓词须与 `uk_permissions_code (code) WHERE
+    /// deleted_at IS NULL` 一致，否则无法匹配部分索引（42P10）。
     pub async fn upsert(
         &self,
         pool: &Pool<Postgres>,
@@ -105,9 +106,8 @@ impl PermissionModel {
         let row: (i64,) = sqlx::query_as(
             r#"INSERT INTO permissions (code, description)
                VALUES ($1, $2)
-               ON CONFLICT (code) DO UPDATE
+               ON CONFLICT (code) WHERE deleted_at IS NULL DO UPDATE
                  SET description = EXCLUDED.description,
-                     deleted_at = NULL,
                      modified = NOW()
                RETURNING id"#,
         )

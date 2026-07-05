@@ -23,8 +23,13 @@ use tibba_config::{Config, humantime_serde};
 use tibba_error::Error;
 use tibba_hook::{BoxFuture, Task, register_task};
 use tibba_session::SessionParams;
+use tibba_util::{is_development, is_test};
 use tracing::info;
 use validator::{Validate, ValidationError};
+
+/// 脚手架自带的开发用示例 `basic.secret`（见 configs/default.toml）。
+/// 生产环境必须覆盖（`TIBBA_WEB__BASIC__SECRET`），否则启动校验失败。
+const DEV_PLACEHOLDER_SECRET: &str = "tibba-dev-insecure-secret-do-not-use-in-production";
 
 /// 本模块所有日志事件的 tracing target。
 /// 可通过 `RUST_LOG=tibba:config=info`（或 `debug`）进行过滤。
@@ -64,7 +69,8 @@ pub struct BasicConfig {
     // timeout
     #[serde(with = "humantime_serde")]
     pub timeout: Duration,
-    // secret
+    // secret：派生 TOTP AES-256-GCM 密钥、签发登录防重放令牌，必须足够长且生产不得用示例值
+    #[validate(length(min = 32), custom(function = "validate_basic_secret"))]
     pub secret: String,
     // prefix
     pub prefix: Option<String>,
@@ -78,6 +84,17 @@ pub struct BasicConfig {
 }
 
 static BASIC_CONFIG: OnceCell<BasicConfig> = OnceCell::new();
+
+/// 校验 basic.secret：生产环境禁止使用脚手架自带的开发示例值。
+/// dev / test 允许沿用示例值以便开箱即用；长度下限由 `#[validate(length)]` 单独保证。
+fn validate_basic_secret(secret: &str) -> Result<(), ValidationError> {
+    if !is_development() && !is_test() && secret == DEV_PLACEHOLDER_SECRET {
+        return Err(ValidationError::new(
+            "basic.secret must be overridden in production (set TIBBA_WEB__BASIC__SECRET)",
+        ));
+    }
+    Ok(())
+}
 
 /// Create a new basic config, if the config is invalid, it will panic
 fn new_basic_config(config: &Config) -> Result<BasicConfig> {
@@ -190,10 +207,18 @@ fn new_oauth_config(config: &Config) -> Result<tibba_oauth::OAuthConfig> {
 static JWT_CONFIG: OnceCell<tibba_jwt::JwtConfig> = OnceCell::new();
 
 fn new_jwt_config(config: &Config) -> Result<tibba_jwt::JwtConfig> {
-    match config.try_deserialize::<tibba_jwt::JwtConfig>() {
-        Ok(c) => Ok(c),
-        Err(_) => Ok(tibba_jwt::JwtConfig::default()),
+    let jwt_config = config
+        .try_deserialize::<tibba_jwt::JwtConfig>()
+        .unwrap_or_default();
+    // 启用 JWT（secret 非空）时强制 ≥32 字符；短 HS256 密钥可离线爆破伪造 token（越权）。
+    // 空 secret 表示未启用，照常放行（相关端点返回 503）。
+    if jwt_config.is_configured() && jwt_config.secret.len() < 32 {
+        return Err(Error::new(
+            "jwt.secret must be at least 32 chars when configured (set TIBBA_WEB__JWT__SECRET)",
+        )
+        .with_category("config"));
     }
+    Ok(jwt_config)
 }
 
 #[derive(Debug, Clone, Default, Validate, Deserialize)]

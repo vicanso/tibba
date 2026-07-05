@@ -298,7 +298,8 @@ const useUserState = create<UserState>((set) => ({
             hash: string;
             token: string;
         }>(USER_LOGIN_TOKEN);
-        const msg = `${data.hash}:${sha256(password).toString()}`;
+        // 仅对明文口令做一层 sha256（定长化 / 不发送明文）；服务端再套 Argon2 校验。
+        // ts/hash/token 仍随请求发送，用于服务端登录令牌的防重放校验。
         const { data: user } = await request.post<UserSession>(
             USER_LOGIN,
             {
@@ -306,7 +307,7 @@ const useUserState = create<UserState>((set) => ({
                 hash: data.hash,
                 token: data.token,
                 account,
-                password: sha256(msg).toString(),
+                password: sha256(password).toString(),
             },
             {
                 headers: {

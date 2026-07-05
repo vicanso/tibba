@@ -46,6 +46,12 @@ const ERROR_CATEGORY: &str = "file_router";
 /// 图片分支按此上限收集，避免超大「图片」撑爆内存。部署如需更大可调整此常量。
 const MAX_UPLOAD_BYTES: usize = 50 * 1024 * 1024;
 
+/// 单次请求最多处理的文件字段数，防海量小字段的 multipart 请求耗尽资源。
+const MAX_UPLOAD_FILES: usize = 20;
+/// 单次请求所有字段累计字节上限（200 MiB），叠加于每字段 `MAX_UPLOAD_BYTES` 之上，
+/// 防多个近上限字段合计撑爆存储 / 数据库。
+const MAX_UPLOAD_TOTAL_BYTES: i64 = 200 * 1024 * 1024;
+
 /// 文件路由模块内部错误，统一通过 `From` 转换为 `tibba_error::Error`。
 #[derive(Debug, Snafu)]
 enum Error {
@@ -82,6 +88,9 @@ enum Error {
     /// 上传内容超过单文件上限（HTTP 413）
     #[snafu(display("upload too large (max {max} bytes)"))]
     PayloadTooLarge { max: usize },
+    /// 单次请求文件字段数超过上限（HTTP 413）
+    #[snafu(display("too many files in one request (max {max})"))]
+    TooManyFiles { max: usize },
 }
 
 impl From<Error> for BaseError {
@@ -103,6 +112,12 @@ impl From<Error> for BaseError {
             Error::PayloadTooLarge { max } => {
                 BaseError::new(format!("upload too large (max {max} bytes)"))
                     .with_sub_category("payload_too_large")
+                    .with_status(413)
+                    .with_exception(false)
+            }
+            Error::TooManyFiles { max } => {
+                BaseError::new(format!("too many files in one request (max {max})"))
+                    .with_sub_category("too_many_files")
                     .with_status(413)
                     .with_exception(false)
             }
@@ -136,6 +151,9 @@ async fn create_file(
     mut multipart: Multipart,
 ) -> JsonResult<HashMap<String, String>> {
     let mut files = HashMap::new();
+    // 请求级配额：字段数与累计字节，防多字段绕过单字段上限耗尽资源
+    let mut file_count: usize = 0;
+    let mut total_bytes: i64 = 0;
     while let Some(mut field) = multipart.next_field().await.context(MultipartSnafu)? {
         let name = field.name().unwrap_or_default().to_string();
         let file_name = field.file_name().unwrap_or_default().to_string();
@@ -148,6 +166,13 @@ async fn create_file(
             .to_string_lossy();
         if ext.is_empty() {
             continue;
+        }
+        file_count += 1;
+        if file_count > MAX_UPLOAD_FILES {
+            return Err(Error::TooManyFiles {
+                max: MAX_UPLOAD_FILES,
+            }
+            .into());
         }
         let file = format!("{}.{}", uuid(), ext);
 
@@ -166,9 +191,17 @@ async fn create_file(
             // 超限即 413，避免超大「图片」撑爆内存（图片体积本应有界）
             let mut data = Vec::new();
             while let Some(chunk) = field.chunk().await.context(MultipartSnafu)? {
-                if data.len() + chunk.len() > MAX_UPLOAD_BYTES {
+                let projected = data.len() + chunk.len();
+                if projected > MAX_UPLOAD_BYTES {
                     return Err(Error::PayloadTooLarge {
                         max: MAX_UPLOAD_BYTES,
+                    }
+                    .into());
+                }
+                // 请求累计（含本字段在途字节）超上限：图片尚在内存缓冲、未落存储，直接拒
+                if total_bytes + projected as i64 > MAX_UPLOAD_TOTAL_BYTES {
+                    return Err(Error::PayloadTooLarge {
+                        max: MAX_UPLOAD_TOTAL_BYTES as usize,
                     }
                     .into());
                 }
@@ -187,11 +220,18 @@ async fn create_file(
             let mut size: i64 = 0;
             while let Some(chunk) = field.chunk().await.context(MultipartSnafu)? {
                 size += chunk.len() as i64;
-                // 累计超过上限：中止写入（清理半截对象）并返回 413，不再继续收流
+                // 单字段或请求累计超上限：中止写入（清理半截对象）并返回 413，不再继续收流
                 if size > MAX_UPLOAD_BYTES as i64 {
                     let _ = writer.abort().await;
                     return Err(Error::PayloadTooLarge {
                         max: MAX_UPLOAD_BYTES,
+                    }
+                    .into());
+                }
+                if total_bytes + size > MAX_UPLOAD_TOTAL_BYTES {
+                    let _ = writer.abort().await;
+                    return Err(Error::PayloadTooLarge {
+                        max: MAX_UPLOAD_TOTAL_BYTES as usize,
                     }
                     .into());
                 }
@@ -205,11 +245,26 @@ async fn create_file(
             params.file_size = size;
         }
 
+        // 累加本字段实际字节，供后续字段的请求级总量判断
+        total_bytes += params.file_size;
         FileModel::new().insert_file(pool, params).await?;
 
         files.insert(name, file);
     }
     Ok(Json(files))
+}
+
+/// 决定响应的 `Content-Disposition`：仅图片允许 `inline` 渲染，其余一律 `attachment`。
+///
+/// 上传时 content_type 来自客户端文件名猜测，攻击者可上传声明为 `text/html` 的文件；
+/// 若 inline 服务于同源，浏览器会直接渲染 → 存储型 XSS。强制 attachment 让顶层导航下载
+/// 而非渲染；`<img>`/`<video>` 等嵌入式加载不受 attachment 影响，仍正常工作。
+fn content_disposition_for(content_type: &str) -> &'static str {
+    if content_type.starts_with("image/") {
+        "inline"
+    } else {
+        "attachment"
+    }
 }
 
 #[derive(Debug, Deserialize, Clone, Validate, IntoParams)]
@@ -295,6 +350,11 @@ async fn get_file(
     if let Ok(header_value) = HeaderValue::from_str(&content_type) {
         headers.insert(header::CONTENT_TYPE, header_value);
     }
+    // 非图片强制 attachment，防止被浏览器在本站源内 inline 渲染（存储型 XSS）
+    headers.insert(
+        header::CONTENT_DISPOSITION,
+        HeaderValue::from_static(content_disposition_for(&content_type)),
+    );
     let size = data.len();
     if size > 0 {
         headers.insert(header::CONTENT_LENGTH, HeaderValue::from(size));
@@ -415,6 +475,11 @@ async fn download_file(
     if let Ok(content_type) = HeaderValue::from_str(&file.content_type) {
         resp_headers.insert(header::CONTENT_TYPE, content_type);
     }
+    // 非图片强制 attachment，防止被浏览器在本站源内 inline 渲染（存储型 XSS）
+    resp_headers.insert(
+        header::CONTENT_DISPOSITION,
+        HeaderValue::from_static(content_disposition_for(&file.content_type)),
+    );
     if let Some(metadata) = file.get_metadata() {
         resp_headers.extend(metadata);
     }

@@ -6,7 +6,7 @@ CREATE TABLE role_permissions (
   deleted_at TIMESTAMP DEFAULT NULL
 );
 
-CREATE UNIQUE INDEX uk_role_permission ON role_permissions (role, permission_code, deleted_at);
+CREATE UNIQUE INDEX uk_role_permission ON role_permissions (role, permission_code) WHERE deleted_at IS NULL;
 CREATE INDEX idx_role_permissions_role ON role_permissions (role, deleted_at);
 CREATE INDEX idx_role_permissions_deleted_at ON role_permissions (deleted_at);
 

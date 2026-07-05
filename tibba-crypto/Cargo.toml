@@ -15,6 +15,9 @@ path = "src/lib.rs"
 
 [dependencies]
 arc-swap = { workspace = true }
+# Argon2id 密码哈希 + 盐随机源（rand_core 0.6）
+argon2 = { workspace = true }
+rand_core = { workspace = true }
 hex = { workspace = true }
 hmac = { workspace = true }
 sha2 = { workspace = true }

@@ -26,7 +26,7 @@ use std::sync::Arc;
 use tibba_hook::{run_after_tasks, run_before_tasks};
 use tibba_middleware::{
     Cors, HttpCache, SecurityHeaders, cors, entry, http_cache, otel_trace, processing_limit,
-    request_id, security_headers, stats,
+    request_id, security_headers, stats, validate_csrf,
 };
 use tibba_router_user::api_key_auth;
 use tibba_scheduler::run_scheduler_jobs;
@@ -273,6 +273,9 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 ),
                 api_key_auth,
             ))
+            // CSRF：紧随鉴权层（更内层）。对浏览器 cookie 会话的状态变更请求做 double-submit
+            // 校验；安全方法与携带 Authorization/X-API-Key 的 API 客户端自动豁免（见 validate_csrf）
+            .layer(from_fn(validate_csrf))
             .layer(from_fn_with_state(state, processing_limit)),
     );
     state.run();

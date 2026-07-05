@@ -60,6 +60,9 @@ type Result<T, E = BaseError> = std::result::Result<T, E>;
 pub const CSRF_COOKIE_NAME: &str = "csrf_token";
 /// 状态变更请求必须带的请求头名。
 pub const CSRF_HEADER_NAME: &str = "X-CSRF-Token";
+/// API Key 请求头名（小写，`HeaderMap` 大小写不敏感匹配）。带此头或 `Authorization`
+/// 的请求视为非 cookie 鉴权，CSRF 豁免。
+const API_KEY_HEADER_NAME: &str = "x-api-key";
 
 #[derive(Debug, Serialize)]
 pub struct CsrfTokenResp {
@@ -87,8 +90,8 @@ pub async fn csrf_token(jar: CookieJar) -> (CookieJar, Json<CsrfTokenResp>) {
 /// 校验失败返回 HTTP 403。调用方按路由分组挂载，不要全局挂——会冲击
 /// `/csrf/token`、`/login`、`/register` 等不应受此约束的端点。
 pub async fn validate_csrf(jar: CookieJar, req: Request, next: Next) -> Result<Response> {
-    // 安全方法直通
-    if matches!(*req.method(), Method::GET | Method::HEAD | Method::OPTIONS) {
+    // 安全方法 + API 客户端（显式凭据、非 cookie 鉴权）直通，其余走 double-submit 校验
+    if is_csrf_exempt(req.method(), req.headers()) {
         return Ok(next.run(req).await);
     }
 
@@ -111,6 +114,15 @@ pub async fn validate_csrf(jar: CookieJar, req: Request, next: Next) -> Result<R
     Ok(next.run(req).await)
 }
 
+/// 判断请求是否免于 CSRF 校验：
+/// - 安全方法（GET/HEAD/OPTIONS）不改状态；
+/// - 携带 `Authorization` / `X-API-Key` 的 API 客户端走显式凭据，非 cookie 环境鉴权。
+fn is_csrf_exempt(method: &Method, headers: &axum::http::HeaderMap) -> bool {
+    matches!(*method, Method::GET | Method::HEAD | Method::OPTIONS)
+        || headers.contains_key(axum::http::header::AUTHORIZATION)
+        || headers.contains_key(API_KEY_HEADER_NAME)
+}
+
 /// 常数时间比较，避免按字节短路泄漏 token。
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
@@ -124,7 +136,8 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::constant_time_eq;
+    use super::{is_csrf_exempt, constant_time_eq};
+    use axum::http::{HeaderMap, HeaderValue, Method, header};
 
     #[test]
     fn constant_time_eq_basic() {
@@ -133,5 +146,34 @@ mod tests {
         assert!(!constant_time_eq(b"abc", b"ab"));
         assert!(!constant_time_eq(b"", b"a"));
         assert!(constant_time_eq(b"", b""));
+    }
+
+    #[test]
+    fn safe_methods_are_exempt() {
+        let empty = HeaderMap::new();
+        assert!(is_csrf_exempt(&Method::GET, &empty));
+        assert!(is_csrf_exempt(&Method::HEAD, &empty));
+        assert!(is_csrf_exempt(&Method::OPTIONS, &empty));
+    }
+
+    #[test]
+    fn mutating_without_credentials_requires_check() {
+        let empty = HeaderMap::new();
+        assert!(!is_csrf_exempt(&Method::POST, &empty));
+        assert!(!is_csrf_exempt(&Method::PUT, &empty));
+        assert!(!is_csrf_exempt(&Method::DELETE, &empty));
+    }
+
+    #[test]
+    fn api_key_clients_are_exempt() {
+        // Authorization: Bearer ...
+        let mut with_auth = HeaderMap::new();
+        with_auth.insert(header::AUTHORIZATION, HeaderValue::from_static("Bearer tibba_x"));
+        assert!(is_csrf_exempt(&Method::POST, &with_auth));
+
+        // X-API-Key（大小写不敏感）
+        let mut with_api_key = HeaderMap::new();
+        with_api_key.insert("X-API-Key", HeaderValue::from_static("tibba_x"));
+        assert!(is_csrf_exempt(&Method::DELETE, &with_api_key));
     }
 }

@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use super::{
-    Error, JsonSnafu, Model, ModelListParams, Schema, SchemaAllowEdit, SchemaOption,
+    CryptoSnafu, Error, JsonSnafu, Model, ModelListParams, Schema, SchemaAllowEdit, SchemaOption,
     SchemaOptionValue, SchemaType, SchemaView, SqlxSnafu, Status, format_datetime,
     new_schema_options,
 };
@@ -320,7 +320,9 @@ impl UserModel {
         account: &str,
         password: &str,
     ) -> Result<u64> {
-        // Get current time for created_at and updated_at
+        // 入库前做 Argon2id 加盐哈希；password 为客户端 sha256(明文)，再套一层 KDF
+        let password_hash =
+            tibba_crypto::hash_password(password.as_bytes()).context(CryptoSnafu)?;
 
         // Insert user and return the last insert ID
         let row: (i64,) = sqlx::query_as(
@@ -334,7 +336,7 @@ impl UserModel {
         )
         .bind(Status::Enabled as i16)
         .bind(account)
-        .bind(password)
+        .bind(&password_hash)
         .fetch_one(pool)
         .await
         .context(SqlxSnafu)?;
@@ -434,19 +436,21 @@ impl UserModel {
         Ok(())
     }
 
-    /// 重置密码：直接覆盖 password 列。调用方负责传入客户端已 sha256 处理的字符串
-    /// （与 register 一致），本方法不做哈希。
+    /// 重置密码：用 Argon2id 哈希后覆盖 password 列。调用方传入客户端已 sha256 处理的
+    /// 字符串（与 register 一致），本方法负责加盐哈希，绝不明文入库。
     pub async fn update_password(
         &self,
         pool: &Pool<Postgres>,
         user_id: i64,
         password: &str,
     ) -> Result<()> {
+        let password_hash =
+            tibba_crypto::hash_password(password.as_bytes()).context(CryptoSnafu)?;
         sqlx::query(
             r#"UPDATE users SET password = $1, modified = NOW()
                WHERE id = $2 AND deleted_at IS NULL"#,
         )
-        .bind(password)
+        .bind(&password_hash)
         .bind(user_id)
         .execute(pool)
         .await

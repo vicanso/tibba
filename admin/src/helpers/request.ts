@@ -2,13 +2,37 @@ import axios, { AxiosRequestConfig, AxiosResponse } from "axios";
 import HTTPError from "@/helpers/http-error";
 
 const requestedAt = "X-Requested-At";
+const csrfCookieName = "csrf_token";
+const csrfHeaderName = "X-CSRF-Token";
+// 安全方法不改状态，无需 CSRF token
+const csrfSafeMethods = ["get", "head", "options"];
+
 const request = axios.create({
     // 默认超时为10秒
     timeout: 10 * 1000,
 });
 
+// 从 document.cookie 读取非 HttpOnly 的 csrf_token（double-submit 模式）
+function readCsrfCookie(): string {
+    const m = document.cookie.match(
+        new RegExp(`(?:^|;\\s*)${csrfCookieName}=([^;]+)`),
+    );
+    return m ? decodeURIComponent(m[1]) : "";
+}
+
+// 确保已持有 CSRF token：cookie 缺失时先向后端拉取一次（该 GET 会种下 cookie）
+async function ensureCsrfToken(): Promise<string> {
+    const existing = readCsrfCookie();
+    if (existing) {
+        return existing;
+    }
+    // 直接用底层 axios（绕过本拦截器的 /api 前缀逻辑），GET 幂等且不需 CSRF
+    const { data } = await axios.get<{ token: string }>("/api/csrf/token");
+    return data?.token || readCsrfCookie();
+}
+
 request.interceptors.request.use(
-    (config) => {
+    async (config) => {
         // 对请求的query部分清空值
         if (config.params) {
             Object.keys(config.params).forEach((element) => {
@@ -21,6 +45,11 @@ request.interceptors.request.use(
         config.url = `/api${config.url}`;
         if (config.headers) {
             config.headers[requestedAt] = `${Date.now()}`;
+            // 状态变更请求附带 CSRF token，与后端 validate_csrf 的 double-submit 校验对齐
+            const method = (config.method || "get").toLowerCase();
+            if (!csrfSafeMethods.includes(method)) {
+                config.headers[csrfHeaderName] = await ensureCsrfToken();
+            }
         }
         return config;
     },

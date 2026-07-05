@@ -7,7 +7,7 @@ CREATE TABLE permissions (
   deleted_at TIMESTAMP DEFAULT NULL
 );
 
-CREATE UNIQUE INDEX uk_permissions_code ON permissions (code, deleted_at);
+CREATE UNIQUE INDEX uk_permissions_code ON permissions (code) WHERE deleted_at IS NULL;
 CREATE INDEX idx_permissions_deleted_at ON permissions (deleted_at);
 
 COMMENT ON TABLE permissions IS '权限点表，登记 RBAC 中所有可被授予的原子权限码';

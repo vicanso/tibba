@@ -22,7 +22,7 @@ CREATE TABLE web_page_detectors (
   deleted_at TIMESTAMP DEFAULT NULL
 );
 
-CREATE UNIQUE INDEX web_page_detectors_name ON web_page_detectors (name, deleted_at);
+CREATE UNIQUE INDEX web_page_detectors_name ON web_page_detectors (name) WHERE deleted_at IS NULL;
 CREATE INDEX idx_web_page_detectors_deleted_at ON web_page_detectors (deleted_at);
 
 COMMENT ON TABLE web_page_detectors IS '网页检测器表';

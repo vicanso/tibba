@@ -24,6 +24,18 @@ pub enum Error {
     /// 密钥列表为空，无法执行签名或验签操作。
     #[snafu(display("key grip empty"))]
     KeyGripEmpty,
+
+    /// Argon2 哈希计算失败（参数异常，正常不会发生）。
+    #[snafu(display("argon2 hash error: {source}"))]
+    Argon2Hash {
+        source: argon2::password_hash::Error,
+    },
+
+    /// 解析已存储的 Argon2 PHC 串失败（库中哈希损坏 / 校验阶段内部异常）。
+    #[snafu(display("argon2 parse error: {source}"))]
+    Argon2Parse {
+        source: argon2::password_hash::Error,
+    },
 }
 
 impl From<Error> for BaseError {
@@ -34,11 +46,21 @@ impl From<Error> for BaseError {
                 .with_sub_category("key_grip")
                 .with_status(500)
                 .with_exception(true),
+            Error::Argon2Hash { source } => BaseError::new(source)
+                .with_sub_category("argon2_hash")
+                .with_status(500)
+                .with_exception(true),
+            Error::Argon2Parse { source } => BaseError::new(source)
+                .with_sub_category("argon2_parse")
+                .with_status(500)
+                .with_exception(true),
         };
         err.with_category("crypto")
     }
 }
 
 mod key_grip;
+mod password;
 
 pub use key_grip::*;
+pub use password::*;

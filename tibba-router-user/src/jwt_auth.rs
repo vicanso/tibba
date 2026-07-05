@@ -38,7 +38,8 @@ use tibba_jwt::JwtSigner;
 use tibba_middleware::{ClientIp, RequestId};
 use tibba_model::{Model, User, UserModel};
 use tibba_model_builtin::{AuditLogModel, AuditLogParams, RolePermissionModel};
-use tibba_util::{JsonParams, JsonResult, sha256, uuid};
+use tibba_crypto::{PasswordCheck, verify_password};
+use tibba_util::{JsonParams, JsonResult, uuid};
 use tibba_validator::x_uuid;
 use tracing::warn;
 use utoipa::ToSchema;
@@ -133,7 +134,7 @@ pub(crate) async fn login_jwt(
     // 1. 防重放令牌校验（与表单 /login 一致）
     params.validate_token(&state.secret)?;
 
-    // 2. 账号 + 密码（hash:stored_password 的 sha256 比对）
+    // 2. 账号 + 密码（Argon2 校验，兼容旧 sha256 存量并无感升级）
     let account = params.account.clone();
     let ip_str = ip.to_string();
 
@@ -144,10 +145,22 @@ pub(crate) async fn login_jwt(
         crate::login_guard::record_failure(state.cache, &account, &ip_str).await;
         return Err(crate::Error::BadCredentials.into());
     };
-    let msg = format!("{}:{}", params.hash, user.password);
-    if sha256(msg.as_bytes()) != params.password {
-        crate::login_guard::record_failure(state.cache, &account, &ip_str).await;
-        return Err(crate::Error::BadCredentials.into());
+    // 密码验证：客户端传入 sha256(明文)，服务端与库中 Argon2 哈希比对（与表单 /login 一致）
+    match verify_password(&user.password, params.password.as_bytes())? {
+        PasswordCheck::Mismatch => {
+            crate::login_guard::record_failure(state.cache, &account, &ip_str).await;
+            return Err(crate::Error::BadCredentials.into());
+        }
+        // 旧式明文 sha256 存量：借本次登录升级为 Argon2；升级失败仅记日志，不阻断登录
+        PasswordCheck::MatchedNeedsRehash => {
+            if let Err(err) = UserModel::new()
+                .update_password(state.pool, user.id, &params.password)
+                .await
+            {
+                warn!(target: LOG_TARGET, account, error = %BaseError::from(err), "password rehash to argon2 failed");
+            }
+        }
+        PasswordCheck::Matched => {}
     }
 
     // 凭证正确：清账号失败计数

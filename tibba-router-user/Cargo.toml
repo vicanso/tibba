@@ -23,6 +23,8 @@ snafu = { workspace = true }
 sqlx = { workspace = true }
 tracing = { workspace = true }
 tibba-cache = { path = "../tibba-cache", version = "0.2.2" }
+# 登录密码校验（Argon2）与旧式 sha256 存量的无感升级
+tibba-crypto = { path = "../tibba-crypto", version = "0.2.2" }
 tibba-email = { path = "../tibba-email", version = "0.2.2" }
 tibba-error = { path = "../tibba-error", version = "0.2.2" }
 tibba-jwt = { path = "../tibba-jwt", version = "0.2.2" }

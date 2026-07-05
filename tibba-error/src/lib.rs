@@ -209,7 +209,28 @@ impl Error {
 impl IntoResponse for Error {
     fn into_response(self) -> Response {
         let status = StatusCode::from_u16(self.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-        let mut res = (status, Json(&self)).into_response();
+        // 5xx / 异常级错误：响应体隐去可能含内部细节的原始 message 与 extra（如 sqlx / 库
+        // 原始错误文本），只回通用文案；完整 message 仍随 self 存入 extensions 供服务端日志
+        // 读取，不外泄给客户端。category / sub_category / code 属分类信息，保留供前端处理。
+        let mut res = if status.is_server_error() || self.is_exception() {
+            let redacted = ErrorData {
+                sub_category: self.data.sub_category.clone(),
+                code: self.data.code.clone(),
+                exception: self.data.exception,
+                extra: None,
+            };
+            (
+                status,
+                Json(ErrorSerialize {
+                    category: &self.category,
+                    message: "internal server error",
+                    data: &redacted,
+                }),
+            )
+                .into_response()
+        } else {
+            (status, Json(&self)).into_response()
+        };
         // 把 Error 放入 extensions，方便日志/统计中间件读取上下文
         res.extensions_mut().insert(self);
         // 错误响应禁止缓存

@@ -71,6 +71,8 @@ pub enum Error {
     InsufficientBalance,
     #[snafu(display("{message}"))]
     InvalidAmount { message: String },
+    #[snafu(display("{source}"))]
+    Crypto { source: tibba_crypto::Error },
 }
 
 impl From<Error> for BaseError {
@@ -100,6 +102,8 @@ impl From<Error> for BaseError {
             Error::InvalidAmount { message } => BaseError::new(message)
                 .with_sub_category("invalid_amount")
                 .with_status(400),
+            // 复用 tibba_crypto 的转换（保留 argon2 sub_category / 状态），外层再归类到 model
+            Error::Crypto { source } => BaseError::from(source),
         };
         err.with_category("model")
     }

@@ -39,7 +39,10 @@ struct Performance {
     refresh_count: u32,
     memory_usage_mb: u32,
     cpu_usage: u16,
+    /// 本次采样周期内的 CPU 时间增量。
     cpu_time: u64,
+    /// 上次采样时的累计 CPU 时间，用于算增量（sysinfo 的 cpu_time 是单调累计值）。
+    cpu_time_total: u64,
     open_files: usize,
     written_mb: u32,
     read_mb: u32,
@@ -67,7 +70,11 @@ async fn update_performance() {
     data.refresh_count += 1;
     data.memory_usage_mb = (process_system_info.memory_usage / mb) as u32;
     data.cpu_usage = process_system_info.cpu_usage as u16;
-    data.cpu_time = process_system_info.cpu_time - data.cpu_time;
+    // 增量 = 当前累计 − 上次累计；再把当前累计存回，供下次计算。saturating_sub 防计数回绕。
+    data.cpu_time = process_system_info
+        .cpu_time
+        .saturating_sub(data.cpu_time_total);
+    data.cpu_time_total = process_system_info.cpu_time;
     data.open_files = process_system_info.open_files.unwrap_or(0);
     data.written_mb = (process_system_info.written_bytes / mb) as u32;
     data.read_mb = (process_system_info.read_bytes / mb) as u32;

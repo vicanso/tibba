@@ -28,7 +28,7 @@ CREATE TABLE http_detectors (
   deleted_at TIMESTAMP DEFAULT NULL
 );
 
-CREATE UNIQUE INDEX name_group_id ON http_detectors (name, group_id, deleted_at);
+CREATE UNIQUE INDEX name_group_id ON http_detectors (name, group_id) WHERE deleted_at IS NULL;
 CREATE INDEX idx_http_detectors_deleted_at ON http_detectors (deleted_at);
 
 COMMENT ON TABLE http_detectors IS 'HTTP检测器表';

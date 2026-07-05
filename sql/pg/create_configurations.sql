@@ -12,7 +12,7 @@ CREATE TABLE configurations (
   deleted_at TIMESTAMP DEFAULT NULL
 );
 
-CREATE UNIQUE INDEX uk_category_name ON configurations (category, name, deleted_at);
+CREATE UNIQUE INDEX uk_category_name ON configurations (category, name) WHERE deleted_at IS NULL;
 CREATE INDEX idx_configurations_effective_time ON configurations (status, effective_start_time, effective_end_time, deleted_at);
 
 COMMENT ON TABLE configurations IS '系统配置表';

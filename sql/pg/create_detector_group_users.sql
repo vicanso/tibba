@@ -14,7 +14,7 @@ CREATE TABLE detector_group_users (
   deleted_at TIMESTAMP DEFAULT NULL
 );
 
-CREATE UNIQUE INDEX uk_user_group ON detector_group_users (user_id, group_id, deleted_at);
+CREATE UNIQUE INDEX uk_user_group ON detector_group_users (user_id, group_id) WHERE deleted_at IS NULL;
 CREATE INDEX idx_detector_group_users_deleted_at ON detector_group_users (deleted_at);
 CREATE INDEX idx_effective_time ON detector_group_users (status, effective_start_time, effective_end_time, deleted_at);
 CREATE INDEX idx_group_status ON detector_group_users (group_id, status);

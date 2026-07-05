@@ -24,6 +24,8 @@ sqlx = { workspace = true }
 substring = { workspace = true }
 tokio = { workspace = true }
 tibba-error = { path = "../tibba-error", version = "0.2.2" }
+# 密码入库前做 Argon2id 哈希（register / update_password）
+tibba-crypto = { path = "../tibba-crypto", version = "0.2.2" }
 time = { workspace = true }
 
 [dev-dependencies]

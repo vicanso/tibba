@@ -4,7 +4,9 @@
 timeout = "60s"
 listen = "127.0.0.1:5000"
 processing_limit = 1_000
-secret = "osbhdlycJ0"
+# 仅开发 / 测试用示例值；生产必须通过 TIBBA_WEB__BASIC__SECRET 覆盖，否则启动校验失败。
+# 该值派生 TOTP AES-256-GCM 密钥并签发登录防重放令牌，务必强随机、保密。
+secret = "tibba-dev-insecure-secret-do-not-use-in-production"
 
 
 # session config

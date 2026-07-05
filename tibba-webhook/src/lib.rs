@@ -32,8 +32,10 @@
 //! worker 取出后签名 + POST；2xx 视为成功，否则由任务队列重试，超过上限转死信。
 //!
 //! ## 接收方验签
-//! 取请求体原始字节 `body`，用约定的 secret 计算 `hex(hmac_sha256(secret, body))`，
-//! 与 `X-Webhook-Signature` 头（去掉 `sha256=` 前缀）做常量时间比较即可。
+//! 取 `X-Webhook-Timestamp` 头 `ts` 与请求体原始字节 `body`，拼出 `signed = ts + "." + body`，
+//! 用约定 secret 计算 `hex(hmac_sha256(secret, signed))`，与 `X-Webhook-Signature` 头
+//! （去掉 `sha256=` 前缀）做常量时间比较。签名已覆盖时间戳，接收方可再校验 `ts` 与当前时间
+//! 的偏差（如 ±5 分钟）拒绝重放，并按 `X-Webhook-Id` 做幂等去重。
 
 use http::Method;
 use http::header::{HeaderMap, HeaderName, HeaderValue};
@@ -45,7 +47,6 @@ use tibba_crypto::KeyGrip;
 use tibba_error::Error as BaseError;
 use tibba_job::{BoxFuture, Job, JobContext, JobHandler, JobQueue};
 use tibba_request::{Client, ClientBuilder, Params};
-use tibba_util::uuid;
 use tracing::info;
 
 /// 本 crate 所有日志事件的 tracing target。
@@ -188,22 +189,29 @@ impl WebhookHandler {
     }
 
     /// 执行一次投递：签名 + POST，2xx 视为成功（非 2xx 由通用拦截器转为 `Err` 触发重试）。
-    async fn deliver(&self, delivery: &WebhookDelivery) -> Result<()> {
+    /// `delivery_id` 由调用方传入且跨重试稳定，作为 `X-Webhook-Id` 供接收方幂等去重。
+    async fn deliver(&self, delivery: &WebhookDelivery, delivery_id: &str) -> Result<()> {
         // 签名基于精确的 body 字节；reqwest 的 .json() 用同一 serde_json 序列化，字节一致，
         // 故此处对 to_vec 的结果签名，与下方 body 实际发送内容保持一致
         let body = serde_json::to_vec(&delivery.payload).context(SerdeSnafu)?;
-        let id = delivery.id.clone().unwrap_or_else(uuid);
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
+        let timestamp_str = timestamp.to_string();
 
         let mut headers = HeaderMap::with_capacity(4);
         insert_header(&mut headers, HEADER_EVENT, &delivery.event)?;
-        insert_header(&mut headers, HEADER_ID, &id)?;
-        insert_header(&mut headers, HEADER_TIMESTAMP, &timestamp.to_string())?;
+        insert_header(&mut headers, HEADER_ID, delivery_id)?;
+        insert_header(&mut headers, HEADER_TIMESTAMP, &timestamp_str)?;
         if let Some(signer) = &self.signer {
-            let signature = signer.sign(&body).context(SignSnafu)?;
+            // 签名覆盖 `timestamp.body`（Stripe 式），把时间戳纳入签名：接收方无法在不失效
+            // 签名的前提下改写 X-Webhook-Timestamp，据此可做重放窗口校验
+            let mut signed_payload = Vec::with_capacity(timestamp_str.len() + 1 + body.len());
+            signed_payload.extend_from_slice(timestamp_str.as_bytes());
+            signed_payload.push(b'.');
+            signed_payload.extend_from_slice(&body);
+            let signature = signer.sign(&signed_payload).context(SignSnafu)?;
             insert_header(&mut headers, HEADER_SIGNATURE, &format!("sha256={signature}"))?;
         }
 
@@ -224,7 +232,7 @@ impl WebhookHandler {
         info!(
             target: LOG_TARGET,
             event = delivery.event,
-            id,
+            id = delivery_id,
             url = delivery.url,
             "webhook delivered"
         );
@@ -239,9 +247,12 @@ impl JobHandler for WebhookHandler {
 
     fn handle(&self, ctx: JobContext) -> BoxFuture<'_, std::result::Result<(), BaseError>> {
         Box::pin(async move {
+            // job 行 id 跨重试稳定，作为默认投递 id；显式 with_id 时以显式值优先
+            let job_id = ctx.id;
             let delivery: WebhookDelivery =
                 serde_json::from_value(ctx.payload).context(SerdeSnafu)?;
-            self.deliver(&delivery).await?;
+            let delivery_id = delivery.id.clone().unwrap_or_else(|| job_id.to_string());
+            self.deliver(&delivery, &delivery_id).await?;
             Ok(())
         })
     }

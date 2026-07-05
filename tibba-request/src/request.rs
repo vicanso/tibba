@@ -524,7 +524,8 @@ impl Client {
         if url.starts_with("http") {
             url.to_string()
         } else {
-            self.config.base_url.to_string() + url
+            // format! 单次分配；此前 base_url.to_string() + url 会分配两次（热路径每请求都走）
+            format!("{}{url}", self.config.base_url)
         }
     }
 
@@ -563,7 +564,9 @@ impl Client {
             Method::PUT => self.client.put(url),
             Method::PATCH => self.client.patch(url),
             Method::DELETE => self.client.delete(url),
-            _ => self.client.get(url),
+            Method::GET => self.client.get(url),
+            // HEAD / OPTIONS 等其余方法按原始 method 构造，避免静默降级为 GET
+            method => self.client.request(method, url),
         };
         if let Some(value) = params.timeout {
             req = req.timeout(value);

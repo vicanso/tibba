@@ -139,6 +139,9 @@ members = [
 [workspace.dependencies]
 aes-gcm = "0.10.3"
 anyhow = "1"
+# 服务端密码哈希（Argon2id），替代此前的明文 sha256 存储
+# std feature 让 password_hash::Error 实现 std::error::Error，供 snafu source 使用
+argon2 = { version = "0.5.3", features = ["std"] }
 arc-swap = "1.9.1"
 axum = { version = "0.8.9", features = ["multipart"] }
 axum-extra = { version = "0.12.6", features = ["cookie", "cookie-signed"] }
@@ -195,6 +198,8 @@ parse-size = "1.1.0"
 path-absolutize = "3.1.1"
 pretty_assertions = "1.4.1"
 rand = "0.10.1"
+# argon2/password-hash 走 rand_core 0.6，与 rand 0.10（rand_core 0.9）主版本隔离，仅用于生成盐
+rand_core = { version = "0.6", features = ["getrandom"] }
 redis = { version = "1.2.0", features = ["tokio-comp", "aio"] }
 reqwest = { version = "0.13.4", default-features = false, features = [
     "rustls",

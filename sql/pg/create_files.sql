@@ -13,7 +13,7 @@ CREATE TABLE files (
   deleted_at TIMESTAMP DEFAULT NULL
 );
 
-CREATE UNIQUE INDEX file_name ON files (filename, deleted_at);
+CREATE UNIQUE INDEX file_name ON files (filename) WHERE deleted_at IS NULL;
 CREATE INDEX idx_files_deleted_at ON files (deleted_at);
 
 COMMENT ON TABLE files IS '文件表';
