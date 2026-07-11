@@ -460,7 +460,7 @@ impl Model for HttpStatModel {
     ) -> Result<Vec<Self::Output>> {
         let mut qb = QueryBuilder::new("SELECT * FROM http_stats");
         self.push_conditions(&mut qb, params)?;
-        params.push_pagination(&mut qb);
+        params.push_pagination(&mut qb, self.orderable_columns());
         let stats = qb
             .build_query_as::<HttpStatSchema>()
             .fetch_all(pool)

@@ -108,11 +108,7 @@ impl UserOauthLinkModel {
     }
 
     /// 建立新的关联。重复绑定会触发 UNIQUE 约束错误——调用方应先查 [`find_by_provider_uid`]。
-    pub async fn create(
-        &self,
-        pool: &Pool<Postgres>,
-        params: CreateLinkParams<'_>,
-    ) -> Result<i64> {
+    pub async fn create(&self, pool: &Pool<Postgres>, params: CreateLinkParams<'_>) -> Result<i64> {
         let row: (i64,) = sqlx::query_as(
             r#"INSERT INTO user_oauth_links
                  (user_id, provider, provider_user_id, provider_login, provider_email)
@@ -151,12 +147,7 @@ impl UserOauthLinkModel {
     }
 
     /// 软删除指定用户的某 provider 关联（解绑）。返回受影响行数。
-    pub async fn unlink(
-        &self,
-        pool: &Pool<Postgres>,
-        user_id: i64,
-        provider: &str,
-    ) -> Result<u64> {
+    pub async fn unlink(&self, pool: &Pool<Postgres>, user_id: i64, provider: &str) -> Result<u64> {
         let result = sqlx::query(
             r#"UPDATE user_oauth_links
                SET deleted_at = NOW()

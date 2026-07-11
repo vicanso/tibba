@@ -337,7 +337,7 @@ impl Model for TokenUsageModel {
     ) -> Result<Vec<Self::Output>> {
         let mut qb: QueryBuilder<Postgres> = QueryBuilder::new("SELECT * FROM token_usages");
         self.push_conditions(&mut qb, params)?;
-        params.push_pagination(&mut qb);
+        params.push_pagination(&mut qb, self.orderable_columns());
         let rows = qb
             .build_query_as::<TokenUsageSchema>()
             .fetch_all(pool)

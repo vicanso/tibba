@@ -20,7 +20,6 @@ http = "1.4.0"
 mime_guess2 = "2.3.1"
 nanoid = "0.5.0"
 num_cpus = "1.17.0"
-once_cell = "1.21.4"
 rand = "0.10.1"
 reqwest = { version = "0.13.2", default-features = false, features = ["rustls", "query", "json"] }
 rust-embed = { version = "8.11.0", features = ["include-exclude"] }
@@ -29,15 +28,14 @@ serde_json = "1.0.149"
 sqlx = { version = "0.8.6", features = ["runtime-tokio", "postgres", "time", "chrono"] }
 substring = "1.4.5"
 time = { version = "0.3.47", features = ["serde"] }
+snafu = "0.9.0"
 tibba-cache = "0.2.2"
 tibba-config = "0.2.2"
 tibba-error = "0.2.2"
 tibba-hook = "0.2.2"
-tibba-llm = "0.2.2"
 tibba-middleware = "0.2.2"
 tibba-model = "0.2.2"
 tibba-model-builtin = "0.2.2"
-tibba-model-token = "0.2.2"
 tibba-opendal = "0.2.2"
 tibba-router-common = "0.2.2"
 tibba-router-file = "0.2.2"
@@ -49,6 +47,8 @@ tibba-sql = "0.2.2"
 tibba-state = "0.2.2"
 tibba-util = "0.2.2"
 tibba-performance = "0.2.2"
+tibba-email = "0.2.2"
+tibba-oauth = "0.2.2"
 tokio = { version = "1.52.1", features = ["macros", "rt", "rt-multi-thread", "net", "signal"] }
 tower = { version = "0.5.3", features = ["timeout"] }
 tower-http = { version = "0.6.8", features = ["compression-br", "compression-gzip", "compression-zstd"] }

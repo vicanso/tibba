@@ -39,9 +39,9 @@
 //! async fn me(user: JwtUser) -> ... { user.user_id ... }
 //! ```
 
-use once_cell::sync::OnceCell;
 use serde::Deserialize;
 use snafu::{ResultExt, Snafu};
+use std::sync::OnceLock;
 use std::time::Duration;
 use tibba_error::Error as BaseError;
 
@@ -54,7 +54,7 @@ mod claims;
 pub(crate) const LOG_TARGET: &str = "tibba:jwt";
 
 /// 全局唯一 JwtSigner，由 binary 在启动期初始化。
-static GLOBAL_SIGNER: OnceCell<JwtSigner> = OnceCell::new();
+static GLOBAL_SIGNER: OnceLock<JwtSigner> = OnceLock::new();
 
 /// tibba-jwt 模块对外的错误类型。
 #[derive(Debug, Snafu)]

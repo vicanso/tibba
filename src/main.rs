@@ -13,31 +13,30 @@
 // limitations under the License.
 
 use crate::router::new_router;
-use crate::state::get_app_state;
 use axum::BoxError;
 use axum::error_handling::HandleErrorLayer;
 use axum::extract::DefaultBodyLimit;
 use axum::http::{Method, Uri};
 use axum::middleware::{from_fn, from_fn_with_state};
+use opentelemetry_otlp::WithExportConfig;
 use std::env;
 use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::Arc;
 use tibba_hook::{run_after_tasks, run_before_tasks};
 use tibba_middleware::{
-    Cors, HttpCache, SecurityHeaders, cors, entry, http_cache, otel_trace, processing_limit,
-    request_id, security_headers, stats, validate_csrf,
+    Cors, HttpCache, MiddlewareOptions, SecurityHeaders, cors, entry, http_cache, otel_trace,
+    processing_limit, request_id, security_headers, stats, validate_csrf,
 };
 use tibba_router_user::api_key_auth;
 use tibba_scheduler::run_scheduler_jobs;
 use tibba_session::session;
-use tibba_util::is_development;
+use tibba_util::{is_development, is_production};
 use tokio::signal;
 use tower::ServiceBuilder;
 use tower_http::compression::CompressionLayer;
 use tower_http::compression::predicate::{NotForContentType, Predicate, SizeAbove};
-use opentelemetry_otlp::WithExportConfig;
-use tracing::{Level, error, info};
+use tracing::{Level, error, info, warn};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
@@ -55,20 +54,28 @@ const JOB_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30
 const GLOBAL_BODY_LIMIT: usize = 2 * 1024 * 1024;
 
 mod admin_web;
+mod app_ctx;
 mod cache;
 mod config;
 mod dal;
-mod docker;
 mod feature;
-mod httpstat;
 mod i18n;
 mod job;
 mod metrics;
-mod model;
 mod openapi;
 mod router;
 mod sql;
 mod state;
+
+#[cfg(feature = "demo-docker")]
+mod docker;
+#[cfg(feature = "demo-docker")]
+mod model;
+
+#[cfg(feature = "demo-detector")]
+mod httpstat;
+
+#[cfg(feature = "demo-tenant")]
 mod tenant;
 
 // Global error handler for the application
@@ -164,11 +171,16 @@ fn init_logger() {
         .init();
 }
 
+/// 进程级 OTLP provider 句柄：优雅退出时 `shutdown` 刷出残余 span。
+static OTEL_PROVIDER: std::sync::OnceLock<opentelemetry_sdk::trace::SdkTracerProvider> =
+    std::sync::OnceLock::new();
+
 /// 构造 OTLP tracing layer。配置缺失 / 构造失败时返回 None，
 /// 让上游的 `.with(None)` 静默忽略——与"未启用"语义等价。
 ///
 /// 用 HTTP/Protobuf 传输（最通用、最少 SDK 依赖）。
-fn build_otel_layer<S>() -> Option<tracing_opentelemetry::OpenTelemetryLayer<S, opentelemetry_sdk::trace::Tracer>>
+fn build_otel_layer<S>()
+-> Option<tracing_opentelemetry::OpenTelemetryLayer<S, opentelemetry_sdk::trace::Tracer>>
 where
     S: tracing::Subscriber + for<'span> tracing_subscriber::registry::LookupSpan<'span>,
 {
@@ -194,8 +206,9 @@ where
         .build();
     let tracer = opentelemetry::trace::TracerProvider::tracer(&provider, "tibba");
 
-    // 设为全局 provider，让 opentelemetry::global::tracer(...) 也能拿到
-    opentelemetry::global::set_tracer_provider(provider);
+    // 克隆一份挂全局，原件存 OnceLock 供进程退出时 shutdown
+    opentelemetry::global::set_tracer_provider(provider.clone());
+    let _ = OTEL_PROVIDER.set(provider);
     // 注册 W3C Trace Context 全局 propagator：入站 otel_trace 中间件据此提取上游
     // traceparent，出站 tibba-request 据此注入，二者共用同一传播格式串起跨服务调用链。
     // 仅在 OTLP 启用时设置，关闭时沿用默认 no-op propagator，提取 / 注入均零开销。
@@ -206,8 +219,21 @@ where
     Some(tracing_opentelemetry::layer().with_tracer(tracer))
 }
 
+/// 优雅关闭 OTLP：刷出 batch 中未导出的 span。未启用 telemetry 时为 no-op。
+fn shutdown_otel() {
+    if let Some(provider) = OTEL_PROVIDER.get() {
+        if let Err(e) = provider.shutdown() {
+            warn!(target: LOG_TARGET, error = %e, "otel provider shutdown failed");
+        } else {
+            info!(target: LOG_TARGET, "otel provider shut down");
+        }
+    }
+}
+
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
     run_before_tasks().await?;
+    // before hooks 已就绪 DB/Redis/OpenDAL/AppState → 组装显式 DI 容器
+    let ctx = app_ctx::AppCtx::install_from_globals()?;
     run_scheduler_jobs().await?;
 
     // 注册异步任务 handler 并启动 worker（DB 池已在 run_before_tasks 中初始化）。
@@ -216,68 +242,91 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // 注册 i18n 本地化目录（按 Accept-Language 本地化错误响应 message）
     i18n::init();
     // 持有句柄以便进程退出前优雅排空在途任务（见下方 serve 之后的 shutdown）
-    let job_workers = tibba_job::start(sql::get_db_pool(), 4);
+    let job_workers = tibba_job::start(ctx.pool, 4);
 
     let basic_config = config::must_get_basic_config();
-    let app = new_router()?;
+    let app = new_router(ctx)?;
+
+    // 可选中间件开关（默认全开）；最小服务可用 MiddlewareOptions::minimal() 裁剪
+    let mw = MiddlewareOptions::default();
+    info!(
+        target: LOG_TARGET,
+        otel = mw.otel,
+        http_cache = mw.http_cache,
+        i18n = mw.i18n,
+        api_key = mw.api_key,
+        csrf = mw.csrf,
+        "middleware options"
+    );
+
+    // CORS：配置白名单 + 生产 fail-fast（禁止任意来源）
+    let mut cors_cfg = Cors::default().with_allow_credentials(basic_config.cors_allow_credentials);
+    for origin in &basic_config.cors_allow_origins {
+        cors_cfg = cors_cfg.add_allow_origin(origin);
+    }
+    if is_production() {
+        cors_cfg
+            .assert_production_safe()
+            .map_err(|msg| -> Box<dyn std::error::Error> { msg.into() })?;
+    }
 
     let predicate = SizeAbove::new(1024)
         .and(NotForContentType::GRPC)
         .and(NotForContentType::IMAGES)
         .and(NotForContentType::SSE);
-    let state = get_app_state();
+    let state = ctx.state;
     // 包成 Arc 以便 session 与 api_key_auth 两个中间件共享同一份配置
     let session_params = Arc::new(config::get_session_params()?);
-    let app = app.layer(
-        // service build layer execute by add order
+
+    // 外层固定：错误处理 / 压缩 / 超时 / body limit / request_id /（可选）otel
+    // Tower ServiceBuilder 按添加顺序包在请求路径外侧。
+    let mut app = app.layer(
         ServiceBuilder::new()
             .layer(HandleErrorLayer::new(handle_error))
             .layer(CompressionLayer::new().compress_when(predicate))
             .timeout(basic_config.timeout)
-            // 全局请求体上限，防超大请求体 DoS；上传路由用 DefaultBodyLimit::disable() 豁免
             .layer(DefaultBodyLimit::max(GLOBAL_BODY_LIMIT))
-            // request_id 挂在最外层（仅次于错误处理 / 压缩），保证 entry / stats /
-            // 业务 handler 都能从扩展中拿到 RequestId
-            .layer(from_fn(request_id))
-            // 分布式追踪：紧随 request_id，为每个请求建立服务端 span 并提取上游 trace 上下文，
-            // 使 span 覆盖后续所有中间件与 handler；未启用 OTLP 时退化为轻量 no-op
-            .layer(from_fn(otel_trace))
-            // 安全响应头：紧随 request_id，覆盖所有正常业务响应（含静态资源 / JSON）。
-            // 默认基线（HSTS / nosniff / X-Frame-Options DENY / Referrer-Policy）；
-            // CSP 需按前端资源定制，故默认留空，由部署侧 with_content_security_policy 开启。
-            .layer(from_fn_with_state(SecurityHeaders::default(), security_headers))
-            // CORS：紧随安全头。预检（OPTIONS）在此短路返回 204，不进入下方 entry/stats/
-            // session 与业务 handler。默认任意来源、无凭据；生产应 add_allow_origin 收敛来源、
-            // 并按需 with_allow_credentials(true) 以支持携带 cookie 的跨域请求。
-            .layer(from_fn_with_state(Arc::new(Cors::default()), cors))
-            // HTTP 缓存：为 GET 响应自动生成 ETag 并处理 If-None-Match → 304。挂在压缩层
-            // 内侧，对未压缩响应体计算 ETag；默认 Cache-Control: no-cache（每次带 ETag 回源校验）。
-            .layer(from_fn_with_state(HttpCache::default(), http_cache))
-            // i18n：按 Accept-Language 本地化错误响应 message。挂在 http_cache 内侧，
-            // 使 ETag 基于本地化后的响应体计算；未注册目录 / 无匹配翻译时零开销透传。
-            .layer(from_fn(tibba_i18n::i18n))
-            .layer(from_fn_with_state(state, entry))
-            .layer(from_fn_with_state(state, stats))
-            .layer(from_fn_with_state(
-                (cache::get_redis_cache(), session_params.clone()),
-                session,
-            ))
-            // API Key 鉴权：紧随 session（更内层）。带有效 tibba_ 令牌时注入已登录
-            // Session，覆盖 session 中间件放入的空 Session，使 UserSession/AdminSession
-            // 提取器对 API Key 请求透明工作；无令牌/无效令牌则原样放行（按未登录处理）
-            .layer(from_fn_with_state(
-                (
-                    sql::get_db_pool(),
-                    cache::get_redis_cache(),
-                    session_params.clone(),
-                ),
-                api_key_auth,
-            ))
-            // CSRF：紧随鉴权层（更内层）。对浏览器 cookie 会话的状态变更请求做 double-submit
-            // 校验；安全方法与携带 Authorization/X-API-Key 的 API 客户端自动豁免（见 validate_csrf）
-            .layer(from_fn(validate_csrf))
-            .layer(from_fn_with_state(state, processing_limit)),
+            .layer(from_fn(request_id)),
     );
+    if mw.otel {
+        // 无 OTLP endpoint 时 otel_trace 内部 no-op；开关关掉则整层不挂
+        app = app.layer(from_fn(otel_trace));
+    }
+
+    // 安全头 + CORS 始终开启（CORS 策略由配置收敛）
+    app = app
+        .layer(from_fn_with_state(
+            SecurityHeaders::default().with_content_security_policy(
+                "object-src 'none'; frame-ancestors 'none'; base-uri 'self'",
+            ),
+            security_headers,
+        ))
+        .layer(from_fn_with_state(Arc::new(cors_cfg), cors));
+
+    if mw.http_cache {
+        app = app.layer(from_fn_with_state(HttpCache::default(), http_cache));
+    }
+    if mw.i18n {
+        app = app.layer(from_fn(tibba_i18n::i18n));
+    }
+    app = app
+        .layer(from_fn_with_state(state, entry))
+        .layer(from_fn_with_state(state, stats))
+        .layer(from_fn_with_state(
+            (ctx.cache, session_params.clone()),
+            session,
+        ));
+    if mw.api_key {
+        // API Key：紧随 session。有效令牌注入登录 Session；无效则按未登录放行
+        app = app.layer(from_fn_with_state(
+            (ctx.pool, ctx.cache, session_params.clone()),
+            api_key_auth,
+        ));
+    }
+    if mw.csrf {
+        app = app.layer(from_fn(validate_csrf));
+    }
+    let app = app.layer(from_fn_with_state(state, processing_limit));
     state.run();
 
     info!("listening on http://{}/", basic_config.listen);
@@ -291,7 +340,35 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // HTTP 已优雅排空（不再有新请求入队任务），再排空在途异步任务：
     // 通知 worker 停止认领、跑完手头任务后退出，最多等 JOB_DRAIN_TIMEOUT
+    let pool = ctx.pool;
+    if let Ok(before) = tibba_job::JobQueue::new(pool).stats().await {
+        info!(
+            target: LOG_TARGET,
+            pending = before.pending,
+            running = before.running,
+            "draining job workers before exit"
+        );
+    }
     job_workers.shutdown(JOB_DRAIN_TIMEOUT).await;
+    // 排空后再采一次：便于运维判断 JOB_DRAIN_TIMEOUT 是否够；残留在途任务将由 reaper 重排
+    if let Ok(after) = tibba_job::JobQueue::new(pool).stats().await {
+        if after.running > 0 {
+            warn!(
+                target: LOG_TARGET,
+                pending = after.pending,
+                running = after.running,
+                "job workers drained with in-flight tasks remaining; reaper will requeue them"
+            );
+        } else {
+            info!(
+                target: LOG_TARGET,
+                pending = after.pending,
+                "job workers drained cleanly"
+            );
+        }
+    }
+    // 在进程退出前刷出 OTLP 残余 span，避免丢最后一批请求追踪
+    shutdown_otel();
     Ok(())
 }
 
@@ -305,10 +382,55 @@ async fn start() {
     }
 }
 
+/// 进程 panic 时的 best-effort 企业微信告警。
+///
+/// - 未设置 / 空 `TIBBA_PANIC_WECOM_KEY` → 静默跳过
+/// - 发送失败只写 stderr，不再 panic
+fn alert_panic_best_effort(message: &str) {
+    let Ok(key) = env::var("TIBBA_PANIC_WECOM_KEY") else {
+        return;
+    };
+    if key.is_empty() {
+        return;
+    }
+    let message = message.to_string();
+    // join 带超时：告警最多挡退出 ~3s，避免 hook 挂死
+    let handle = std::thread::spawn(move || {
+        let rt = match tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(rt) => rt,
+            Err(e) => {
+                eprintln!("panic alert: runtime build failed: {e}");
+                return;
+            }
+        };
+        rt.block_on(async move {
+            let notifier = match tibba_notify::WecomRobotNotifier::new() {
+                Ok(n) => n,
+                Err(e) => {
+                    eprintln!("panic alert: wecom init failed: {e}");
+                    return;
+                }
+            };
+            use tibba_notify::{Notifier, NotifyMessage};
+            let msg = NotifyMessage::new("tibba panic", message);
+            if let Err(e) = notifier.send(&key, &msg).await {
+                eprintln!("panic alert: send failed: {e}");
+            }
+        });
+    });
+    let _ = handle.join();
+}
+
 fn main() {
-    std::panic::set_hook(Box::new(|e| {
-        // TODO send alert
-        error!(target: LOG_TARGET, event = "panic", message = e.to_string());
+    std::panic::set_hook(Box::new(|info| {
+        let message = info.to_string();
+        error!(target: LOG_TARGET, event = "panic", message = %message);
+        // best-effort 告警：环境变量 TIBBA_PANIC_WECOM_KEY = 企业微信机器人 key。
+        // 独立线程 + current_thread runtime，避免在 hook 里依赖可能已崩的全局 runtime。
+        alert_panic_best_effort(&message);
         std::process::exit(1);
     }));
     init_logger();

@@ -36,10 +36,10 @@ struct WebTemplates;
 struct SqlTemplates;
 
 // 通用 src 文件（所有项目均需要）
+const APP_CTX_RS: &str = include_str!("../../src/app_ctx.rs");
 const CACHE_RS: &str = include_str!("../../src/cache.rs");
 const CONFIG_RS: &str = include_str!("../../src/config.rs");
 const DAL_RS: &str = include_str!("../../src/dal.rs");
-const ROUTER_RS: &str = include_str!("../../src/router.rs");
 const SQL_RS: &str = include_str!("../../src/sql.rs");
 const STATE_RS: &str = include_str!("../../src/state.rs");
 const ADMIN_WEB_RS: &str = include_str!("../../src/admin_web.rs");
@@ -47,8 +47,9 @@ const ADMIN_WEB_RS: &str = include_str!("../../src/admin_web.rs");
 // 独立项目 Cargo.toml 模板（已解析 workspace 依赖、移除 workspace 配置）
 const CARGO_TOML_TPL: &str = include_str!("../templates/Cargo.toml");
 
-// main.rs 模板（已移除 tibba 特定模块：httpstat、web_page_stat、llm 示例）
+// main.rs / router 模板（精简：无 docker/httpstat/job 样板业务）
 const MAIN_RS_TPL: &str = include_str!("../templates/main.rs");
+const ROUTER_RS_TPL: &str = include_str!("../templates/router.rs");
 
 // Makefile 模板（裁剪自 workspace 根 Makefile，移除 workspace 专属目标）
 const MAKEFILE_TPL: &str = include_str!("../templates/Makefile");
@@ -86,13 +87,14 @@ fn write_executable(dir: &Path, relative: &str, content: &str) -> std::io::Resul
 fn generate(name: &str, dir: &Path) -> std::io::Result<()> {
     fs::create_dir_all(dir)?;
 
-    // 通用 src 文件，直接复制
+    // 通用 src 文件，直接复制（含 AppCtx DI 入口）
+    write_text(dir, "src/app_ctx.rs", APP_CTX_RS)?;
     write_text(dir, "src/cache.rs", CACHE_RS)?;
     write_text(dir, "src/config.rs", CONFIG_RS)?;
     write_text(dir, "src/dal.rs", DAL_RS)?;
     write_text(dir, "src/sql.rs", SQL_RS)?;
     write_text(dir, "src/admin_web.rs", ADMIN_WEB_RS)?;
-    write_text(dir, "src/router.rs", ROUTER_RS)?;
+    write_text(dir, "src/router.rs", ROUTER_RS_TPL)?;
 
     // state.rs 替换项目名称
     let state = STATE_RS.replace(
@@ -101,8 +103,10 @@ fn generate(name: &str, dir: &Path) -> std::io::Result<()> {
     );
     write_text(dir, "src/state.rs", &state)?;
 
-    // main.rs 从模板生成，替换环境变量前缀占位符
-    let main = MAIN_RS_TPL.replace("{{NAME_UPPER}}", &name.to_uppercase());
+    // main.rs 从模板生成，替换 tracing target 占位符
+    let main = MAIN_RS_TPL
+        .replace("{{NAME}}", name)
+        .replace("{{NAME_UPPER}}", &name.to_uppercase());
     write_text(dir, "src/main.rs", &main)?;
 
     // configs/ 目录，直接复制

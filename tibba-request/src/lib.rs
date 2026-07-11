@@ -54,6 +54,9 @@ pub enum Error {
         service: String,
         source: serde_json::Error,
     },
+    /// 目标地址指向内部网络（私网 / 回环 / 链路本地 / 云元数据），被 SSRF 防护拦截。
+    #[snafu(display("{service} blocked internal target: {host}"))]
+    BlockedTarget { service: String, host: String },
 }
 
 impl From<Error> for BaseError {
@@ -85,6 +88,12 @@ impl From<Error> for BaseError {
                 )
             }
             Error::Serde { service, source } => (service, BaseError::new(source)),
+            Error::BlockedTarget { service, host } => (
+                service,
+                BaseError::new(format!("blocked internal target: {host}"))
+                    .with_status(403)
+                    .with_exception(false),
+            ),
         };
         err.with_sub_category(&service).with_category("request")
     }

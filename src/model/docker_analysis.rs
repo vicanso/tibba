@@ -12,11 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::app_ctx::get_app_ctx;
 use crate::config::{must_get_diving_config, must_get_email_config};
-use crate::sql::get_db_pool;
 use ctor::ctor;
 use serde::{Deserialize, Serialize};
-use tibba_notify::{EmailNotifier, MultiNotifier, Notifier, NotifyMessage, WecomRobotNotifier};
 use snafu::{OptionExt, ResultExt, Snafu};
 use sqlx::{FromRow, PgPool};
 use std::sync::Arc;
@@ -28,6 +27,7 @@ use tibba_model_token::{
     LLM_PROVIDER_ANTHROPIC, SERVICE_LLM, TokenLlmModel, TokenPriceModel, TokenService,
     TokenUsageInsertParams,
 };
+use tibba_notify::{EmailNotifier, MultiNotifier, Notifier, NotifyMessage, WecomRobotNotifier};
 use tibba_scheduler::{register_job_task, singleton_cron_job};
 use tracing::{error, info, warn};
 
@@ -289,7 +289,7 @@ impl DockerAnalysisModel {
 }
 
 async fn run_docker_analysis() -> Result<usize> {
-    let pool = get_db_pool();
+    let pool = get_app_ctx().pool;
     let ids = DockerAnalysisModel::list_waiting_ids(pool).await?;
 
     if ids.is_empty() {
@@ -470,7 +470,7 @@ async fn analyze_image(record: &DockerAnalysisRecord) -> Result<DockerAnalysisRe
 
     info!(target: LOG_TARGET, id = record.id, "diving image success");
 
-    let pool = get_db_pool();
+    let pool = get_app_ctx().pool;
     let prev_llm =
         DockerAnalysisModel::find_last_llm_result(pool, &record.repo_name, &record.tag, record.id)
             .await

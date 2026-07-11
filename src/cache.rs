@@ -14,8 +14,8 @@
 
 use super::config::must_get_config;
 use ctor::ctor;
-use once_cell::sync::OnceCell;
 use std::sync::Arc;
+use std::sync::OnceLock;
 use std::time::Duration;
 use tibba_cache::{RedisCache, RedisClient, RedisCmdStat, new_redis_client};
 use tibba_error::Error;
@@ -29,8 +29,8 @@ use tracing::{error, info, warn};
 const LOG_TARGET: &str = "tibba:redis";
 
 type Result<T> = std::result::Result<T, Error>;
-static REDIS_CACHE: OnceCell<RedisCache> = OnceCell::new();
-static REDIS_CLIENT: OnceCell<RedisClient> = OnceCell::new();
+static REDIS_CACHE: OnceLock<RedisCache> = OnceLock::new();
+static REDIS_CLIENT: OnceLock<RedisClient> = OnceLock::new();
 
 fn cmd_stat(stat: RedisCmdStat) {
     let elapsed = stat.elapsed.as_millis();
@@ -49,10 +49,16 @@ fn cmd_stat(stat: RedisCmdStat) {
 }
 
 fn get_redis_client() -> Result<&'static RedisClient> {
-    REDIS_CLIENT.get_or_try_init(|| {
-        let client = new_redis_client(&must_get_config().sub_config("redis"))?;
-        Ok(client.with_stat_callback(&cmd_stat))
-    })
+    // OnceLock::get_or_try_init 尚未稳定；先 get，未初始化再构造 + set（竞态时取胜者）
+    if let Some(client) = REDIS_CLIENT.get() {
+        return Ok(client);
+    }
+    let client =
+        new_redis_client(&must_get_config().sub_config("redis"))?.with_stat_callback(&cmd_stat);
+    let _ = REDIS_CLIENT.set(client);
+    REDIS_CLIENT
+        .get()
+        .ok_or_else(|| Error::new("redis client not initialized").with_category("redis"))
 }
 
 pub fn get_redis_cache() -> &'static RedisCache {
@@ -70,6 +76,12 @@ pub fn get_redis_cache() -> &'static RedisCache {
 /// 多副本部署时，仅抢到锁（SET NX）的实例执行该次定时任务，其余实例跳过本次触发。
 /// 抢锁失败（通常意味着 Redis 不可用）时返回 `false`：本次全体跳过，
 /// 「宁可少跑一次，也不要多副本重复执行」，并打 warn 便于排障。
+///
+/// 当前仅 `demo-detector` / `demo-docker` 样板任务使用；关 feature 时保留 API 供业务接入。
+#[cfg_attr(
+    not(any(feature = "demo-detector", feature = "demo-docker")),
+    allow(dead_code)
+)]
 pub fn redis_try_lock() -> TryLock {
     Arc::new(|key: String, ttl: Duration| -> LockFuture {
         Box::pin(async move {

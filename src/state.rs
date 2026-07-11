@@ -14,8 +14,8 @@
 
 use super::config::must_get_basic_config;
 use ctor::ctor;
-use once_cell::sync::{Lazy, OnceCell};
 use std::sync::Arc;
+use std::sync::{LazyLock, OnceLock};
 use std::time::Duration;
 use tibba_error::Error;
 use tibba_hook::{BoxFuture, Task, register_task};
@@ -32,7 +32,7 @@ const LOG_TARGET: &str = "tibba:state";
 
 type Result<T> = std::result::Result<T, Error>;
 
-static STATE: OnceCell<AppState> = OnceCell::new();
+static STATE: OnceLock<AppState> = OnceLock::new();
 
 #[derive(Debug, Default)]
 struct Performance {
@@ -47,7 +47,8 @@ struct Performance {
     written_mb: u32,
     read_mb: u32,
 }
-static PERFORMANCE: Lazy<RwLock<Performance>> = Lazy::new(|| RwLock::new(Performance::default()));
+static PERFORMANCE: LazyLock<RwLock<Performance>> =
+    LazyLock::new(|| RwLock::new(Performance::default()));
 
 pub fn get_app_state() -> &'static AppState {
     STATE.get_or_init(|| {

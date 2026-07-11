@@ -12,6 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//! Redis 缓存与连接池。
+//!
+//! ## 热点路径约定（调用方应优先复用本 crate）
+//! | 场景 | 推荐 API | 说明 |
+//! |------|----------|------|
+//! | Session | `RedisCache` + 前缀 `session:` | 中间件层已用，勿在 handler 再绕过 |
+//! | API Key 校验 | `get_struct` / 短 TTL | 避免每次请求查 DB |
+//! | 登录防爆破 | `incr` 固定窗口 | 见 `login_guard` / `RedisIpRateLimit` |
+//! | Feature flag | 进程内 + Redis 双层 | `two_level_store` |
+//! | 分布式锁 | `lock` | 定时任务 singleton |
+//!
+//! 默认 TTL 10 分钟；生产键名务必 `with_prefix` 隔离命名空间。
+
 use serde::Deserialize;
 use snafu::{ResultExt, Snafu};
 use std::time::Duration;

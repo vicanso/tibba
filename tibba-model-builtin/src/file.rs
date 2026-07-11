@@ -346,7 +346,7 @@ impl Model for FileModel {
     ) -> Result<Vec<Self::Output>> {
         let mut qb = QueryBuilder::new("SELECT * FROM files");
         self.push_conditions(&mut qb, params)?;
-        params.push_pagination(&mut qb);
+        params.push_pagination(&mut qb, self.orderable_columns());
         let files = qb
             .build_query_as::<FileSchema>()
             .fetch_all(pool)

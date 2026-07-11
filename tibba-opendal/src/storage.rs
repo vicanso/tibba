@@ -40,7 +40,12 @@ impl From<opendal::raw::PresignedRequest> for PresignResult {
         let headers = req
             .header()
             .iter()
-            .map(|(k, v)| (k.as_str().to_string(), v.to_str().unwrap_or_default().to_string()))
+            .map(|(k, v)| {
+                (
+                    k.as_str().to_string(),
+                    v.to_str().unwrap_or_default().to_string(),
+                )
+            })
             .collect();
         Self {
             method: req.method().as_str().to_string(),

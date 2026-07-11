@@ -319,7 +319,7 @@ impl Model for TokenLlmModel {
     ) -> Result<Vec<Self::Output>> {
         let mut qb: QueryBuilder<Postgres> = QueryBuilder::new("SELECT * FROM token_llms");
         self.push_conditions(&mut qb, params)?;
-        params.push_pagination(&mut qb);
+        params.push_pagination(&mut qb, self.orderable_columns());
         let rows = qb
             .build_query_as::<TokenLlmSchema>()
             .fetch_all(pool)

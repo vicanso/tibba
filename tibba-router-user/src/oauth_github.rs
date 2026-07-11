@@ -269,7 +269,9 @@ async fn land_user(
     let account = allocate_account(pool, &gh.login).await?;
     // 64 字符 sha256，用户不可知，满足 x_user_password 验证（≥32 chars）
     let random_password = sha256(format!("{}{}", uuid(), uuid()).as_bytes());
-    let new_id = user_model.register(pool, &account, &random_password).await?;
+    let new_id = user_model
+        .register(pool, &account, &random_password)
+        .await?;
 
     // 首个注册用户自动 ROLE_SUPER_ADMIN（与表单注册流程对齐）
     if new_id == 1 {

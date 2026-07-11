@@ -227,6 +227,25 @@ impl Session {
         }
     }
 
+    /// 是否持有 Admin 或 SuperAdmin 角色（与 [`AdminSession`] 提取器判定一致）。
+    #[must_use]
+    pub fn is_admin(&self) -> bool {
+        self.data.roles.iter().any(|role| {
+            let r = Role::from(role.as_str());
+            r == Role::Admin || r == Role::SuperAdmin
+        })
+    }
+
+    /// 要求 Admin / SuperAdmin 角色，否则 403。
+    pub fn require_admin(&self) -> Result<()> {
+        self.validate_login()?;
+        if self.is_admin() {
+            Ok(())
+        } else {
+            Err(Error::UserNotAdmin.into())
+        }
+    }
+
     /// 续期：累加续期计数并更新签发时间戳。
     pub fn refresh(&mut self) {
         self.data.renewal_count += 1;

@@ -14,6 +14,20 @@ default-run = "tibba"
 # Set the unwrap_used lint level to deny
 unwrap_used = "deny"
 
+# 可选业务样板：默认 full 与历史行为一致。
+# 最小二进制：cargo build --no-default-features
+# 按需：cargo build --no-default-features --features demo-docker,demo-tenant
+[features]
+default = ["full"]
+full = ["demo-docker", "demo-detector", "demo-tenant", "demo-token"]
+# Token 计费 / 账户 / LLM 计价模型（tibba-model-token）+ 注册赠分任务
+demo-token = ["dep:tibba-model-token"]
+# Docker 镜像分析 API + 后台任务（计费依赖 token 表，故联动 demo-token）
+demo-docker = ["demo-token"]
+# HTTP 探测调度 / 告警（src/httpstat，依赖 http-stat + quick-js）
+demo-detector = ["dep:http-stat", "dep:quick-js"]
+# 行级多租户演示路由 /tenant
+demo-tenant = []
 
 [dependencies]
 axum = { workspace = true }
@@ -23,12 +37,11 @@ ctor = "1.0.7"
 futures = { workspace = true }
 hostname = { workspace = true }
 http = { workspace = true }
-http-stat = "0.6.2"
+http-stat = { version = "0.6.2", optional = true }
 metrics = { workspace = true }
 metrics-exporter-prometheus = { workspace = true }
 nanoid = { workspace = true }
-once_cell = { workspace = true }
-quick-js = "0.4.1"
+quick-js = { version = "0.4.1", optional = true }
 rand = { workspace = true }
 reqwest = { workspace = true }
 resend-rs = { workspace = true }
@@ -52,7 +65,7 @@ tibba-llm = { path = "./tibba-llm" }
 tibba-middleware = { path = "./tibba-middleware" }
 tibba-model = { path = "./tibba-model" }
 tibba-model-builtin = { path = "./tibba-model-builtin" }
-tibba-model-token = { path = "./tibba-model-token" }
+tibba-model-token = { path = "./tibba-model-token", optional = true }
 tibba-notify = { path = "./tibba-notify" }
 tibba-oauth = { path = "./tibba-oauth" }
 tibba-opendal = { path = "./tibba-opendal" }
@@ -249,3 +262,7 @@ zstd = "0.13.3"
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }
+serde_json = { workspace = true }
+tibba-error = { path = "./tibba-error" }
+tibba-middleware = { path = "./tibba-middleware" }
+tibba-session = { path = "./tibba-session" }

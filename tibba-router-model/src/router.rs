@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{RecordNotFoundSnafu, get_registered_model};
+use crate::{RecordNotFoundSnafu, authorize_model_access, get_registered_model};
 use axum::Json;
 use axum::Router;
 use axum::extract::State;
@@ -24,7 +24,7 @@ use snafu::OptionExt;
 use sqlx::PgPool;
 use tibba_error::Error;
 use tibba_model::{ModelListParams, SchemaOption, SchemaView};
-use tibba_session::{AdminSession, UserSession};
+use tibba_session::UserSession;
 use tibba_util::{JsonParams, JsonResult, QueryParams};
 use tibba_validator::x_schema_name;
 use utoipa::{IntoParams, OpenApi, ToSchema};
@@ -52,8 +52,9 @@ async fn get_schema(
     QueryParams(params): QueryParams<GetSchemaParams>,
     _session: UserSession,
 ) -> JsonResult<SchemaView> {
-    let model = get_registered_model(&params.name)?;
-    Ok(Json(model.schema_view(pool).await))
+    // schema 仅需登录：前端表单渲染；数据读写另有 list/detail 鉴权
+    let entry = get_registered_model(&params.name)?;
+    Ok(Json(entry.model.schema_view(pool).await))
 }
 
 #[derive(Deserialize, Validate, IntoParams)]
@@ -85,7 +86,7 @@ struct ListParams {
 async fn list_model(
     State(pool): State<&'static PgPool>,
     QueryParams(params): QueryParams<ListParams>,
-    _session: AdminSession,
+    session: UserSession,
 ) -> JsonResult<Value> {
     let query_params = ModelListParams {
         page: params.page,
@@ -94,9 +95,11 @@ async fn list_model(
         keyword: params.keyword,
         filters: params.filters,
     };
-    let model = get_registered_model(&params.model)?;
+    let entry = get_registered_model(&params.model)?;
+    authorize_model_access(&session, &entry.permissions, false)?;
     Ok(Json(
-        model
+        entry
+            .model
             .list_and_count(pool, params.count, &query_params)
             .await?,
     ))
@@ -124,10 +127,12 @@ struct GetModelParams {
 async fn get_detail(
     State(pool): State<&'static PgPool>,
     QueryParams(params): QueryParams<GetModelParams>,
-    _session: AdminSession,
+    session: UserSession,
 ) -> JsonResult<Value> {
-    let model = get_registered_model(&params.model)?;
-    let data = model
+    let entry = get_registered_model(&params.model)?;
+    authorize_model_access(&session, &entry.permissions, false)?;
+    let data = entry
+        .model
         .get_by_id(pool, params.id)
         .await?
         .context(RecordNotFoundSnafu {
@@ -155,11 +160,12 @@ struct DeleteModelParams {
 )]
 async fn delete_model(
     State(pool): State<&'static PgPool>,
-    _session: AdminSession,
+    session: UserSession,
     QueryParams(params): QueryParams<DeleteModelParams>,
 ) -> Result<StatusCode> {
-    let model = get_registered_model(&params.model)?;
-    model.delete_by_id(pool, params.id).await?;
+    let entry = get_registered_model(&params.model)?;
+    authorize_model_access(&session, &entry.permissions, true)?;
+    entry.model.delete_by_id(pool, params.id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -183,11 +189,15 @@ struct UpdateModelParams {
 )]
 async fn update_model(
     State(pool): State<&'static PgPool>,
-    _session: AdminSession,
+    session: UserSession,
     JsonParams(params): JsonParams<UpdateModelParams>,
 ) -> Result<StatusCode> {
-    let model = get_registered_model(&params.model)?;
-    model.update_by_id(pool, params.id, params.data).await?;
+    let entry = get_registered_model(&params.model)?;
+    authorize_model_access(&session, &entry.permissions, true)?;
+    entry
+        .model
+        .update_by_id(pool, params.id, params.data)
+        .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -209,11 +219,13 @@ struct CreateModelParams {
 )]
 async fn create_model(
     State(pool): State<&'static PgPool>,
-    session: AdminSession,
+    session: UserSession,
     JsonParams(params): JsonParams<CreateModelParams>,
 ) -> JsonResult<Value> {
-    let model = get_registered_model(&params.model)?;
-    let id = model
+    let entry = get_registered_model(&params.model)?;
+    authorize_model_access(&session, &entry.permissions, true)?;
+    let id = entry
+        .model
         .insert(pool, params.data, session.get_user_id())
         .await?;
     Ok(Json(json!({ "id": id })))
@@ -245,8 +257,9 @@ async fn search_model(
     QueryParams(params): QueryParams<SearchParams>,
     _session: UserSession,
 ) -> JsonResult<SearchOptionsResp> {
-    let model = get_registered_model(&params.model)?;
-    let options = model.search_options(pool, params.keyword).await?;
+    // 下拉搜索与 schema 相同：仅需登录（选项本身无敏感写权限）
+    let entry = get_registered_model(&params.model)?;
+    let options = entry.model.search_options(pool, params.keyword).await?;
     Ok(Json(SearchOptionsResp { options }))
 }
 

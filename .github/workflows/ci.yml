@@ -1,0 +1,50 @@
+# PR / push 质量门禁：fmt → clippy → test
+# 与 publish.yml（镜像构建）分离，避免每次 lint 都跑多架构 Docker。
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  check:
+    name: fmt / clippy / test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          # workspace 较大，共享 key 前缀以便 PR 与 main 复用
+          shared-key: "ci-workspace"
+
+      - name: cargo fmt --check
+        run: cargo fmt --all -- --check
+
+      - name: cargo clippy
+        # 与 Makefile `lint` 对齐：全 workspace + deny warnings
+        run: cargo clippy --workspace --all-targets -- --deny=warnings
+
+      - name: cargo test
+        # 单元 / 集成测试（不启真 DB；需 DB 的测例应自行 skip 或用 feature）
+        run: cargo test --workspace --all-targets
+
+      - name: feature matrix (minimal + full)
+        # 确认可选样板 feature 可开关编译，避免 cfg 漂移
+        run: |
+          cargo check -p tibba --no-default-features
+          cargo check -p tibba --features full

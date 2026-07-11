@@ -267,7 +267,7 @@ impl Model for ConfigurationModel {
     ) -> Result<Vec<Self::Output>> {
         let mut qb = QueryBuilder::new("SELECT * FROM configurations");
         self.push_conditions(&mut qb, params)?;
-        params.push_pagination(&mut qb);
+        params.push_pagination(&mut qb, self.orderable_columns());
         let configurations = qb
             .build_query_as::<ConfigurationSchema>()
             .fetch_all(pool)

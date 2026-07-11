@@ -50,6 +50,8 @@ use governor::{Quota, RateLimiter};
 use std::net::IpAddr;
 use std::num::NonZeroU32;
 use std::sync::Arc;
+use std::time::Duration;
+use tibba_cache::RedisCache;
 use tibba_error::Error as BaseError;
 use tracing::debug;
 
@@ -104,3 +106,58 @@ pub async fn ip_rate_limit(
     }
 }
 
+/// 基于 Redis 的 IP 限流状态：跨实例共享计数（固定窗口）。
+///
+/// 相比 [`IpRateLimitState`]（governor 内存计数，每实例独立配额），多副本部署下此实现
+/// 全局一致——所有实例累加同一个 Redis 计数器，配额不会因扩容而放大。
+#[derive(Clone)]
+pub struct RedisIpRateLimit {
+    cache: &'static RedisCache,
+    /// 命名空间，区分不同端点的配额桶（如 "login" / "email"）。
+    label: &'static str,
+    /// 窗口内允许的最大请求数。
+    max: i64,
+    /// 计数窗口长度。
+    window: Duration,
+}
+
+impl RedisIpRateLimit {
+    /// `label` 用于隔离不同端点的计数键；`max` 为窗口内上限；`window` 为窗口长度。
+    #[must_use]
+    pub fn new(
+        cache: &'static RedisCache,
+        label: &'static str,
+        max: i64,
+        window: Duration,
+    ) -> Self {
+        Self {
+            cache,
+            label,
+            max,
+            window,
+        }
+    }
+}
+
+/// 中间件：按 client IP 在 Redis 固定窗口内计数，超限返回 429。跨实例共享配额。
+///
+/// Redis 不可用时 `incr` 返回错误并上抛（fail-closed，宁可拒绝也不放过高频请求）；本应用
+/// 会话本就强依赖 Redis，故不额外引入可用性耦合。
+pub async fn redis_ip_rate_limit(
+    State(state): State<RedisIpRateLimit>,
+    ClientIp(ip): ClientIp,
+    req: Request,
+    next: Next,
+) -> Result<Response> {
+    let key = format!("rate:{}:{ip}", state.label);
+    // incr 原子自增并在首次设窗口 TTL（见 RedisCache::incr）
+    let count = state.cache.incr(&key, 1, Some(state.window)).await?;
+    if count > state.max {
+        debug!(target: LOG_TARGET, ip = %ip, label = state.label, "redis ip rate limit hit");
+        return Err(Error::RateLimited {
+            quota: format!("{}/{}s", state.max, state.window.as_secs()),
+        }
+        .into());
+    }
+    Ok(next.run(req).await)
+}

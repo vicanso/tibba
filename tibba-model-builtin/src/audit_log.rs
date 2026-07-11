@@ -181,7 +181,9 @@ impl AuditLogModel {
     /// 写一条审计日志。
     /// **注意**：调用方应忽略 Err，审计失败不能影响业务请求。
     pub async fn log(&self, pool: &Pool<Postgres>, params: AuditLogParams) -> Result<i64> {
-        let detail = params.detail.unwrap_or_else(|| Value::Object(Default::default()));
+        let detail = params
+            .detail
+            .unwrap_or_else(|| Value::Object(Default::default()));
         let row: (i64,) = sqlx::query_as(
             r#"INSERT INTO audit_logs
                  (user_id, action, target_type, target_id, detail,

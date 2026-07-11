@@ -77,10 +77,12 @@ impl From<Error> for BaseError {
                 .with_sub_category("csrf_mismatch")
                 .with_status(403)
                 .with_exception(false),
-            Error::RateLimited { quota } => BaseError::new(format!("rate limited (quota: {quota})"))
-                .with_sub_category("rate_limited")
-                .with_status(429)
-                .with_exception(false),
+            Error::RateLimited { quota } => {
+                BaseError::new(format!("rate limited (quota: {quota})"))
+                    .with_sub_category("rate_limited")
+                    .with_status(429)
+                    .with_exception(false)
+            }
             Error::IdempotencyBodyTooLarge { limit_bytes } => BaseError::new(format!(
                 "idempotency body too large (limit {limit_bytes} bytes)"
             ))
@@ -169,6 +171,7 @@ mod limit;
 mod rate_limit;
 mod request_id;
 mod security_headers;
+mod stack;
 mod stats;
 mod trace;
 mod tracker;
@@ -183,6 +186,7 @@ pub use limit::*;
 pub use rate_limit::*;
 pub use request_id::*;
 pub use security_headers::*;
+pub use stack::*;
 pub use stats::*;
 pub use trace::*;
 pub use tracker::*;
@@ -202,8 +206,8 @@ mod tests {
             "172.16.5.6",
             "192.168.0.1",
             "169.254.1.1",
-            "fd00::1",       // ULA
-            "fe80::1",       // link-local
+            "fd00::1", // ULA
+            "fe80::1", // link-local
         ] {
             let parsed: IpAddr = ip.parse().unwrap();
             assert!(is_trusted_proxy(parsed), "{ip} 应视为可信对端");

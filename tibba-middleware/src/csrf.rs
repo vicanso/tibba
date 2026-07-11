@@ -136,7 +136,7 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_csrf_exempt, constant_time_eq};
+    use super::{constant_time_eq, is_csrf_exempt};
     use axum::http::{HeaderMap, HeaderValue, Method, header};
 
     #[test]
@@ -168,7 +168,10 @@ mod tests {
     fn api_key_clients_are_exempt() {
         // Authorization: Bearer ...
         let mut with_auth = HeaderMap::new();
-        with_auth.insert(header::AUTHORIZATION, HeaderValue::from_static("Bearer tibba_x"));
+        with_auth.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer tibba_x"),
+        );
         assert!(is_csrf_exempt(&Method::POST, &with_auth));
 
         // X-API-Key（大小写不敏感）

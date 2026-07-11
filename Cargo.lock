@@ -5958,7 +5958,6 @@ dependencies = [
  "mime_guess2",
  "nanoid",
  "num_cpus",
- "once_cell",
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
@@ -6139,7 +6138,6 @@ dependencies = [
  "axum",
  "humantime-serde",
  "jsonwebtoken",
- "once_cell",
  "serde",
  "snafu",
  "tibba-error",
@@ -6476,6 +6474,7 @@ dependencies = [
  "axum",
  "snafu",
  "tibba-error",
+ "tibba-session",
 ]
 
 [[package]]

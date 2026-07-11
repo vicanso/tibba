@@ -24,7 +24,7 @@ use std::net::IpAddr;
 use std::time::Duration;
 use tibba_cache::RedisCache;
 use tibba_state::{AppState, CTX};
-use tracing::debug;
+use tracing::{debug, warn};
 
 /// 当前正在处理的请求数 gauge。Prometheus 端可用 `max_over_time(http_inflight[1d])`
 /// 计算历史峰值，无需在应用内维护 `peak_processing` 字段。
@@ -189,8 +189,14 @@ pub async fn error_limiter(
     next: Next,
 ) -> Result<Response> {
     let (key, ttl) = get_limit_params(&req, ip, &params);
-    // Check if current error count exceeds limit
-    let current_count = cache.get::<i64>(&key).await.unwrap_or(0);
+    // 读当前错误计数；Redis 出错时按软限流语义放行（不阻断正常流量），但记 warn 便于排障
+    let current_count = match cache.get::<i64>(&key).await {
+        Ok(count) => count,
+        Err(e) => {
+            warn!(target: LOG_TARGET, error = %e, "error_limiter read count failed, allowing");
+            0
+        }
+    };
     if current_count > params.max {
         return Err(Error::TooManyRequests {
             limit: params.max,
@@ -199,10 +205,11 @@ pub async fn error_limiter(
         .into());
     }
     let res = next.run(req).await;
-    // Increment counter only on error responses
-    if res.status().as_u16() >= 400 {
-        // Ignore Redis errors when incrementing
-        let _ = cache.incr(&key, 1, Some(ttl)).await;
+    // 仅错误响应计数；incr 失败不阻断响应，但记 warn，不再静默吞掉
+    if res.status().as_u16() >= 400
+        && let Err(e) = cache.incr(&key, 1, Some(ttl)).await
+    {
+        warn!(target: LOG_TARGET, error = %e, "error_limiter incr failed");
     }
     Ok(res)
 }

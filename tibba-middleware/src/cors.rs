@@ -146,6 +146,38 @@ impl Cors {
         self
     }
 
+    /// 当前是否「任意来源」（白名单为空）。
+    #[must_use]
+    pub fn is_open(&self) -> bool {
+        self.allow_origins.is_empty()
+    }
+
+    /// 是否允许携带凭据。
+    #[must_use]
+    pub fn allow_credentials(&self) -> bool {
+        self.allow_credentials
+    }
+
+    /// 已配置的来源白名单（只读）。
+    #[must_use]
+    pub fn allow_origins(&self) -> &[String] {
+        &self.allow_origins
+    }
+
+    /// 生产环境安全校验：禁止「任意来源」白名单为空。
+    ///
+    /// 宽松默认值只适合本地；生产必须 `add_allow_origin` 收敛，否则启动失败（fail-fast）。
+    pub fn assert_production_safe(&self) -> Result<(), String> {
+        if self.is_open() {
+            return Err(
+                "production CORS must set allow_origins (empty whitelist = reflect any Origin); \
+                 set basic.cors_allow_origins or TIBBA_WEB__BASIC__CORS_ALLOW_ORIGINS"
+                    .to_string(),
+            );
+        }
+        Ok(())
+    }
+
     /// 依据请求 `Origin` 解析应回显的 `Access-Control-Allow-Origin` 值。
     /// 返回 `None` 表示该来源不被允许（不输出该头，浏览器据此拦截）。
     fn resolve_origin(&self, origin: Option<&str>) -> Option<HeaderValue> {
@@ -300,7 +332,10 @@ mod tests {
             headers.get(ACCESS_CONTROL_ALLOW_ORIGIN).unwrap(),
             "https://ok.com"
         );
-        assert_eq!(headers.get(ACCESS_CONTROL_ALLOW_CREDENTIALS).unwrap(), "true");
+        assert_eq!(
+            headers.get(ACCESS_CONTROL_ALLOW_CREDENTIALS).unwrap(),
+            "true"
+        );
         assert_eq!(headers.get(VARY).unwrap(), "Origin");
     }
 

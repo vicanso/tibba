@@ -483,7 +483,11 @@ pub fn start(pool: &'static PgPool, concurrency: usize) -> JobWorkers {
     let mut handles = Vec::with_capacity(workers + 2);
     for i in 0..workers {
         let worker_id = format!("w-{i}");
-        handles.push(tokio::spawn(worker_loop(pool, worker_id, shutdown_rx.clone())));
+        handles.push(tokio::spawn(worker_loop(
+            pool,
+            worker_id,
+            shutdown_rx.clone(),
+        )));
     }
     handles.push(tokio::spawn(reaper_loop(pool, shutdown_rx.clone())));
     handles.push(tokio::spawn(metrics_loop(pool, shutdown_rx)));
@@ -495,7 +499,11 @@ pub fn start(pool: &'static PgPool, concurrency: usize) -> JobWorkers {
 }
 
 /// 单个 worker 主循环：认领 → 分发 → ack / fail。收到关停信号后跑完手头任务即退出。
-async fn worker_loop(pool: &'static PgPool, worker_id: String, mut shutdown: watch::Receiver<bool>) {
+async fn worker_loop(
+    pool: &'static PgPool,
+    worker_id: String,
+    mut shutdown: watch::Receiver<bool>,
+) {
     let queue = JobQueue::new(pool);
     loop {
         // 关停后停止认领新任务即视为已排空（在途任务已在下方 await 跑完）
@@ -544,12 +552,16 @@ async fn worker_loop(pool: &'static PgPool, worker_id: String, mut shutdown: wat
 
 /// 按 job_type 路由到注册的 handler 执行；未注册视为失败（走重试 / 死信）。
 async fn dispatch(job: &ClaimedJob) -> Result<()> {
-    let Some(handler) = HANDLERS.get(job.job_type.as_str()).map(|h| h.value().clone()) else {
-        return Err(
-            BaseError::new(format!("no handler registered for job type: {}", job.job_type))
-                .with_category("job")
-                .with_sub_category("no_handler"),
-        );
+    let Some(handler) = HANDLERS
+        .get(job.job_type.as_str())
+        .map(|h| h.value().clone())
+    else {
+        return Err(BaseError::new(format!(
+            "no handler registered for job type: {}",
+            job.job_type
+        ))
+        .with_category("job")
+        .with_sub_category("no_handler"));
     };
     let ctx = JobContext {
         id: job.id,

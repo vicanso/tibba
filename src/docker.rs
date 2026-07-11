@@ -33,14 +33,18 @@ pub struct DockerTokenQuery {
     pub notify_force: bool,
 }
 
+/// Docker Hub webhook 推送元数据；仅部分字段参与业务，其余保留反序列化完整载荷。
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct DockerPushData {
     pub pushed_at: i64,
     pub pusher: String,
     pub tag: String,
 }
 
+/// Docker Hub 仓库标识；业务主要用 `repo_name`。
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct DockerRepository {
     pub name: String,
     pub namespace: String,
@@ -49,6 +53,7 @@ pub struct DockerRepository {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct DockerWebhookPayload {
     pub callback_url: Option<String>,
     pub push_data: DockerPushData,

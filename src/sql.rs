@@ -14,8 +14,8 @@
 
 use crate::config::must_get_config;
 use ctor::ctor;
-use once_cell::sync::OnceCell;
 use sqlx::PgPool;
+use std::sync::OnceLock;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, atomic::AtomicBool};
 use std::time::Duration;
@@ -26,7 +26,7 @@ use tibba_sql::{PoolStat, new_pg_pool};
 use tracing::info;
 
 type Result<T> = std::result::Result<T, Error>;
-static DB_POOL: OnceCell<PgPool> = OnceCell::new();
+static DB_POOL: OnceLock<PgPool> = OnceLock::new();
 
 pub fn get_db_pool() -> &'static PgPool {
     // init db pool is checked in init function

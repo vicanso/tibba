@@ -23,6 +23,15 @@
 //! ## 暴露策略
 //! Swagger UI 仅在 development / test 环境挂载（见 [`mount_swagger`]），
 //! 生产环境不暴露任何 API 表面。
+//!
+//! ## Schema 完整度
+//! - **静态核心 API**（`/users/*` 登录、session、文件上传等）：`utoipa` 注解 +
+//!   request/response schema，Swagger「Try it out」可用。
+//! - **动态 Model CRUD**（`/models/*`）：响应体随注册模型变化，文档只描述形状，
+//!   字段详情走运行时 `GET /models/schema?name=…`。
+//!
+//! 导出机器可读 JSON：dev 下访问 `/api-docs/openapi.json`，或
+//! `cargo run --bin export-openapi -- admin/openapi.json`（见 `src/bin/export-openapi.rs`）。
 
 use axum::Router;
 use tibba_util::{is_development, is_test};
@@ -46,6 +55,8 @@ struct ApiDoc;
 ///
 /// `api_prefix` 为部署侧配置的 API 前缀（如 `/api`），写进 `servers`，
 /// 使 Swagger UI 的「Try it out」请求带上正确前缀；为空时退化为 `/`。
+///
+/// 离线导出请用 `export-openapi` 二进制（逻辑与此 merge 列表对齐）。
 fn build_openapi(api_prefix: Option<&str>) -> utoipa::openapi::OpenApi {
     let mut doc = ApiDoc::openapi();
 

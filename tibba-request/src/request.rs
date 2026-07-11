@@ -25,7 +25,7 @@ use serde::de::DeserializeOwned;
 use snafu::ResultExt;
 use std::collections::HashMap;
 use std::future::Future;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::pin::Pin;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -255,8 +255,8 @@ fn retry_backoff(base: Duration, attempt: u32) -> Duration {
 }
 
 /// 简单熔断器：连续失败达 `threshold` 即打开，`cooldown` 内对请求快速失败；冷却结束后
-/// 自动恢复（下一次失败会再次打开）。非严格 half-open，MVP 足够。状态用原子 + 极短临界区
-/// 维护，**不跨 await 持锁**。
+/// 以**半开单探针**恢复（仅放行一个探测请求，成功则关闭、失败则重开）。状态用原子 + 极短
+/// 临界区维护，**不跨 await 持锁**。
 struct CircuitBreaker {
     /// 连续失败计数。
     failures: AtomicU32,
@@ -278,14 +278,19 @@ impl CircuitBreaker {
         }
     }
 
-    /// 是否放行本次请求。处于打开窗口内 → `false`；冷却结束 → 复位并放行。
+    /// 是否放行本次请求。处于打开 / 探测窗口内 → `false`；冷却结束 → 放行**单个**探测。
+    ///
+    /// 半开单探针：冷却结束后仅放行一个探测请求，并把窗口顺延一个 `cooldown`，使并发请求在
+    /// 探测期间仍被拒（避免冷却到期时全部涌入的 thundering herd）。探测结果由
+    /// `record_success`（关闭）/`record_failure`（重开）决定；探测若因异常未上报，窗口到期后
+    /// 自然允许下一次探测，不会永久卡死。mutex 串行化保证同一时刻只放行一个探测。
     fn allow(&self) -> bool {
         let mut guard = self.open_until.lock().unwrap_or_else(|e| e.into_inner());
         match *guard {
             Some(until) if Instant::now() < until => false,
-            // 冷却结束，恢复放行（失败再开）
+            // 冷却结束：放行本次作为探测，窗口顺延一个 cooldown 以拒绝其余并发请求
             Some(_) => {
-                *guard = None;
+                *guard = Some(Instant::now() + self.cooldown);
                 true
             }
             None => true,
@@ -340,23 +345,47 @@ struct ClientConfig {
     retry_base_delay: Duration,
     /// 可选熔断器：连续失败达阈值后在冷却期内快速失败
     circuit_breaker: Option<CircuitBreaker>,
+    /// 开启后拒绝目标解析到内部地址（私网 / 回环 / 链路本地 / 云元数据）的请求，防 SSRF。
+    /// 对投递到用户 / 运维可控 URL 的客户端（webhook、探测）应开启。
+    deny_internal_targets: bool,
 }
 
+/// 默认整体请求超时（含建连 + 传输）。未调用 [`ClientBuilder::with_timeout`] 时生效。
+pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
+/// 默认 TCP 连接超时。
+pub const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+/// 默认重试退避基数（仅在 `with_retry` 开启后使用）。
+pub const DEFAULT_RETRY_BASE_DELAY: Duration = Duration::from_millis(100);
+
 /// HTTP 客户端构建器，通过链式调用配置后调用 `.build()` 生成 `Client`。
+///
+/// ## 默认值
+/// | 项 | 默认 | 说明 |
+/// |----|------|------|
+/// | `timeout` | 30s | 整体请求超时 |
+/// | `connect_timeout` | 5s | TCP 建连 |
+/// | `max_retries` | 0 | 默认不重试 |
+/// | `retry_base_delay` | 100ms | 指数退避基数，封顶 64× |
+///
+/// ## 重试语义
+/// 仅当 `with_retry(n, …)` 且 `n > 0` 时重试：
+/// - **幂等方法**（GET/HEAD/PUT/DELETE/OPTIONS）：网络超时、连接失败、429、5xx
+/// - **非幂等**（POST/PATCH）：仅**连接未建立**时重试（服务端必未收到）
+/// - 超时 / 发送中断对非幂等**不**重试（可能已处理）
 pub struct ClientBuilder {
     config: ClientConfig,
 }
 
 impl ClientBuilder {
-    /// 以服务名创建构建器，其余选项均使用默认值。
+    /// 以服务名创建构建器；超时类选项带安全默认值（见模块常量）。
     pub fn new(service: &str) -> Self {
         Self {
             config: ClientConfig {
                 service: service.to_string(),
                 base_url: String::new(),
                 read_timeout: None,
-                timeout: None,
-                connect_timeout: None,
+                timeout: Some(DEFAULT_TIMEOUT),
+                connect_timeout: Some(DEFAULT_CONNECT_TIMEOUT),
                 pool_idle_timeout: None,
                 pool_max_idle_per_host: 0,
                 headers: None,
@@ -364,8 +393,9 @@ impl ClientBuilder {
                 max_processing: None,
                 dns_overrides: None,
                 max_retries: 0,
-                retry_base_delay: Duration::from_millis(100),
+                retry_base_delay: DEFAULT_RETRY_BASE_DELAY,
                 circuit_breaker: None,
+                deny_internal_targets: false,
             },
         }
     }
@@ -374,6 +404,14 @@ impl ClientBuilder {
     #[must_use]
     pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
         self.config.base_url = base_url.into();
+        self
+    }
+
+    /// 开启 SSRF 防护：拒绝目标解析到内部地址（私网 / 回环 / 链路本地 / 云元数据）的请求。
+    /// 用于向用户 / 运维可控 URL 发请求的客户端（webhook 投递、外部探测等）。
+    #[must_use]
+    pub fn with_deny_internal_targets(mut self) -> Self {
+        self.config.deny_internal_targets = true;
         self
     }
 
@@ -518,6 +556,35 @@ pub struct Client {
     processing: AtomicU32,
 }
 
+/// 判断 IP 是否为内部 / 特殊地址，SSRF 场景下应拒绝：
+/// 回环、私网、链路本地（含 169.254.169.254 云元数据）、CGNAT、文档段、未指定 / 广播，
+/// 以及 IPv6 的 ULA / link-local / IPv4-mapped 内部地址。
+fn is_internal_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || v4.is_broadcast()
+                || v4.is_unspecified()
+                || v4.is_documentation()
+                // 共享地址空间 100.64.0.0/10（运营商级 NAT）
+                || (v4.octets()[0] == 100 && (v4.octets()[1] & 0xc0) == 64)
+        }
+        IpAddr::V6(v6) => {
+            // IPv4-mapped（::ffff:a.b.c.d）按内嵌 v4 判断，防绕过
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                return is_internal_ip(IpAddr::V4(v4));
+            }
+            let first = v6.segments()[0];
+            v6.is_loopback()
+                || v6.is_unspecified()
+                || (first & 0xfe00) == 0xfc00 // ULA fc00::/7
+                || (first & 0xffc0) == 0xfe80 // link-local fe80::/10
+        }
+    }
+}
+
 impl Client {
     /// 若 `url` 以 "http" 开头则直接使用，否则拼接 base_url。
     fn get_url(&self, url: &str) -> String {
@@ -527,6 +594,42 @@ impl Client {
             // format! 单次分配；此前 base_url.to_string() + url 会分配两次（热路径每请求都走）
             format!("{}{url}", self.config.base_url)
         }
+    }
+
+    /// SSRF 校验：确保目标 host 解析出的所有 IP 都是公网地址，否则拒绝。
+    ///
+    /// host 为 IP 字面量时直接校验；为域名时经 DNS 解析后逐个校验。注意：reqwest 建连时会
+    /// **再次**解析域名，理论上存在 DNS-rebinding 时间窗；此实现足以挡住直连内网 IP、云元数据
+    /// 端点与静态解析到内网的域名（绝大多数真实 SSRF），rebinding 属更高级攻击，后续可用
+    /// 连接前 IP 固定（resolve_to_addrs）进一步收敛。
+    async fn ensure_public_target(&self, uri: &Uri) -> Result<()> {
+        let host = uri.host().ok_or_else(|| Error::BlockedTarget {
+            service: self.config.service.clone(),
+            host: "<none>".to_string(),
+        })?;
+        let port = uri.port_u16().unwrap_or(443);
+
+        let addrs: Vec<IpAddr> = if let Ok(ip) = host.parse::<IpAddr>() {
+            vec![ip]
+        } else {
+            tokio::net::lookup_host((host, port))
+                .await
+                .map_err(|e| Error::Common {
+                    service: self.config.service.clone(),
+                    message: format!("dns resolve failed for {host}: {e}"),
+                })?
+                .map(|sa| sa.ip())
+                .collect()
+        };
+
+        // 解析结果为空，或任一 IP 为内部地址，都拒绝
+        if addrs.is_empty() || addrs.iter().any(|ip| is_internal_ip(*ip)) {
+            return Err(Error::BlockedTarget {
+                service: self.config.service.clone(),
+                host: host.to_string(),
+            });
+        }
+        Ok(())
     }
 
     /// 执行 HTTP 请求并返回原始响应字节。
@@ -556,6 +659,11 @@ impl Client {
         })?;
         stats.path = uri.path().to_string();
         stats.method = params.method.to_string();
+
+        // SSRF 防护：对开启的客户端，拒绝目标解析到内部地址的请求
+        if self.config.deny_internal_targets {
+            self.ensure_public_target(&uri).await?;
+        }
 
         // 幂等性决定重试策略（在 match 消费前先算好）
         let idempotent = is_idempotent(&params.method);
@@ -889,6 +997,42 @@ impl Client {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// SSRF：内网 / 特殊地址判为内部，公网地址判为外部。
+    #[test]
+    fn internal_ip_classification() {
+        for ip in [
+            "127.0.0.1",
+            "::1",
+            "10.0.0.1",
+            "172.16.0.1",
+            "192.168.1.1",
+            "169.254.169.254", // 云元数据
+            "100.64.0.1",      // CGNAT
+            "0.0.0.0",
+            "fc00::1",          // ULA
+            "fe80::1",          // link-local
+            "::ffff:127.0.0.1", // IPv4-mapped 回环
+            "::ffff:10.0.0.1",  // IPv4-mapped 私网
+        ] {
+            assert!(
+                is_internal_ip(ip.parse::<IpAddr>().unwrap()),
+                "{ip} 应判为内部地址"
+            );
+        }
+        for ip in [
+            "1.1.1.1",
+            "8.8.8.8",
+            "9.9.9.9",
+            "93.184.216.34",
+            "2606:4700::1111",
+        ] {
+            assert!(
+                !is_internal_ip(ip.parse::<IpAddr>().unwrap()),
+                "{ip} 应判为公网地址"
+            );
+        }
+    }
 
     /// 退避按 2 的幂增长，并在 2^6 处封顶。
     #[test]

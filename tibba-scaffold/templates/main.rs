@@ -12,21 +12,31 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//! {{NAME}} 应用入口（由 tibba-scaffold 生成）。
+//!
+//! 对齐上游 tibba 的核心模式：
+//! - hook before → AppCtx → 路由 → 中间件栈 → 优雅关闭
+//! - 默认挂载 request_id / security / CORS / session / csrf / processing_limit
+//! - 业务路由在 `router.rs` 中组装
+
 use crate::router::new_router;
-use crate::state::get_app_state;
 use axum::BoxError;
 use axum::error_handling::HandleErrorLayer;
+use axum::extract::DefaultBodyLimit;
 use axum::http::{Method, Uri};
-use axum::middleware::from_fn_with_state;
+use axum::middleware::{from_fn, from_fn_with_state};
 use std::env;
 use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::Arc;
 use tibba_hook::{run_after_tasks, run_before_tasks};
-use tibba_middleware::{entry, processing_limit, stats};
+use tibba_middleware::{
+    Cors, MiddlewareOptions, SecurityHeaders, cors, entry, processing_limit, request_id,
+    security_headers, stats, validate_csrf,
+};
 use tibba_scheduler::run_scheduler_jobs;
 use tibba_session::session;
-use tibba_util::is_development;
+use tibba_util::{is_development, is_production};
 use tokio::signal;
 use tower::ServiceBuilder;
 use tower_http::compression::CompressionLayer;
@@ -38,7 +48,11 @@ use tracing_subscriber::FmtSubscriber;
 /// 可通过 `RUST_LOG={{NAME}}:app=info`（或 `debug`）进行过滤。
 const LOG_TARGET: &str = "{{NAME}}:app";
 
+/// 全局请求体上限（2 MiB）。
+const GLOBAL_BODY_LIMIT: usize = 2 * 1024 * 1024;
+
 mod admin_web;
+mod app_ctx;
 mod cache;
 mod config;
 mod dal;
@@ -88,7 +102,7 @@ async fn shutdown_signal() {
         _ = ctrl_c => {},
         _ = terminate => {},
     }
-    info!("signal received, starting graceful shutdown");
+    info!(target: LOG_TARGET, "signal received, starting graceful shutdown");
 }
 
 fn init_logger() {
@@ -116,33 +130,59 @@ fn init_logger() {
 
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
     run_before_tasks().await?;
+    let ctx = app_ctx::AppCtx::install_from_globals()?;
     run_scheduler_jobs().await?;
 
     let basic_config = config::must_get_basic_config();
-    let app = new_router()?;
+    let app = new_router(ctx)?;
+
+    let mw = MiddlewareOptions::default();
+    let mut cors_cfg = Cors::default().with_allow_credentials(basic_config.cors_allow_credentials);
+    for origin in &basic_config.cors_allow_origins {
+        cors_cfg = cors_cfg.add_allow_origin(origin);
+    }
+    if is_production() {
+        cors_cfg
+            .assert_production_safe()
+            .map_err(|msg| -> Box<dyn std::error::Error> { msg.into() })?;
+    }
 
     let predicate = SizeAbove::new(1024)
         .and(NotForContentType::GRPC)
         .and(NotForContentType::IMAGES)
         .and(NotForContentType::SSE);
-    let state = get_app_state();
-    let session_params = config::get_session_params()?;
-    let app = app.layer(
+    let state = ctx.state;
+    let session_params = Arc::new(config::get_session_params()?);
+
+    let mut app = app.layer(
         ServiceBuilder::new()
             .layer(HandleErrorLayer::new(handle_error))
             .layer(CompressionLayer::new().compress_when(predicate))
             .timeout(basic_config.timeout)
-            .layer(from_fn_with_state(state, entry))
-            .layer(from_fn_with_state(state, stats))
-            .layer(from_fn_with_state(
-                (cache::get_redis_cache(), Arc::new(session_params)),
-                session,
-            ))
-            .layer(from_fn_with_state(state, processing_limit)),
+            .layer(DefaultBodyLimit::max(GLOBAL_BODY_LIMIT))
+            .layer(from_fn(request_id)),
     );
+    app = app
+        .layer(from_fn_with_state(
+            SecurityHeaders::default().with_content_security_policy(
+                "object-src 'none'; frame-ancestors 'none'; base-uri 'self'",
+            ),
+            security_headers,
+        ))
+        .layer(from_fn_with_state(Arc::new(cors_cfg), cors))
+        .layer(from_fn_with_state(state, entry))
+        .layer(from_fn_with_state(state, stats))
+        .layer(from_fn_with_state(
+            (ctx.cache, session_params.clone()),
+            session,
+        ));
+    if mw.csrf {
+        app = app.layer(from_fn(validate_csrf));
+    }
+    let app = app.layer(from_fn_with_state(state, processing_limit));
     state.run();
 
-    info!("listening on http://{}/", basic_config.listen);
+    info!(target: LOG_TARGET, "listening on http://{}/", basic_config.listen);
     let listener = tokio::net::TcpListener::bind(basic_config.listen.clone()).await?;
     axum::serve(
         listener,
@@ -155,7 +195,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
 async fn start() {
     if let Err(e) = run().await {
-        error!(target: LOG_TARGET, event = "launch_app", message = ?e)
+        error!(target: LOG_TARGET, event = "launch_app", message = ?e);
     }
     if let Err(e) = run_after_tasks().await {
         error!(target: LOG_TARGET, event = "run_after_tasks", message = ?e);
@@ -163,20 +203,20 @@ async fn start() {
 }
 
 fn main() {
-    std::panic::set_hook(Box::new(|e| {
-        error!(target: LOG_TARGET, event = "panic", message = e.to_string());
+    std::panic::set_hook(Box::new(|info| {
+        error!(target: LOG_TARGET, event = "panic", message = info.to_string());
         std::process::exit(1);
     }));
     init_logger();
-    let cpus = std::env::var("{{NAME_UPPER}}_THREADS")
+    let cpus = std::env::var("TIBBA_THREADS")
         .map(|v| v.parse::<usize>().unwrap_or(num_cpus::get()))
         .unwrap_or(num_cpus::get())
         .max(1);
-    info!(threads = cpus, "start static server");
+    info!(target: LOG_TARGET, threads = cpus, "starting");
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .worker_threads(cpus)
         .build()
-        .unwrap_or_else(|e| panic!("failed to build tokio runtime: {}", e))
+        .unwrap_or_else(|e| panic!("failed to build tokio runtime: {e}"))
         .block_on(start());
 }

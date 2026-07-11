@@ -253,7 +253,7 @@ impl Model for DetectorGroupModel {
     ) -> Result<Vec<Self::Output>> {
         let mut qb = QueryBuilder::new("SELECT * FROM detector_groups");
         self.push_conditions(&mut qb, params)?;
-        params.push_pagination(&mut qb);
+        params.push_pagination(&mut qb, self.orderable_columns());
         let groups = qb
             .build_query_as::<DetectorGroupSchema>()
             .fetch_all(pool)

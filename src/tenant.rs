@@ -15,29 +15,26 @@
 //! 行级多租户演示：基于 `tenant_notes` 表的租户隔离 CRUD。
 //!
 //! 演示要点（隔离模式，业务可照搬到自己的多租户表）：
-//! - 当前租户由 [`derive_tenant_from_session`] 中间件从**鉴权身份**派生并注入请求扩展，
+//! - 当前租户由 [`tibba_tenant::inject_tenant_from_user_id`] 从**鉴权身份**派生并注入扩展，
 //!   [`tibba_tenant::TenantId`] 提取器优先采用扩展，从而不信任客户端 `X-Tenant-Id` 头；
 //! - 写入恒带 `tenant_id`，读取 / 删除恒 `WHERE tenant_id = $T`；
-//! - 单行读写用 `id = $1 AND tenant_id = $2` 做**纵深防御**：即便猜到别的租户的行 id，
-//!   也读不到 / 删不掉，避免越权（IDOR）。
+//! - 单行读写用 `id = $1 AND tenant_id = $2`（见 [`tibba_tenant::sql`]）做**纵深防御**。
 //!
 //! 挂载于 `/tenant`（见 `router.rs`），所有端点都需登录；租户来自身份而非请求头。
 
-use crate::sql::get_db_pool;
+use crate::app_ctx::get_app_ctx;
 use axum::Json;
 use axum::Router;
-use axum::extract::{FromRequestParts, Path, Request};
+use axum::extract::Path;
 use axum::http::StatusCode;
-use axum::middleware::{Next, from_fn};
-use axum::response::Response;
+use axum::middleware::from_fn;
 use axum::routing::{get, post};
 use serde::{Deserialize, Serialize};
 use snafu::{ResultExt, Snafu};
-use time::PrimitiveDateTime;
 use tibba_error::Error as BaseError;
 use tibba_model::format_datetime;
-use tibba_session::UserSession;
-use tibba_tenant::TenantId;
+use tibba_tenant::{TenantId, inject_tenant_from_user_id};
+use time::PrimitiveDateTime;
 
 type Result<T> = std::result::Result<T, BaseError>;
 
@@ -140,7 +137,7 @@ async fn create_note(tenant: TenantId, Json(req): Json<CreateNoteReq>) -> Result
     )
     .bind(tenant.as_str())
     .bind(content)
-    .fetch_one(get_db_pool())
+    .fetch_one(get_app_ctx().pool)
     .await
     .context(SqlxSnafu)?;
     Ok(Json(row.into()))
@@ -158,7 +155,7 @@ async fn list_notes(tenant: TenantId) -> Result<Json<Vec<NoteResp>>> {
     )
     .bind(tenant.as_str())
     .bind(LIST_LIMIT)
-    .fetch_all(get_db_pool())
+    .fetch_all(get_app_ctx().pool)
     .await
     .context(SqlxSnafu)?;
     Ok(Json(rows.into_iter().map(NoteResp::from).collect()))
@@ -174,7 +171,7 @@ async fn get_note(tenant: TenantId, Path(id): Path<i64>) -> Result<Json<NoteResp
     )
     .bind(id)
     .bind(tenant.as_str())
-    .fetch_optional(get_db_pool())
+    .fetch_optional(get_app_ctx().pool)
     .await
     .context(SqlxSnafu)?;
     let row = row.ok_or(Error::NotFound { id })?;
@@ -184,10 +181,11 @@ async fn get_note(tenant: TenantId, Path(id): Path<i64>) -> Result<Json<NoteResp
 /// `DELETE /tenant/notes/{id}` —— 删除本租户的某条便签（命中 204，否则 404）。
 async fn delete_note(tenant: TenantId, Path(id): Path<i64>) -> Result<StatusCode> {
     // 同样 id + tenant_id 双条件：删不掉别的租户的行
+    // （形状 = tenant_sql::WHERE_ID_AND_TENANT；sqlx 0.9 要求字面量）
     let result = sqlx::query("DELETE FROM tenant_notes WHERE id = $1 AND tenant_id = $2")
         .bind(id)
         .bind(tenant.as_str())
-        .execute(get_db_pool())
+        .execute(get_app_ctx().pool)
         .await
         .context(SqlxSnafu)?;
     if result.rows_affected() == 0 {
@@ -196,25 +194,11 @@ async fn delete_note(tenant: TenantId, Path(id): Path<i64>) -> Result<StatusCode
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// 中间件：要求登录，并从**鉴权身份**派生租户注入请求扩展。
-///
-/// 安全要点：`TenantId` 提取器优先采用请求扩展，此处注入后即**忽略客户端可伪造的
-/// `X-Tenant-Id` 头**，杜绝匿名 / 越权访问他人租户数据。demo 简单取 `u{user_id}` 作租户；
-/// 真实业务应据 `user → tenant` 映射（成员表 / JWT claim）派生。
-async fn derive_tenant_from_session(req: Request, next: Next) -> Result<Response> {
-    let (mut parts, body) = req.into_parts();
-    // 未登录 → 401（UserSession 提取器负责校验登录态）
-    let user = UserSession::from_request_parts(&mut parts, &()).await?;
-    let tenant = TenantId::parse(format!("u{}", user.get_user_id()))?;
-    parts.extensions.insert(tenant);
-    Ok(next.run(Request::from_parts(parts, body)).await)
-}
-
 /// 构造多租户演示路由（由 `router.rs` 以 `/tenant` 前缀挂载）。
-/// 所有端点先过 [`derive_tenant_from_session`]：必须登录，且租户来自身份而非请求头。
+/// 所有端点先过 [`inject_tenant_from_user_id`]：必须登录，且租户来自身份而非请求头。
 pub fn new_tenant_router() -> Router {
     Router::new()
         .route("/notes", post(create_note).get(list_notes))
         .route("/notes/{id}", get(get_note).delete(delete_note))
-        .layer(from_fn(derive_tenant_from_session))
+        .layer(from_fn(inject_tenant_from_user_id))
 }

@@ -24,15 +24,15 @@ use serde_json::json;
 use snafu::{OptionExt, Snafu};
 use sqlx::PgPool;
 use std::future::Future;
-use std::num::NonZeroU32;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::time::Duration;
 use tibba_cache::RedisCache;
 use tibba_crypto::{PasswordCheck, verify_password};
 use tibba_email::EmailConfig;
 use tibba_error::Error as BaseError;
 use tibba_middleware::{
-    ClientIp, IpRateLimitState, RequestId, ip_rate_limit, user_tracker, validate_captcha,
+    ClientIp, RedisIpRateLimit, RequestId, redis_ip_rate_limit, user_tracker, validate_captcha,
 };
 use tibba_model::{Model, ROLE_SUPER_ADMIN, User, UserModel, UserUpdateParams};
 use tibba_model_builtin::{AuditLogModel, AuditLogParams, RolePermissionModel};
@@ -50,17 +50,14 @@ use validator::Validate;
 /// 本 crate 日志 target；`RUST_LOG=tibba:router_user=info` 可过滤。
 const LOG_TARGET: &str = "tibba:router_user";
 
+/// IP 限流窗口：固定 1 分钟。
+const RATE_WINDOW: Duration = Duration::from_secs(60);
 /// 发信端点（邮箱验证 / 密码重置）每 IP 每分钟上限，缓解邮件轰炸与账号枚举。
-/// 用 const match 而非 `.unwrap()` 构造 NonZeroU32，遵守 no-unwrap 约定。
-const EMAIL_ENDPOINT_RATE_PER_MIN: NonZeroU32 = match NonZeroU32::new(5) {
-    Some(n) => n,
-    None => NonZeroU32::MIN,
-};
+const EMAIL_ENDPOINT_RATE_MAX: i64 = 5;
 /// 注册端点每 IP 每分钟上限，缓解批量注册 / 枚举。
-const REGISTER_RATE_PER_MIN: NonZeroU32 = match NonZeroU32::new(10) {
-    Some(n) => n,
-    None => NonZeroU32::MIN,
-};
+const REGISTER_RATE_MAX: i64 = 10;
+/// 登录端点每 IP 每分钟上限（叠加于账号+IP 暴力锁定之上，挡高频撞库）。
+const LOGIN_RATE_MAX: i64 = 30;
 
 mod api_key;
 mod email_verify;
@@ -741,10 +738,13 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
         secret: params.secret.clone(),
     };
 
-    // IP 维度限流器：发信端点严格限、注册端点略宽。governor 内存计数，跨实例不共享，
-    // 但足以挡单机高频刷；分布式强一致限流可后续接 Redis 令牌桶。
-    let email_endpoint_limit = IpRateLimitState::per_minute(EMAIL_ENDPOINT_RATE_PER_MIN);
-    let register_limit = IpRateLimitState::per_minute(REGISTER_RATE_PER_MIN);
+    // IP 维度限流器：基于 Redis 固定窗口，跨实例共享配额（多副本部署一致）。
+    // 发信端点严格限、注册略宽、登录再宽（叠加于账号+IP 暴力锁定之上）。
+    let email_endpoint_limit =
+        RedisIpRateLimit::new(params.cache, "email", EMAIL_ENDPOINT_RATE_MAX, RATE_WINDOW);
+    let register_limit =
+        RedisIpRateLimit::new(params.cache, "register", REGISTER_RATE_MAX, RATE_WINDOW);
+    let login_limit = RedisIpRateLimit::new(params.cache, "login", LOGIN_RATE_MAX, RATE_WINDOW);
 
     Router::new()
         .route(
@@ -754,7 +754,8 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
                 .layer(from_fn_with_state(
                     (name, "login_token").into(),
                     user_tracker,
-                )),
+                ))
+                .layer(from_fn_with_state(login_limit.clone(), redis_ip_rate_limit)),
         )
         .route(
             "/login",
@@ -764,14 +765,17 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
                     (params.magic_code.clone(), params.cache),
                     validate_captcha,
                 ))
-                .layer(from_fn_with_state((name, "login").into(), user_tracker)),
+                .layer(from_fn_with_state((name, "login").into(), user_tracker))
+                // IP 限流置于最外层：高频撞库在进 captcha / handler 前即被 429 挡下
+                .layer(from_fn_with_state(login_limit.clone(), redis_ip_rate_limit)),
         )
-        // 2FA 登录第二步：凭挑战令牌 + 动态码完成（带频率限制，无需再过验证码）
+        // 2FA 登录第二步：凭挑战令牌 + 动态码完成（与登录共享 IP 配额，无需再过验证码）
         .route(
             "/login/mfa",
             post(login_mfa)
                 .with_state((params.secret.clone(), params.pool, params.cache))
-                .layer(from_fn_with_state((name, "login_mfa").into(), user_tracker)),
+                .layer(from_fn_with_state((name, "login_mfa").into(), user_tracker))
+                .layer(from_fn_with_state(login_limit.clone(), redis_ip_rate_limit)),
         )
         .route("/me", get(me).with_state(params.pool))
         .route("/refresh", patch(refresh_session))
@@ -783,7 +787,10 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
                     on_register: params.on_register,
                 })
                 // IP 限流：挡批量注册 / 账号枚举
-                .layer(from_fn_with_state(register_limit.clone(), ip_rate_limit))
+                .layer(from_fn_with_state(
+                    register_limit.clone(),
+                    redis_ip_rate_limit,
+                ))
                 .layer(from_fn_with_state((name, "register").into(), user_tracker)),
         )
         .route(
@@ -812,7 +819,7 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
                 // 发信端点：IP 限流挡邮件轰炸；先于 user_tracker（更外层）执行
                 .layer(from_fn_with_state(
                     email_endpoint_limit.clone(),
-                    ip_rate_limit,
+                    redis_ip_rate_limit,
                 ))
                 .layer(from_fn_with_state(
                     (name, "email_verify_request").into(),
@@ -831,7 +838,7 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
                 // 发信端点：IP 限流挡邮件轰炸 / 枚举扫描
                 .layer(from_fn_with_state(
                     email_endpoint_limit.clone(),
-                    ip_rate_limit,
+                    redis_ip_rate_limit,
                 ))
                 .layer(from_fn_with_state(
                     (name, "password_reset_request").into(),
@@ -925,7 +932,9 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
                     (params.magic_code.clone(), params.cache),
                     validate_captcha,
                 ))
-                .layer(from_fn_with_state((name, "login_jwt").into(), user_tracker)),
+                .layer(from_fn_with_state((name, "login_jwt").into(), user_tracker))
+                // IP 限流置于最外层，与表单 /login 同策略
+                .layer(from_fn_with_state(login_limit.clone(), redis_ip_rate_limit)),
         )
         // JWT 登录 2FA 第二步（带频率限制）
         .route(

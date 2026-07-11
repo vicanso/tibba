@@ -18,8 +18,8 @@
 //! 改为入队的 `gift_points` 任务：注册流程只负责入队，真正充值由 worker 执行，
 //! **失败会自动重试**（多次失败转死信），不再静默丢分。
 
+use crate::app_ctx::get_app_ctx;
 use crate::config::must_get_webhook_config;
-use crate::sql::get_db_pool;
 use axum::Json;
 use axum::Router;
 use axum::extract::{Path, Query};
@@ -66,7 +66,7 @@ impl JobHandler for GiftPointsHandler {
                 })?;
 
             TokenService::recharge(
-                get_db_pool(),
+                get_app_ctx().pool,
                 TokenRechargeInsertParams {
                     user_id,
                     amount: GIFT_AMOUNT,
@@ -167,7 +167,7 @@ fn dead_not_found(id: i64) -> BaseError {
 
 /// `GET /jobs/stats` —— 队列深度概览（Admin）。
 async fn queue_stats(_admin: AdminSession) -> Result<Json<QueueStatsResp>> {
-    let stats = JobQueue::new(get_db_pool()).stats().await?;
+    let stats = JobQueue::new(get_app_ctx().pool).stats().await?;
     Ok(Json(QueueStatsResp {
         pending: stats.pending,
         running: stats.running,
@@ -185,13 +185,15 @@ async fn list_dead_jobs(
         .unwrap_or(DEAD_LIST_DEFAULT_LIMIT)
         .clamp(1, DEAD_LIST_MAX_LIMIT);
     let offset = query.offset.unwrap_or(0).max(0);
-    let jobs = JobQueue::new(get_db_pool()).list_dead(limit, offset).await?;
+    let jobs = JobQueue::new(get_app_ctx().pool)
+        .list_dead(limit, offset)
+        .await?;
     Ok(Json(jobs.into_iter().map(DeadJobItem::from).collect()))
 }
 
 /// `POST /jobs/dead/{id}/retry` —— 重放一条死信（Admin）。命中 204，否则 404。
 async fn retry_dead_job(_admin: AdminSession, Path(id): Path<i64>) -> Result<StatusCode> {
-    if JobQueue::new(get_db_pool()).retry_dead(id).await? {
+    if JobQueue::new(get_app_ctx().pool).retry_dead(id).await? {
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(dead_not_found(id))
@@ -200,7 +202,7 @@ async fn retry_dead_job(_admin: AdminSession, Path(id): Path<i64>) -> Result<Sta
 
 /// `DELETE /jobs/dead/{id}` —— 永久删除一条死信（Admin）。命中 204，否则 404。
 async fn purge_dead_job(_admin: AdminSession, Path(id): Path<i64>) -> Result<StatusCode> {
-    if JobQueue::new(get_db_pool()).purge_dead(id).await? {
+    if JobQueue::new(get_app_ctx().pool).purge_dead(id).await? {
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(dead_not_found(id))
@@ -239,7 +241,7 @@ async fn enqueue_webhook_test(
     Json(req): Json<WebhookTestReq>,
 ) -> Result<Json<WebhookTestResp>> {
     let delivery = WebhookDelivery::new(req.url, req.event, req.payload);
-    let job_id = tibba_webhook::enqueue(get_db_pool(), &delivery).await?;
+    let job_id = tibba_webhook::enqueue(get_app_ctx().pool, &delivery).await?;
     Ok(Json(WebhookTestResp { job_id }))
 }
 

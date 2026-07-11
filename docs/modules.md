@@ -1,5 +1,15 @@
 # tibba modules
 
+Workspace 内 `tibba-*` crate 的 path 依赖关系（由 `cargo run --bin generate-mermaid` 生成）。
+
+更新：
+
+```bash
+make mermaid
+# 或
+cargo run --bin generate-mermaid
+```
+
 ```mermaid
 graph TD
     config --> error
@@ -8,23 +18,32 @@ graph TD
 
     hook --> error
 
+    i18n --> error
+
+    job --> error
+
     llm --> error
 
-    model --> error
+    oauth --> error
 
     scheduler --> error
 
+    totp --> error
+
     util --> error
 
-    model-builtin --> error
-    model-builtin --> model
+    email --> config
+    email --> error
 
-    model-token --> error
-    model-token --> model
+    model --> crypto
+    model --> error
 
     cache --> config
     cache --> error
     cache --> util
+
+    jwt --> error
+    jwt --> util
 
     opendal --> config
     opendal --> error
@@ -37,21 +56,45 @@ graph TD
     sql --> error
     sql --> util
 
-    middleware --> cache
-    middleware --> error
-    middleware --> state
-    middleware --> util
+    model-builtin --> error
+    model-builtin --> model
 
-    router-common --> cache
-    router-common --> error
-    router-common --> performance
-    router-common --> state
-    router-common --> util
+    model-token --> error
+    model-token --> model
+
+    feature --> cache
+    feature --> error
 
     session --> cache
     session --> error
     session --> state
     session --> util
+
+    notify --> email
+    notify --> error
+    notify --> request
+
+    webhook --> crypto
+    webhook --> error
+    webhook --> job
+    webhook --> request
+    webhook --> util
+
+    middleware --> cache
+    middleware --> error
+    middleware --> session
+    middleware --> state
+    middleware --> util
+
+    rbac --> error
+    rbac --> session
+
+    router-common --> cache
+    router-common --> error
+    router-common --> performance
+    router-common --> session
+    router-common --> state
+    router-common --> util
 
     router-file --> error
     router-file --> model-builtin
@@ -67,11 +110,20 @@ graph TD
     router-model --> util
     router-model --> validator
 
+    tenant --> error
+    tenant --> session
+
     router-user --> cache
+    router-user --> crypto
+    router-user --> email
     router-user --> error
+    router-user --> jwt
     router-user --> middleware
     router-user --> model
+    router-user --> model-builtin
+    router-user --> oauth
     router-user --> session
+    router-user --> totp
     router-user --> util
     router-user --> validator
 ```

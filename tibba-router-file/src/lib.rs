@@ -733,14 +733,20 @@ mod tests {
     #[test]
     fn full_when_no_or_bad_range() {
         // 无 bytes= 前缀
-        assert!(matches!(parse_byte_range("items=0-1", 1000), RangeSpec::Full));
+        assert!(matches!(
+            parse_byte_range("items=0-1", 1000),
+            RangeSpec::Full
+        ));
         // 多段不支持，退化整文件
         assert!(matches!(
             parse_byte_range("bytes=0-1,2-3", 1000),
             RangeSpec::Full
         ));
         // 非数字
-        assert!(matches!(parse_byte_range("bytes=a-b", 1000), RangeSpec::Full));
+        assert!(matches!(
+            parse_byte_range("bytes=a-b", 1000),
+            RangeSpec::Full
+        ));
     }
 
     #[test]

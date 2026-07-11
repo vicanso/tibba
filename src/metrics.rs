@@ -20,14 +20,14 @@
 
 use ctor::ctor;
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
-use once_cell::sync::OnceCell;
 use std::sync::Arc;
+use std::sync::OnceLock;
 use tibba_error::Error;
 use tibba_hook::{BoxFuture, Task, register_task};
 
 type Result<T> = std::result::Result<T, Error>;
 
-static HANDLE: OnceCell<PrometheusHandle> = OnceCell::new();
+static HANDLE: OnceLock<PrometheusHandle> = OnceLock::new();
 
 fn map_err(err: impl ToString) -> Error {
     Error::new(err).with_category("metrics")

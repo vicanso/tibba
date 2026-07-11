@@ -12,8 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::sql::get_db_pool;
-use crate::cache::get_redis_cache;
+use crate::app_ctx::get_app_ctx;
 use crate::config::must_get_basic_config;
 use chrono::DateTime;
 use ctor::ctor;
@@ -21,11 +20,11 @@ use futures::future::join_all;
 use http::Uri;
 use http::{HeaderMap, HeaderName, HeaderValue};
 use http_stat::{HttpRequest, request};
-use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::LazyLock;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::{net::IpAddr, time::Duration};
 use tibba_error::Error;
@@ -51,7 +50,7 @@ static INLINE_JS: &str = include_str!("./inline.js");
 
 type Result<T> = std::result::Result<T, Error>;
 
-static HOSTNAME: Lazy<String> = Lazy::new(|| {
+static HOSTNAME: LazyLock<String> = LazyLock::new(|| {
     hostname::get()
         .unwrap_or_default()
         .to_string_lossy()
@@ -313,7 +312,7 @@ struct WeComMarkDownMessage {
 }
 
 async fn run_detector_stat() -> Result<(i32, i32, i32)> {
-    let pool = get_db_pool();
+    let pool = get_app_ctx().pool;
     let count = Arc::new(AtomicI32::new(0));
     let success = Arc::new(AtomicI32::new(0));
     let minutes = OffsetDateTime::now_utc().unix_timestamp() / 60;
@@ -361,7 +360,8 @@ async fn run_detector_stat() -> Result<(i32, i32, i32)> {
                 // 随机delay，为了让各机器更好的获到执行的机会
                 let delay = Duration::from_millis(rand::random::<u64>() % 200);
                 tokio::time::sleep(delay).await;
-                let locked = match get_redis_cache()
+                let locked = match get_app_ctx()
+                    .cache
                     .lock(&lock_key, Some(Duration::from_secs(30)))
                     .await
                 {
@@ -526,13 +526,14 @@ async fn send_alarms(alarm_params: Vec<StatAlarmParam>, alarm_config: AlarmConfi
 
 async fn run_stat_alarm() -> Result<(i32, i32)> {
     let task = "http_alarm_task";
-    let locked = get_redis_cache()
+    let locked = get_app_ctx()
+        .cache
         .lock(task, Some(Duration::from_secs(20)))
         .await?;
     if !locked {
         return Ok((0, -1));
     }
-    let pool = get_db_pool();
+    let pool = get_app_ctx().pool;
     let Some(alarm_config) = ConfigurationModel::new()
         .get_config(pool, "alarm", "httpstat")
         .await?
@@ -545,14 +546,14 @@ async fn run_stat_alarm() -> Result<(i32, i32)> {
         last_check_time: chrono::Utc::now().timestamp() - 5 * 60,
         failed_targets: vec![],
     };
-    if let Ok(Some(result)) = get_redis_cache().get_struct::<StatAlarmCache>(key).await {
+    if let Ok(Some(result)) = get_app_ctx().cache.get_struct::<StatAlarmCache>(key).await {
         alarm_cache.last_check_time = result.last_check_time;
         alarm_cache.failed_targets = result.failed_targets;
     };
     // 每次只查询10秒前的数据
     let now = chrono::Utc::now().timestamp() - 10;
 
-    let pool = get_db_pool();
+    let pool = get_app_ctx().pool;
     let last_check_time = chrono::DateTime::from_timestamp(alarm_cache.last_check_time, 0)
         .ok_or(Error::new("parse time error"))?
         .to_rfc3339();
@@ -682,7 +683,8 @@ async fn run_stat_alarm() -> Result<(i32, i32)> {
         info!(target: LOG_TARGET_ALARM, task, success, "send alarm message done");
     }
 
-    if let Err(e) = get_redis_cache()
+    if let Err(e) = get_app_ctx()
+        .cache
         .set_struct(
             key,
             &StatAlarmCache {

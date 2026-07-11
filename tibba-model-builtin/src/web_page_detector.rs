@@ -270,7 +270,7 @@ impl Model for WebPageDetectorModel {
     ) -> Result<Vec<Self::Output>> {
         let mut qb = QueryBuilder::new("SELECT * FROM web_page_detectors");
         self.push_conditions(&mut qb, params)?;
-        params.push_pagination(&mut qb);
+        params.push_pagination(&mut qb, self.orderable_columns());
         let detectors = qb
             .build_query_as::<WebPageDetectorSchema>()
             .fetch_all(pool)

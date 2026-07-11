@@ -222,7 +222,10 @@ async fn build_session(
     params: Arc<SessionParams>,
     user_id: i64,
 ) -> Option<Session> {
-    let user = UserModel::new().get_by_id(pool, user_id as u64).await.ok()??;
+    let user = UserModel::new()
+        .get_by_id(pool, user_id as u64)
+        .await
+        .ok()??;
     let roles = user.roles.clone().unwrap_or_default();
     let groups = user.groups.clone().unwrap_or_default();
     let permissions = RolePermissionModel::new()
@@ -251,7 +254,10 @@ pub async fn api_key_auth(
         && token.starts_with(TOKEN_PREFIX)
     {
         let key_hash = sha256(token.as_bytes());
-        match ApiKeyModel::new().find_active_by_hash(pool, &key_hash).await {
+        match ApiKeyModel::new()
+            .find_active_by_hash(pool, &key_hash)
+            .await
+        {
             Ok(Some(auth)) => {
                 if let Some(session) = build_session(pool, cache, params, auth.user_id).await {
                     req.extensions_mut().insert(session);

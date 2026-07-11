@@ -498,7 +498,7 @@ impl Model for HttpDetectorModel {
     ) -> Result<Vec<Self::Output>> {
         let mut qb = QueryBuilder::new("SELECT * FROM http_detectors");
         self.push_conditions(&mut qb, params)?;
-        params.push_pagination(&mut qb);
+        params.push_pagination(&mut qb, self.orderable_columns());
         let detectors = qb
             .build_query_as::<HttpDetectorSchema>()
             .fetch_all(pool)

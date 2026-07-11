@@ -27,9 +27,17 @@ const FALLBACK: &str = "en";
 pub fn init() {
     let catalog = Catalog::new(FALLBACK)
         // 限流 / 并发超限（tibba-middleware）
-        .add("en", "too_many_requests", "Too many requests, please retry later.")
+        .add(
+            "en",
+            "too_many_requests",
+            "Too many requests, please retry later.",
+        )
         .add("zh", "too_many_requests", "请求过于频繁，请稍后再试。")
-        .add("en", "rate_limited", "Rate limit exceeded, please slow down.")
+        .add(
+            "en",
+            "rate_limited",
+            "Rate limit exceeded, please slow down.",
+        )
         .add("zh", "rate_limited", "已触发频率限制，请稍后再试。")
         // CSRF 校验失败（tibba-middleware）
         .add("en", "csrf_cookie_missing", "Missing CSRF cookie.")

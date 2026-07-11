@@ -252,7 +252,9 @@ async fn land_user(
     // 档三：新建
     let account = allocate_account(pool, g).await?;
     let random_password = sha256(format!("{}{}", uuid(), uuid()).as_bytes());
-    let new_id = user_model.register(pool, &account, &random_password).await?;
+    let new_id = user_model
+        .register(pool, &account, &random_password)
+        .await?;
 
     if new_id == 1 {
         user_model
@@ -291,10 +293,7 @@ async fn land_user(
 /// - 优先 `g_{email_local}`（email "@" 前的部分，清洗后取 ≤17 字符）
 /// - 无 email 时回退到 `g_{sub_前缀}`
 /// - 冲突时改 `g_{短前缀}_{4 位随机数}`，最多 5 次
-async fn allocate_account(
-    pool: &PgPool,
-    g: &GoogleUser,
-) -> std::result::Result<String, BaseError> {
+async fn allocate_account(pool: &PgPool, g: &GoogleUser) -> std::result::Result<String, BaseError> {
     let model = UserModel::new();
 
     let raw: String = g

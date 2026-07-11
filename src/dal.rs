@@ -14,8 +14,8 @@
 
 use crate::config::must_get_config;
 use ctor::ctor;
-use once_cell::sync::OnceCell;
 use std::sync::Arc;
+use std::sync::OnceLock;
 use tibba_error::Error;
 use tibba_hook::{BoxFuture, Task, register_task};
 use tibba_opendal::{Storage, new_opendal_storage};
@@ -23,7 +23,7 @@ use tracing::info;
 
 type Result<T> = std::result::Result<T, Error>;
 
-static OPENDAL_STORAGE: OnceCell<Storage> = OnceCell::new();
+static OPENDAL_STORAGE: OnceLock<Storage> = OnceLock::new();
 
 pub fn get_opendal_storage() -> &'static Storage {
     // init opendal storage is checked in init function

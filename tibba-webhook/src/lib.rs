@@ -212,7 +212,11 @@ impl WebhookHandler {
             signed_payload.push(b'.');
             signed_payload.extend_from_slice(&body);
             let signature = signer.sign(&signed_payload).context(SignSnafu)?;
-            insert_header(&mut headers, HEADER_SIGNATURE, &format!("sha256={signature}"))?;
+            insert_header(
+                &mut headers,
+                HEADER_SIGNATURE,
+                &format!("sha256={signature}"),
+            )?;
         }
 
         self.client
@@ -286,7 +290,11 @@ impl WebhookHandlerBuilder {
     pub fn with_secret(mut self, secret: impl Into<String>) -> Self {
         let secret = secret.into();
         // 空密钥等同于不签名，避免用空 key 产出可被任意伪造的「签名」
-        self.secret = if secret.is_empty() { None } else { Some(secret) };
+        self.secret = if secret.is_empty() {
+            None
+        } else {
+            Some(secret)
+        };
         self
     }
 
@@ -312,6 +320,8 @@ impl WebhookHandlerBuilder {
     pub fn build(self) -> Result<WebhookHandler> {
         let mut builder = ClientBuilder::new("webhook")
             .with_timeout(self.timeout)
+            // webhook 目标 URL 由业务/调用方提供，开启 SSRF 防护拒绝内网 / 元数据地址
+            .with_deny_internal_targets()
             .with_common_interceptor();
         if let Some((threshold, cooldown)) = self.circuit_breaker {
             builder = builder.with_circuit_breaker(threshold, cooldown);

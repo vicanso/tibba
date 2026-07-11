@@ -349,7 +349,7 @@ impl Model for TokenPriceModel {
     ) -> Result<Vec<Self::Output>> {
         let mut qb: QueryBuilder<Postgres> = QueryBuilder::new("SELECT * FROM token_prices");
         self.push_conditions(&mut qb, params)?;
-        params.push_pagination(&mut qb);
+        params.push_pagination(&mut qb, self.orderable_columns());
         let rows = qb
             .build_query_as::<TokenPriceSchema>()
             .fetch_all(pool)

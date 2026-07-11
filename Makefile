@@ -20,6 +20,18 @@ dev:
 
 mermaid:
 	cargo run --bin generate-mermaid
+	@echo "updated docs/modules.md"
 
 release:
-	cargo build --release 
+	cargo build --release
+
+# 最小二进制（关掉 docker/detector/tenant 样板）
+release-minimal:
+	cargo build --release --no-default-features
+
+# 导出 OpenAPI JSON（供 admin 生成 TS client）
+openapi:
+	cargo run --bin export-openapi -- admin/openapi.json
+
+openapi-types: openapi
+	cd admin && ./scripts/gen-api-types.sh openapi.json src/api/schema.d.ts 

@@ -191,26 +191,110 @@ where
     }
 }
 
-static MODEL_REGISTRY: LazyLock<RwLock<HashMap<String, Arc<dyn DynModel>>>> =
-    LazyLock::new(|| RwLock::new(HashMap::new()));
+/// 模型级权限元数据：按操作细粒度授权，避免「凡 Admin 可改一切表」。
+///
+/// - `read` / `write` 为 `None`（默认）：沿用 **Admin 角色** 门禁（兼容现网）
+/// - 设为权限码（如 `model:user:read`）：要求该码，**或** Admin 角色（运维逃生舱）
+/// - SuperAdmin 通常持有 `*`，自动放行所有码
+///
+/// 链式配置：
+/// ```ignore
+/// ModelPermissions::default()
+///     .with_read("model:user:read")
+///     .with_write("model:user:write")
+/// ```
+#[derive(Debug, Clone, Default)]
+pub struct ModelPermissions {
+    /// list / detail 所需权限码；`None` → 仅 Admin
+    read: Option<&'static str>,
+    /// create / update / delete 所需权限码；`None` → 仅 Admin
+    write: Option<&'static str>,
+}
 
-/// 向全局注册表注册一个具名模型。
-pub fn register_model(name: impl Into<String>, model: Arc<dyn DynModel>) {
-    if let Ok(mut registry) = MODEL_REGISTRY.write() {
-        registry.insert(name.into(), model);
+impl ModelPermissions {
+    #[must_use]
+    pub fn with_read(mut self, permission: &'static str) -> Self {
+        self.read = Some(permission);
+        self
+    }
+
+    #[must_use]
+    pub fn with_write(mut self, permission: &'static str) -> Self {
+        self.write = Some(permission);
+        self
+    }
+
+    /// 读权限码（若有）。
+    #[must_use]
+    pub fn read(&self) -> Option<&'static str> {
+        self.read
+    }
+
+    /// 写权限码（若有）。
+    #[must_use]
+    pub fn write(&self) -> Option<&'static str> {
+        self.write
     }
 }
 
-pub(crate) fn get_registered_model(name: &str) -> Result<Arc<dyn DynModel>> {
+/// 注册表条目：动态模型 + 权限元数据。
+#[derive(Clone)]
+pub struct RegisteredModel {
+    pub model: Arc<dyn DynModel>,
+    pub permissions: ModelPermissions,
+}
+
+static MODEL_REGISTRY: LazyLock<RwLock<HashMap<String, RegisteredModel>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
+
+/// 向全局注册表注册具名模型，权限为默认（Admin 角色门禁）。
+pub fn register_model(name: impl Into<String>, model: Arc<dyn DynModel>) {
+    register_model_with(name, model, ModelPermissions::default());
+}
+
+/// 注册具名模型并附带读写权限码。
+pub fn register_model_with(
+    name: impl Into<String>,
+    model: Arc<dyn DynModel>,
+    permissions: ModelPermissions,
+) {
+    if let Ok(mut registry) = MODEL_REGISTRY.write() {
+        registry.insert(name.into(), RegisteredModel { model, permissions });
+    }
+}
+
+pub(crate) fn get_registered_model(name: &str) -> Result<RegisteredModel> {
     // `.ok()` 丢弃 PoisonError 携带的读守卫（其内容无诊断价值），转交 snafu 统一上下文
     let registry = MODEL_REGISTRY.read().ok().context(RegistryPoisonedSnafu)?;
-    let model = registry
+    let entry = registry
         .get(name)
         .cloned()
         .context(ModelNotSupportedSnafu {
             name: name.to_string(),
         })?;
-    Ok(model)
+    Ok(entry)
+}
+
+/// 按注册元数据鉴权。
+///
+/// - 权限码已配置：持有该码 **或** Admin 角色
+/// - 未配置：仅 Admin 角色（与历史 `AdminSession` 一致）
+pub(crate) fn authorize_model_access(
+    session: &tibba_session::Session,
+    permissions: &ModelPermissions,
+    write: bool,
+) -> Result<()> {
+    let code = if write {
+        permissions.write()
+    } else {
+        permissions.read()
+    };
+    match code {
+        // Admin 逃生舱优先：运维角色不依赖细粒度码是否入库
+        Some(_) if session.is_admin() => session.require_admin(),
+        Some(required) => session.require_permission(required),
+        None => session.require_admin(),
+    }
 }
 
 mod router;

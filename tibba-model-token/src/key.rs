@@ -254,7 +254,7 @@ impl Model for TokenKeyModel {
     ) -> Result<Vec<Self::Output>> {
         let mut qb: QueryBuilder<Postgres> = QueryBuilder::new("SELECT * FROM token_keys");
         self.push_conditions(&mut qb, params)?;
-        params.push_pagination(&mut qb);
+        params.push_pagination(&mut qb, self.orderable_columns());
         let rows = qb
             .build_query_as::<TokenKeySchema>()
             .fetch_all(pool)

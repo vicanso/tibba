@@ -147,7 +147,11 @@ pub async fn idempotency(
     };
     if let Err(e) = state
         .cache
-        .set_struct(&cache_key, &cached, Some(Duration::from_secs(CACHE_TTL_SECS)))
+        .set_struct(
+            &cache_key,
+            &cached,
+            Some(Duration::from_secs(CACHE_TTL_SECS)),
+        )
         .await
     {
         warn!(target: LOG_TARGET, error = %e, "idempotency cache set failed (not cached)");

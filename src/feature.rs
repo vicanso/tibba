@@ -21,7 +21,7 @@
 //! 服务端要按开关放量时，直接用 [`tibba_feature::FeatureFlags::is_enabled`] 即可，
 //! 无需经过这些管理端点。
 
-use crate::cache::get_redis_cache;
+use crate::app_ctx::get_app_ctx;
 use axum::Json;
 use axum::Router;
 use axum::extract::Path;
@@ -41,9 +41,13 @@ struct SetFlagBody {
     enabled: bool,
 }
 
+fn feature_flags() -> FeatureFlags {
+    FeatureFlags::new(get_app_ctx().cache)
+}
+
 /// `GET /features` —— 列出全部开关（Admin）。
 async fn list_flags(_admin: AdminSession) -> Result<Json<Vec<FeatureFlag>>> {
-    let flags = FeatureFlags::new(get_redis_cache()).list().await?;
+    let flags = feature_flags().list().await?;
     Ok(Json(flags))
 }
 
@@ -53,9 +57,7 @@ async fn set_flag(
     Path(name): Path<String>,
     Json(body): Json<SetFlagBody>,
 ) -> Result<Json<FeatureFlag>> {
-    FeatureFlags::new(get_redis_cache())
-        .set(name.clone(), body.enabled)
-        .await?;
+    feature_flags().set(name.clone(), body.enabled).await?;
     Ok(Json(FeatureFlag {
         name,
         enabled: body.enabled,
@@ -64,7 +66,7 @@ async fn set_flag(
 
 /// `DELETE /features/{name}` —— 删除某开关（Admin），幂等。
 async fn delete_flag(_admin: AdminSession, Path(name): Path<String>) -> Result<StatusCode> {
-    FeatureFlags::new(get_redis_cache()).remove(&name).await?;
+    feature_flags().remove(&name).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

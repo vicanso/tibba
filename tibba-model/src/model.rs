@@ -32,6 +32,10 @@ pub struct ModelListParams {
     pub filters: Option<String>,
 }
 
+/// 默认允许排序的列：各 model 未覆写 [`Model::orderable_columns`] 时使用。
+/// 仅含通用时间戳与主键，避免客户端对敏感列（如 `password`）做 ORDER BY 探测。
+pub const DEFAULT_ORDERABLE_COLUMNS: &[&str] = &["id", "created", "modified"];
+
 impl ModelListParams {
     pub fn parse_filters(&self) -> Result<Option<HashMap<String, String>>> {
         if let Some(filters) = &self.filters {
@@ -43,9 +47,13 @@ impl ModelListParams {
         }
     }
 
-    pub fn push_pagination(&self, qb: &mut QueryBuilder<Postgres>) {
+    /// 追加 `ORDER BY` + `LIMIT/OFFSET`。
+    ///
+    /// `allowed` 为列名白名单（由 [`Model::orderable_columns`] 提供）；不在名单内的
+    /// `order_by` 回退到 `id`（或名单首项），防止任意列排序。
+    pub fn push_pagination(&self, qb: &mut QueryBuilder<Postgres>, allowed: &[&str]) {
         let order_by = self.order_by.as_deref().unwrap_or("id");
-        push_order_by(qb, order_by);
+        push_order_by(qb, order_by, allowed);
         // clamp 到 [1, 200]：加下限 1，避免 limit 缺省 / 传 0 时生成 `LIMIT 0` 静默返回空结果
         let limit = self.limit.clamp(1, 200);
         let offset = (self.page.max(1) - 1) * limit;
@@ -53,17 +61,49 @@ impl ModelListParams {
     }
 }
 
-/// Append a validated ORDER BY clause. Column name must be alphanumeric/underscore only.
-pub fn push_order_by(qb: &mut QueryBuilder<Postgres>, order_by: &str) {
-    let (col, dir) = if let Some(col) = order_by.strip_prefix('-') {
+/// 解析 `order_by`：前缀 `-` 表示 DESC，否则 ASC。
+///
+/// 返回 `(列名, 方向)`；列名尚未做白名单校验。
+#[must_use]
+pub fn parse_order_by(order_by: &str) -> (&str, &'static str) {
+    if let Some(col) = order_by.strip_prefix('-') {
         (col, "DESC")
     } else {
         (order_by, "ASC")
-    };
-    if col.chars().all(|c| c.is_alphanumeric() || c == '_') {
-        qb.push(format!(" ORDER BY {col} {dir}"));
     }
 }
+
+/// 在白名单内时追加 `ORDER BY col DIR`；否则回退到 `id`（或 `allowed` 首项）ASC。
+///
+/// 额外要求列名仅含字母数字下划线，双保险防止注入。
+pub fn push_order_by(qb: &mut QueryBuilder<Postgres>, order_by: &str, allowed: &[&str]) {
+    let (col, dir) = parse_order_by(order_by);
+    let fallback = if allowed.contains(&"id") {
+        "id"
+    } else {
+        allowed.first().copied().unwrap_or("id")
+    };
+    let col = if col.chars().all(|c| c.is_alphanumeric() || c == '_') && allowed.contains(&col) {
+        col
+    } else {
+        // 非法 / 未授权列：固定 ASC，避免用攻击者指定的方向排序敏感列
+        qb.push(format!(" ORDER BY {fallback} ASC"));
+        return;
+    };
+    qb.push(format!(" ORDER BY {col} {dir}"));
+}
+
+/// 按主键查询未删除行的 `WHERE` 片段（绑定 `$1` = id）。
+///
+/// sqlx 0.9 的 `query` 仅接受 `'static` 字面量（`SqlSafeStr`），故完整
+/// `UPDATE/SELECT` 仍由各 model 写死字面量；此处导出共用片段供 `QueryBuilder::push`。
+pub const ACTIVE_BY_ID_WHERE: &str = " WHERE id = $1 AND deleted_at IS NULL";
+
+/// 列表查询的软删除过滤前缀（供 `QueryBuilder::push`）。
+pub const ACTIVE_WHERE: &str = " WHERE deleted_at IS NULL";
+
+/// 软删除 `SET` 子句（不含表名），供文档与手工拼接时保持语义一致。
+pub const SOFT_DELETE_SET: &str = " SET deleted_at = NOW(), modified = NOW()";
 
 pub trait Model: Send + Sync {
     type Output: Serialize + Send;
@@ -72,6 +112,12 @@ pub trait Model: Send + Sync {
         &'a self,
         pool: &'a Pool<Postgres>,
     ) -> impl Future<Output = SchemaView> + Send + 'a;
+    /// 允许客户端 `order_by` 使用的列名（不含 `-` 前缀）。
+    ///
+    /// 默认 [`DEFAULT_ORDERABLE_COLUMNS`]；含敏感字段的表应覆写为明确白名单。
+    fn orderable_columns(&self) -> &'static [&'static str] {
+        DEFAULT_ORDERABLE_COLUMNS
+    }
     fn keyword(&self) -> String {
         String::new()
     }
@@ -205,5 +251,63 @@ pub trait Model: Send + Sync {
         _keyword: Option<String>,
     ) -> impl Future<Output = Result<Vec<SchemaOption>>> + Send + 'a {
         async { Ok(vec![]) }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    fn order_sql(order_by: &str, allowed: &[&str]) -> String {
+        let mut qb = QueryBuilder::<Postgres>::new("SELECT 1");
+        push_order_by(&mut qb, order_by, allowed);
+        qb.sql().as_str().to_string()
+    }
+
+    #[test]
+    fn parse_order_by_asc_and_desc() {
+        assert_eq!(parse_order_by("created"), ("created", "ASC"));
+        assert_eq!(parse_order_by("-created"), ("created", "DESC"));
+    }
+
+    #[test]
+    fn push_order_by_allows_whitelisted_column() {
+        assert_eq!(
+            order_sql("-modified", DEFAULT_ORDERABLE_COLUMNS),
+            "SELECT 1 ORDER BY modified DESC"
+        );
+        assert_eq!(
+            order_sql("id", DEFAULT_ORDERABLE_COLUMNS),
+            "SELECT 1 ORDER BY id ASC"
+        );
+    }
+
+    #[test]
+    fn push_order_by_rejects_sensitive_or_unknown_column() {
+        // password 不在白名单 → 回退 id ASC，且忽略攻击者指定的 DESC
+        assert_eq!(
+            order_sql("-password", DEFAULT_ORDERABLE_COLUMNS),
+            "SELECT 1 ORDER BY id ASC"
+        );
+        assert_eq!(
+            order_sql("not_a_col", &["id", "created"]),
+            "SELECT 1 ORDER BY id ASC"
+        );
+    }
+
+    #[test]
+    fn push_order_by_rejects_injection_shaped_input() {
+        assert_eq!(
+            order_sql("id; drop table users", DEFAULT_ORDERABLE_COLUMNS),
+            "SELECT 1 ORDER BY id ASC"
+        );
+    }
+
+    #[test]
+    fn soft_delete_fragments_are_stable() {
+        assert!(SOFT_DELETE_SET.contains("deleted_at"));
+        assert!(ACTIVE_BY_ID_WHERE.contains("deleted_at IS NULL"));
+        assert_eq!(ACTIVE_WHERE, " WHERE deleted_at IS NULL");
     }
 }
