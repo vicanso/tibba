@@ -28,8 +28,12 @@ use axum::routing::{delete, get, post};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tibba_error::Error as BaseError;
-use tibba_job::{BoxFuture, DeadJob, JobContext, JobHandler, JobQueue, register_handler};
+use tibba_job::{DeadJob, JobQueue, register_handler};
+// gift_points handler 相关类型仅在 demo-token 下使用，随之 gate 避免 minimal 构建未用告警
+#[cfg(feature = "demo-token")]
+use tibba_job::{BoxFuture, JobContext, JobHandler};
 use tibba_model::format_datetime;
+#[cfg(feature = "demo-token")]
 use tibba_model_token::{RECHARGE_SOURCE_GIFT, TokenRechargeInsertParams, TokenService};
 use tibba_session::AdminSession;
 use tibba_webhook::{WebhookDelivery, WebhookHandler};
@@ -37,17 +41,21 @@ use tibba_webhook::{WebhookDelivery, WebhookHandler};
 type Result<T> = std::result::Result<T, BaseError>;
 
 /// 任务类型名：注册赠积分。入队与 handler 须用同一常量，避免拼写漂移。
+#[cfg(feature = "demo-token")]
 pub const JOB_GIFT_POINTS: &str = "gift_points";
 
 /// 注册赠送的积分数（与原 on_register 内联逻辑一致）。
+#[cfg(feature = "demo-token")]
 const GIFT_AMOUNT: i64 = 1_000_000;
 
 /// `gift_points` 任务处理器：给指定用户充值赠送积分。
 ///
 /// 幂等性说明：当前按「至少一次」语义实现；若需严格一次，可在 payload 带幂等键并在
 /// 充值前查重。注册赠分多发的风险可接受，MVP 暂不加额外去重。
+#[cfg(feature = "demo-token")]
 struct GiftPointsHandler;
 
+#[cfg(feature = "demo-token")]
 impl JobHandler for GiftPointsHandler {
     fn job_type(&self) -> &'static str {
         JOB_GIFT_POINTS
@@ -83,6 +91,8 @@ impl JobHandler for GiftPointsHandler {
 
 /// 注册所有应用级任务 handler。须在 `tibba_job::start` 之前调用。
 pub fn register_job_handlers() -> Result<()> {
+    // 注册赠积分 handler 仅在 demo-token 下编译（其余部署无 token 账户体系）
+    #[cfg(feature = "demo-token")]
     register_handler(Arc::new(GiftPointsHandler));
     // 出站 webhook：用配置的签名密钥构建 handler（密钥为空则投递不签名）
     let webhook_handler = WebhookHandler::builder()

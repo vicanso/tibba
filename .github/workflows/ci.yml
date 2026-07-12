@@ -26,6 +26,12 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      - name: Install build dependencies
+        # imageoptimize→avif-decode→aom-decode→libaom-sys 及 image→ravif→rav1e 的
+        # x86 汇编优化需要 nasm；cmake 供 libaom 构建。与 Dockerfile 构建依赖保持一致，
+        # 缺失时 libaom-sys 会在 cmake configure 阶段报 "Unable to find assembler"。
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends nasm cmake
+
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
         with:

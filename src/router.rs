@@ -44,6 +44,8 @@ use tibba_router_model::{
 };
 use tibba_router_user::{UserRouterParams, new_user_router};
 use tibba_util::{is_development, is_test};
+// error! 仅用于 demo-token 的 on_register 入队失败日志，minimal 构建下无引用
+#[cfg(feature = "demo-token")]
 use tracing::error;
 
 type Result<T> = std::result::Result<T, Error>;

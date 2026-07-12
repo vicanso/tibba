@@ -234,6 +234,8 @@ fn new_jwt_config(config: &Config) -> Result<tibba_jwt::JwtConfig> {
     Ok(jwt_config)
 }
 
+// token 配置整套仅在 demo-token 下编译：minimal 构建无 token 账户 / LLM 计价体系
+#[cfg(feature = "demo-token")]
 #[derive(Debug, Clone, Default, Validate, Deserialize)]
 pub struct TokenConfig {
     /// 可选模型名列表，供 token_llm / token_price 的 `model` 字段下拉展示。
@@ -241,14 +243,17 @@ pub struct TokenConfig {
     pub models: Vec<String>,
 }
 
+#[cfg(feature = "demo-token")]
 static TOKEN_CONFIG: OnceLock<TokenConfig> = OnceLock::new();
 
+#[cfg(feature = "demo-token")]
 fn new_token_config(config: &Config) -> Result<TokenConfig> {
     let token_config = config.try_deserialize::<TokenConfig>()?;
     token_config.validate().map_err(config_error)?;
     Ok(token_config)
 }
 
+#[cfg(feature = "demo-token")]
 pub fn must_get_token_config() -> &'static TokenConfig {
     TOKEN_CONFIG
         .get()
@@ -371,10 +376,14 @@ async fn init_config() -> Result<()> {
     JWT_CONFIG
         .set(jwt_config)
         .map_err(|_| config_error("jwt config init failed"))?;
-    let token_config = new_token_config(&app_config.sub_config("token"))?;
-    TOKEN_CONFIG
-        .set(token_config)
-        .map_err(|_| config_error("token config init failed"))?;
+    // token 配置仅在 demo-token 下初始化（minimal 构建无 token 账户体系）
+    #[cfg(feature = "demo-token")]
+    {
+        let token_config = new_token_config(&app_config.sub_config("token"))?;
+        TOKEN_CONFIG
+            .set(token_config)
+            .map_err(|_| config_error("token config init failed"))?;
+    }
     let webhook_config = new_webhook_config(&app_config.sub_config("webhook"))?;
     WEBHOOK_CONFIG
         .set(webhook_config)
