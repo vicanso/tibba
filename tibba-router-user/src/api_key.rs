@@ -32,11 +32,13 @@ use axum::Json;
 use axum::extract::{Path, Request, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::middleware::Next;
-use axum::response::Response;
+use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use std::sync::Arc;
+use std::time::Duration;
 use tibba_cache::RedisCache;
+use tibba_error::Error as BaseError;
 use tibba_model::{Model, UserModel};
 use tibba_model_builtin::{ApiKey, ApiKeyModel, CreateApiKeyParams, RolePermissionModel};
 use tibba_session::{Session, SessionParams, UserSession};
@@ -54,6 +56,11 @@ const LOG_TARGET: &str = "tibba:router_user";
 const TOKEN_PREFIX: &str = "tibba_";
 /// 展示用前缀长度："tibba_" + 8 位 hex。
 const PREFIX_DISPLAY_LEN: usize = 14;
+
+/// 单个 API Key 的固定窗口时长（限流按 key 维度，与 IP 维度限流正交）。
+const API_KEY_RATE_WINDOW: Duration = Duration::from_secs(60);
+/// 单个 API Key 每窗口最大请求数，超出返回 429。M2M 场景的粗粒度兜底。
+const API_KEY_RATE_MAX: i64 = 600;
 
 /// 生成新令牌，返回 `(明文 token, key_hash, key_prefix)`。
 ///
@@ -240,11 +247,41 @@ async fn build_session(
     Some(session)
 }
 
+/// 对单个 API Key 做固定窗口限流（key 维度，非 IP）。返回 `Some(429 响应)` 表示已
+/// 超限、调用方应短路返回；`None` 表示放行。
+///
+/// Redis 异常时**放行**（fail-open）：[`api_key_auth`] 的契约是「静默、尽量不失败」，
+/// 限流只是尽力而为的保护，不应因缓存抖动让所有 API Key 调用瘫痪；异常记 warn。
+/// 这与 IP 维度的 `redis_ip_rate_limit`（守护登录等敏感端点、fail-closed）取舍不同。
+async fn api_key_rate_limited(cache: &RedisCache, key_id: i64) -> Option<Response> {
+    let redis_key = format!("apikey_rate:{key_id}");
+    // incr 原子自增并在首次设窗口 TTL（见 RedisCache::incr）
+    match cache.incr(&redis_key, 1, Some(API_KEY_RATE_WINDOW)).await {
+        Ok(count) if count > API_KEY_RATE_MAX => {
+            warn!(target: LOG_TARGET, key_id, count, "api key rate limit exceeded");
+            Some(
+                BaseError::new("api key rate limit exceeded")
+                    .with_category("router_user")
+                    .with_sub_category("rate_limited")
+                    .with_status(429)
+                    .into_response(),
+            )
+        }
+        Ok(_) => None,
+        Err(e) => {
+            warn!(target: LOG_TARGET, error = %e, "api key rate limit check failed, allow");
+            None
+        }
+    }
+}
+
 /// 全局鉴权中间件：识别 API Key 并注入已登录 Session。
 ///
-/// **不会失败** —— 无令牌 / 非本前缀 / 无效令牌都静默放行（按未登录处理），
-/// 真正的 401 由下游 `UserSession` 提取器在受保护路由上给出。须挂在 session
-/// 中间件「之后」（更内层），以便用有效 key 的 Session 覆盖空 Session。
+/// 无令牌 / 非本前缀 / 无效令牌都静默放行（按未登录处理），真正的 401 由下游
+/// `UserSession` 提取器在受保护路由上给出。**唯一的短路**：有效 key 超过每-key
+/// 固定窗口配额（[`API_KEY_RATE_MAX`]/[`API_KEY_RATE_WINDOW`]）时直接返回 429；
+/// 限流用 Redis 计数、跨实例一致，Redis 异常仍放行（见 [`api_key_rate_limited`]）。
+/// 须挂在 session 中间件「之后」（更内层），以便用有效 key 的 Session 覆盖空 Session。
 pub async fn api_key_auth(
     State((pool, cache, params)): State<(&'static PgPool, &'static RedisCache, Arc<SessionParams>)>,
     mut req: Request,
@@ -259,6 +296,10 @@ pub async fn api_key_auth(
             .await
         {
             Ok(Some(auth)) => {
+                // 有效 key 先过每-key 限流：超配额直接 429，防止单 key 打爆后端
+                if let Some(resp) = api_key_rate_limited(cache, auth.id).await {
+                    return resp;
+                }
                 if let Some(session) = build_session(pool, cache, params, auth.user_id).await {
                     req.extensions_mut().insert(session);
                     // 更新最近使用时间，best-effort：失败不影响鉴权

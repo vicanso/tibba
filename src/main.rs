@@ -75,6 +75,9 @@ mod model;
 #[cfg(feature = "demo-detector")]
 mod httpstat;
 
+#[cfg(feature = "demo-token")]
+mod llm;
+
 #[cfg(feature = "demo-tenant")]
 mod tenant;
 

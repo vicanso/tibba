@@ -14,9 +14,9 @@
 
 use crate::admin_web::serve_web;
 use crate::app_ctx::AppCtx;
-use crate::config::{must_get_basic_config, must_get_email_config, must_get_oauth_config};
 #[cfg(feature = "demo-token")]
 use crate::config::must_get_token_config;
+use crate::config::{must_get_basic_config, must_get_email_config, must_get_oauth_config};
 use crate::metrics::metrics_handler;
 use crate::sql::ping_db;
 use axum::Router;
@@ -195,7 +195,7 @@ pub fn new_router(ctx: &AppCtx) -> Result<Router> {
             if let Err(e) = tibba_job::JobQueue::new(pool).enqueue(&job).await {
                 error!(user_id, error = %e, "入队注册赠积分任务失败");
             }
-        })
+        }) as tibba_router_user::OnRegisterFuture
     }) as tibba_router_user::OnRegisterFn);
     #[cfg(not(feature = "demo-token"))]
     let on_register = None;
@@ -249,6 +249,12 @@ pub fn new_router(ctx: &AppCtx) -> Result<Router> {
     #[cfg(feature = "demo-tenant")]
     {
         api_router = api_router.nest("/tenant", crate::tenant::new_tenant_router());
+    }
+
+    // LLM 流式对话演示 SSE 端点（需登录），挂在 /llm，依赖 token_llms 配置表
+    #[cfg(feature = "demo-token")]
+    {
+        api_router = api_router.nest("/llm", crate::llm::new_llm_router());
     }
 
     let app = if let Some(prefix) = &basic_config.prefix {
