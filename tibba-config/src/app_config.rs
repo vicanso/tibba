@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use super::{BuildSnafu, Error, ParseSizeSnafu, ReadSnafu};
-use config::{Config as RawConfig, Environment, File, FileFormat};
+use config::{Config as RawConfig, Environment, File, FileFormat, Map};
 use parse_size::parse_size;
 use serde::Deserialize;
 use snafu::ResultExt;
@@ -22,11 +22,17 @@ use std::time::Duration;
 
 type Result<T> = std::result::Result<T, Error>;
 
+/// 环境变量层级分隔符。
+///
+/// 用 `__` 而非单 `_`：后者会把 `llm_api_key` 这类含下划线的字段名误拆成
+/// `llm.api.key`，导致配置读不到。
+const ENV_SEPARATOR: &str = "__";
+
 /// 应用配置，封装底层 `config::Config`，提供命名空间与便捷读取方法。
 ///
-/// `env_prefix` 在 [`Self::new`] 中只用于一次性构造 `Environment` source，
-/// 之后被烘焙进 `settings`，不需要在 `Config` 实例上保留——这样可省一次
-/// `String` clone（在 [`Self::sub_config`] 内）并缩小 struct 体积。
+/// 由 [`Config::builder`] 构造；环境变量前缀只在构造期用于装配 `Environment`
+/// source，之后烘焙进 `settings`，不在实例上保留——这样可省一次 `String` clone
+/// （在 [`Self::sub_config`] 内）并缩小 struct 体积。
 #[derive(Debug, Clone, Default)]
 pub struct Config {
     /// 子配置前缀，用于隔离不同模块的配置命名空间。
@@ -34,35 +40,96 @@ pub struct Config {
     settings: RawConfig,
 }
 
-impl Config {
-    /// 从多个 TOML 字符串和可选的环境变量前缀构建配置。
-    /// 后面的配置源会覆盖前面的同名配置项，环境变量优先级最高。
-    /// 例如：`APP_DATABASE_PORT=5433` 会覆盖 TOML 中的 `database.port`。
-    pub fn new(data: &[&str], env_prefix: Option<&str>) -> Result<Self> {
-        let mut builder = RawConfig::builder();
+/// [`Config`] 的构造器：TOML 源可追加多份，环境变量覆盖为可选项。
+///
+/// ```ignore
+/// let config = Config::builder()
+///     .add_toml(default_toml)
+///     .add_toml(env_toml)
+///     .with_env_prefix("TIBBA_WEB")
+///     .build()?;
+/// ```
+#[derive(Debug, Default)]
+pub struct ConfigBuilder {
+    /// TOML 源，按加入顺序生效，后者覆盖前者。
+    sources: Vec<String>,
+    /// 环境变量前缀；`None` 表示不挂载环境变量源。
+    env_prefix: Option<String>,
+    /// 环境变量层级分隔符，`None` 时取 [`ENV_SEPARATOR`]。
+    env_separator: Option<String>,
+}
 
-        // 逐个加载 TOML 配置源，空字符串跳过
-        for d in data {
-            if !d.is_empty() {
-                builder = builder.add_source(File::from_str(d, FileFormat::Toml));
-            }
+impl ConfigBuilder {
+    /// 追加一份 TOML 配置源；后加入的覆盖先加入的，空串忽略。
+    #[must_use]
+    pub fn add_toml(mut self, data: impl Into<String>) -> Self {
+        let data = data.into();
+        if !data.is_empty() {
+            self.sources.push(data);
+        }
+        self
+    }
+
+    /// 设置环境变量前缀，优先级高于所有 TOML 源。
+    ///
+    /// 例如前缀 `TIBBA_WEB` 时，`TIBBA_WEB__DATABASE__HOST` 覆盖 `database.host`，
+    /// `TIBBA_WEB__EMAIL__API_KEY` 覆盖 `email.api_key`（单 `_` 是字段名的一部分）。
+    ///
+    /// 不调用本方法则**完全不挂载**环境变量源。空串等同于不设置。
+    #[must_use]
+    pub fn with_env_prefix(mut self, prefix: impl Into<String>) -> Self {
+        self.env_prefix = Some(prefix.into());
+        self
+    }
+
+    /// 自定义环境变量层级分隔符，默认 [`ENV_SEPARATOR`]（`__`）。
+    #[must_use]
+    pub fn with_env_separator(mut self, separator: impl Into<String>) -> Self {
+        self.env_separator = Some(separator.into());
+        self
+    }
+
+    /// 构建配置。
+    pub fn build(self) -> Result<Config> {
+        self.build_with_env(None)
+    }
+
+    /// 内部构建入口。`env_source` 为 `Some` 时以给定映射替代进程环境变量，
+    /// 供单测使用——`std::env::set_var` 在多线程 test binary 中与其它线程读环境变量
+    /// 存在竞态（Rust 2024 已将其标记为 `unsafe`），这里绕开。
+    fn build_with_env(self, env_source: Option<Map<String, String>>) -> Result<Config> {
+        let mut builder = RawConfig::builder();
+        for data in &self.sources {
+            builder = builder.add_source(File::from_str(data, FileFormat::Toml));
         }
 
-        // 环境变量覆盖同名配置，使用 `__` 作为层级分隔符，单 `_` 保留为字段名的一部分。
-        // 例如 `APP__DATABASE__HOST` 对应 `database.host`，
-        // `APP__DIVING__LLM_API_KEY` 对应 `diving.llm_api_key`。
-        builder = builder.add_source(
-            Environment::with_prefix(env_prefix.unwrap_or_default())
-                .prefix_separator("__")
-                .separator("__"),
-        );
+        // 空前缀不能直接透传：config-rs 会把 prefix_pattern 算成分隔符本身（`__`），
+        // 等于要求所有环境变量以 `__` 开头，覆盖能力静默失效。故空前缀直接不挂该源。
+        if let Some(prefix) = self.env_prefix.filter(|p| !p.is_empty()) {
+            let separator = self.env_separator.as_deref().unwrap_or(ENV_SEPARATOR);
+            let mut env = Environment::with_prefix(&prefix)
+                .prefix_separator(separator)
+                .separator(separator)
+                // 空值视为未设置：`export XXX=` 不应把 TOML 里的值抹成空串
+                .ignore_empty(true);
+            if env_source.is_some() {
+                env = env.source(env_source);
+            }
+            builder = builder.add_source(env);
+        }
 
-        let settings = builder.build().context(BuildSnafu)?;
-
-        Ok(Self {
+        Ok(Config {
             prefix: String::new(),
-            settings,
+            settings: builder.build().context(BuildSnafu)?,
         })
+    }
+}
+
+impl Config {
+    /// 创建配置构造器，见 [`ConfigBuilder`]。
+    #[must_use]
+    pub fn builder() -> ConfigBuilder {
+        ConfigBuilder::default()
     }
 
     /// 将前缀与键名拼接为完整的配置键路径。
@@ -201,7 +268,11 @@ mod tests {
             max_size = "100MB"
         "#;
 
-        Config::new(&[toml_data], Some("TEST")).unwrap()
+        Config::builder()
+            .add_toml(toml_data)
+            .with_env_prefix("TEST")
+            .build()
+            .unwrap()
     }
 
     #[test]
@@ -265,7 +336,7 @@ mod tests {
     fn test_get_duration_negative_clamped() {
         // 负秒数应被钳为 0，避免 i64→u64 回绕成天文数字
         let toml = r#"backwards = -10"#;
-        let config = Config::new(&[toml], None).unwrap();
+        let config = Config::builder().add_toml(toml).build().unwrap();
         assert_eq!(config.get_duration("backwards").unwrap(), Duration::ZERO);
     }
 
@@ -330,17 +401,74 @@ mod tests {
 
     #[test]
     fn test_empty_config() {
-        let config = Config::new(&[""], None).unwrap();
+        // 空串源被忽略，等价于没有任何配置源
+        let config = Config::builder().add_toml("").build().unwrap();
         assert!(config.get_int("any_key").is_err());
         assert!(config.get_bool("any_key").is_err());
         assert!(config.get_duration("any_key").is_err());
         assert!(config.get_byte_size("any_key").is_err());
     }
 
+    /// 构造假环境变量映射，避免 `std::env::set_var` 的多线程竞态。
+    fn env_map(pairs: &[(&str, &str)]) -> Map<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+            .collect()
+    }
+
     #[test]
     fn test_environment_variable_override() {
-        // 仅验证带 env 前缀也能正常构造；前缀已烘焙进 settings，无需对外暴露
-        let _config = Config::new(&[""], Some("MYAPP")).unwrap();
+        let toml = r#"
+            [database]
+            host = "localhost"
+            port = 5432
+
+            [email]
+            api_key = "from-toml"
+        "#;
+        let config = Config::builder()
+            .add_toml(toml)
+            .with_env_prefix("MYAPP")
+            .build_with_env(Some(env_map(&[
+                ("MYAPP__DATABASE__HOST", "from-env"),
+                // 单 `_` 是字段名的一部分，不会被拆成 email.api.key
+                ("MYAPP__EMAIL__API_KEY", "k-123456"),
+                // 空值视为未设置，不得把 TOML 里的 5432 抹掉
+                ("MYAPP__DATABASE__PORT", ""),
+                // 前缀不匹配的变量必须被忽略
+                ("OTHER__DATABASE__HOST", "should-be-ignored"),
+            ])))
+            .unwrap();
+        assert_eq!(config.get_string("database.host").unwrap(), "from-env");
+        assert_eq!(config.get_string("email.api_key").unwrap(), "k-123456");
+        assert_eq!(config.get_int("database.port").unwrap(), 5432);
+    }
+
+    #[test]
+    fn test_no_env_prefix_mounts_no_env_source() {
+        // 不调 with_env_prefix 则完全不挂环境变量源。
+        // 旧实现把 None 透传成 with_prefix("")，prefix_pattern 会变成 "__"，
+        // 于是 `__NOPREFIX` 反而能覆盖配置——本例正是那个回归的守卫。
+        let config = Config::builder()
+            .add_toml(r#"noprefix = "from-toml""#)
+            .build_with_env(Some(env_map(&[("__NOPREFIX", "leaked")])))
+            .unwrap();
+        assert_eq!(config.get_string("noprefix").unwrap(), "from-toml");
+    }
+
+    #[test]
+    fn test_custom_env_separator() {
+        let config = Config::builder()
+            .add_toml(
+                r#"[database]
+                host = "localhost""#,
+            )
+            .with_env_prefix("MYAPP")
+            .with_env_separator("_")
+            .build_with_env(Some(env_map(&[("MYAPP_DATABASE_HOST", "from-env")])))
+            .unwrap();
+        assert_eq!(config.get_string("database.host").unwrap(), "from-env");
     }
 
     #[test]
@@ -353,7 +481,11 @@ mod tests {
             app_name = "config2"
             debug = true
         "#;
-        let config = Config::new(&[config1, config2], None).unwrap();
+        let config = Config::builder()
+            .add_toml(config1)
+            .add_toml(config2)
+            .build()
+            .unwrap();
         assert_eq!(config.get_string("app_name").unwrap(), "config2");
         assert_eq!(config.get_int("port").unwrap(), 8080);
         assert_eq!(config.get_bool("debug").unwrap(), true);

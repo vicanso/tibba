@@ -275,6 +275,10 @@ impl From<Error> for BaseError {
 /// 可通过 `RUST_LOG=tibba:cache=info`（或 `debug`）进行过滤。
 pub(crate) const LOG_TARGET: &str = "tibba:cache";
 
+/// 重导出 `redis`，调用方可直接 `tibba_cache::redis::cmd(...)`，
+/// 既省去自行声明 redis 依赖，也避免版本不一致导致 trait 不通用。
+pub use redis;
+
 mod cache;
 mod pool;
 mod ttl_lru_store;

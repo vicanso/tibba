@@ -289,17 +289,16 @@ fn new_config() -> Result<&'static Config> {
     if let Some(config) = CONFIGS.get() {
         return Ok(config);
     }
-    let mut arr = vec![];
+    // default.toml 打底，{ENV}.toml 覆盖，环境变量 TIBBA_WEB__ 优先级最高
+    let mut builder = Config::builder().with_env_prefix("TIBBA_WEB");
     for name in ["default.toml", &format!("{}.toml", tibba_util::get_env())] {
         let data = Configs::get(name)
             .ok_or(config_error(format!("{name} not found")))?
             .data;
         info!(target: LOG_TARGET, "load config from {name}");
-        arr.push(std::string::String::from_utf8_lossy(&data).to_string());
+        builder = builder.add_toml(std::string::String::from_utf8_lossy(&data));
     }
-
-    let data: Vec<&str> = arr.iter().map(|s| s.as_str()).collect();
-    let config = tibba_config::Config::new(&data, Some("TIBBA_WEB"))?;
+    let config = builder.build()?;
     let _ = CONFIGS.set(config);
     CONFIGS
         .get()
