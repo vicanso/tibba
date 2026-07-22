@@ -1,11 +1,11 @@
 [package]
 name = "tibba-model-builtin"
-version = "0.2.2"
-edition = "2024"
-authors = ["Tree Xie <tree.xie@outlook.com>"]
-license = "Apache-2.0"
-homepage = "https://github.com/vicanso/tibba"
-repository = "https://github.com/vicanso/tibba"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
 keywords = ["tibba", "model"]
 description = "built-in models for tibba (file, detector, http-stat, etc.)"
 
@@ -21,6 +21,6 @@ snafu = { workspace = true }
 sqlx = { workspace = true }
 substring = { workspace = true }
 tokio = { workspace = true }
-tibba-error = { path = "../tibba-error", version = "0.2.2" }
-tibba-model = { path = "../tibba-model", version = "0.2.2" }
+tibba-error = { path = "../tibba-error", version = "0.2.5" }
+tibba-model = { path = "../tibba-model", version = "0.2.5" }
 time = { workspace = true }

@@ -1,11 +1,11 @@
 [package]
 name = "tibba-webhook"
-version = "0.2.2"
-edition = "2024"
-authors = ["Tree Xie <tree.xie@outlook.com>"]
-license = "Apache-2.0"
-homepage = "https://github.com/vicanso/tibba"
-repository = "https://github.com/vicanso/tibba"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
 keywords = ["tibba", "webhook"]
 description = "Outbound webhook delivery (HMAC-signed, queue-backed retry/dead-letter) for tibba"
 
@@ -20,11 +20,11 @@ serde_json = { workspace = true }
 snafu = { workspace = true }
 sqlx = { workspace = true }
 tracing = { workspace = true }
-tibba-crypto = { path = "../tibba-crypto", version = "0.2.2" }
-tibba-error = { path = "../tibba-error", version = "0.2.2" }
-tibba-job = { path = "../tibba-job", version = "0.2.2" }
-tibba-request = { path = "../tibba-request", version = "0.2.2" }
-tibba-util = { path = "../tibba-util", version = "0.2.2" }
+tibba-crypto = { path = "../tibba-crypto", version = "0.2.5" }
+tibba-error = { path = "../tibba-error", version = "0.2.5" }
+tibba-job = { path = "../tibba-job", version = "0.2.5" }
+tibba-request = { path = "../tibba-request", version = "0.2.5" }
+tibba-util = { path = "../tibba-util", version = "0.2.5" }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }

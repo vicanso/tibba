@@ -1,11 +1,11 @@
 [package]
 name = "tibba-model-token"
-version = "0.2.4"
-edition = "2024"
-authors = ["Tree Xie <tree.xie@outlook.com>"]
-license = "Apache-2.0"
-homepage = "https://github.com/vicanso/tibba"
-repository = "https://github.com/vicanso/tibba"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
 keywords = ["tibba", "model", "token", "billing"]
 description = "token billing models for tibba (account, recharge, usage, price)"
 
@@ -18,7 +18,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 snafu = { workspace = true }
 sqlx = { workspace = true }
-tibba-error = { path = "../tibba-error", version = "0.2.2" }
-tibba-model = { path = "../tibba-model", version = "0.2.3" }
+tibba-error = { path = "../tibba-error", version = "0.2.5" }
+tibba-model = { path = "../tibba-model", version = "0.2.5" }
 uuid = { workspace = true, features = ["v4"] }
 time = { workspace = true }

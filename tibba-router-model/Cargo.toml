@@ -1,11 +1,11 @@
 [package]
 name = "tibba-router-model"
-version = "0.2.2"
-edition = "2024"
-authors = ["Tree Xie <tree.xie@outlook.com>"]
-license = "Apache-2.0"
-homepage = "https://github.com/vicanso/tibba"
-repository = "https://github.com/vicanso/tibba"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
 keywords = ["tibba", "router", "model"]
 description = "model router for tibba"
 
@@ -19,11 +19,11 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 snafu = { workspace = true }
 sqlx = { workspace = true }
-tibba-error = { path = "../tibba-error", version = "0.2.2" }
-tibba-hook = { path = "../tibba-hook", version = "0.2.2" }
-tibba-model = { path = "../tibba-model", version = "0.2.2" }
-tibba-session = { path = "../tibba-session", version = "0.2.2" }
-tibba-util = { path = "../tibba-util", version = "0.2.2" }
-tibba-validator = { path = "../tibba-validator", version = "0.2.2" }
+tibba-error = { path = "../tibba-error", version = "0.2.5" }
+tibba-hook = { path = "../tibba-hook", version = "0.2.5" }
+tibba-model = { path = "../tibba-model", version = "0.2.5" }
+tibba-session = { path = "../tibba-session", version = "0.2.5" }
+tibba-util = { path = "../tibba-util", version = "0.2.5" }
+tibba-validator = { path = "../tibba-validator", version = "0.2.5" }
 utoipa = { workspace = true }
 validator = { workspace = true }

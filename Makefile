@@ -2,6 +2,7 @@ bump:
 	@test -n "$(v)" || (echo "用法: make bump v=0.2.0" && exit 1)
 	./bump_version.sh $(v)
 
+# 发布到 crates.io：make publish / make publish p=core / make publish p=ext / make publish p=tibba-error
 publish:
 	./scripts/publish.sh $(p)
 

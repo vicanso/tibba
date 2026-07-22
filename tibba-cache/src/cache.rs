@@ -12,9 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{CompressionSnafu, Error, RedisClient, RedisClientConn, RedisSnafu, SerdeJsonSnafu};
-use deadpool_redis::redis::{cmd, pipe};
-use redis::AsyncCommands;
+use super::{
+    CompressionSnafu, Error, RedisClient, RedisClientConn, RedisDedicatedConn, RedisSnafu,
+    SerdeJsonSnafu,
+};
+use redis::{AsyncCommands, cmd, pipe};
 use serde::{Serialize, de::DeserializeOwned};
 use snafu::ResultExt;
 use std::{borrow::Cow, time::Duration};
@@ -35,9 +37,28 @@ pub struct RedisCache {
 }
 
 impl RedisCache {
+    /// 从连接池借用连接（短命令）。长阻塞请用 [`Self::dedicated_blocking_conn`]。
     #[inline]
     pub async fn conn(&self) -> Result<RedisClientConn> {
         self.client.conn().await
+    }
+
+    /// 阻塞读专用连接。`max_block` 与 `BRPOP` timeout 对齐，见 [`RedisClient::dedicated_blocking_conn`]。
+    #[inline]
+    pub async fn dedicated_blocking_conn(&self, max_block: Duration) -> Result<RedisDedicatedConn> {
+        self.client.dedicated_blocking_conn(max_block).await
+    }
+
+    /// 短命令专用写连接（reply_loop），见 [`RedisClient::dedicated_command_conn`]。
+    #[inline]
+    pub async fn dedicated_command_conn(&self) -> Result<RedisDedicatedConn> {
+        self.client.dedicated_command_conn().await
+    }
+
+    /// 底层 [`RedisClient`] 引用。
+    #[inline]
+    pub fn client(&self) -> &'static RedisClient {
+        self.client
     }
 
     /// 创建新的 RedisCache 实例，默认 TTL 10 分钟，无前缀。

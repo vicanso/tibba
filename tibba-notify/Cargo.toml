@@ -1,11 +1,11 @@
 [package]
 name = "tibba-notify"
-version = "0.2.2"
-edition = "2024"
-authors = ["Tree Xie <tree.xie@outlook.com>"]
-license = "Apache-2.0"
-homepage = "https://github.com/vicanso/tibba"
-repository = "https://github.com/vicanso/tibba"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
 keywords = ["tibba", "notify", "wecom", "email"]
 description = "unified notifier trait for tibba (email + wecom + ...)"
 
@@ -17,7 +17,7 @@ path = "src/lib.rs"
 [dependencies]
 serde = { workspace = true }
 snafu = { workspace = true }
-tibba-email = { path = "../tibba-email", version = "0.2.2" }
-tibba-error = { path = "../tibba-error", version = "0.2.2" }
-tibba-request = { path = "../tibba-request", version = "0.2.2" }
+tibba-email = { path = "../tibba-email", version = "0.2.5" }
+tibba-error = { path = "../tibba-error", version = "0.2.5" }
+tibba-request = { path = "../tibba-request", version = "0.2.5" }
 tracing = { workspace = true }

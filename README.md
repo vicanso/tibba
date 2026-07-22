@@ -125,6 +125,16 @@ cargo run -p tibba-scaffold -- my-app ~/github
 | 中间件开关 | `MiddlewareOptions`（`tibba-middleware`） |
 | 共享依赖 | `AppCtx`（`src/app_ctx.rs`） |
 
+## Crate 分层（核心 / 扩展）
+
+Workspace 内库分为 **核心 Core**（脚手架底座）与 **扩展 Extension**（计费、任务队列、Webhook 等），说明见 [docs/crates.md](docs/crates.md)。各 `tibba-*/README.md` 中有分层标记。
+
+```bash
+./scripts/publish.sh core   # 仅核心
+./scripts/publish.sh ext    # 仅扩展
+./scripts/publish.sh        # core → ext 全部
+```
+
 ## Cargo features（可选样板）
 
 默认 `full` 与历史行为一致。构建更瘦的二进制可关掉样板业务：

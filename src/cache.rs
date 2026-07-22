@@ -32,6 +32,9 @@ type Result<T> = std::result::Result<T, Error>;
 static REDIS_CACHE: OnceLock<RedisCache> = OnceLock::new();
 static REDIS_CLIENT: OnceLock<RedisClient> = OnceLock::new();
 
+/// 慢命令阈值兜底：客户端尚未就绪时使用，正常路径取 URI `slow=`。
+const FALLBACK_SLOW_CMD_THRESHOLD: Duration = Duration::from_millis(200);
+
 fn cmd_stat(stat: RedisCmdStat) {
     let elapsed = stat.elapsed.as_millis();
 
@@ -40,11 +43,29 @@ fn cmd_stat(stat: RedisCmdStat) {
             target: LOG_TARGET,
             cmd = stat.cmd,
             elapsed,
+            intentional_block = stat.intentional_block,
             error = error,
             "redis error cmd"
         );
-    } else if elapsed > 10 {
-        info!(target: LOG_TARGET, cmd = stat.cmd, elapsed, "redis slow cmd");
+        return;
+    }
+    // 意图性阻塞命令（BRPOP / XREAD BLOCK 等）本就该久等，不计入慢命令，
+    // 否则它会长期霸榜把真正的慢查询淹掉
+    if stat.intentional_block {
+        return;
+    }
+    // 阈值取 URI `slow=`（默认 200ms），不再硬编码
+    let threshold = REDIS_CLIENT
+        .get()
+        .map_or(FALLBACK_SLOW_CMD_THRESHOLD, RedisClient::slow_cmd_threshold);
+    if stat.elapsed > threshold {
+        info!(
+            target: LOG_TARGET,
+            cmd = stat.cmd,
+            elapsed,
+            threshold = threshold.as_millis(),
+            "redis slow cmd"
+        );
     }
 }
 

@@ -1,11 +1,11 @@
 [package]
 name = "tibba-crypto"
-version = "0.2.2"
-edition = "2024"
-authors = ["Tree Xie <tree.xie@outlook.com>"]
-license = "Apache-2.0"
-homepage = "https://github.com/vicanso/tibba"
-repository = "https://github.com/vicanso/tibba"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
 keywords = ["tibba", "crypto"]
 description = "crypto for tibba"
 
@@ -22,7 +22,7 @@ hex = { workspace = true }
 hmac = { workspace = true }
 sha2 = { workspace = true }
 snafu = { workspace = true }
-tibba-error = { path = "../tibba-error", version = "0.2.2" }
+tibba-error = { path = "../tibba-error", version = "0.2.5" }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }

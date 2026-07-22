@@ -1,11 +1,11 @@
 [package]
 name = "tibba-router-common"
-version = "0.2.2"
-edition = "2024"
-authors = ["Tree Xie <tree.xie@outlook.com>"]
-license = "Apache-2.0"
-homepage = "https://github.com/vicanso/tibba"
-repository = "https://github.com/vicanso/tibba"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
 keywords = ["tibba", "router", "common"]
 description = "common router for tibba"
 
@@ -24,13 +24,13 @@ image = { workspace = true }
 os_info = { workspace = true }
 serde = { workspace = true }
 snafu = { workspace = true }
-tibba-cache = { path = "../tibba-cache", version = "0.2.2" }
-tibba-error = { path = "../tibba-error", version = "0.2.2" }
-tibba-performance = { path = "../tibba-performance", version = "0.2.2" }
+tibba-cache = { path = "../tibba-cache", version = "0.2.5" }
+tibba-error = { path = "../tibba-error", version = "0.2.5" }
+tibba-performance = { path = "../tibba-performance", version = "0.2.5" }
 # /commons/application 暴露内部运行时信息，用 AdminSession 门控
-tibba-session = { path = "../tibba-session", version = "0.2.2" }
-tibba-state = { path = "../tibba-state", version = "0.2.2" }
-tibba-util = { path = "../tibba-util", version = "0.2.2" }
+tibba-session = { path = "../tibba-session", version = "0.2.5" }
+tibba-state = { path = "../tibba-state", version = "0.2.5" }
+tibba-util = { path = "../tibba-util", version = "0.2.5" }
 tokio = { workspace = true }
 tracing = { workspace = true }
 utoipa = { workspace = true }

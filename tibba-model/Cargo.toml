@@ -1,11 +1,11 @@
 [package]
 name = "tibba-model"
-version = "0.2.3"
-edition = "2024"
-authors = ["Tree Xie <tree.xie@outlook.com>"]
-license = "Apache-2.0"
-homepage = "https://github.com/vicanso/tibba"
-repository = "https://github.com/vicanso/tibba"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
 keywords = ["tibba", "model"]
 description = "model for tibba"
 
@@ -23,9 +23,9 @@ snafu = { workspace = true }
 sqlx = { workspace = true }
 substring = { workspace = true }
 tokio = { workspace = true }
-tibba-error = { path = "../tibba-error", version = "0.2.2" }
+tibba-error = { path = "../tibba-error", version = "0.2.5" }
 # 密码入库前做 Argon2id 哈希（register / update_password）
-tibba-crypto = { path = "../tibba-crypto", version = "0.2.2" }
+tibba-crypto = { path = "../tibba-crypto", version = "0.2.5" }
 time = { workspace = true }
 
 [dev-dependencies]

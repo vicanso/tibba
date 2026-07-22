@@ -267,16 +267,18 @@ impl SecretCipher {
 
     /// 加密明文密钥，返回 `base64(nonce || ciphertext)`。
     pub fn encrypt(&self, plaintext: &[u8]) -> Result<String> {
-        use aes_gcm::Aes256Gcm;
-        use aes_gcm::aead::{Aead, KeyInit, generic_array::GenericArray};
+        // aes-gcm 0.11 起用 hybrid-array 的 `Array` 取代 `generic_array::GenericArray`，
+        // `Key<C>` / `Nonce<N>` 均为其别名，可由定长数组直接 From 转换
+        use aes_gcm::aead::Aead;
+        use aes_gcm::{Aes256Gcm, Key, KeyInit, Nonce};
 
-        let cipher = Aes256Gcm::new(GenericArray::from_slice(&self.key));
+        let cipher = Aes256Gcm::new(&Key::<Aes256Gcm>::from(self.key));
         let mut nonce = [0u8; 12];
         rand::rng().fill_bytes(&mut nonce);
         // GCM 加密失败无业务可恢复信息（aes_gcm::Error 故意不透出细节），
         // 故用 ok().context() 归一为 Encrypt，避免 map_err 闭包
         let ct = cipher
-            .encrypt(GenericArray::from_slice(&nonce), plaintext)
+            .encrypt(&Nonce::from(nonce), plaintext)
             .ok()
             .context(EncryptSnafu)?;
         let mut blob = Vec::with_capacity(12 + ct.len());
@@ -287,19 +289,18 @@ impl SecretCipher {
 
     /// 解密 [`encrypt`](Self::encrypt) 产出的 base64 串，返回明文密钥字节。
     pub fn decrypt(&self, blob_b64: &str) -> Result<Vec<u8>> {
-        use aes_gcm::Aes256Gcm;
-        use aes_gcm::aead::{Aead, KeyInit, generic_array::GenericArray};
+        use aes_gcm::aead::Aead;
+        use aes_gcm::{Aes256Gcm, Key, KeyInit, Nonce};
 
         let blob = STANDARD.decode(blob_b64).context(Base64Snafu)?;
         if blob.len() < 12 {
             return BlobTooShortSnafu.fail();
         }
         let (nonce, ct) = blob.split_at(12);
-        let cipher = Aes256Gcm::new(GenericArray::from_slice(&self.key));
-        let pt = cipher
-            .decrypt(GenericArray::from_slice(nonce), ct)
-            .ok()
-            .context(DecryptSnafu)?;
+        // split_at(12) 保证长度恰为 12，转换不会失败；万一失败按解密失败处理，不 panic
+        let nonce = <&Nonce<_>>::try_from(nonce).ok().context(DecryptSnafu)?;
+        let cipher = Aes256Gcm::new(&Key::<Aes256Gcm>::from(self.key));
+        let pt = cipher.decrypt(nonce, ct).ok().context(DecryptSnafu)?;
         Ok(pt)
     }
 }

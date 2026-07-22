@@ -1,11 +1,11 @@
 [package]
 name = "tibba-middleware"
-version = "0.2.2"
-edition = "2024"
-authors = ["Tree Xie <tree.xie@outlook.com>"]
-license = "Apache-2.0"
-homepage = "https://github.com/vicanso/tibba"
-repository = "https://github.com/vicanso/tibba"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
 keywords = ["tibba", "middleware"]
 description = "middleware for tibba"
 
@@ -23,11 +23,11 @@ scopeguard = { workspace = true }
 serde = { workspace = true }
 snafu = { workspace = true }
 serde_json = { workspace = true }
-tibba-cache = { path = "../tibba-cache", version = "0.2.2" }
-tibba-error = { path = "../tibba-error", version = "0.2.2" }
-tibba-session = { path = "../tibba-session", version = "0.2.2" }
-tibba-state = { path = "../tibba-state", version = "0.2.2" }
-tibba-util = { path = "../tibba-util", version = "0.2.2" }
+tibba-cache = { path = "../tibba-cache", version = "0.2.5" }
+tibba-error = { path = "../tibba-error", version = "0.2.5" }
+tibba-session = { path = "../tibba-session", version = "0.2.5" }
+tibba-state = { path = "../tibba-state", version = "0.2.5" }
+tibba-util = { path = "../tibba-util", version = "0.2.5" }
 tokio = { workspace = true }
 tracing = { workspace = true }
 # 入站请求创建服务端 span 并提取上游 W3C trace 上下文（分布式追踪）

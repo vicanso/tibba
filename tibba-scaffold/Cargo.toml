@@ -1,8 +1,8 @@
 [package]
 name = "tibba-scaffold"
-version = "0.2.2"
-edition = "2024"
-authors = ["Tree Xie <tree.xie@outlook.com>"]
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
 description = "脚手架工具，用于快速创建 tibba 项目"
 publish = false
 

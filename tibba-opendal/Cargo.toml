@@ -1,11 +1,11 @@
 [package]
 name = "tibba-opendal"
-version = "0.2.3"
-edition = "2024"
-authors = ["Tree Xie <tree.xie@outlook.com>"]
-license = "Apache-2.0"
-homepage = "https://github.com/vicanso/tibba"
-repository = "https://github.com/vicanso/tibba"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
 keywords = ["tibba", "opendal"]
 description = "opendal for tibba"
 
@@ -19,7 +19,7 @@ opendal = { workspace = true }
 path-absolutize = { workspace = true }
 snafu = { workspace = true }
 serde = { workspace = true }
-tibba-config = { path = "../tibba-config", version = "0.2.2" }
-tibba-error = { path = "../tibba-error", version = "0.2.2" }
-tibba-util = { path = "../tibba-util", version = "0.2.2" }
+tibba-config = { path = "../tibba-config", version = "0.2.5" }
+tibba-error = { path = "../tibba-error", version = "0.2.5" }
+tibba-util = { path = "../tibba-util", version = "0.2.5" }
 validator = { workspace = true }

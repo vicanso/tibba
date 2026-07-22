@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use cached::proc_macro::cached;
+use cached::cached;
 use serde::{Deserialize, Serialize};
 use sysinfo::{Pid, ProcessesToUpdate, System};
 
@@ -50,8 +50,8 @@ pub fn current_process_system_info() -> ProcessSystemInfo {
 /// 同一时刻只有一个线程执行刷新，避免重复采集）。
 ///
 /// 采集的指标：内存占用、CPU 使用率与累计时间、文件描述符数量、磁盘读写字节数。
-// size 上限：按 PID 缓存，加 LRU 容量上限防高基数 PID 调用导致 map 无界增长
-#[cached(size = 64, time = 10, sync_writes = "by_key")]
+// max_size 上限：按 PID 缓存，加 LRU 容量上限防高基数 PID 调用导致 map 无界增长
+#[cached(max_size = 64, ttl = 10, sync_writes = "by_key")]
 pub fn get_process_system_info(pid: usize) -> ProcessSystemInfo {
     let mut sys = System::new();
     let sysinfo_pid = Pid::from(pid);

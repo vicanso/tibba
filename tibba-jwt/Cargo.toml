@@ -1,11 +1,11 @@
 [package]
 name = "tibba-jwt"
-version = "0.2.2"
-edition = "2024"
-authors = ["Tree Xie <tree.xie@outlook.com>"]
-license = "Apache-2.0"
-homepage = "https://github.com/vicanso/tibba"
-repository = "https://github.com/vicanso/tibba"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
 keywords = ["tibba", "jwt", "auth", "hs256"]
 description = "JWT (HS256) auth path for tibba — access token + opaque refresh"
 
@@ -20,6 +20,6 @@ humantime-serde = { workspace = true }
 jsonwebtoken = { workspace = true }
 serde = { workspace = true }
 snafu = { workspace = true }
-tibba-error = { path = "../tibba-error", version = "0.2.2" }
-tibba-util = { path = "../tibba-util", version = "0.2.2" }
+tibba-error = { path = "../tibba-error", version = "0.2.5" }
+tibba-util = { path = "../tibba-util", version = "0.2.5" }
 tracing = { workspace = true }

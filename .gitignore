@@ -16,7 +16,11 @@ target/
 # Added by cargo
 .vscode
 node_modules
+# Vite / 前端构建产物；admin/dist 需存在供 rust-embed 编译，保留 README 占位
 dist
+!admin/dist/
+admin/dist/**
+!admin/dist/README.md
 dhat*.json
 default_*
 report.*
