@@ -19,11 +19,11 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 snafu = { workspace = true }
 sqlx = { workspace = true }
-tibba-error = { path = "../tibba-error", version = "0.2.5" }
-tibba-hook = { path = "../tibba-hook", version = "0.2.5" }
-tibba-model = { path = "../tibba-model", version = "0.2.5" }
-tibba-session = { path = "../tibba-session", version = "0.2.5" }
-tibba-util = { path = "../tibba-util", version = "0.2.5" }
-tibba-validator = { path = "../tibba-validator", version = "0.2.5" }
+tibba-error = { path = "../tibba-error", version = "0.2.6" }
+tibba-hook = { path = "../tibba-hook", version = "0.2.6" }
+tibba-model = { path = "../tibba-model", version = "0.2.6" }
+tibba-session = { path = "../tibba-session", version = "0.2.6" }
+tibba-util = { path = "../tibba-util", version = "0.2.6" }
+tibba-validator = { path = "../tibba-validator", version = "0.2.6" }
 utoipa = { workspace = true }
 validator = { workspace = true }

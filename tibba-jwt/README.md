@@ -2,7 +2,7 @@
 
 **JWT 鉴权**
 
-> **分层**：核心（Core）— REST 脚手架底座，优先发布
+> **分层**：标准（Standard）— 标准 REST 构件，依赖核心
 
 HS256 access token + Redis opaque refresh，与 Cookie Session 正交。
 

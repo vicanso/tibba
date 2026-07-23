@@ -15,7 +15,7 @@ path = "src/lib.rs"
 
 [dependencies]
 dashmap = { workspace = true }
-tibba-error = { path = "../tibba-error", version = "0.2.5" }
+tibba-error = { path = "../tibba-error", version = "0.2.6" }
 tracing = { workspace = true }
 
 [dev-dependencies]

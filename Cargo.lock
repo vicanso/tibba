@@ -6285,7 +6285,7 @@ dependencies = [
 
 [[package]]
 name = "tibba"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "axum",
  "axum-extra",
@@ -6361,7 +6361,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-cache"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "deadpool",
  "humantime-serde",
@@ -6381,7 +6381,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-config"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "bytesize-serde",
  "config",
@@ -6396,7 +6396,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-crypto"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "arc-swap",
  "argon2",
@@ -6411,7 +6411,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-email"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "resend-rs",
  "serde",
@@ -6423,7 +6423,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-error"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "axum",
  "serde",
@@ -6431,7 +6431,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-feature"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "serde",
  "tibba-cache",
@@ -6440,7 +6440,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-hook"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "dashmap",
  "pretty_assertions",
@@ -6451,7 +6451,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-i18n"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "axum",
  "pretty_assertions",
@@ -6461,7 +6461,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-job"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "dashmap",
  "metrics",
@@ -6476,7 +6476,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-jwt"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "axum",
  "humantime-serde",
@@ -6490,7 +6490,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-llm"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "bytes",
  "futures",
@@ -6506,7 +6506,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-middleware"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "axum",
  "axum-extra",
@@ -6530,7 +6530,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-model"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "chrono",
  "http",
@@ -6548,7 +6548,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-model-builtin"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "http",
  "serde",
@@ -6564,7 +6564,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-model-token"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "serde",
  "serde_json",
@@ -6578,7 +6578,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-notify"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "serde",
  "snafu",
@@ -6590,7 +6590,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-oauth"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "reqwest",
  "serde",
@@ -6603,7 +6603,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-opendal"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "dirs",
  "opendal",
@@ -6618,7 +6618,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-performance"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "cached",
  "serde",
@@ -6627,7 +6627,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-rbac"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "axum",
  "http-body-util",
@@ -6640,7 +6640,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-request"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "axum",
  "bytes",
@@ -6660,7 +6660,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-router-common"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -6685,7 +6685,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-router-file"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "axum",
  "image 0.25.10",
@@ -6706,7 +6706,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-router-model"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "axum",
  "serde",
@@ -6725,7 +6725,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-router-user"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "axum",
  "axum-extra",
@@ -6753,14 +6753,14 @@ dependencies = [
 
 [[package]]
 name = "tibba-scaffold"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "rust-embed",
 ]
 
 [[package]]
 name = "tibba-scheduler"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "dashmap",
  "snafu",
@@ -6771,7 +6771,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-session"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "axum",
  "axum-extra",
@@ -6789,7 +6789,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-sql"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "humantime-serde",
  "serde",
@@ -6804,7 +6804,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-state"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "arc-swap",
  "tokio",
@@ -6812,7 +6812,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-tenant"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "axum",
  "snafu",
@@ -6822,7 +6822,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-totp"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",
@@ -6837,7 +6837,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-util"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "axum",
  "axum-extra",
@@ -6863,14 +6863,14 @@ dependencies = [
 
 [[package]]
 name = "tibba-validator"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "validator",
 ]
 
 [[package]]
 name = "tibba-webhook"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "http",
  "pretty_assertions",

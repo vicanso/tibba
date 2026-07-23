@@ -27,9 +27,9 @@ redis = { workspace = true, features = ["cluster-async"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 snafu = { workspace = true }
-tibba-config = { path = "../tibba-config", version = "0.2.5" }
-tibba-error = { path = "../tibba-error", version = "0.2.5" }
-tibba-util = { path = "../tibba-util", version = "0.2.5" }
+tibba-config = { path = "../tibba-config", version = "0.2.6" }
+tibba-error = { path = "../tibba-error", version = "0.2.6" }
+tibba-util = { path = "../tibba-util", version = "0.2.6" }
 tokio = { workspace = true }
 tracing = { workspace = true }
 url = { workspace = true }

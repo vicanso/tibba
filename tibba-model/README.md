@@ -2,7 +2,7 @@
 
 **Model 抽象**
 
-> **分层**：核心（Core）— REST 脚手架底座，优先发布
+> **分层**：标准（Standard）— 标准 REST 构件，依赖核心
 
 通用 Model trait、分页/排序白名单、schema 视图与用户等基础模型。
 

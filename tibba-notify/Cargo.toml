@@ -17,7 +17,7 @@ path = "src/lib.rs"
 [dependencies]
 serde = { workspace = true }
 snafu = { workspace = true }
-tibba-email = { path = "../tibba-email", version = "0.2.5" }
-tibba-error = { path = "../tibba-error", version = "0.2.5" }
-tibba-request = { path = "../tibba-request", version = "0.2.5" }
+tibba-email = { path = "../tibba-email", version = "0.2.6" }
+tibba-error = { path = "../tibba-error", version = "0.2.6" }
+tibba-request = { path = "../tibba-request", version = "0.2.6" }
 tracing = { workspace = true }

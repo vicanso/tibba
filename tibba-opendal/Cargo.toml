@@ -19,7 +19,7 @@ opendal = { workspace = true }
 path-absolutize = { workspace = true }
 snafu = { workspace = true }
 serde = { workspace = true }
-tibba-config = { path = "../tibba-config", version = "0.2.5" }
-tibba-error = { path = "../tibba-error", version = "0.2.5" }
-tibba-util = { path = "../tibba-util", version = "0.2.5" }
+tibba-config = { path = "../tibba-config", version = "0.2.6" }
+tibba-error = { path = "../tibba-error", version = "0.2.6" }
+tibba-util = { path = "../tibba-util", version = "0.2.6" }
 validator = { workspace = true }

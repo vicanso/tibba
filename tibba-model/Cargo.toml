@@ -23,9 +23,9 @@ snafu = { workspace = true }
 sqlx = { workspace = true }
 substring = { workspace = true }
 tokio = { workspace = true }
-tibba-error = { path = "../tibba-error", version = "0.2.5" }
+tibba-error = { path = "../tibba-error", version = "0.2.6" }
 # 密码入库前做 Argon2id 哈希（register / update_password）
-tibba-crypto = { path = "../tibba-crypto", version = "0.2.5" }
+tibba-crypto = { path = "../tibba-crypto", version = "0.2.6" }
 time = { workspace = true }
 
 [dev-dependencies]

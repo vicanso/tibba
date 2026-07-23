@@ -20,7 +20,7 @@ reqwest = { workspace = true, features = ["stream"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 snafu = { workspace = true }
-tibba-error = { path = "../tibba-error", version = "0.2.5" }
+tibba-error = { path = "../tibba-error", version = "0.2.6" }
 tracing = { workspace = true }
 
 [dev-dependencies]

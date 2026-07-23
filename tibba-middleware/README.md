@@ -2,7 +2,7 @@
 
 **HTTP 中间件**
 
-> **分层**：核心（Core）— REST 脚手架底座，优先发布
+> **分层**：标准（Standard）— 标准 REST 构件，依赖核心
 
 request_id、CORS、CSRF、限流、ETag、安全头、入口/统计、幂等等横切中间件与 MiddlewareOptions。
 

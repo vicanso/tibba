@@ -1,9 +1,9 @@
 #!/bin/bash
-# 按「核心 / 扩展」分组发布 tibba-* 到 crates.io。
+# 按「核心 / 标准 / 扩展」分组发布 tibba-* 到 crates.io。
 # 分层说明见 docs/crates.md；各 crate README 中有 **分层** 标记。
 set -euo pipefail
 
-# ── 核心（Core）：脚手架底座，按依赖 DAG 分批 ─────────────────────────────
+# ── 核心（Core）：最小脚手架底座，按依赖 DAG 分批 ────────────────────────
 # Batch C1 — 无内部依赖
 CORE_C1=(
     tibba-error
@@ -19,20 +19,25 @@ CORE_C2=(
     tibba-hook
     tibba-scheduler
 )
-# Batch C3 — config / util / crypto
+# Batch C3 — config / util（缓存与出站 HTTP 客户端，几乎所有请求都依赖）
 CORE_C3=(
-    tibba-model
     tibba-cache
-    tibba-opendal
     tibba-request
+)
+
+# ── 标准（Standard）：标准 REST 构件，比 core 低、比 ext 高，依赖核心 ─────
+# Batch S1 — config / util / crypto
+STANDARD_S1=(
+    tibba-model
+    tibba-opendal
     tibba-sql
 )
-# Batch C4 — model
-CORE_C4=(
+# Batch S2 — model
+STANDARD_S2=(
     tibba-model-builtin
 )
-# Batch C5 — cache / util / state
-CORE_C5=(
+# Batch S3 — cache / util / state
+STANDARD_S3=(
     tibba-session
     tibba-email
     tibba-oauth
@@ -40,20 +45,20 @@ CORE_C5=(
     tibba-totp
     tibba-i18n
 )
-# Batch C6 — session / cache
-CORE_C6=(
+# Batch S4 — session / cache
+STANDARD_S4=(
     tibba-middleware
     tibba-rbac
 )
-# Batch C7 — 路由层
-CORE_C7=(
+# Batch S5 — 路由层
+STANDARD_S5=(
     tibba-router-common
     tibba-router-file
     tibba-router-model
     tibba-router-user
 )
 
-# ── 扩展（Extension）：可选能力，依赖核心 ────────────────────────────────
+# ── 扩展（Extension）：可选能力，依赖核心与标准 ──────────────────────────
 # Batch E1 — 仅/主要依赖 error 或 cache
 EXT_E1=(
     tibba-job
@@ -74,10 +79,11 @@ WAIT_SECS="${TIBBA_PUBLISH_WAIT:-30}"
 usage() {
     cat <<'EOF'
 用法:
-  ./scripts/publish.sh              # 发布全部：core → ext
+  ./scripts/publish.sh              # 发布全部：core → standard → ext
   ./scripts/publish.sh all          # 同上
   ./scripts/publish.sh core         # 仅核心
-  ./scripts/publish.sh ext          # 仅扩展（请先保证 core 已发布）
+  ./scripts/publish.sh standard     # 仅标准（请先保证 core 已发布）
+  ./scripts/publish.sh ext          # 仅扩展（请先保证 core + standard 已发布）
   ./scripts/publish.sh <crate>      # 发布单个 crate，如 tibba-error
 
 环境变量:
@@ -111,13 +117,20 @@ publish_core() {
     echo "######## CORE ########"
     publish_batch "core/C1 (leaf)" "${CORE_C1[@]}"
     publish_batch "core/C2 (error)" "${CORE_C2[@]}"
-    publish_batch "core/C3 (infra)" "${CORE_C3[@]}"
-    publish_batch "core/C4 (model-builtin)" "${CORE_C4[@]}"
-    publish_batch "core/C5 (session/auth)" "${CORE_C5[@]}"
-    publish_batch "core/C6 (middleware)" "${CORE_C6[@]}"
-    # 最后一批仍等待，避免紧接着发 ext 时索引未更新
-    publish_batch "core/C7 (routers)" "${CORE_C7[@]}"
+    # 最后一批仍等待，避免紧接着发 standard 时索引未更新
+    publish_batch "core/C3 (cache/request)" "${CORE_C3[@]}"
     echo "######## CORE done ########"
+}
+
+publish_standard() {
+    echo "######## STANDARD ########"
+    publish_batch "standard/S1 (model/infra)" "${STANDARD_S1[@]}"
+    publish_batch "standard/S2 (model-builtin)" "${STANDARD_S2[@]}"
+    publish_batch "standard/S3 (session/auth)" "${STANDARD_S3[@]}"
+    publish_batch "standard/S4 (middleware)" "${STANDARD_S4[@]}"
+    # 最后一批仍等待，避免紧接着发 ext 时索引未更新
+    publish_batch "standard/S5 (routers)" "${STANDARD_S5[@]}"
+    echo "######## STANDARD done ########"
 }
 
 publish_ext() {
@@ -129,8 +142,9 @@ publish_ext() {
 
 list_known() {
     printf '%s\n' \
-        "${CORE_C1[@]}" "${CORE_C2[@]}" "${CORE_C3[@]}" "${CORE_C4[@]}" \
-        "${CORE_C5[@]}" "${CORE_C6[@]}" "${CORE_C7[@]}" \
+        "${CORE_C1[@]}" "${CORE_C2[@]}" "${CORE_C3[@]}" \
+        "${STANDARD_S1[@]}" "${STANDARD_S2[@]}" "${STANDARD_S3[@]}" \
+        "${STANDARD_S4[@]}" "${STANDARD_S5[@]}" \
         "${EXT_E1[@]}" "${EXT_E2[@]}"
 }
 
@@ -143,11 +157,15 @@ case "$cmd" in
         ;;
     all | "")
         publish_core
+        publish_standard
         publish_ext
-        echo "all core + extension crates published successfully"
+        echo "all core + standard + extension crates published successfully"
         ;;
     core)
         publish_core
+        ;;
+    standard | std)
+        publish_standard
         ;;
     ext | extension)
         publish_ext

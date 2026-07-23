@@ -195,12 +195,25 @@ fn new_redis_config(config: &Config) -> Result<RedisConfig> {
     // 保留原始 scheme（如 `rediss://` 表示 TLS）；之前硬编码 `redis://` 会
     // 让 TLS 配置被静默降级为明文，且无任何错误或警告
     let scheme = parsed.schema;
+    // userinfo 里的密码必须拼回每个节点 URL：host_strings() 只输出 host:port，
+    // 把 userinfo 剥掉了。少了这一步，redis-rs 的 Client::open / ClusterClient
+    // 拿到的是无 auth 的 URL，带密码的实例会 AUTH 失败（cluster 报 NOAUTH）。
+    let userinfo_password = parsed.password;
+    let auth = match (parsed.username, userinfo_password) {
+        (Some(u), Some(p)) => format!("{u}:{p}@"),
+        (None, Some(p)) => format!(":{p}@"),
+        (Some(u), None) => format!("{u}@"),
+        (None, None) => String::new(),
+    };
     let nodes = parsed
         .host_strings()
         .iter()
-        .map(|item| format!("{scheme}://{item}"))
+        .map(|item| format!("{scheme}://{auth}{item}"))
         .collect();
     let query = parsed.query;
+    // 密码优先取 userinfo（redis://:pw@host），回退到查询串 ?password=。
+    // 连接本身已从上面拼好的 URL 取到 auth；这里保留一份供 pool 日志打码。
+    let password = userinfo_password.map(str::to_string).or(query.password);
     // response_timeout：未配置 → 5s；显式 0 → None（关闭）；其它 → 该值
     let response_timeout = match query.response_timeout {
         None => Some(DEFAULT_RESPONSE_TIMEOUT),
@@ -217,7 +230,7 @@ fn new_redis_config(config: &Config) -> Result<RedisConfig> {
         max_conn_age: query.max_conn_age.unwrap_or(Duration::from_secs(24 * 3600)),
         // 由于pool本身没有idle timeout处理，因此现在的模块在复用前判断，需要根据redis server设置调整，默认10分钟
         idle_timeout: query.idle_timeout.unwrap_or(Duration::from_secs(10 * 60)),
-        password: query.password,
+        password,
         response_timeout,
         slow_cmd_threshold: query
             .slow

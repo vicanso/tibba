@@ -23,4 +23,4 @@ time = { workspace = true }
 # 定时轮询需要 time、优雅排空的关停信道需要 sync（watch），workspace 默认未启用，单独开启
 tokio = { workspace = true, features = ["time", "sync"] }
 tracing = { workspace = true }
-tibba-error = { path = "../tibba-error", version = "0.2.5" }
+tibba-error = { path = "../tibba-error", version = "0.2.6" }

@@ -2,7 +2,7 @@
 
 **RBAC 中间件**
 
-> **分层**：核心（Core）— REST 脚手架底座，优先发布
+> **分层**：标准（Standard）— 标准 REST 构件，依赖核心
 
 基于 Session 权限码的 axum 路由层 `require_permission` 适配。
 

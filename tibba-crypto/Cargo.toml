@@ -22,7 +22,7 @@ hex = { workspace = true }
 hmac = { workspace = true }
 sha2 = { workspace = true }
 snafu = { workspace = true }
-tibba-error = { path = "../tibba-error", version = "0.2.5" }
+tibba-error = { path = "../tibba-error", version = "0.2.6" }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }

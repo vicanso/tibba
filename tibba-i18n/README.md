@@ -2,7 +2,7 @@
 
 **错误消息 i18n**
 
-> **分层**：核心（Core）— REST 脚手架底座，优先发布
+> **分层**：标准（Standard）— 标准 REST 构件，依赖核心
 
 按 Accept-Language 协商语言并本地化错误响应 message。
 

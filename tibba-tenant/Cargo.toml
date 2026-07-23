@@ -16,5 +16,5 @@ path = "src/lib.rs"
 [dependencies]
 axum = { workspace = true }
 snafu = { workspace = true }
-tibba-error = { path = "../tibba-error", version = "0.2.5" }
-tibba-session = { path = "../tibba-session", version = "0.2.5" }
+tibba-error = { path = "../tibba-error", version = "0.2.6" }
+tibba-session = { path = "../tibba-session", version = "0.2.6" }

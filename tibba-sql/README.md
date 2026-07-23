@@ -2,7 +2,7 @@
 
 **PostgreSQL 连接池**
 
-> **分层**：核心（Core）— REST 脚手架底座，优先发布
+> **分层**：标准（Standard）— 标准 REST 构件，依赖核心
 
 从配置构建 sqlx PgPool，连接池统计与 URI 解析。
 

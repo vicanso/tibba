@@ -21,9 +21,9 @@ cookie = { workspace = true }
 scopeguard = { workspace = true }
 snafu = { workspace = true }
 serde = { workspace = true }
-tibba-cache = { path = "../tibba-cache", version = "0.2.5" }
-tibba-error = { path = "../tibba-error", version = "0.2.5" }
-tibba-util = { path = "../tibba-util", version = "0.2.5" }
-tibba-state = { path = "../tibba-state", version = "0.2.5" }
+tibba-cache = { path = "../tibba-cache", version = "0.2.6" }
+tibba-error = { path = "../tibba-error", version = "0.2.6" }
+tibba-util = { path = "../tibba-util", version = "0.2.6" }
+tibba-state = { path = "../tibba-state", version = "0.2.6" }
 time = { workspace = true }
 tracing = { workspace = true }

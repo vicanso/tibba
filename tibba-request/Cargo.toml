@@ -21,8 +21,8 @@ scopeguard = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 snafu = { workspace = true }
-tibba-error = { path = "../tibba-error", version = "0.2.5" }
-tibba-util = { path = "../tibba-util", version = "0.2.5" }
+tibba-error = { path = "../tibba-error", version = "0.2.6" }
+tibba-util = { path = "../tibba-util", version = "0.2.6" }
 # net：SSRF 防护需 lookup_host 解析目标域名。time：重试退避的定时器。
 # workspace 默认未启用这两个特性，这里单独开启
 tokio = { workspace = true, features = ["time", "net"] }

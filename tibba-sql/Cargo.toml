@@ -18,9 +18,9 @@ humantime-serde = { workspace = true }
 serde = { workspace = true }
 snafu = { workspace = true }
 sqlx = { workspace = true }
-tibba-config = { path = "../tibba-config", version = "0.2.5" }
-tibba-error = { path = "../tibba-error", version = "0.2.5" }
-tibba-util = { path = "../tibba-util", version = "0.2.5" }
+tibba-config = { path = "../tibba-config", version = "0.2.6" }
+tibba-error = { path = "../tibba-error", version = "0.2.6" }
+tibba-util = { path = "../tibba-util", version = "0.2.6" }
 tracing = { workspace = true }
 validator = { workspace = true }
 
