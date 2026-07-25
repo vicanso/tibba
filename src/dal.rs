@@ -17,8 +17,8 @@ use ctor::ctor;
 use std::sync::Arc;
 use std::sync::OnceLock;
 use tibba_error::Error;
-use tibba_lifecycle::{BoxFuture, Task, register_task};
 use tibba_opendal::{Storage, new_opendal_storage};
+use tibba_runtime::{BoxFuture, Task, register_task};
 use tracing::info;
 
 type Result<T> = std::result::Result<T, Error>;

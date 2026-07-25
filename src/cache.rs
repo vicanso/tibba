@@ -19,9 +19,7 @@ use std::sync::OnceLock;
 use std::time::Duration;
 use tibba_cache::{RedisCache, RedisClient, RedisCmdStat, new_redis_client};
 use tibba_error::Error;
-use tibba_lifecycle::{
-    BoxFuture, Job, LockFuture, Task, TryLock, register_job_task, register_task,
-};
+use tibba_runtime::{BoxFuture, Job, LockFuture, Task, TryLock, register_job_task, register_task};
 use tibba_util::Stopwatch;
 use tracing::{error, info, warn};
 

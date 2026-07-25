@@ -29,7 +29,7 @@ use std::env;
 use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::Arc;
-use tibba_lifecycle::{run_after_tasks, run_before_tasks, run_scheduler_jobs};
+use tibba_runtime::{run_after_tasks, run_before_tasks, run_scheduler_jobs};
 use tibba_middleware::{
     Cors, MiddlewareOptions, SecurityHeaders, cors, entry, processing_limit, request_id,
     security_headers, stats, validate_csrf,

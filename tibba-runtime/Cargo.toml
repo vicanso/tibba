@@ -1,0 +1,36 @@
+[package]
+name = "tibba-runtime"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+keywords = ["tibba", "runtime"]
+description = "process runtime state, metrics and lifecycle for tibba"
+
+[lib]
+name = "tibba_runtime"
+path = "src/lib.rs"
+
+[features]
+default = []
+# 进程资源采样（src/process.rs）。sysinfo 传递依赖较重，默认关闭。
+process-info = ["dep:cached", "dep:serde", "dep:sysinfo"]
+# cron 定时任务（src/scheduler.rs）。tokio-cron-scheduler 传递依赖较重，默认关闭。
+scheduler = ["dep:snafu", "dep:tokio-cron-scheduler"]
+
+[dependencies]
+arc-swap = { workspace = true }
+cached = { workspace = true, optional = true }
+dashmap = { workspace = true }
+serde = { workspace = true, optional = true }
+snafu = { workspace = true, optional = true }
+sysinfo = { workspace = true, optional = true }
+tibba-error = { path = "../tibba-error", version = "0.2.6" }
+tokio = { workspace = true }
+tokio-cron-scheduler = { workspace = true, optional = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }

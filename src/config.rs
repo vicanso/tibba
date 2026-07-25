@@ -21,7 +21,7 @@ use std::sync::OnceLock;
 use std::time::Duration;
 use tibba_config::{Config, humantime_serde};
 use tibba_error::Error;
-use tibba_lifecycle::{BoxFuture, Task, register_task};
+use tibba_runtime::{BoxFuture, Task, register_task};
 use tibba_session::SessionParams;
 use tibba_util::{is_development, is_test};
 use tracing::info;

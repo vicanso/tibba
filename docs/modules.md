@@ -20,11 +20,11 @@ graph TD
 
     job --> error
 
-    lifecycle --> error
-
     llm --> error
 
     oauth --> error
+
+    runtime --> error
 
     totp --> error
 
@@ -65,7 +65,7 @@ graph TD
 
     session --> cache
     session --> error
-    session --> state
+    session --> runtime
     session --> util
 
     notify --> email
@@ -80,8 +80,8 @@ graph TD
 
     middleware --> cache
     middleware --> error
+    middleware --> runtime
     middleware --> session
-    middleware --> state
     middleware --> util
 
     rbac --> error
@@ -89,8 +89,8 @@ graph TD
 
     router-common --> cache
     router-common --> error
+    router-common --> runtime
     router-common --> session
-    router-common --> state
     router-common --> util
 
     router-file --> error
@@ -98,14 +98,12 @@ graph TD
     router-file --> opendal
     router-file --> session
     router-file --> util
-    router-file --> validator
 
     router-model --> error
-    router-model --> lifecycle
     router-model --> model
+    router-model --> runtime
     router-model --> session
     router-model --> util
-    router-model --> validator
 
     tenant --> error
     tenant --> session
@@ -122,5 +120,4 @@ graph TD
     router-user --> session
     router-user --> totp
     router-user --> util
-    router-user --> validator
 ```

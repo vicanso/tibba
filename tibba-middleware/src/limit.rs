@@ -23,7 +23,7 @@ use scopeguard::defer;
 use std::net::IpAddr;
 use std::time::Duration;
 use tibba_cache::RedisCache;
-use tibba_state::{AppState, CTX};
+use tibba_runtime::{AppState, CTX};
 use tracing::{debug, warn};
 
 /// 当前正在处理的请求数 gauge。Prometheus 端可用 `max_over_time(http_inflight[1d])`

@@ -8,7 +8,7 @@
 
 ## 依赖
 
-依赖：cache/crypto/email/error/jwt/middleware/model/model-builtin/oauth/session/totp/util/validator
+依赖：cache/crypto/email/error/jwt/middleware/model/model-builtin/oauth/session/totp/util
 
 ## 在工作区中的位置
 

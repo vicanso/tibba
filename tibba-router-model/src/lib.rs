@@ -19,8 +19,8 @@ use sqlx::PgPool;
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, RwLock};
 use tibba_error::Error as BaseError;
-use tibba_lifecycle::BoxFuture;
 use tibba_model::{Model, ModelListParams, SchemaOption, SchemaView};
+use tibba_runtime::BoxFuture;
 
 /// 模块对外暴露的 Result 仍以 `tibba_error::Error` 为错误类型，本地 `Error` 仅作 snafu 上下文。
 type Result<T, E = BaseError> = std::result::Result<T, E>;

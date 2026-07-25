@@ -8,7 +8,7 @@ schema 驱动的动态 CRUD，支持按模型注册权限码。
 
 ## 依赖
 
-依赖：tibba-error, tibba-lifecycle, tibba-model, tibba-session, tibba-util, tibba-validator
+依赖：tibba-error, tibba-model, tibba-runtime, tibba-session, tibba-util
 
 ## 在工作区中的位置
 

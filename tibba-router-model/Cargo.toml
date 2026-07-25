@@ -20,11 +20,10 @@ serde_json = { workspace = true }
 snafu = { workspace = true }
 sqlx = { workspace = true }
 tibba-error = { path = "../tibba-error", version = "0.2.6" }
-# 仅用其 BoxFuture 类型别名，故不开启 scheduler feature
-tibba-lifecycle = { path = "../tibba-lifecycle", version = "0.2.6" }
 tibba-model = { path = "../tibba-model", version = "0.2.6" }
+# 仅用其 BoxFuture 类型别名，故两个 feature 都不开
+tibba-runtime = { path = "../tibba-runtime", version = "0.2.6" }
 tibba-session = { path = "../tibba-session", version = "0.2.6" }
 tibba-util = { path = "../tibba-util", version = "0.2.6" }
-tibba-validator = { path = "../tibba-validator", version = "0.2.6" }
 utoipa = { workspace = true }
 validator = { workspace = true }

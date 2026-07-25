@@ -12,6 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//! `validator` crate 的自定义校验函数（`x_*`）与错误码常量（`CODE_*`）。
+//!
+//! 每个校验器可通过同名环境变量（`-` 换 `_`、转小写、值为 `*`）临时关闭，
+//! 便于本地开发绕过格式限制，见 [`is_disabled`]。
+//!
+//! 模块名用 `validate` 而非 `validator`，以免与外部 `validator` crate 撞名。
+
 use std::env;
 use validator::ValidationError;
 

@@ -25,8 +25,7 @@ use sqlx::PgPool;
 use tibba_error::Error;
 use tibba_model::{ModelListParams, SchemaOption, SchemaView};
 use tibba_session::UserSession;
-use tibba_util::{JsonParams, JsonResult, QueryParams};
-use tibba_validator::x_schema_name;
+use tibba_util::{JsonParams, JsonResult, QueryParams, x_schema_name};
 use utoipa::{IntoParams, OpenApi, ToSchema};
 use validator::Validate;
 

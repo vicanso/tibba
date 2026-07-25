@@ -8,7 +8,7 @@
 
 ## 依赖
 
-依赖：tibba-error, tibba-model-builtin, tibba-opendal, tibba-session, tibba-util, tibba-validator
+依赖：tibba-error, tibba-model-builtin, tibba-opendal, tibba-session, tibba-util
 
 ## 在工作区中的位置
 

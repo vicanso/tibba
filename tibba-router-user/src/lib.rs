@@ -40,9 +40,9 @@ use tibba_oauth::OAuthConfig;
 use tibba_session::{Session, SessionResponse, UserSession};
 use tibba_util::{
     JsonParams, JsonResult, generate_device_id_cookie, get_device_id_from_cookie, is_development,
-    is_test, now, timestamp, timestamp_hash, uuid, validate_timestamp_hash,
+    is_test, now, timestamp, timestamp_hash, uuid, validate_timestamp_hash, x_sha256,
+    x_user_account, x_user_email, x_user_password, x_uuid,
 };
-use tibba_validator::*;
 use tracing::warn;
 use utoipa::{OpenApi, ToSchema};
 use validator::Validate;

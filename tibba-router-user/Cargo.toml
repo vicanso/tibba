@@ -35,6 +35,5 @@ tibba-oauth = { path = "../tibba-oauth", version = "0.2.6" }
 tibba-session = { path = "../tibba-session", version = "0.2.6" }
 tibba-totp = { path = "../tibba-totp", version = "0.2.6" }
 tibba-util = { path = "../tibba-util", version = "0.2.6" }
-tibba-validator = { path = "../tibba-validator", version = "0.2.6" }
 utoipa = { workspace = true }
 validator = { workspace = true }

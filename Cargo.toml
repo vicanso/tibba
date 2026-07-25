@@ -60,8 +60,6 @@ tibba-feature = { path = "./tibba-feature" }
 tibba-i18n = { path = "./tibba-i18n" }
 tibba-job = { path = "./tibba-job" }
 tibba-jwt = { path = "./tibba-jwt" }
-# scheduler：主应用需要 cron 定时任务
-tibba-lifecycle = { path = "./tibba-lifecycle", features = ["scheduler"] }
 tibba-llm = { path = "./tibba-llm" }
 tibba-middleware = { path = "./tibba-middleware" }
 tibba-model = { path = "./tibba-model" }
@@ -75,10 +73,14 @@ tibba-router-common = { path = "./tibba-router-common" }
 tibba-router-file = { path = "./tibba-router-file" }
 tibba-router-model = { path = "./tibba-router-model" }
 tibba-router-user = { path = "./tibba-router-user" }
+# process-info：/commons/application 与定时日志需要进程采样
+# scheduler：主应用需要 cron 定时任务
+tibba-runtime = { path = "./tibba-runtime", features = [
+    "process-info",
+    "scheduler",
+] }
 tibba-session = { path = "./tibba-session" }
 tibba-sql = { path = "./tibba-sql" }
-# process-info：/commons/application 与定时日志需要进程 CPU / 内存采样
-tibba-state = { path = "./tibba-state", features = ["process-info"] }
 tibba-tenant = { path = "./tibba-tenant" }
 tibba-util = { path = "./tibba-util" }
 tibba-webhook = { path = "./tibba-webhook" }
@@ -119,7 +121,6 @@ members = [
     "tibba-feature",
     "tibba-job",
     "tibba-jwt",
-    "tibba-lifecycle",
     "tibba-middleware",
     "tibba-model",
     "tibba-model-builtin",
@@ -132,10 +133,9 @@ members = [
     "tibba-router-common",
     "tibba-router-file",
     "tibba-router-user",
+    "tibba-runtime",
     "tibba-sql",
-    "tibba-state",
     "tibba-util",
-    "tibba-validator",
     "tibba-session",
     "tibba-router-model",
     "tibba-llm",

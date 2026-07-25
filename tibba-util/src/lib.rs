@@ -95,6 +95,7 @@ mod request;
 mod response;
 mod string;
 mod uri;
+mod validate;
 mod value;
 
 pub use compression::*;
@@ -104,4 +105,5 @@ pub use request::*;
 pub use response::*;
 pub use string::*;
 pub use uri::*;
+pub use validate::*;
 pub use value::*;

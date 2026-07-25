@@ -7,15 +7,13 @@ set -euo pipefail
 # Batch C1 — 无内部依赖
 CORE_C1=(
     tibba-error
-    tibba-state
-    tibba-validator
 )
 # Batch C2 — 主要依赖 error
 CORE_C2=(
     tibba-util
     tibba-config
     tibba-crypto
-    tibba-lifecycle
+    tibba-runtime
 )
 # Batch C3 — config / util（缓存与出站 HTTP 客户端，几乎所有请求都依赖）
 CORE_C3=(

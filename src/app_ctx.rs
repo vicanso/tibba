@@ -34,7 +34,7 @@ use std::sync::OnceLock;
 use tibba_cache::RedisCache;
 use tibba_error::Error;
 use tibba_opendal::Storage;
-use tibba_state::AppState;
+use tibba_runtime::AppState;
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 

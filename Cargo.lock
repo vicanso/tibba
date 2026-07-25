@@ -6324,7 +6324,6 @@ dependencies = [
  "tibba-i18n",
  "tibba-job",
  "tibba-jwt",
- "tibba-lifecycle",
  "tibba-llm",
  "tibba-middleware",
  "tibba-model",
@@ -6338,9 +6337,9 @@ dependencies = [
  "tibba-router-file",
  "tibba-router-model",
  "tibba-router-user",
+ "tibba-runtime",
  "tibba-session",
  "tibba-sql",
- "tibba-state",
  "tibba-tenant",
  "tibba-util",
  "tibba-webhook",
@@ -6476,19 +6475,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tibba-lifecycle"
-version = "0.2.6"
-dependencies = [
- "dashmap",
- "pretty_assertions",
- "snafu",
- "tibba-error",
- "tokio",
- "tokio-cron-scheduler",
- "tracing",
-]
-
-[[package]]
 name = "tibba-llm"
 version = "0.2.6"
 dependencies = [
@@ -6519,8 +6505,8 @@ dependencies = [
  "snafu",
  "tibba-cache",
  "tibba-error",
+ "tibba-runtime",
  "tibba-session",
- "tibba-state",
  "tibba-util",
  "tokio",
  "tracing",
@@ -6664,8 +6650,8 @@ dependencies = [
  "snafu",
  "tibba-cache",
  "tibba-error",
+ "tibba-runtime",
  "tibba-session",
- "tibba-state",
  "tibba-util",
  "tokio",
  "tracing",
@@ -6689,7 +6675,6 @@ dependencies = [
  "tibba-opendal",
  "tibba-session",
  "tibba-util",
- "tibba-validator",
  "utoipa",
  "validator",
 ]
@@ -6704,11 +6689,10 @@ dependencies = [
  "snafu",
  "sqlx 0.9.0",
  "tibba-error",
- "tibba-lifecycle",
  "tibba-model",
+ "tibba-runtime",
  "tibba-session",
  "tibba-util",
- "tibba-validator",
  "utoipa",
  "validator",
 ]
@@ -6735,10 +6719,26 @@ dependencies = [
  "tibba-session",
  "tibba-totp",
  "tibba-util",
- "tibba-validator",
  "tracing",
  "utoipa",
  "validator",
+]
+
+[[package]]
+name = "tibba-runtime"
+version = "0.2.6"
+dependencies = [
+ "arc-swap",
+ "cached",
+ "dashmap",
+ "pretty_assertions",
+ "serde",
+ "snafu",
+ "sysinfo",
+ "tibba-error",
+ "tokio",
+ "tokio-cron-scheduler",
+ "tracing",
 ]
 
 [[package]]
@@ -6760,7 +6760,7 @@ dependencies = [
  "snafu",
  "tibba-cache",
  "tibba-error",
- "tibba-state",
+ "tibba-runtime",
  "tibba-util",
  "time",
  "tracing",
@@ -6779,17 +6779,6 @@ dependencies = [
  "tibba-util",
  "tracing",
  "validator",
-]
-
-[[package]]
-name = "tibba-state"
-version = "0.2.6"
-dependencies = [
- "arc-swap",
- "cached",
- "serde",
- "sysinfo",
- "tokio",
 ]
 
 [[package]]
@@ -6841,13 +6830,6 @@ dependencies = [
  "uuid",
  "validator",
  "zstd",
-]
-
-[[package]]
-name = "tibba-validator"
-version = "0.2.6"
-dependencies = [
- "validator",
 ]
 
 [[package]]

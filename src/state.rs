@@ -18,8 +18,9 @@ use std::sync::Arc;
 use std::sync::{LazyLock, OnceLock};
 use std::time::Duration;
 use tibba_error::Error;
-use tibba_lifecycle::{BoxFuture, Job, Task, register_job_task, register_task};
-use tibba_state::{AppState, get_process_system_info};
+use tibba_runtime::{
+    AppState, BoxFuture, Job, Task, get_process_system_info, register_job_task, register_task,
+};
 use tibba_util::is_production;
 use tokio::sync::RwLock;
 use tracing::info;

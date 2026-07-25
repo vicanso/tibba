@@ -25,14 +25,16 @@
 | Crate | 职责 | 可选 feature |
 |-------|------|--------------|
 | `tibba-error` | HTTP 错误类型 | |
-| `tibba-state` | AppState / 请求上下文 / 进程指标 | `process-info`（sysinfo 采样） |
-| `tibba-validator` | 校验辅助 | |
-| `tibba-util` | 通用工具 | |
+| `tibba-util` | 通用工具 + 自定义校验器（`x_*`） | |
 | `tibba-config` | 配置加载 | |
 | `tibba-crypto` | 密码哈希 / 密钥 | |
-| `tibba-lifecycle` | 启动/关闭钩子 + Cron 定时任务 | `scheduler`（cron 调度） |
+| `tibba-runtime` | AppState / 请求上下文 / 进程指标 / 启停钩子 / Cron | `process-info`、`scheduler` |
 | `tibba-cache` | Redis 缓存 | |
 | `tibba-request` | 出站 HTTP 客户端 | |
+
+7 个 core 与「重依赖簇」一一对应，这是有原则的下限：`error`→axum、
+`util`→编码/时间/HTTP 杂项、`config`→config-rs、`crypto`→argon2/hmac/sha2、
+`runtime`→arc-swap/tokio/dashmap、`cache`→redis/deadpool、`request`→reqwest/otel。
 
 ## 标准 Standard
 

@@ -8,7 +8,7 @@
 
 ## 依赖
 
-依赖：tibba-cache, tibba-error, tibba-state, tibba-util
+依赖：tibba-cache, tibba-error, tibba-runtime, tibba-util
 
 ## 在工作区中的位置
 

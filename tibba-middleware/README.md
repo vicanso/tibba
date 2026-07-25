@@ -8,7 +8,7 @@ request_id、CORS、CSRF、限流、ETag、安全头、入口/统计、幂等等
 
 ## 依赖
 
-依赖：tibba-cache, tibba-error, tibba-session, tibba-state, tibba-util
+依赖：tibba-cache, tibba-error, tibba-runtime, tibba-session, tibba-util
 
 ## 在工作区中的位置
 

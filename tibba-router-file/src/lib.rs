@@ -32,8 +32,9 @@ use tibba_error::Error as BaseError;
 use tibba_model_builtin::{ConfigurationModel, FileInsertParams, FileModel, Model};
 use tibba_opendal::{PresignResult, Storage};
 use tibba_session::UserSession;
-use tibba_util::{JsonResult, QueryParams, uuid};
-use tibba_validator::{x_file_group, x_file_name, x_image_format, x_image_quality};
+use tibba_util::{
+    JsonResult, QueryParams, uuid, x_file_group, x_file_name, x_image_format, x_image_quality,
+};
 use utoipa::{IntoParams, OpenApi, ToSchema};
 use validator::Validate;
 

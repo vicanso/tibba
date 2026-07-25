@@ -21,7 +21,7 @@ use scopeguard::defer;
 use snafu::ResultExt;
 use std::time::Duration;
 use tibba_cache::RedisCache;
-use tibba_state::CTX;
+use tibba_runtime::CTX;
 use tokio::time::sleep;
 use tracing::debug;
 
