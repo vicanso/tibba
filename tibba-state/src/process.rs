@@ -12,6 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//! 进程资源采样：CPU / 内存 / 文件描述符 / 磁盘读写。
+//!
+//! 与 [`crate::AppState`] 同属「进程自身状态」，故与之同 crate；
+//! 但 `sysinfo` 传递依赖较重，仅在开启 `process-info` feature 时编译。
+
 use cached::cached;
 use serde::{Deserialize, Serialize};
 use sysinfo::{Pid, ProcessesToUpdate, System};

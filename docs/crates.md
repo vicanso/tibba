@@ -19,19 +19,20 @@
 
 最小脚手架底座：错误模型、配置、密钥、缓存、出站 HTTP，以及钩子与调度。
 
-| Crate | 职责 |
-|-------|------|
-| `tibba-error` | HTTP 错误类型 |
-| `tibba-state` | AppState / 请求上下文 |
-| `tibba-performance` | 进程指标 |
-| `tibba-validator` | 校验辅助 |
-| `tibba-util` | 通用工具 |
-| `tibba-config` | 配置加载 |
-| `tibba-crypto` | 密码哈希 / 密钥 |
-| `tibba-hook` | 启动/关闭钩子 |
-| `tibba-scheduler` | Cron / 重复任务 |
-| `tibba-cache` | Redis 缓存 |
-| `tibba-request` | 出站 HTTP 客户端 |
+重依赖（sysinfo、tokio-cron-scheduler）以 default-off feature 隔离，
+只用轻量部分的下游不必为其付出编译代价。
+
+| Crate | 职责 | 可选 feature |
+|-------|------|--------------|
+| `tibba-error` | HTTP 错误类型 | |
+| `tibba-state` | AppState / 请求上下文 / 进程指标 | `process-info`（sysinfo 采样） |
+| `tibba-validator` | 校验辅助 | |
+| `tibba-util` | 通用工具 | |
+| `tibba-config` | 配置加载 | |
+| `tibba-crypto` | 密码哈希 / 密钥 | |
+| `tibba-lifecycle` | 启动/关闭钩子 + Cron 定时任务 | `scheduler`（cron 调度） |
+| `tibba-cache` | Redis 缓存 | |
+| `tibba-request` | 出站 HTTP 客户端 | |
 
 ## 标准 Standard
 

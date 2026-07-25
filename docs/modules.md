@@ -16,17 +16,15 @@ graph TD
 
     crypto --> error
 
-    hook --> error
-
     i18n --> error
 
     job --> error
 
+    lifecycle --> error
+
     llm --> error
 
     oauth --> error
-
-    scheduler --> error
 
     totp --> error
 
@@ -91,7 +89,6 @@ graph TD
 
     router-common --> cache
     router-common --> error
-    router-common --> performance
     router-common --> session
     router-common --> state
     router-common --> util
@@ -104,7 +101,7 @@ graph TD
     router-file --> validator
 
     router-model --> error
-    router-model --> hook
+    router-model --> lifecycle
     router-model --> model
     router-model --> session
     router-model --> util

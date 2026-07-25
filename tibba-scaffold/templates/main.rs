@@ -29,12 +29,11 @@ use std::env;
 use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::Arc;
-use tibba_hook::{run_after_tasks, run_before_tasks};
+use tibba_lifecycle::{run_after_tasks, run_before_tasks, run_scheduler_jobs};
 use tibba_middleware::{
     Cors, MiddlewareOptions, SecurityHeaders, cors, entry, processing_limit, request_id,
     security_headers, stats, validate_csrf,
 };
-use tibba_scheduler::run_scheduler_jobs;
 use tibba_session::session;
 use tibba_util::{is_development, is_production};
 use tokio::signal;

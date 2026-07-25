@@ -14,7 +14,7 @@
 
 //! 基于 PostgreSQL `FOR UPDATE SKIP LOCKED` 的异步任务队列。
 //!
-//! 与 cron 调度器（`tibba-scheduler`）互补：cron 管「周期性反复跑」，本模块管
+//! 与 cron 调度器（`tibba-lifecycle` 的 `scheduler`）互补：cron 管「周期性反复跑」，本模块管
 //! 「事件触发、可靠地做掉一次，失败能重试、毒消息隔离」。选 PG 的关键优势是支持
 //! 「事务性入队」（[`JobQueue::enqueue_tx`]），杜绝 dual-write 问题。
 //!
@@ -100,7 +100,7 @@ const METRIC_QUEUE_DEPTH: &str = "job_queue_depth";
 
 // ── Handler 注册表 ────────────────────────────────────────────────────────
 
-/// 全局 handler 注册表：job_type → handler。与 `tibba_scheduler::register_job_task`
+/// 全局 handler 注册表：job_type → handler。与 `tibba_lifecycle::register_job_task`
 /// 同思路，撞名时新覆盖旧并打 warn（避免「handler 静默丢失」排查无门）。
 static HANDLERS: LazyLock<DashMap<&'static str, Arc<dyn JobHandler>>> = LazyLock::new(DashMap::new);
 

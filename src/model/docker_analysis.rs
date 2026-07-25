@@ -21,14 +21,13 @@ use sqlx::{FromRow, PgPool};
 use std::sync::Arc;
 use std::time::Duration;
 use tibba_error::Error as BaseError;
-use tibba_hook::{BoxFuture, Task, register_task};
+use tibba_lifecycle::{BoxFuture, Task, register_job_task, register_task, singleton_cron_job};
 use tibba_llm::{Backend, LlmCall, Usage as LlmUsage};
 use tibba_model_token::{
     LLM_PROVIDER_ANTHROPIC, SERVICE_LLM, TokenLlmModel, TokenPriceModel, TokenService,
     TokenUsageInsertParams,
 };
 use tibba_notify::{EmailNotifier, MultiNotifier, Notifier, NotifyMessage, WecomRobotNotifier};
-use tibba_scheduler::{register_job_task, singleton_cron_job};
 use tracing::{error, info, warn};
 
 /// 该模块所有日志事件的 tracing target。

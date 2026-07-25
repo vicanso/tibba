@@ -6321,10 +6321,10 @@ dependencies = [
  "tibba-email",
  "tibba-error",
  "tibba-feature",
- "tibba-hook",
  "tibba-i18n",
  "tibba-job",
  "tibba-jwt",
+ "tibba-lifecycle",
  "tibba-llm",
  "tibba-middleware",
  "tibba-model",
@@ -6333,13 +6333,11 @@ dependencies = [
  "tibba-notify",
  "tibba-oauth",
  "tibba-opendal",
- "tibba-performance",
  "tibba-request",
  "tibba-router-common",
  "tibba-router-file",
  "tibba-router-model",
  "tibba-router-user",
- "tibba-scheduler",
  "tibba-session",
  "tibba-sql",
  "tibba-state",
@@ -6439,17 +6437,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tibba-hook"
-version = "0.2.6"
-dependencies = [
- "dashmap",
- "pretty_assertions",
- "tibba-error",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "tibba-i18n"
 version = "0.2.6"
 dependencies = [
@@ -6485,6 +6472,19 @@ dependencies = [
  "snafu",
  "tibba-error",
  "tibba-util",
+ "tracing",
+]
+
+[[package]]
+name = "tibba-lifecycle"
+version = "0.2.6"
+dependencies = [
+ "dashmap",
+ "pretty_assertions",
+ "snafu",
+ "tibba-error",
+ "tokio",
+ "tokio-cron-scheduler",
  "tracing",
 ]
 
@@ -6617,15 +6617,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tibba-performance"
-version = "0.2.6"
-dependencies = [
- "cached",
- "serde",
- "sysinfo",
-]
-
-[[package]]
 name = "tibba-rbac"
 version = "0.2.6"
 dependencies = [
@@ -6673,7 +6664,6 @@ dependencies = [
  "snafu",
  "tibba-cache",
  "tibba-error",
- "tibba-performance",
  "tibba-session",
  "tibba-state",
  "tibba-util",
@@ -6714,7 +6704,7 @@ dependencies = [
  "snafu",
  "sqlx 0.9.0",
  "tibba-error",
- "tibba-hook",
+ "tibba-lifecycle",
  "tibba-model",
  "tibba-session",
  "tibba-util",
@@ -6759,17 +6749,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tibba-scheduler"
-version = "0.2.6"
-dependencies = [
- "dashmap",
- "snafu",
- "tibba-error",
- "tokio-cron-scheduler",
- "tracing",
-]
-
-[[package]]
 name = "tibba-session"
 version = "0.2.6"
 dependencies = [
@@ -6807,6 +6786,9 @@ name = "tibba-state"
 version = "0.2.6"
 dependencies = [
  "arc-swap",
+ "cached",
+ "serde",
+ "sysinfo",
  "tokio",
 ]
 

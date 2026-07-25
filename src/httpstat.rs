@@ -28,12 +28,11 @@ use std::sync::LazyLock;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::{net::IpAddr, time::Duration};
 use tibba_error::Error;
-use tibba_hook::{BoxFuture, Task, register_task};
+use tibba_lifecycle::{BoxFuture, Task, register_job_task, register_task, singleton_cron_job};
 use tibba_model::{AlarmConfig, ConfigurationModel, Model, ResultValue};
 use tibba_model_builtin::{
     HttpDetector, HttpDetectorModel, HttpStat, HttpStatInsertParams, HttpStatModel, REGION_ANY,
 };
-use tibba_scheduler::{register_job_task, singleton_cron_job};
 use time::OffsetDateTime;
 use tokio::sync::Semaphore;
 use tokio::time::timeout;

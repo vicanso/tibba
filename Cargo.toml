@@ -57,10 +57,11 @@ tibba-config = { path = "./tibba-config" }
 tibba-email = { path = "./tibba-email" }
 tibba-error = { path = "./tibba-error" }
 tibba-feature = { path = "./tibba-feature" }
-tibba-hook = { path = "./tibba-hook" }
 tibba-i18n = { path = "./tibba-i18n" }
 tibba-job = { path = "./tibba-job" }
 tibba-jwt = { path = "./tibba-jwt" }
+# scheduler：主应用需要 cron 定时任务
+tibba-lifecycle = { path = "./tibba-lifecycle", features = ["scheduler"] }
 tibba-llm = { path = "./tibba-llm" }
 tibba-middleware = { path = "./tibba-middleware" }
 tibba-model = { path = "./tibba-model" }
@@ -74,14 +75,13 @@ tibba-router-common = { path = "./tibba-router-common" }
 tibba-router-file = { path = "./tibba-router-file" }
 tibba-router-model = { path = "./tibba-router-model" }
 tibba-router-user = { path = "./tibba-router-user" }
-tibba-scheduler = { path = "./tibba-scheduler" }
 tibba-session = { path = "./tibba-session" }
 tibba-sql = { path = "./tibba-sql" }
-tibba-state = { path = "./tibba-state" }
+# process-info：/commons/application 与定时日志需要进程 CPU / 内存采样
+tibba-state = { path = "./tibba-state", features = ["process-info"] }
 tibba-tenant = { path = "./tibba-tenant" }
 tibba-util = { path = "./tibba-util" }
 tibba-webhook = { path = "./tibba-webhook" }
-tibba-performance = { path = "./tibba-performance" }
 tokio = { workspace = true }
 tower = { workspace = true }
 tower-http = { version = "0.7.0", features = [
@@ -117,16 +117,15 @@ members = [
     "tibba-email",
     "tibba-error",
     "tibba-feature",
-    "tibba-hook",
     "tibba-job",
     "tibba-jwt",
+    "tibba-lifecycle",
     "tibba-middleware",
     "tibba-model",
     "tibba-model-builtin",
     "tibba-model-token",
     "tibba-notify",
     "tibba-opendal",
-    "tibba-performance",
     "tibba-request",
     "tibba-oauth",
     "tibba-rbac",
@@ -137,7 +136,6 @@ members = [
     "tibba-state",
     "tibba-util",
     "tibba-validator",
-    "tibba-scheduler",
     "tibba-session",
     "tibba-router-model",
     "tibba-llm",

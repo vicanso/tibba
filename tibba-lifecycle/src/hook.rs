@@ -12,6 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//! 启动 / 关闭钩子：全局注册表 + 按优先级驱动执行。
+
+use crate::HOOK_LOG_TARGET;
 use dashmap::DashMap;
 use std::future::Future;
 use std::pin::Pin;
@@ -19,10 +22,6 @@ use std::sync::Arc;
 use std::sync::LazyLock;
 use tibba_error::Error;
 use tracing::{error, info};
-
-/// 该 crate 所有日志事件的 tracing target。
-/// 可通过 `RUST_LOG=tibba:hook=info`（或 `debug`）进行过滤。
-const LOG_TARGET: &str = "tibba:hook";
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -107,7 +106,7 @@ async fn run_tasks(task_type: TaskType) -> Result<()> {
             Ok(executed) => {
                 if executed {
                     info!(
-                        target: LOG_TARGET,
+                        target: HOOK_LOG_TARGET,
                         task_type = task_type.label(),
                         name,
                         elapsed = start.elapsed().as_millis(),
@@ -116,7 +115,7 @@ async fn run_tasks(task_type: TaskType) -> Result<()> {
             }
             Err(err) => {
                 error!(
-                    target: LOG_TARGET,
+                    target: HOOK_LOG_TARGET,
                     task_type = task_type.label(),
                     name,
                     elapsed = start.elapsed().as_millis(),

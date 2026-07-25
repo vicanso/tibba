@@ -20,8 +20,7 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, atomic::AtomicBool};
 use std::time::Duration;
 use tibba_error::Error;
-use tibba_hook::{BoxFuture, Task, register_task};
-use tibba_scheduler::{Job, register_job_task};
+use tibba_lifecycle::{BoxFuture, Job, Task, register_job_task, register_task};
 use tibba_sql::{PoolStat, new_pg_pool};
 use tracing::info;
 

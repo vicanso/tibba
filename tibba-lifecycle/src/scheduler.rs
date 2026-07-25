@@ -12,6 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//! cron 定时任务：全局注册表 + 启动时统一挂载到 `JobScheduler`。
+
+use crate::SCHEDULER_LOG_TARGET;
 use dashmap::DashMap;
 use snafu::{ResultExt, Snafu};
 use std::future::Future;
@@ -22,10 +25,6 @@ use tibba_error::Error as BaseError;
 pub use tokio_cron_scheduler::Job;
 use tokio_cron_scheduler::{JobScheduler, JobSchedulerError};
 use tracing::{error, info, warn};
-
-/// 该 crate 所有日志事件的 tracing target。
-/// 可通过 `RUST_LOG=tibba:scheduler=info`（或 `debug`）进行过滤。
-const LOG_TARGET: &str = "tibba:scheduler";
 
 type Result<T> = std::result::Result<T, BaseError>;
 
@@ -119,7 +118,7 @@ pub fn register_job_task(name: impl Into<String>, job: Job) {
     let name = name.into();
     if JOB_TASKS.insert(name.clone(), job).is_some() {
         warn!(
-            target: LOG_TARGET,
+            target: SCHEDULER_LOG_TARGET,
             name,
             "job task name conflict; previous registration overwritten"
         );
@@ -140,7 +139,7 @@ pub async fn run_scheduler_jobs() -> Result<JobScheduler> {
             // 失败任务在 fail-fast 前先记一条带 name 的错误日志；
             // 让操作员一眼看到是哪个任务在启动期掉链子，无需再去 grep snafu Display
             error!(
-                target: LOG_TARGET,
+                target: SCHEDULER_LOG_TARGET,
                 name,
                 error = %err,
                 "add job failed",
@@ -150,14 +149,14 @@ pub async fn run_scheduler_jobs() -> Result<JobScheduler> {
                 source: err,
             }));
         }
-        info!(target: LOG_TARGET, name, "add job success");
+        info!(target: SCHEDULER_LOG_TARGET, name, "add job success");
         added += 1;
     }
 
     scheduler.shutdown_on_ctrl_c();
     scheduler.start().await.context(StartSnafu)?;
 
-    info!(target: LOG_TARGET, jobs = added, "scheduler started");
+    info!(target: SCHEDULER_LOG_TARGET, jobs = added, "scheduler started");
 
     Ok(scheduler)
 }

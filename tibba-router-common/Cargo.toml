@@ -26,10 +26,12 @@ serde = { workspace = true }
 snafu = { workspace = true }
 tibba-cache = { path = "../tibba-cache", version = "0.2.6" }
 tibba-error = { path = "../tibba-error", version = "0.2.6" }
-tibba-performance = { path = "../tibba-performance", version = "0.2.6" }
 # /commons/application 暴露内部运行时信息，用 AdminSession 门控
 tibba-session = { path = "../tibba-session", version = "0.2.6" }
-tibba-state = { path = "../tibba-state", version = "0.2.6" }
+# process-info：/commons/application 需要进程 CPU / 内存采样
+tibba-state = { path = "../tibba-state", version = "0.2.6", features = [
+    "process-info",
+] }
 tibba-util = { path = "../tibba-util", version = "0.2.6" }
 tokio = { workspace = true }
 tracing = { workspace = true }

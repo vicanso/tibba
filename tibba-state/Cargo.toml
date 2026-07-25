@@ -14,6 +14,15 @@ description = "state for tibba"
 name = "tibba_state"
 path = "src/lib.rs"
 
+[features]
+default = []
+# 进程资源采样（src/process.rs）。sysinfo 传递依赖较重，默认关闭，
+# 由真正需要的调用方（tibba-router-common、主应用）显式开启。
+process-info = ["dep:cached", "dep:serde", "dep:sysinfo"]
+
 [dependencies]
 arc-swap = { workspace = true }
+cached = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+sysinfo = { workspace = true, optional = true }
 tokio = { workspace = true }
