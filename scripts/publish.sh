@@ -20,6 +20,10 @@ CORE_C3=(
     tibba-cache
     tibba-request
 )
+# Batch C4 — 门面：re-export 上面全部 7 个，故必须最后发
+CORE_C4=(
+    tibba-core
+)
 
 # ── 标准（Standard）：标准 REST 构件，比 core 低、比 ext 高，依赖核心 ─────
 # Batch S1 — config / util / crypto
@@ -113,8 +117,9 @@ publish_core() {
     echo "######## CORE ########"
     publish_batch "core/C1 (leaf)" "${CORE_C1[@]}"
     publish_batch "core/C2 (error)" "${CORE_C2[@]}"
-    # 最后一批仍等待，避免紧接着发 standard 时索引未更新
     publish_batch "core/C3 (cache/request)" "${CORE_C3[@]}"
+    # 最后一批仍等待，避免紧接着发 standard 时索引未更新
+    publish_batch "core/C4 (facade)" "${CORE_C4[@]}"
     echo "######## CORE done ########"
 }
 
@@ -138,7 +143,7 @@ publish_ext() {
 
 list_known() {
     printf '%s\n' \
-        "${CORE_C1[@]}" "${CORE_C2[@]}" "${CORE_C3[@]}" \
+        "${CORE_C1[@]}" "${CORE_C2[@]}" "${CORE_C3[@]}" "${CORE_C4[@]}" \
         "${STANDARD_S1[@]}" "${STANDARD_S2[@]}" "${STANDARD_S3[@]}" \
         "${STANDARD_S4[@]}" "${STANDARD_S5[@]}" \
         "${EXT_E1[@]}" "${EXT_E2[@]}"
@@ -167,10 +172,10 @@ case "$cmd" in
         publish_ext
         ;;
     tibba-*)
-        # 单包：必须在清单内（防止误发 scaffold 等）
+        # 单包：必须在清单内（防止拼错包名时静默失败）
         if ! list_known | grep -qx "$cmd"; then
             echo "error: unknown or non-publishable crate: $cmd" >&2
-            echo "hint: scaffold 等 tool 不发布；清单见 docs/crates.md" >&2
+            echo "hint: 清单见 docs/crates.md" >&2
             exit 1
         fi
         publish_one "$cmd"

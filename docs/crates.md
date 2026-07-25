@@ -11,9 +11,11 @@
 - **Standard** — 标准 REST 构件（数据模型、存储、会话、鉴权栈、路由），比 core 低、比 ext 高，依赖核心。
 - **Extension** — 可选产品能力，依赖核心与标准。
 
-工具包 `tibba-scaffold` 标记为 **Tool**，`publish = false`，不参与发布。
+workspace 内全部 `tibba-*` 均可发布，无例外。
 
 版本号统一见根 `Cargo.toml` 的 `[workspace.package]`。
+
+派生新项目见 [scaffold.md](scaffold.md)。
 
 ## 核心 Core
 
@@ -35,6 +37,27 @@
 7 个 core 与「重依赖簇」一一对应，这是有原则的下限：`error`→axum、
 `util`→编码/时间/HTTP 杂项、`config`→config-rs、`crypto`→argon2/hmac/sha2、
 `runtime`→arc-swap/tokio/dashmap、`cache`→redis/deadpool、`request`→reqwest/otel。
+每对 crate 的消费者集合都不相同，任何进一步合并都会让某个 crate 背上用不到的依赖簇。
+
+### 门面：`tibba-core`
+
+`tibba-core` 是**纯 re-export 门面**，不含业务代码，把上面 7 个收拢到一个依赖项下：
+
+```toml
+tibba-core = "0.2.6"    # default = ["full"]，写一行就能用
+```
+
+```rust
+use tibba_core::{error::Error, runtime::AppState, cache::RedisCache};
+```
+
+每个 core crate 对应一个 feature（`util` / `config` / `crypto` / `runtime` /
+`cache` / `request`，`error` 始终编译），外加透传 `process-info`、`scheduler`。
+需要瘦身时 `default-features = false` 可从 269 个传递依赖降到 55 个。
+
+**门面只给最终应用用。** 库 crate（含 workspace 内所有 `tibba-*`）应继续直接依赖
+它真正需要的那几个——保住依赖可裁剪、增量编译粒度、以及编译器强制的分层边界。
+`tibba-core` 因此必须在其余 7 个之后发布（`publish.sh` 的 `core/C4` 批次）。
 
 ## 标准 Standard
 
@@ -81,12 +104,6 @@
 | `demo-docker` | 应用内模块 + token |
 | `demo-detector` | 应用内探测 + 部分 model-builtin |
 | `demo-tenant` | `tibba-tenant` |
-
-## 工具 Tool
-
-| Crate | 说明 |
-|-------|------|
-| `tibba-scaffold` | 生成新项目，不发布 |
 
 ## 发布
 

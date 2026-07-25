@@ -1,0 +1,51 @@
+[package]
+name = "tibba-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+keywords = ["tibba", "core"]
+description = "facade crate re-exporting the tibba core components"
+
+[lib]
+name = "tibba_core"
+path = "src/lib.rs"
+
+# 纯 re-export 门面：不含任何业务代码，只把 7 个 core crate 收拢到一个依赖项下。
+# 每个 feature 对应一个 core crate，default 全开——门面的价值就是「写一行就能用」，
+# 若默认精简则调用方又得回去逐个列 feature，等于没解决问题。
+[features]
+default = ["full"]
+full = [
+    "util",
+    "config",
+    "crypto",
+    "runtime",
+    "cache",
+    "request",
+    "process-info",
+    "scheduler",
+]
+
+util = ["dep:tibba-util"]
+config = ["dep:tibba-config"]
+crypto = ["dep:tibba-crypto"]
+runtime = ["dep:tibba-runtime"]
+cache = ["dep:tibba-cache"]
+request = ["dep:tibba-request"]
+
+# 透传 tibba-runtime 的两个可选能力，免得调用方为此绕过门面直接依赖 tibba-runtime
+process-info = ["runtime", "tibba-runtime/process-info"]
+scheduler = ["runtime", "tibba-runtime/scheduler"]
+
+[dependencies]
+# error 始终编译：所有 core crate 都依赖它，且它自身最轻（54 个传递依赖）
+tibba-error = { path = "../tibba-error", version = "0.2.6" }
+tibba-cache = { path = "../tibba-cache", version = "0.2.6", optional = true }
+tibba-config = { path = "../tibba-config", version = "0.2.6", optional = true }
+tibba-crypto = { path = "../tibba-crypto", version = "0.2.6", optional = true }
+tibba-request = { path = "../tibba-request", version = "0.2.6", optional = true }
+tibba-runtime = { path = "../tibba-runtime", version = "0.2.6", optional = true }
+tibba-util = { path = "../tibba-util", version = "0.2.6", optional = true }

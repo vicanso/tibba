@@ -115,6 +115,7 @@ strip = "debuginfo"
 members = [
     "tibba-cache",
     "tibba-config",
+    "tibba-core",
     "tibba-crypto",
     "tibba-email",
     "tibba-error",
@@ -140,7 +141,6 @@ members = [
     "tibba-router-model",
     "tibba-llm",
     "tibba-totp",
-    "tibba-scaffold",
     "tibba-webhook",
     "tibba-i18n",
     "tibba-tenant",

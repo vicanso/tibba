@@ -68,6 +68,14 @@ graph TD
     session --> runtime
     session --> util
 
+    core --> cache
+    core --> config
+    core --> crypto
+    core --> error
+    core --> request
+    core --> runtime
+    core --> util
+
     notify --> email
     notify --> error
     notify --> request

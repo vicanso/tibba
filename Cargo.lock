@@ -6392,6 +6392,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "tibba-core"
+version = "0.2.6"
+dependencies = [
+ "tibba-cache",
+ "tibba-config",
+ "tibba-crypto",
+ "tibba-error",
+ "tibba-request",
+ "tibba-runtime",
+ "tibba-util",
+]
+
+[[package]]
 name = "tibba-crypto"
 version = "0.2.6"
 dependencies = [
@@ -6739,13 +6752,6 @@ dependencies = [
  "tokio",
  "tokio-cron-scheduler",
  "tracing",
-]
-
-[[package]]
-name = "tibba-scaffold"
-version = "0.2.6"
-dependencies = [
- "rust-embed",
 ]
 
 [[package]]

@@ -6,9 +6,12 @@ bump:
 publish:
 	./scripts/publish.sh $(p)
 
-scaffold:
-	@test -n "$(name)" || (echo "用法: make scaffold name=my-app [output=~/github]" && exit 1)
-	cargo run -p tibba-scaffold -- $(name) $(output)
+# 派生新项目：复制本仓库并改名（详见 docs/scaffold.md）
+# make init name=my-app dest=~/github [flags=--minimal]
+init:
+	@test -n "$(name)" || (echo "用法: make init name=my-app dest=~/github [flags=--minimal]" && exit 1)
+	@test -n "$(dest)" || (echo "用法: make init name=my-app dest=~/github [flags=--minimal]" && exit 1)
+	./scripts/init-project.sh $(name) $(dest) $(flags)
 
 lint:
 	cargo clippy --all-targets --all -- --deny=warnings

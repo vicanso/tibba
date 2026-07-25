@@ -103,15 +103,20 @@ make openapi          # → admin/openapi.json
 make openapi-types    # openapi-typescript → admin/src/api/schema.d.ts
 ```
 
-## 脚手架新项目
+## 派生新项目
+
+本仓库的主应用（`src/`）就是参考实现与模板本身。
 
 ```bash
-make scaffold name=my-app
-# 或
-cargo run -p tibba-scaffold -- my-app ~/github
+make init name=my-app dest=~/github                  # 完整
+make init name=my-app dest=~/github flags=--minimal  # 去掉 demo-* 样板业务
 ```
 
-模板会生成最小可运行入口（AppCtx + 核心中间件）；可按业务再引入 `tibba-router-*` 等 crate。
+复制整个仓库后改名（包名、tracing target、env 前缀、Dockerfile），产物保留 workspace
+与全部 `tibba-*` path 依赖——因此永远与 CI 验证过的代码一致，不存在版本 pin 漂移。
+
+若想要「只依赖已发布 crate 的独立精简项目」，见 **[docs/scaffold.md](docs/scaffold.md)**，
+那份文档同时也是交给 AI 让它照着组装的清单。
 
 ## 常用能力入口
 
