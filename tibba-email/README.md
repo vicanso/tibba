@@ -8,7 +8,7 @@
 
 ## 依赖
 
-依赖：tibba-config, tibba-error
+依赖：tibba-error
 
 ## 在工作区中的位置
 

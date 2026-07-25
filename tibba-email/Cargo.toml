@@ -18,6 +18,5 @@ path = "src/lib.rs"
 resend-rs = { workspace = true }
 serde = { workspace = true }
 snafu = { workspace = true }
-tibba-config = { path = "../tibba-config", version = "0.2.6" }
 tibba-error = { path = "../tibba-error", version = "0.2.6" }
 tracing = { workspace = true }

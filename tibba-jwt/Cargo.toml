@@ -21,5 +21,9 @@ jsonwebtoken = { workspace = true }
 serde = { workspace = true }
 snafu = { workspace = true }
 tibba-error = { path = "../tibba-error", version = "0.2.6" }
-tibba-util = { path = "../tibba-util", version = "0.2.6" }
+tibba-util = { path = "../tibba-util", version = "0.2.6", default-features = false }
 tracing = { workspace = true }
+
+[package.metadata.cargo-machete]
+# humantime-serde 通过 #[serde(with = "humantime_serde")] 属性字符串使用，machete 无法识别
+ignored = ["humantime-serde"]

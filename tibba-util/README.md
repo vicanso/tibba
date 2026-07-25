@@ -24,6 +24,24 @@ struct LoginParams {
 每个校验器可通过同名环境变量临时关闭（`-` 换 `_`、转小写、值设为 `*`），
 便于本地开发绕过格式限制：`x_user_password='*'`。
 
+## Features
+
+默认全开，现有调用方无需改动；只用轻量函数的下游可裁剪：
+
+| Feature | 默认 | 内容 | 甩掉的依赖 |
+|---------|------|------|-----------|
+| `compression` | 开 | `compress` / `decompress` / `Algorithm` | zstd（含 zstd-sys C 编译）、lz4_flex |
+| `http` | 开 | header / cookie / body 辅助（`get_header_value`、`generate_device_id_cookie` 等） | axum-extra、cookie、http-body-util |
+
+```toml
+# 只要 parse_uri / timestamp / uuid 等轻量函数
+tibba-util = { version = "0.2.6", default-features = false }
+# 加压缩
+tibba-util = { version = "0.2.6", default-features = false, features = ["compression"] }
+```
+
+对应的 `Error` 变体随 feature 一并裁剪（如 `Zstd` 仅在 `compression` 开启时存在）。
+
 ## 依赖
 
 依赖：tibba-error

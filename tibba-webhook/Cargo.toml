@@ -24,7 +24,6 @@ tibba-crypto = { path = "../tibba-crypto", version = "0.2.6" }
 tibba-error = { path = "../tibba-error", version = "0.2.6" }
 tibba-job = { path = "../tibba-job", version = "0.2.6" }
 tibba-request = { path = "../tibba-request", version = "0.2.6" }
-tibba-util = { path = "../tibba-util", version = "0.2.6" }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }

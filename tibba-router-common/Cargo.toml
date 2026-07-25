@@ -32,7 +32,7 @@ tibba-runtime = { path = "../tibba-runtime", version = "0.2.6", features = [
 ] }
 # /commons/application 暴露内部运行时信息，用 AdminSession 门控
 tibba-session = { path = "../tibba-session", version = "0.2.6" }
-tibba-util = { path = "../tibba-util", version = "0.2.6" }
+tibba-util = { path = "../tibba-util", version = "0.2.6", default-features = false }
 tokio = { workspace = true }
 tracing = { workspace = true }
 utoipa = { workspace = true }

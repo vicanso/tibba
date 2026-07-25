@@ -29,7 +29,10 @@ serde_json = { workspace = true }
 snafu = { workspace = true }
 tibba-config = { path = "../tibba-config", version = "0.2.6" }
 tibba-error = { path = "../tibba-error", version = "0.2.6" }
-tibba-util = { path = "../tibba-util", version = "0.2.6" }
+# 只用 compress/decompress 与 parse_uri，不需要 util 的 http 簇
+tibba-util = { path = "../tibba-util", version = "0.2.6", default-features = false, features = [
+    "compression",
+] }
 tokio = { workspace = true }
 tracing = { workspace = true }
 url = { workspace = true }

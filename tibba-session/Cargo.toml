@@ -24,6 +24,6 @@ serde = { workspace = true }
 tibba-cache = { path = "../tibba-cache", version = "0.2.6" }
 tibba-error = { path = "../tibba-error", version = "0.2.6" }
 tibba-runtime = { path = "../tibba-runtime", version = "0.2.6" }
-tibba-util = { path = "../tibba-util", version = "0.2.6" }
+tibba-util = { path = "../tibba-util", version = "0.2.6", default-features = false }
 time = { workspace = true }
 tracing = { workspace = true }

@@ -14,15 +14,26 @@ description = "util for tibba"
 name = "tibba_util"
 path = "src/lib.rs"
 
+# 只用 parse_uri / timestamp 等轻量函数的下游（sql、opendal、jwt 等）可通过
+# default-features = false 甩掉两组重依赖；默认全开，现有调用方无需改动。
+[features]
+default = ["compression", "http"]
+# src/compression.rs：zstd（含 zstd-sys C 编译）+ lz4
+compression = ["dep:lz4_flex", "dep:zstd"]
+# src/http.rs：cookie / header / body 辅助（axum-extra 一族约 25 个传递依赖）
+http = ["dep:axum-extra", "dep:cookie", "dep:http-body-util"]
+
 [dependencies]
+# axum 本体不做门控：request/response 的 extractor 始终需要，
+# 且 tibba-error 已依赖 axum，甩掉它并不减少任何下游的依赖树
 axum = { workspace = true }
-axum-extra = { workspace = true }
+axum-extra = { workspace = true, optional = true }
 chrono = { workspace = true }
-cookie = { workspace = true }
+cookie = { workspace = true, optional = true }
 hex = { workspace = true }
 humantime = { workspace = true }
-http-body-util = { workspace = true }
-lz4_flex = { workspace = true }
+http-body-util = { workspace = true, optional = true }
+lz4_flex = { workspace = true, optional = true }
 nanoid = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -33,7 +44,7 @@ tibba-error = { path = "../tibba-error", version = "0.2.6" }
 uuid = { workspace = true }
 url = { workspace = true }
 validator = { workspace = true }
-zstd = { workspace = true }
+zstd = { workspace = true, optional = true }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }

@@ -6296,7 +6296,6 @@ dependencies = [
  "hostname",
  "http",
  "http-stat",
- "metrics",
  "metrics-exporter-prometheus",
  "mime_guess2",
  "nanoid",
@@ -6309,7 +6308,6 @@ dependencies = [
  "rand 0.10.2",
  "regex",
  "reqwest",
- "resend-rs",
  "rust-embed",
  "serde",
  "serde_json",
@@ -6332,7 +6330,6 @@ dependencies = [
  "tibba-notify",
  "tibba-oauth",
  "tibba-opendal",
- "tibba-request",
  "tibba-router-common",
  "tibba-router-file",
  "tibba-router-model",
@@ -6392,19 +6389,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tibba-core"
-version = "0.2.6"
-dependencies = [
- "tibba-cache",
- "tibba-config",
- "tibba-crypto",
- "tibba-error",
- "tibba-request",
- "tibba-runtime",
- "tibba-util",
-]
-
-[[package]]
 name = "tibba-crypto"
 version = "0.2.6"
 dependencies = [
@@ -6426,7 +6410,6 @@ dependencies = [
  "resend-rs",
  "serde",
  "snafu",
- "tibba-config",
  "tibba-error",
  "tracing",
 ]
@@ -6514,7 +6497,6 @@ dependencies = [
  "opentelemetry",
  "scopeguard",
  "serde",
- "serde_json",
  "snafu",
  "tibba-cache",
  "tibba-error",
@@ -6538,7 +6520,6 @@ dependencies = [
  "serde_json",
  "snafu",
  "sqlx 0.9.0",
- "substring",
  "tibba-crypto",
  "tibba-error",
  "time",
@@ -6554,11 +6535,8 @@ dependencies = [
  "serde_json",
  "snafu",
  "sqlx 0.9.0",
- "substring",
- "tibba-error",
  "tibba-model",
  "time",
- "tokio",
 ]
 
 [[package]]
@@ -6569,7 +6547,6 @@ dependencies = [
  "serde_json",
  "snafu",
  "sqlx 0.9.0",
- "tibba-error",
  "tibba-model",
  "time",
  "uuid",
@@ -6621,7 +6598,6 @@ version = "0.2.6"
 dependencies = [
  "axum",
  "http-body-util",
- "snafu",
  "tibba-error",
  "tibba-session",
  "tokio",
@@ -6852,7 +6828,6 @@ dependencies = [
  "tibba-error",
  "tibba-job",
  "tibba-request",
- "tibba-util",
  "tracing",
 ]
 

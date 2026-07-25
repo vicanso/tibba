@@ -27,7 +27,7 @@ workspace 内全部 `tibba-*` 均可发布，无例外。
 | Crate | 职责 | 可选 feature |
 |-------|------|--------------|
 | `tibba-error` | HTTP 错误类型 | |
-| `tibba-util` | 通用工具 + 自定义校验器（`x_*`） | |
+| `tibba-util` | 通用工具 + 自定义校验器（`x_*`） | `compression`（zstd/lz4）、`http`（cookie/header 辅助），默认全开 |
 | `tibba-config` | 配置加载 | |
 | `tibba-crypto` | 密码哈希 / 密钥 | |
 | `tibba-runtime` | AppState / 请求上下文 / 进程指标 / 启停钩子 / Cron | `process-info`、`scheduler` |
@@ -38,26 +38,6 @@ workspace 内全部 `tibba-*` 均可发布，无例外。
 `util`→编码/时间/HTTP 杂项、`config`→config-rs、`crypto`→argon2/hmac/sha2、
 `runtime`→arc-swap/tokio/dashmap、`cache`→redis/deadpool、`request`→reqwest/otel。
 每对 crate 的消费者集合都不相同，任何进一步合并都会让某个 crate 背上用不到的依赖簇。
-
-### 门面：`tibba-core`
-
-`tibba-core` 是**纯 re-export 门面**，不含业务代码，把上面 7 个收拢到一个依赖项下：
-
-```toml
-tibba-core = "0.2.6"    # default = ["full"]，写一行就能用
-```
-
-```rust
-use tibba_core::{error::Error, runtime::AppState, cache::RedisCache};
-```
-
-每个 core crate 对应一个 feature（`util` / `config` / `crypto` / `runtime` /
-`cache` / `request`，`error` 始终编译），外加透传 `process-info`、`scheduler`。
-需要瘦身时 `default-features = false` 可从 269 个传递依赖降到 55 个。
-
-**门面只给最终应用用。** 库 crate（含 workspace 内所有 `tibba-*`）应继续直接依赖
-它真正需要的那几个——保住依赖可裁剪、增量编译粒度、以及编译器强制的分层边界。
-`tibba-core` 因此必须在其余 7 个之后发布（`publish.sh` 的 `core/C4` 批次）。
 
 ## 标准 Standard
 

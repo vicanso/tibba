@@ -20,10 +20,6 @@ CORE_C3=(
     tibba-cache
     tibba-request
 )
-# Batch C4 — 门面：re-export 上面全部 7 个，故必须最后发
-CORE_C4=(
-    tibba-core
-)
 
 # ── 标准（Standard）：标准 REST 构件，比 core 低、比 ext 高，依赖核心 ─────
 # Batch S1 — config / util / crypto
@@ -117,9 +113,8 @@ publish_core() {
     echo "######## CORE ########"
     publish_batch "core/C1 (leaf)" "${CORE_C1[@]}"
     publish_batch "core/C2 (error)" "${CORE_C2[@]}"
-    publish_batch "core/C3 (cache/request)" "${CORE_C3[@]}"
     # 最后一批仍等待，避免紧接着发 standard 时索引未更新
-    publish_batch "core/C4 (facade)" "${CORE_C4[@]}"
+    publish_batch "core/C3 (cache/request)" "${CORE_C3[@]}"
     echo "######## CORE done ########"
 }
 
@@ -143,7 +138,7 @@ publish_ext() {
 
 list_known() {
     printf '%s\n' \
-        "${CORE_C1[@]}" "${CORE_C2[@]}" "${CORE_C3[@]}" "${CORE_C4[@]}" \
+        "${CORE_C1[@]}" "${CORE_C2[@]}" "${CORE_C3[@]}" \
         "${STANDARD_S1[@]}" "${STANDARD_S2[@]}" "${STANDARD_S3[@]}" \
         "${STANDARD_S4[@]}" "${STANDARD_S5[@]}" \
         "${EXT_E1[@]}" "${EXT_E2[@]}"

@@ -38,13 +38,11 @@ futures = { workspace = true }
 hostname = { workspace = true }
 http = { workspace = true }
 http-stat = { version = "0.7.1", optional = true }
-metrics = { workspace = true }
 metrics-exporter-prometheus = { workspace = true }
 nanoid = { workspace = true }
 quick-js = { version = "0.4.1", optional = true }
 rand = { workspace = true }
 reqwest = { workspace = true }
-resend-rs = { workspace = true }
 mime_guess2 = { workspace = true }
 rust-embed = { workspace = true }
 serde = { workspace = true }
@@ -68,7 +66,6 @@ tibba-model-token = { path = "./tibba-model-token", optional = true }
 tibba-notify = { path = "./tibba-notify" }
 tibba-oauth = { path = "./tibba-oauth" }
 tibba-opendal = { path = "./tibba-opendal" }
-tibba-request = { path = "./tibba-request" }
 tibba-router-common = { path = "./tibba-router-common" }
 tibba-router-file = { path = "./tibba-router-file" }
 tibba-router-model = { path = "./tibba-router-model" }
@@ -115,7 +112,6 @@ strip = "debuginfo"
 members = [
     "tibba-cache",
     "tibba-config",
-    "tibba-core",
     "tibba-crypto",
     "tibba-email",
     "tibba-error",

@@ -43,8 +43,6 @@
 
 - 分层与职责：**`docs/crates.md`**（Core / Standard / Extension / 各自的可选 feature）
 - crate 间依赖关系图：**`docs/modules.md`**（由 `make mermaid` 生成）
-- 最终应用建议直接用门面 **`tibba-core`**（见 `tibba-core/README.md`），
-  它把 7 个 core crate 收成一行依赖；Standard / Extension 层按需单独加。
 
 ### 2. 确定依赖版本
 

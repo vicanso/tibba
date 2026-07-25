@@ -26,6 +26,6 @@ tibba-error = { path = "../tibba-error", version = "0.2.6" }
 tibba-model-builtin = { path = "../tibba-model-builtin", version = "0.2.6" }
 tibba-opendal = { path = "../tibba-opendal", version = "0.2.6" }
 tibba-session = { path = "../tibba-session", version = "0.2.6" }
-tibba-util = { path = "../tibba-util", version = "0.2.6" }
+tibba-util = { path = "../tibba-util", version = "0.2.6", default-features = false }
 utoipa = { workspace = true }
 validator = { workspace = true }

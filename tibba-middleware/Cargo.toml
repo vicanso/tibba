@@ -22,12 +22,11 @@ metrics = { workspace = true }
 scopeguard = { workspace = true }
 serde = { workspace = true }
 snafu = { workspace = true }
-serde_json = { workspace = true }
 tibba-cache = { path = "../tibba-cache", version = "0.2.6" }
 tibba-error = { path = "../tibba-error", version = "0.2.6" }
 tibba-runtime = { path = "../tibba-runtime", version = "0.2.6" }
 tibba-session = { path = "../tibba-session", version = "0.2.6" }
-tibba-util = { path = "../tibba-util", version = "0.2.6" }
+tibba-util = { path = "../tibba-util", version = "0.2.6", default-features = false, features = ["http"] }
 tokio = { workspace = true }
 tracing = { workspace = true }
 # 入站请求创建服务端 span 并提取上游 W3C trace 上下文（分布式追踪）

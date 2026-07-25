@@ -8,7 +8,7 @@
 
 ## 依赖
 
-依赖：tibba-error, tibba-model
+依赖：tibba-model
 
 ## 在工作区中的位置
 

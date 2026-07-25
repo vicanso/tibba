@@ -16,6 +16,8 @@ graph TD
 
     crypto --> error
 
+    email --> error
+
     i18n --> error
 
     job --> error
@@ -29,9 +31,6 @@ graph TD
     totp --> error
 
     util --> error
-
-    email --> config
-    email --> error
 
     model --> crypto
     model --> error
@@ -54,10 +53,8 @@ graph TD
     sql --> error
     sql --> util
 
-    model-builtin --> error
     model-builtin --> model
 
-    model-token --> error
     model-token --> model
 
     feature --> cache
@@ -68,14 +65,6 @@ graph TD
     session --> runtime
     session --> util
 
-    core --> cache
-    core --> config
-    core --> crypto
-    core --> error
-    core --> request
-    core --> runtime
-    core --> util
-
     notify --> email
     notify --> error
     notify --> request
@@ -84,7 +73,6 @@ graph TD
     webhook --> error
     webhook --> job
     webhook --> request
-    webhook --> util
 
     middleware --> cache
     middleware --> error

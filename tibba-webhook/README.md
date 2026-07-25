@@ -8,7 +8,7 @@ HMAC 签名的出站 webhook 投递，复用 job 队列做重试与死信。
 
 ## 依赖
 
-依赖：tibba-crypto, tibba-error, tibba-job, tibba-request, tibba-util
+依赖：tibba-crypto, tibba-error, tibba-job, tibba-request
 
 ## 在工作区中的位置
 
