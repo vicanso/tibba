@@ -554,6 +554,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
+name = "base64"
+version = "0.23.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b25655df2c3cdd83c5e5b293b88acd880332b2ddadd7c30ac43144fdc0033da9"
+
+[[package]]
 name = "base64ct"
 version = "1.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -772,9 +778,9 @@ dependencies = [
 
 [[package]]
 name = "cc"
-version = "1.3.0"
+version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c89588d05638b5b4594a3348a2d6c20277e43a7f5c5202b05cc56888475a47b8"
+checksum = "5add81bb678e6cb321aff7fa0dc7689ad82b112dbc032cea19f91d6b8e3582b9"
 dependencies = [
  "find-msvc-tools",
  "jobserver",
@@ -1581,9 +1587,9 @@ dependencies = [
 
 [[package]]
 name = "either"
-version = "1.16.0"
+version = "1.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "91622ff5e7162018101f2fea40d6ebf4a78bbe5a49736a2020649edf9693679e"
+checksum = "9e5e8f6c15a24b9a3ee5efec809ccd006d3b30e8b3bb63c39af737c7f87daa1d"
 dependencies = [
  "serde",
 ]
@@ -2829,9 +2835,9 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "jiff"
-version = "0.2.34"
+version = "0.2.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e184d09547b80eb7e20d141ba2fb1fbac843ca53f4cf1b31210adc4c1adc6e16"
+checksum = "668b7183bd07af9a4885f5c35b0cc5c83c4607a913c16b7e17291832910d2dcc"
 dependencies = [
  "defmt",
  "jiff-core",
@@ -2857,9 +2863,9 @@ dependencies = [
 
 [[package]]
 name = "jiff-static"
-version = "0.2.34"
+version = "0.2.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "323da076b7a6faf914dc677cb05a4b907742ff7375c8322c9e7f5061e5e0e9de"
+checksum = "3a69dcb3a21cfb32ce1cd056169337ca284af0766dd766e7878819b251a49204"
 dependencies = [
  "jiff-core",
  "proc-macro2",
@@ -2965,9 +2971,9 @@ dependencies = [
 
 [[package]]
 name = "jsonwebtoken"
-version = "10.4.0"
+version = "11.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eba32bfb4ffdeaca3e34431072faf01745c9b26d25504aa7a6cf5684334fc4fc"
+checksum = "881733cbc631fc9e472e24447ce32a64bedf2da498d6d8570b08edc87de71f65"
 dependencies = [
  "base64 0.22.1",
  "getrandom 0.2.17",
@@ -4248,9 +4254,9 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
 name = "pest"
-version = "2.8.7"
+version = "2.8.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "47627dd7305c6a2d6c8c6bcd24c5a4c17dbbf425f4f9c5313e724b38fc9782e9"
+checksum = "7df728be843c7070fab6ab7c328c4e9e9d78e23bf749c0669c86ee7ebfa050a2"
 dependencies = [
  "memchr",
  "ucd-trie",
@@ -4258,9 +4264,9 @@ dependencies = [
 
 [[package]]
 name = "pest_derive"
-version = "2.8.7"
+version = "2.8.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4b4254325ecad416ab689e27ba51da03ba01a9632bc6e108f5fe7c3c4ad29d58"
+checksum = "9e2dd6fc3b26b3462ee188aac870f5a41d398f1cd5e2408d16531bd71c9591fd"
 dependencies = [
  "pest",
  "pest_generator",
@@ -4268,9 +4274,9 @@ dependencies = [
 
 [[package]]
 name = "pest_generator"
-version = "2.8.7"
+version = "2.8.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6c4c0e91ead7a8f7acecbca6f003fc2e8282b1dbe2dd9c9d2f16aba42995e0a7"
+checksum = "6a7a9205cfb6f596a9e8b689c0a15f9ceb7a1aafae7aaf788150ac65b29975b6"
 dependencies = [
  "pest",
  "pest_meta",
@@ -4281,9 +4287,9 @@ dependencies = [
 
 [[package]]
 name = "pest_meta"
-version = "2.8.7"
+version = "2.8.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f9744bc48116fee06334924bb5f2bad41eed5e89bd26e29b0b799f9a3f82c210"
+checksum = "85abd351c0de1e8384fc791a0737111a350394937e92b956b743dac12429f57c"
 dependencies = [
  "pest",
 ]
@@ -4508,9 +4514,9 @@ dependencies = [
 
 [[package]]
 name = "proc-macro-error-attr3"
-version = "3.0.2"
+version = "3.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "34e4dd828515431dd6c4a030d26f7eaed7dd4778226e9d2bb968d65ca4ec3d4d"
+checksum = "be5bfc63c4dc85083c9daaf7112d0261701d4058677c3bff7f2afc44e30ef3e1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4518,14 +4524,14 @@ dependencies = [
 
 [[package]]
 name = "proc-macro-error3"
-version = "3.0.2"
+version = "3.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ee475e440453418ff1335189eddf7101ba502cd818ab7ae04209bc83aa925aa"
+checksum = "dd0d42490f6b7b143eef32b9e3522e42bf25dadc02c69ed72236f80adb949b5c"
 dependencies = [
  "proc-macro-error-attr3",
  "proc-macro2",
  "quote",
- "syn 2.0.119",
+ "syn 3.0.3",
 ]
 
 [[package]]
@@ -5322,9 +5328,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-pki-types"
-version = "1.15.0"
+version = "1.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "764899a24af3980067ee14bc143654f297b22eaebfe3c7b6b211920a5a59b046"
+checksum = "2f4925028c7eb5d1fcdaf196971378ed9d2c1c4efc7dc5d011256f76c99c0a96"
 dependencies = [
  "web-time",
  "zeroize",
@@ -6285,7 +6291,7 @@ dependencies = [
 
 [[package]]
 name = "tibba"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "axum",
  "axum-extra",
@@ -6355,7 +6361,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-cache"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "deadpool",
  "humantime-serde",
@@ -6375,7 +6381,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-config"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "bytesize-serde",
  "config",
@@ -6390,7 +6396,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-crypto"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "arc-swap",
  "argon2",
@@ -6405,7 +6411,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-email"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "resend-rs",
  "serde",
@@ -6416,7 +6422,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-error"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "axum",
  "serde",
@@ -6424,7 +6430,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-feature"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "serde",
  "tibba-cache",
@@ -6433,7 +6439,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-i18n"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "axum",
  "pretty_assertions",
@@ -6443,7 +6449,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-job"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "dashmap",
  "metrics",
@@ -6458,7 +6464,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-jwt"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "axum",
  "humantime-serde",
@@ -6472,7 +6478,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-llm"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "bytes",
  "futures",
@@ -6488,7 +6494,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-middleware"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "axum",
  "axum-extra",
@@ -6511,7 +6517,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-model"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "chrono",
  "http",
@@ -6528,7 +6534,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-model-builtin"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "http",
  "serde",
@@ -6541,7 +6547,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-model-token"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "serde",
  "serde_json",
@@ -6554,7 +6560,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-notify"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "serde",
  "snafu",
@@ -6566,7 +6572,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-oauth"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "reqwest",
  "serde",
@@ -6579,7 +6585,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-opendal"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "dirs",
  "opendal",
@@ -6594,7 +6600,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-rbac"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "axum",
  "http-body-util",
@@ -6606,7 +6612,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-request"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "axum",
  "bytes",
@@ -6626,10 +6632,10 @@ dependencies = [
 
 [[package]]
 name = "tibba-router-common"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "axum",
- "base64 0.22.1",
+ "base64 0.23.0",
  "captcha",
  "hostname",
  "humantime",
@@ -6650,7 +6656,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-router-file"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "axum",
  "image 0.25.10",
@@ -6670,7 +6676,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-router-model"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "axum",
  "serde",
@@ -6688,7 +6694,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-router-user"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "axum",
  "axum-extra",
@@ -6715,7 +6721,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-runtime"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "arc-swap",
  "cached",
@@ -6732,7 +6738,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-session"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "axum",
  "axum-extra",
@@ -6750,7 +6756,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-sql"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "humantime-serde",
  "serde",
@@ -6765,7 +6771,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-tenant"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "axum",
  "snafu",
@@ -6775,10 +6781,10 @@ dependencies = [
 
 [[package]]
 name = "tibba-totp"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "aes-gcm",
- "base64 0.22.1",
+ "base64 0.23.0",
  "hmac 0.13.0",
  "rand 0.10.2",
  "sha1 0.11.0",
@@ -6790,7 +6796,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-util"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "axum",
  "axum-extra",
@@ -6816,7 +6822,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-webhook"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "http",
  "pretty_assertions",
