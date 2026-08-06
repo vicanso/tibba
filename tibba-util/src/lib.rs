@@ -30,6 +30,10 @@ pub enum Error {
     Lz4Decompress {
         source: lz4_flex::block::DecompressError,
     },
+    /// 解压输出超过允许上限，见 `decompress_with_limit`。
+    #[cfg(feature = "compression")]
+    #[snafu(display("decompressed size {size} exceeds limit {limit}"))]
+    DecompressTooLarge { size: usize, limit: usize },
     #[cfg(feature = "http")]
     #[snafu(display("{source}"))]
     InvalidHeaderName {
@@ -59,6 +63,13 @@ impl From<Error> for BaseError {
             #[cfg(feature = "compression")]
             Error::Lz4Decompress { source } => {
                 BaseError::new(source).with_sub_category("lz4_decompress")
+            }
+            // 超限多半意味着数据损坏或被篡改，值得告警
+            #[cfg(feature = "compression")]
+            Error::DecompressTooLarge { size, limit } => {
+                BaseError::new(format!("decompressed size {size} exceeds limit {limit}"))
+                    .with_sub_category("decompress_too_large")
+                    .with_exception(true)
             }
             #[cfg(feature = "http")]
             Error::InvalidHeaderName { source } => {

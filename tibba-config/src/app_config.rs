@@ -18,6 +18,7 @@ use parse_size::parse_size;
 use serde::Deserialize;
 use snafu::ResultExt;
 use std::borrow::Cow;
+use std::sync::Arc;
 use std::time::Duration;
 
 type Result<T> = std::result::Result<T, Error>;
@@ -33,11 +34,30 @@ const ENV_SEPARATOR: &str = "__";
 /// 由 [`Config::builder`] 构造；环境变量前缀只在构造期用于装配 `Environment`
 /// source，之后烘焙进 `settings`，不在实例上保留——这样可省一次 `String` clone
 /// （在 [`Self::sub_config`] 内）并缩小 struct 体积。
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct Config {
     /// 子配置前缀，用于隔离不同模块的配置命名空间。
     prefix: String,
-    settings: RawConfig,
+    /// 已烘焙的配置树，`Arc` 共享。
+    ///
+    /// 用 `Arc` 而非直接持有：`config::Config` 内部是完整的 `Map<String, Value>`
+    /// 配置树，[`Config::sub_config`] 每调一次就要整棵深拷贝一遍。各模块在初始化
+    /// 时普遍 `sub_config("redis")` / `sub_config("database")` 这样切命名空间，
+    /// 换成引用计数后这些调用只增减一个计数。配置树构建后只读，共享安全。
+    settings: Arc<RawConfig>,
+}
+
+/// 手写 `Debug` 而非 derive：`settings` 持有完整配置树，内含数据库口令、
+/// 第三方 API key 等凭据。derive 出来的 `{:?}` 会把它们原样打进日志或 panic
+/// 回溯——而 `Config` 常被塞进各模块的 struct 里，一次上层 derive 就会连带泄漏。
+/// 这里只暴露命名空间前缀与条目数，凭据一律不出现。
+impl std::fmt::Debug for Config {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Config")
+            .field("prefix", &self.prefix)
+            .field("settings", &"<redacted>")
+            .finish()
+    }
 }
 
 /// [`Config`] 的构造器：TOML 源可追加多份，环境变量覆盖为可选项。
@@ -49,7 +69,7 @@ pub struct Config {
 ///     .with_env_prefix("TIBBA_WEB")
 ///     .build()?;
 /// ```
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct ConfigBuilder {
     /// TOML 源，按加入顺序生效，后者覆盖前者。
     sources: Vec<String>,
@@ -57,6 +77,19 @@ pub struct ConfigBuilder {
     env_prefix: Option<String>,
     /// 环境变量层级分隔符，`None` 时取 [`ENV_SEPARATOR`]。
     env_separator: Option<String>,
+}
+
+/// 同 [`Config`] 的 `Debug`，且泄漏面更大：`sources` 存的是**原始 TOML 全文**，
+/// derive 会把整份配置（含明文口令）打出来。构造期的错误处理最容易顺手
+/// `{builder:?}`，故只输出源的数量与环境变量前缀，正文一律不出现。
+impl std::fmt::Debug for ConfigBuilder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConfigBuilder")
+            .field("sources", &format_args!("<{} redacted>", self.sources.len()))
+            .field("env_prefix", &self.env_prefix)
+            .field("env_separator", &self.env_separator)
+            .finish()
+    }
 }
 
 impl ConfigBuilder {
@@ -120,7 +153,7 @@ impl ConfigBuilder {
 
         Ok(Config {
             prefix: String::new(),
-            settings: builder.build().context(BuildSnafu)?,
+            settings: Arc::new(builder.build().context(BuildSnafu)?),
         })
     }
 }
@@ -180,17 +213,29 @@ impl Config {
 
     /// 读取时间长度配置值。
     /// 优先解析人类可读格式（如 "10s"、"1h"），失败则回退为纯数字（秒）。
+    ///
+    /// 两种格式都解析不了时，报的错会带上**键名与实际取值**。此前的实现是
+    /// 「humantime 失败就去试 `get_int`」，于是 `timeout = "abc"` 报出来的是
+    /// 一句「期望整数」——把排查方向引向类型问题，而真正的原因是时长格式写错了。
     pub fn get_duration(&self, key: &str) -> Result<Duration> {
         let full_key = self.get_key(key);
-        if let Ok(duration_str) = self.settings.get_string(&full_key)
-            && let Ok(duration) = humantime::parse_duration(&duration_str)
-        {
+        // 统一按字符串取：config-rs 会把整数值也转成字符串，故一次读取即可覆盖
+        // `timeout = "60s"` 与 `timeout = 120` 两种写法，无需读两遍。
+        // 键不存在 / 类型无法转字符串时，这里的 ReadSnafu 就是准确的错误。
+        let raw = self.settings.get_string(&full_key).context(ReadSnafu)?;
+
+        if let Ok(duration) = humantime::parse_duration(&raw) {
             return Ok(duration);
         }
+        // 回退：纯数字视为秒数；负数视为 0，避免 i64→u64 回绕成天文数字时长
+        if let Ok(seconds) = raw.parse::<i64>() {
+            return Ok(Duration::from_secs(seconds.max(0) as u64));
+        }
 
-        // 回退：尝试将值作为秒数解析；负数视为 0，避免 i64→u64 回绕成天文数字时长
-        let seconds = self.settings.get_int(&full_key).context(ReadSnafu)?;
-        Ok(Duration::from_secs(seconds.max(0) as u64))
+        Err(Error::InvalidDuration {
+            key: full_key.into_owned(),
+            value: raw,
+        })
     }
 
     /// 读取字节大小配置值，支持 "10MB"、"1KB" 等人类可读格式，返回字节数。
@@ -217,7 +262,8 @@ impl Config {
 
         Config {
             prefix: new_prefix,
-            settings: self.settings.clone(),
+            // 引用计数 +1，不复制配置树
+            settings: Arc::clone(&self.settings),
         }
     }
 }
@@ -332,6 +378,29 @@ mod tests {
         );
     }
 
+    /// 时长格式写错时，错误必须指向「时长格式」并带上键名与实际取值，
+    /// 而不是像此前那样回退去试整数、最终报一句误导性的类型错误。
+    #[test]
+    fn invalid_duration_error_names_key_and_value() {
+        let config = Config::builder()
+            .add_toml(r#"timeout = "abc""#)
+            .build()
+            .unwrap();
+        let err = config.get_duration("timeout").unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("invalid duration"), "错误应指向时长格式: {msg}");
+        assert!(msg.contains("timeout"), "错误应带上键名: {msg}");
+        assert!(msg.contains("abc"), "错误应带上实际取值: {msg}");
+
+        // 子配置下键名应是完整路径，便于直接定位到配置文件里的位置
+        let err = config
+            .sub_config("svc")
+            .get_duration("nope")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("svc.nope"), "子配置应报完整键路径: {err}");
+    }
+
     #[test]
     fn test_get_duration_negative_clamped() {
         // 负秒数应被钳为 0，避免 i64→u64 回绕成天文数字
@@ -388,6 +457,32 @@ mod tests {
         let db_config = config.sub_config("database");
         let nested_config = db_config.sub_config("connection");
         assert_eq!(nested_config.prefix, "database.connection");
+    }
+
+    /// `sub_config` / `clone` 必须共享同一棵配置树，而不是深拷贝。
+    ///
+    /// 退回 `settings: RawConfig` 时每次 sub_config 都会整棵复制一遍——各模块
+    /// 初始化时普遍要切命名空间，这条路径值得钉死。
+    #[test]
+    fn sub_config_shares_tree_instead_of_deep_copying() {
+        let config = create_test_config();
+        let before = Arc::strong_count(&config.settings);
+
+        let db = config.sub_config("database");
+        let cache = config.sub_config("cache");
+        let nested = db.sub_config("connection");
+        let cloned = config.clone();
+
+        // 四个派生实例都指向同一份 Arc
+        assert!(Arc::ptr_eq(&config.settings, &db.settings));
+        assert!(Arc::ptr_eq(&config.settings, &cache.settings));
+        assert!(Arc::ptr_eq(&config.settings, &nested.settings));
+        assert!(Arc::ptr_eq(&config.settings, &cloned.settings));
+        assert_eq!(Arc::strong_count(&config.settings), before + 4);
+
+        // 共享不影响各自的命名空间隔离
+        assert_eq!(db.get_string("host").unwrap(), "localhost");
+        assert_eq!(cache.get_bool("enabled").unwrap(), true);
     }
 
     #[test]
@@ -469,6 +564,37 @@ mod tests {
             .build_with_env(Some(env_map(&[("MYAPP_DATABASE_HOST", "from-env")])))
             .unwrap();
         assert_eq!(config.get_string("database.host").unwrap(), "from-env");
+    }
+
+    #[test]
+    fn debug_does_not_leak_secrets() {
+        // Config / ConfigBuilder 的 `{:?}` 绝不能吐出配置正文——这是防止口令
+        // 随日志或 panic 回溯外泄的守卫，回归到 derive(Debug) 时本例会失败。
+        let toml = r#"
+            [database]
+            password = "super-secret-pw"
+
+            [email]
+            api_key = "k-should-never-be-logged"
+        "#;
+        let builder = Config::builder().add_toml(toml).with_env_prefix("MYAPP");
+        let builder_debug = format!("{builder:?}");
+        assert!(!builder_debug.contains("super-secret-pw"));
+        assert!(!builder_debug.contains("k-should-never-be-logged"));
+        // 非敏感的结构信息仍应可见，便于排查
+        assert!(builder_debug.contains("MYAPP"));
+
+        let config = builder.build().unwrap();
+        let config_debug = format!("{:?}", config.sub_config("database"));
+        assert!(!config_debug.contains("super-secret-pw"));
+        assert!(!config_debug.contains("k-should-never-be-logged"));
+        assert!(config_debug.contains("database"));
+
+        // 脱敏只针对 Debug，正常读取路径不受影响
+        assert_eq!(
+            config.get_string("database.password").unwrap(),
+            "super-secret-pw"
+        );
     }
 
     #[test]

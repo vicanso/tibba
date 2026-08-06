@@ -12,11 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{AxumSnafu, Error, InvalidHeaderNameSnafu, InvalidHeaderValueSnafu};
+use super::{AxumSnafu, Error, InvalidHeaderNameSnafu, InvalidHeaderValueSnafu, is_development};
 use axum::body::{Body, Bytes};
 use axum::http::{HeaderMap, HeaderValue, header, header::HeaderName};
 use axum_extra::extract::cookie::{Cookie, CookieJar};
-use cookie::CookieBuilder;
+use cookie::{CookieBuilder, SameSite};
 use http_body_util::BodyExt;
 use nanoid::nanoid;
 use snafu::ResultExt;
@@ -25,17 +25,26 @@ use std::time::Duration;
 // Custom Result type using the crate's Error type
 type Result<T> = std::result::Result<T, Error>;
 
-/// Inserts multiple HTTP headers into a HeaderMap
+/// 批量写入 HTTP 头，名称或值为空的条目直接跳过。
 ///
-/// Safely handles header name and value validation
-/// Skips empty names or values
+/// # 失败语义：逐条原子，整体**非**原子
+/// 单个条目的名称与值都通过校验后才会写入，不存在「只写了名字没写值」的中间态。
+/// 但遇到非法条目会立即返回 `Err`，**此前已写入的条目保留**，`headers` 处于
+/// 部分修改状态。
+///
+/// 之所以不做整体原子（先全部校验再统一写入）：那需要把条目先收集到一个临时
+/// Vec，而最主要的调用方 [`set_header_if_not_exist`] 每次只传一个条目、且在
+/// 每个响应上都会被调用，为一个当前无人依赖的保证在热路径上加一次堆分配并不划算。
+///
+/// 调用方若确实需要「要么全成功要么不动」，应先自行校验，或写入一个临时
+/// `HeaderMap` 再整体 extend。
 ///
 /// # Arguments
 /// * `headers` - Mutable reference to HeaderMap
-/// * `values` - HashMap of header names and values to insert
+/// * `values` - 待写入的 (名称, 值) 序列
 ///
 /// # Returns
-/// * `Result<()>` - Success or error if header name/value is invalid
+/// * `Result<()>` - 全部写入成功，或首个非法条目对应的错误
 pub fn insert_headers<K, V>(
     headers: &mut HeaderMap<HeaderValue>,
     values: impl IntoIterator<Item = (K, V)>,
@@ -44,17 +53,16 @@ where
     K: AsRef<str>,
     V: AsRef<str>,
 {
-    // If it fails, do not set
     for (name, value) in values {
         let name = name.as_ref();
         let value = value.as_ref();
         if name.is_empty() || value.is_empty() {
             continue;
         }
-        headers.insert(
-            HeaderName::try_from(name).context(InvalidHeaderNameSnafu)?,
-            HeaderValue::try_from(value).context(InvalidHeaderValueSnafu)?,
-        );
+        // 名称与值都构造成功才 insert：保证单条目不会留下半写状态
+        let name = HeaderName::try_from(name).context(InvalidHeaderNameSnafu)?;
+        let value = HeaderValue::try_from(value).context(InvalidHeaderValueSnafu)?;
+        headers.insert(name, value);
     }
     Ok(())
 }
@@ -136,20 +144,24 @@ pub fn get_device_id_from_cookie(jar: &CookieJar) -> Option<&str> {
     jar.get(DEVICE_ID_NAME).map(|cookie| cookie.value())
 }
 
-/// Generates a new device ID cookie
+/// 生成新的设备 ID Cookie。
 ///
-/// Creates a cookie with:
-/// - 52-week expiration
-/// - HTTP-only flag
-/// - Root path
+/// 属性与 `tibba-session` 的会话 Cookie 保持一致：
+/// - 52 周有效期、根路径
+/// - `HttpOnly`：禁止脚本读取，设备标识不进 XSS 的可窃取面
+/// - `SameSite=Lax`：跨站请求不携带，缓解借设备 ID 做的跨站追踪 / CSRF 关联；
+///   顶层导航仍会带上，不影响正常回访识别
+/// - `Secure`：生产环境强制，禁止设备标识经明文 HTTP 传输被中间人捕获；
+///   dev 环境放行以便本地 http 调试
 ///
-/// # Returns
-/// * CookieBuilder configured with device ID settings
+/// 返回 `CookieBuilder` 而非 `Cookie`，调用方仍可按需覆盖上述默认值。
 pub fn generate_device_id_cookie() -> CookieBuilder<'static> {
     let expires = cookie::time::OffsetDateTime::now_utc()
         .saturating_add(cookie::time::Duration::try_from(DEVICE_ID_LIFETIME).unwrap_or_default());
     Cookie::build((DEVICE_ID_NAME, nanoid!(16)))
         .http_only(true)
+        .same_site(SameSite::Lax)
+        .secure(!is_development())
         .expires(expires)
         .path("/")
 }

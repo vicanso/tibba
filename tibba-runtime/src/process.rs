@@ -44,9 +44,31 @@ pub struct ProcessSystemInfo {
     pub read_bytes: u64,
 }
 
-/// 获取当前进程的系统资源使用情况，内部委托给 `get_process_system_info`。
+/// 获取当前进程的系统资源使用情况，内部委托给 [`get_process_system_info`]。
+///
+/// ⚠️ **同步阻塞**，async 上下文请用 [`current_process_system_info_async`]。
 pub fn current_process_system_info() -> ProcessSystemInfo {
     get_process_system_info(std::process::id() as usize)
+}
+
+/// [`current_process_system_info`] 的 async 版本，采样在阻塞线程池上执行。
+pub async fn current_process_system_info_async() -> ProcessSystemInfo {
+    get_process_system_info_async(std::process::id() as usize).await
+}
+
+/// [`get_process_system_info`] 的 async 版本，采样在阻塞线程池上执行。
+///
+/// 采样本身是同步系统调用：`System::new()` + `refresh_processes()`，Linux 上
+/// `open_files()` 还要遍历 `/proc/<pid>/fd`，量级在毫秒到数十毫秒。更麻烦的是
+/// `#[cached]` 的 `sync_writes = "by_key"` 用的是**同步** mutex——缓存冷时并发
+/// 调用会一起堵在这把锁上，而它们都跑在 tokio worker 线程上。
+///
+/// 丢进 `spawn_blocking` 后，阻塞发生在专用线程池，不占用 worker。
+/// 阻塞任务 panic 时返回默认值：资源采样是观测数据，不该让请求失败。
+pub async fn get_process_system_info_async(pid: usize) -> ProcessSystemInfo {
+    tokio::task::spawn_blocking(move || get_process_system_info(pid))
+        .await
+        .unwrap_or_default()
 }
 
 /// 获取指定 PID 进程的系统资源使用情况。
@@ -55,6 +77,10 @@ pub fn current_process_system_info() -> ProcessSystemInfo {
 /// 同一时刻只有一个线程执行刷新，避免重复采集）。
 ///
 /// 采集的指标：内存占用、CPU 使用率与累计时间、文件描述符数量、磁盘读写字节数。
+///
+/// ⚠️ **同步阻塞**：内部是系统调用，且缓存未命中时会在同步 mutex 上排队。
+/// 在 async 上下文中请改用 [`get_process_system_info_async`]，否则会堵住
+/// tokio worker 线程。
 // max_size 上限：按 PID 缓存，加 LRU 容量上限防高基数 PID 调用导致 map 无界增长
 #[cached(max_size = 64, ttl = 10, sync_writes = "by_key")]
 pub fn get_process_system_info(pid: usize) -> ProcessSystemInfo {

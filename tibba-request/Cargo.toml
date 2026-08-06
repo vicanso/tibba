@@ -13,9 +13,22 @@ description = "request for tibba"
 name = "tibba_request"
 path = "src/lib.rs"
 
+[features]
+default = []
+# 采集对端 TLS 证书有效期到 `HttpStats.tls_cert`，用于证书临期告警。
+#
+# 默认关闭的两点代价：
+# 1. reqwest 的 `tls_info(true)` 会把对端证书 DER 复制进**每个**响应的 extensions，
+#    是每响应一次的堆分配；
+# 2. x509-parser 带约 8 个传递依赖（asn1-rs / der-parser / nom / oid-registry …）。
+# 只有真正要做证书监控的部署才值得付这两笔，故设为 opt-in。
+tls-info = ["dep:x509-parser"]
+
 [dependencies]
 axum = { workspace = true }
 bytes = { workspace = true }
+# 重试退避的抖动源：纯指数退避会让所有重试者同时回源（thundering herd）
+rand = { workspace = true }
 reqwest = { workspace = true }
 scopeguard = { workspace = true }
 serde = { workspace = true }
@@ -31,6 +44,7 @@ tracing = { workspace = true }
 # 出站请求注入 W3C traceparent，串联下游服务调用链（分布式追踪）
 opentelemetry = { workspace = true }
 tracing-opentelemetry = { workspace = true }
+x509-parser = { workspace = true, optional = true }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }

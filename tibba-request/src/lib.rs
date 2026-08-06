@@ -57,6 +57,10 @@ pub enum Error {
     /// 目标地址指向内部网络（私网 / 回环 / 链路本地 / 云元数据），被 SSRF 防护拦截。
     #[snafu(display("{service} blocked internal target: {host}"))]
     BlockedTarget { service: String, host: String },
+    /// 开启 SSRF 防护的客户端收到 3xx。重定向目标未经 `ensure_public_target` 校验，
+    /// 跟随即等于绕过防护，故直接拒绝并把 Location 带出来供排查。
+    #[snafu(display("{service} blocked redirect to: {location}"))]
+    BlockedRedirect { service: String, location: String },
 }
 
 impl From<Error> for BaseError {
@@ -74,7 +78,7 @@ impl From<Error> for BaseError {
             Error::Uri { service, source } => (service, BaseError::new(source)),
             Error::Request {
                 service,
-                path: _,
+                path,
                 source,
             } => {
                 let status = source.status().map_or(500, |v| v.as_u16());
@@ -84,7 +88,12 @@ impl From<Error> for BaseError {
                     service,
                     BaseError::new(source)
                         .with_status(status)
-                        .with_exception(is_network_exception),
+                        .with_exception(is_network_exception)
+                        // 此前这里是 `path: _`，把上游辛苦 clone 来的 path 直接丢掉。
+                        // reqwest 的错误信息只有 URL 没有我们这侧的路径归一化结果，
+                        // 排查时很需要它——放进 extra：5xx 时对客户端脱敏，但完整
+                        // Error 仍进 response extensions 供日志读取。
+                        .add_extra(format!("path={path}")),
                 )
             }
             Error::Serde { service, source } => (service, BaseError::new(source)),
@@ -94,9 +103,44 @@ impl From<Error> for BaseError {
                     .with_status(403)
                     .with_exception(false),
             ),
+            // 与 BlockedTarget 同属客户端侧的 SSRF 策略拒绝：403，且不算基础设施异常
+            // （下游其实是健康的，只是给了我们一个不能跟随的跳转）
+            Error::BlockedRedirect { service, location } => (
+                service,
+                BaseError::new(format!("blocked redirect to: {location}"))
+                    .with_status(403)
+                    .with_exception(false),
+            ),
         };
         err.with_sub_category(&service).with_category("request")
     }
 }
 
 pub use request::*;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    /// SSRF 策略拒绝（目标内网 / 不可跟随的重定向）统一映射为 403 且不触发告警。
+    #[test]
+    fn ssrf_rejections_map_to_403_without_alert() {
+        for err in [
+            Error::BlockedTarget {
+                service: "webhook".to_string(),
+                host: "169.254.169.254".to_string(),
+            },
+            Error::BlockedRedirect {
+                service: "webhook".to_string(),
+                location: "http://169.254.169.254/latest/meta-data/".to_string(),
+            },
+        ] {
+            let base = BaseError::from(err);
+            assert_eq!(base.status(), 403);
+            assert!(!base.is_exception(), "策略拒绝不应被当成基础设施异常告警");
+            assert_eq!(base.category(), "request");
+            assert_eq!(base.sub_category(), Some("webhook"));
+        }
+    }
+}

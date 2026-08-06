@@ -28,7 +28,8 @@ serde = { workspace = true, optional = true }
 snafu = { workspace = true, optional = true }
 sysinfo = { workspace = true, optional = true }
 tibba-error = { path = "../tibba-error", version = "0.2.6" }
-tokio = { workspace = true }
+# time：关闭钩子的超时控制（run_after_tasks），workspace 默认未启用该特性
+tokio = { workspace = true, features = ["time"] }
 tokio-cron-scheduler = { workspace = true, optional = true }
 tracing = { workspace = true }
 

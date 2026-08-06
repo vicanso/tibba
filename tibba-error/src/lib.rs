@@ -29,6 +29,12 @@ struct ErrorData {
     exception: Option<bool>,
     /// 附加信息列表，可携带多条上下文说明。
     extra: Option<Vec<String>>,
+    /// 是否对客户端隐去 `message` / `extra`；`None` 表示按状态码判定。
+    ///
+    /// `#[serde(skip)]`：这是「如何构造响应」的服务端控制位，不是响应内容本身，
+    /// 不该出现在回给客户端的 JSON 里。
+    #[serde(skip)]
+    redact: Option<bool>,
 }
 
 // 仅用于将 Error 序列化为扁平 JSON 对象的内部视图。
@@ -151,9 +157,29 @@ impl Error {
     }
 
     /// 标记是否为需要告警的异常级错误，支持链式调用。
+    ///
+    /// **只影响告警**，不影响响应体是否脱敏——脱敏见 [`Self::with_redact`]。
     #[must_use]
     pub fn with_exception(mut self, exception: bool) -> Self {
         self.data.exception = Some(exception);
+        self
+    }
+
+    /// 显式控制是否对客户端隐去 `message` 与 `extra`，支持链式调用。
+    ///
+    /// 不调用本方法时按状态码判定：**5xx 隐去、4xx 保留**。
+    ///
+    /// 之所以要与 [`Self::with_exception`] 分开：两者是独立的轴。`exception`
+    /// 的语义是「需要告警」，不等于「含内部细节」。此前二者被合并判定，
+    /// 一个 `400 + exception` 的错误会回 `400 {"message":"internal server error"}`,
+    /// 状态码与文案自相矛盾，前端无从处理。
+    ///
+    /// 需要覆盖默认时才用它，两个方向都支持：
+    /// - `with_redact(true)`：4xx 但 message 含内部细节（如策略引擎的内部规则）
+    /// - `with_redact(false)`：5xx 但 message 是可安全外露的固定文案
+    #[must_use]
+    pub fn with_redact(mut self, redact: bool) -> Self {
+        self.data.redact = Some(redact);
         self
     }
 
@@ -199,25 +225,43 @@ impl Error {
         self.data.exception.unwrap_or(false)
     }
 
+    /// 是否已显式设置脱敏；`None` 表示按状态码默认判定（见 [`Self::with_redact`]）。
+    pub fn redact(&self) -> Option<bool> {
+        self.data.redact
+    }
+
     /// 附加上下文列表，未设置时返回空切片。
     pub fn extra(&self) -> &[String] {
         self.data.extra.as_deref().unwrap_or(&[])
     }
 }
 
+/// 依据状态码与显式设置，判定响应体是否需要隐去 `message` / `extra`。
+///
+/// 默认只看状态码：5xx 的 message 多半是 sqlx / 底层库的原始错误文本，不能外泄；
+/// 4xx 是给调用方看的业务信息，必须保留，否则前端拿不到可处理的原因。
+///
+/// 注意这里**不再**参考 `exception`。它只表示「需要告警」，与「含内部细节」无关，
+/// 详见 [`Error::with_redact`]。
+fn should_redact(status: StatusCode, explicit: Option<bool>) -> bool {
+    explicit.unwrap_or_else(|| status.is_server_error())
+}
+
 /// 将 `Error` 转换为带 JSON 响应体和 `no-cache` 头的 HTTP 响应。
 impl IntoResponse for Error {
     fn into_response(self) -> Response {
         let status = StatusCode::from_u16(self.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-        // 5xx / 异常级错误：响应体隐去可能含内部细节的原始 message 与 extra（如 sqlx / 库
-        // 原始错误文本），只回通用文案；完整 message 仍随 self 存入 extensions 供服务端日志
-        // 读取，不外泄给客户端。category / sub_category / code 属分类信息，保留供前端处理。
-        let mut res = if status.is_server_error() || self.is_exception() {
+        // 需脱敏时：响应体隐去可能含内部细节的原始 message 与 extra，只回通用文案；
+        // 完整 message 仍随 self 存入 extensions 供服务端日志读取，不外泄给客户端。
+        // category / sub_category / code 属分类信息，保留供前端处理。
+        let mut res = if should_redact(status, self.data.redact) {
             let redacted = ErrorData {
                 sub_category: self.data.sub_category.clone(),
                 code: self.data.code.clone(),
                 exception: self.data.exception,
                 extra: None,
+                // 服务端控制位，不参与序列化，取值无关紧要
+                redact: None,
             };
             (
                 status,
@@ -237,5 +281,150 @@ impl IntoResponse for Error {
         res.headers_mut()
             .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
         res
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    /// 取出响应体 JSON，供断言脱敏与否。
+    async fn body_json(res: Response) -> serde_json::Value {
+        let bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .expect("读取响应体");
+        serde_json::from_slice(&bytes).expect("响应体应是合法 JSON")
+    }
+
+    #[test]
+    fn redact_defaults_to_status_class_only() {
+        // 默认：5xx 脱敏、4xx 不脱敏
+        assert!(should_redact(StatusCode::INTERNAL_SERVER_ERROR, None));
+        assert!(should_redact(StatusCode::SERVICE_UNAVAILABLE, None));
+        assert!(!should_redact(StatusCode::BAD_REQUEST, None));
+        assert!(!should_redact(StatusCode::NOT_FOUND, None));
+        assert!(!should_redact(StatusCode::OK, None));
+        // 显式设置双向覆盖默认
+        assert!(should_redact(StatusCode::BAD_REQUEST, Some(true)));
+        assert!(!should_redact(StatusCode::INTERNAL_SERVER_ERROR, Some(false)));
+    }
+
+    /// 回归守卫：`exception` 只管告警，不得触发脱敏。
+    ///
+    /// 此前判定是 `status.is_server_error() || is_exception()`，于是
+    /// 400 + exception 会回 `{"message":"internal server error"}` —— 状态码
+    /// 与文案自相矛盾，前端无从处理。
+    #[tokio::test]
+    async fn exception_on_4xx_keeps_client_facing_message() {
+        let err = Error::new("email format invalid")
+            .with_category("params")
+            .with_status(400)
+            .with_exception(true);
+        let res = err.into_response();
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+
+        let body = body_json(res).await;
+        assert_eq!(body["message"], "email format invalid");
+        assert_eq!(body["category"], "params");
+    }
+
+    #[tokio::test]
+    async fn server_error_message_is_redacted() {
+        let err = Error::new("relation \"users\" does not exist")
+            .with_category("db")
+            .with_sub_category("sqlx")
+            .with_status(500)
+            .add_extra("connection=primary");
+        let res = err.into_response();
+
+        let body = body_json(res).await;
+        assert_eq!(body["message"], "internal server error");
+        // 分类信息保留供前端分流
+        assert_eq!(body["category"], "db");
+        assert_eq!(body["sub_category"], "sqlx");
+        // extra 可能含内部上下文，必须一并隐去
+        assert!(body["extra"].is_null());
+        // 原始 message 不得以任何形式出现在响应体里
+        assert!(!body.to_string().contains("does not exist"));
+    }
+
+    /// 未设 status 时回退 500，同样按 5xx 脱敏（status=0 不是 4xx）。
+    #[tokio::test]
+    async fn unset_status_falls_back_to_redacted_500() {
+        let err = Error::new("raw internal detail").with_category("cache");
+        let res = err.into_response();
+        assert_eq!(res.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(body_json(res).await["message"], "internal server error");
+    }
+
+    #[tokio::test]
+    async fn explicit_redact_overrides_both_directions() {
+        // 4xx 但强制脱敏
+        let res = Error::new("internal policy rule #42 denied")
+            .with_status(403)
+            .with_redact(true)
+            .into_response();
+        assert_eq!(res.status(), StatusCode::FORBIDDEN);
+        assert_eq!(body_json(res).await["message"], "internal server error");
+
+        // 5xx 但确认文案安全，照常回给客户端
+        let res = Error::new("upstream is warming up, retry later")
+            .with_status(503)
+            .with_redact(false)
+            .into_response();
+        assert_eq!(
+            body_json(res).await["message"],
+            "upstream is warming up, retry later"
+        );
+    }
+
+    /// 完整 Error 始终进 extensions，供日志中间件读取未脱敏的原文。
+    #[test]
+    fn full_error_is_preserved_in_extensions() {
+        let res = Error::new("secret detail").with_status(500).into_response();
+        let stored = res
+            .extensions()
+            .get::<Error>()
+            .expect("Error 应存入 extensions");
+        assert_eq!(stored.message(), "secret detail");
+    }
+
+    #[test]
+    fn no_cache_header_is_always_set() {
+        let res = Error::new("x").with_status(400).into_response();
+        assert_eq!(
+            res.headers().get(header::CACHE_CONTROL).unwrap(),
+            "no-cache"
+        );
+    }
+
+    /// `redact` 是服务端控制位，不得出现在回给客户端的 JSON 里。
+    #[test]
+    fn redact_flag_is_not_serialized() {
+        let json = serde_json::to_string(&Error::new("m").with_redact(true)).unwrap();
+        assert!(!json.contains("redact"), "序列化结果不应含 redact: {json}");
+    }
+
+    #[test]
+    fn serde_round_trip_preserves_public_fields() {
+        let err = Error::new("boom")
+            .with_category("db")
+            .with_sub_category("sqlx")
+            .with_code("E1001")
+            .with_exception(true)
+            .add_extra("a")
+            .add_extra("b");
+        let json = serde_json::to_string(&err).unwrap();
+        let back: Error = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(back.message(), "boom");
+        assert_eq!(back.category(), "db");
+        assert_eq!(back.sub_category(), Some("sqlx"));
+        assert_eq!(back.code(), Some("E1001"));
+        assert!(back.is_exception());
+        assert_eq!(back.extra(), ["a".to_string(), "b".to_string()]);
+        // status 不参与序列化，跨服务传递会丢失（既有行为）
+        assert_eq!(back.status(), 0);
     }
 }

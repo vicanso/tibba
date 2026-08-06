@@ -14,7 +14,7 @@
 
 use super::{
     ClusterBuildSnafu, ClusterConnectSnafu, Error, RedisSnafu, SingleBuildSnafu,
-    SingleConnectSnafu, new_redis_config,
+    SingleConnectSnafu, new_redis_config, redact_node_url,
 };
 use deadpool::managed::{self, HookError, Metrics, PoolConfig, RecycleError, Timeouts};
 use redis::aio::{ConnectionLike, MultiplexedConnection};
@@ -472,22 +472,50 @@ fn get_command_name(cmd: &Cmd) -> &str {
     "unknown"
 }
 
+/// 无条件阻塞的命令：list / zset 阻塞读与 pubsub 订阅族。
+const ALWAYS_BLOCKING: &[&str] = &[
+    "BRPOP",
+    "BLPOP",
+    "BRPOPLPUSH",
+    "BLMOVE",
+    "BLMPOP",
+    "BZPOPMIN",
+    "BZPOPMAX",
+    "BZMPOP",
+    "SUBSCRIBE",
+    "PSUBSCRIBE",
+    "SSUBSCRIBE",
+    "WAIT",
+];
+
+/// 仅当参数含 `BLOCK` 时才阻塞的命令。
+const BLOCKING_WITH_BLOCK_ARG: &[&str] = &["XREAD", "XREADGROUP"];
+
 /// 意图性阻塞 / 长等命令：耗时不计入「慢命令」告警（仍可上报 error）。
 ///
 /// 含 list/zset/stream 阻塞读与 pubsub 订阅族；`XREAD`/`XREADGROUP` 仅当参数含 `BLOCK`。
+///
+/// 逐个 `eq_ignore_ascii_case` 而非先 `to_ascii_uppercase()`：后者为了大小写不敏感
+/// 匹配而给**每条** Redis 命令分配一个 String。`str::eq_ignore_ascii_case` 先比长度，
+/// 绝大多数命令（GET/SET/…）在第一项就因长度不符而出局，比一次堆分配便宜得多。
 #[must_use]
 pub fn is_intentional_blocking_command(cmd: &Cmd) -> bool {
     let name = get_command_name(cmd);
-    let upper = name.to_ascii_uppercase();
-    match upper.as_str() {
-        "BRPOP" | "BLPOP" | "BRPOPLPUSH" | "BLMOVE" | "BLMPOP" | "BZPOPMIN" | "BZPOPMAX"
-        | "BZMPOP" | "SUBSCRIBE" | "PSUBSCRIBE" | "SSUBSCRIBE" | "WAIT" => true,
-        "XREAD" | "XREADGROUP" => cmd.args_iter().any(|a| match a {
-            Arg::Simple(b) => b.eq_ignore_ascii_case(b"BLOCK"),
-            _ => false,
-        }),
-        _ => false,
+    if ALWAYS_BLOCKING
+        .iter()
+        .any(|candidate| candidate.eq_ignore_ascii_case(name))
+    {
+        return true;
     }
+    if BLOCKING_WITH_BLOCK_ARG
+        .iter()
+        .any(|candidate| candidate.eq_ignore_ascii_case(name))
+    {
+        return cmd
+            .args_iter()
+            .any(|a| matches!(a, Arg::Simple(b) if b.eq_ignore_ascii_case(b"BLOCK")));
+    }
+    false
 }
 
 #[inline]
@@ -694,16 +722,12 @@ pub fn new_redis_client(config: &Config) -> Result<RedisClient> {
         ..Default::default()
     };
 
-    let password = redis_config.password.as_deref().unwrap_or_default();
+    // 日志打码走 redact_node_url：此前是拿密码原文做子串替换，密码恰好是 `6379`
+    // 这类常见串时会把端口一并打掉，密码为空时又完全不打码
     let nodes: Vec<_> = redis_config
         .nodes
         .iter()
-        .map(|v| {
-            if password.is_empty() {
-                return v.to_string();
-            }
-            v.replace(password, "***")
-        })
+        .map(|v| redact_node_url(v))
         .collect();
 
     let is_single = redis_config.nodes.len() <= 1;

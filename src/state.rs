@@ -19,7 +19,7 @@ use std::sync::{LazyLock, OnceLock};
 use std::time::Duration;
 use tibba_error::Error;
 use tibba_runtime::{
-    AppState, BoxFuture, Job, Task, get_process_system_info, register_job_task, register_task,
+    AppState, BoxFuture, Job, Task, get_process_system_info_async, register_job_task, register_task,
 };
 use tibba_util::is_production;
 use tokio::sync::RwLock;
@@ -63,7 +63,8 @@ pub fn get_app_state() -> &'static AppState {
 
 async fn update_performance() {
     let pid = std::process::id() as usize;
-    let process_system_info = get_process_system_info(pid);
+    // 定时任务同样跑在 tokio runtime 上，采样需丢到阻塞线程池
+    let process_system_info = get_process_system_info_async(pid).await;
 
     let mb = 1024 * 1024;
     let mut data = PERFORMANCE.write().await;

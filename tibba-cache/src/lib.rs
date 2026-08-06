@@ -20,8 +20,8 @@
 //! | Session | `RedisCache` + 前缀 `session:` | 中间件层已用，勿在 handler 再绕过 |
 //! | API Key 校验 | `get_struct` / 短 TTL | 避免每次请求查 DB |
 //! | 登录防爆破 | `incr` 固定窗口 | 见 `login_guard` / `RedisIpRateLimit` |
-//! | Feature flag | 进程内 + Redis 双层 | `two_level_store` |
-//! | 分布式锁 | `lock` | 定时任务 singleton |
+//! | Feature flag | 进程内 + Redis 双层 | `two_level_store`；L1 对齐边界保一致性、L2 抖动防雪崩 |
+//! | 分布式锁 | `lock` | 定时任务 singleton；**只靠 TTL 释放，无 unlock**（见 `RedisCache::lock`） |
 //! | **长阻塞**（BRPOP） | [`RedisClient::dedicated_blocking_conn`]`(max_block)` | **不归池** + **按 max_block 设置 response timeout** |
 //! | 专用短写（reply loop） | [`RedisClient::dedicated_command_conn`] | 不归池，显式 5s response timeout |
 //!
@@ -58,6 +58,7 @@
 
 use serde::Deserialize;
 use snafu::{ResultExt, Snafu};
+use std::borrow::Cow;
 use std::time::Duration;
 use tibba_config::Config;
 use tibba_error::Error as BaseError;
@@ -120,8 +121,24 @@ pub enum Error {
 
 type Result<T> = std::result::Result<T, Error>;
 
+/// 去掉节点 URL 里的 userinfo：`scheme://user:pass@host:port` → `scheme://***@host:port`。
+///
+/// 按 `://` 与最后一个 `@` 切分，而不是拿密码原文去做子串替换——后者在密码恰好
+/// 是 `6379` 这类常见串时会把端口一起打码，而且密码为空时完全失效。
+/// 用 `rsplit_once('@')`：密码里若含未转义的 `@`，最后一个才是真正的分隔符。
+fn redact_node_url(url: &str) -> Cow<'_, str> {
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return Cow::Borrowed(url);
+    };
+    match rest.rsplit_once('@') {
+        Some((_userinfo, host)) => Cow::Owned(format!("{scheme}://***@{host}")),
+        // 无 userinfo，原样返回
+        None => Cow::Borrowed(url),
+    }
+}
+
 // Redis 连接配置，含校验规则
-#[derive(Debug, Clone, Default, Validate)]
+#[derive(Clone, Default, Validate)]
 pub struct RedisConfig {
     // Redis 节点列表
     #[validate(length(min = 1))]
@@ -145,6 +162,34 @@ pub struct RedisConfig {
     pub response_timeout: Option<Duration>,
     /// 慢命令统计阈值：超过则由应用侧 `stat_callback` 记为 slow（阻塞命令会豁免）。
     pub slow_cmd_threshold: Duration,
+}
+
+/// 手写 `Debug` 而非 derive：本结构有**两处**都带着 Redis 口令。
+///
+/// - `password` 是明文口令本身；
+/// - `nodes` 存的是拼好 auth 的完整节点 URL（`redis://:secret@host:6379`），
+///   同样含口令——这一处最容易被漏掉。
+///
+/// derive 出来的 `{:?}` 会把两者原样打进日志或 panic 回溯，而连接失败时正是最
+/// 想打印配置的时候。这里只保留「是否配了口令」这一位信息，值一律不出现。
+/// 同 `tibba_config::Config` 的处理。
+impl std::fmt::Debug for RedisConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let nodes: Vec<Cow<'_, str>> = self.nodes.iter().map(|n| redact_node_url(n)).collect();
+        f.debug_struct("RedisConfig")
+            .field("nodes", &nodes)
+            .field("pool_size", &self.pool_size)
+            .field("connection_timeout", &self.connection_timeout)
+            .field("wait_timeout", &self.wait_timeout)
+            .field("recycle_timeout", &self.recycle_timeout)
+            .field("idle_timeout", &self.idle_timeout)
+            // 只暴露「配没配」，不暴露值
+            .field("password", &self.password.as_ref().map(|_| "<redacted>"))
+            .field("max_conn_age", &self.max_conn_age)
+            .field("response_timeout", &self.response_timeout)
+            .field("slow_cmd_threshold", &self.slow_cmd_threshold)
+            .finish()
+    }
 }
 
 fn default_pool_size() -> u32 {
@@ -294,10 +339,112 @@ pub use redis;
 
 mod cache;
 mod pool;
-mod ttl_lru_store;
+mod ttl_fifo_store;
 mod two_level_store;
 
 pub use cache::*;
 pub use pool::*;
-pub use ttl_lru_store::*;
+pub use ttl_fifo_store::*;
 pub use two_level_store::*;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    fn config_with_uri(uri: &str) -> Config {
+        Config::builder()
+            .add_toml(format!("uri = \"{uri}\""))
+            .build()
+            .expect("构造测试配置")
+    }
+
+    /// IPv6 部署的端到端守卫：URI 里的 `[::1]` 必须一路带着方括号拼进节点 URL。
+    ///
+    /// 此前 `parse_uri` 把 `[::1]` 拆成 host=`[:` / port=`1]`，解析直接失败，
+    /// IPv6 环境下应用起不来。
+    #[test]
+    fn ipv6_redis_uri_produces_bracketed_node_urls() {
+        let config = config_with_uri("redis://[::1]:6379");
+        let redis_config = new_redis_config(&config).expect("IPv6 URI 必须能解析");
+        assert_eq!(redis_config.nodes, vec!["redis://[::1]:6379".to_string()]);
+    }
+
+    /// IPv6 + 密码 + 集群多节点：auth 与方括号都要正确拼回每个节点。
+    #[test]
+    fn ipv6_cluster_uri_keeps_auth_and_brackets() {
+        let config = config_with_uri("redis://:secret@[::1]:6379,[fe80::2]:6380");
+        let redis_config = new_redis_config(&config).unwrap();
+        assert_eq!(
+            redis_config.nodes,
+            vec![
+                "redis://:secret@[::1]:6379".to_string(),
+                "redis://:secret@[fe80::2]:6380".to_string(),
+            ]
+        );
+        assert_eq!(redis_config.password.as_deref(), Some("secret"));
+    }
+
+    /// IPv4 路径不能被 IPv6 支持改坏。
+    #[test]
+    fn ipv4_uri_is_unaffected() {
+        let config = config_with_uri("redis://127.0.0.1:6379");
+        let redis_config = new_redis_config(&config).unwrap();
+        assert_eq!(redis_config.nodes, vec!["redis://127.0.0.1:6379".to_string()]);
+    }
+
+    #[test]
+    fn redact_node_url_strips_userinfo_only() {
+        assert_eq!(
+            redact_node_url("redis://:secret@host:6379"),
+            "redis://***@host:6379"
+        );
+        assert_eq!(
+            redact_node_url("redis://user:secret@host:6379"),
+            "redis://***@host:6379"
+        );
+        // 无 userinfo：原样返回，不应凭空加 ***
+        assert_eq!(redact_node_url("redis://host:6379"), "redis://host:6379");
+        // IPv6 节点
+        assert_eq!(
+            redact_node_url("redis://:pw@[::1]:6379"),
+            "redis://***@[::1]:6379"
+        );
+        // 密码含未转义 `@`：取最后一个 `@` 作分隔符
+        assert_eq!(
+            redact_node_url("redis://user:p@ss@host:6379"),
+            "redis://***@host:6379"
+        );
+        // 非 URL 形态不处理
+        assert_eq!(redact_node_url("not-a-url"), "not-a-url");
+    }
+
+    /// `RedisConfig` 的 `{:?}` 绝不能吐出口令——它藏在**两处**：
+    /// `password` 字段本身，以及 `nodes` 里拼好 auth 的完整节点 URL。
+    /// 回归到 `derive(Debug)` 时本例会失败。
+    #[test]
+    fn debug_leaks_neither_password_field_nor_node_urls() {
+        let config = config_with_uri("redis://:sup3r-s3cret@host1:6379,host2:6380");
+        let redis_config = new_redis_config(&config).unwrap();
+
+        // 前提：口令确实同时存在于两处，否则本测试是空转
+        assert_eq!(redis_config.password.as_deref(), Some("sup3r-s3cret"));
+        assert!(redis_config.nodes.iter().any(|n| n.contains("sup3r-s3cret")));
+
+        let debug = format!("{redis_config:?}");
+        assert!(
+            !debug.contains("sup3r-s3cret"),
+            "Debug 输出泄漏了口令: {debug}"
+        );
+        // 结构信息仍需可见，否则排查连接问题时 Debug 就没用了
+        assert!(debug.contains("host1:6379"));
+        assert!(debug.contains("host2:6380"));
+        assert!(debug.contains("<redacted>"), "应能看出「配了口令」这一位信息");
+
+        // 未配口令时不应显示 <redacted>，避免误导
+        let plain = new_redis_config(&config_with_uri("redis://host:6379")).unwrap();
+        let debug = format!("{plain:?}");
+        assert!(!debug.contains("<redacted>"));
+        assert!(debug.contains("None"));
+    }
+}

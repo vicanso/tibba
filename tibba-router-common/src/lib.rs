@@ -30,7 +30,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tibba_cache::RedisCache;
 use tibba_error::Error as BaseError;
-use tibba_runtime::{AppState, current_process_system_info};
+use tibba_runtime::{AppState, current_process_system_info_async};
 use tibba_session::AdminSession;
 use tibba_util::{JsonResult, QueryParams, get_env, uuid};
 use tokio::time::timeout;
@@ -205,7 +205,8 @@ async fn get_application_info(
 ) -> JsonResult<ApplicationInfo> {
     let uptime = state.get_started_at().elapsed().unwrap_or_default();
     let os_info = os_info::get();
-    let performance = current_process_system_info();
+    // 采样是同步系统调用，丢到阻塞线程池，避免堵住 tokio worker
+    let performance = current_process_system_info_async().await;
     let mb = 1024 * 1024;
 
     Ok(Json(ApplicationInfo {

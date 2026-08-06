@@ -20,10 +20,64 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::LazyLock;
+use std::time::{Duration, Instant};
 use tibba_error::Error;
-use tracing::{error, info};
+use tokio::time::timeout;
+use tracing::{error, info, warn};
 
 type Result<T> = std::result::Result<T, Error>;
+
+/// 关闭阶段所有 `after` 钩子的总预算。
+///
+/// 取 10s 是为了留在常见的 K8s `terminationGracePeriodSeconds`（默认 30s）之内，
+/// 让进程有机会自己退干净，而不是被 SIGKILL 砍掉。
+pub const DEFAULT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// 单个 `after` 钩子的时间上限，防止某一个钩子吃掉全部预算。
+pub const DEFAULT_TASK_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// 关闭阶段的超时预算。
+///
+/// 两级限制缺一不可：只有单任务上限时，N 个任务最坏仍要 N×T；只有总预算时，
+/// 第一个卡住的任务会吃光预算，后面的清理一个都跑不到。
+#[derive(Debug, Clone, Copy)]
+pub struct ShutdownTimeouts {
+    /// 所有 `after` 钩子合计的时间上限
+    total: Duration,
+    /// 单个 `after` 钩子的时间上限
+    per_task: Duration,
+}
+
+impl Default for ShutdownTimeouts {
+    fn default() -> Self {
+        Self {
+            total: DEFAULT_SHUTDOWN_TIMEOUT,
+            per_task: DEFAULT_TASK_TIMEOUT,
+        }
+    }
+}
+
+impl ShutdownTimeouts {
+    /// 使用默认预算，见 [`DEFAULT_SHUTDOWN_TIMEOUT`] / [`DEFAULT_TASK_TIMEOUT`]。
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// 设置所有 `after` 钩子合计的时间上限，支持链式调用。
+    #[must_use]
+    pub fn with_total(mut self, total: Duration) -> Self {
+        self.total = total;
+        self
+    }
+
+    /// 设置单个 `after` 钩子的时间上限，支持链式调用。
+    #[must_use]
+    pub fn with_per_task(mut self, per_task: Duration) -> Self {
+        self.per_task = per_task;
+        self
+    }
+}
 
 /// 装箱的异步 Future，用于 trait object 场景下的异步方法返回类型。
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -94,12 +148,51 @@ fn collect_sorted(task_type: TaskType) -> Vec<(String, Arc<dyn Task>)> {
 /// 按优先级顺序执行所有已注册的钩子任务。
 /// - Before 阶段 fail-fast：首个错误立即返回，跳过剩余任务（避免半初始化的启动状态）
 /// - After 阶段 best-effort：每个错误记日志后继续，确保所有清理任务都被尝试，最终始终返回 Ok
-async fn run_tasks(task_type: TaskType) -> Result<()> {
+///
+/// `timeouts` 仅对 After 阶段生效（Before 传 `None`）：超时的钩子会被**丢弃**
+/// （future 被 drop，清理动作中途取消），随后继续跑下一个。这是刻意的取舍——
+/// 关闭阶段拖着不退的代价是被 SIGKILL，那样一个清理都做不成。
+async fn run_tasks(task_type: TaskType, timeouts: Option<ShutdownTimeouts>) -> Result<()> {
+    let deadline = timeouts.map(|t| Instant::now() + t.total);
+
     for (name, task) in collect_sorted(task_type) {
-        let start = std::time::Instant::now();
-        let outcome = match task_type {
-            TaskType::Before => task.before().await,
-            TaskType::After => task.after().await,
+        let start = Instant::now();
+
+        // 本任务可用的时间片 = 单任务上限与总预算剩余量取小
+        let budget = match (timeouts, deadline) {
+            (Some(t), Some(end)) => {
+                let remaining = end.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    warn!(
+                        target: HOOK_LOG_TARGET,
+                        task_type = task_type.label(),
+                        name,
+                        "shutdown budget exhausted; remaining tasks skipped",
+                    );
+                    break;
+                }
+                Some(t.per_task.min(remaining))
+            }
+            _ => None,
+        };
+
+        let outcome = match (task_type, budget) {
+            (TaskType::Before, _) => task.before().await,
+            (TaskType::After, None) => task.after().await,
+            (TaskType::After, Some(limit)) => match timeout(limit, task.after()).await {
+                Ok(result) => result,
+                Err(_) => {
+                    error!(
+                        target: HOOK_LOG_TARGET,
+                        task_type = task_type.label(),
+                        name,
+                        timeout_ms = limit.as_millis(),
+                        "after task timed out; abandoned",
+                    );
+                    // best-effort：放弃这个，继续尝试后续清理
+                    continue;
+                }
+            },
         };
 
         match outcome {
@@ -139,14 +232,27 @@ pub fn register_task(name: impl Into<String>, task: Arc<dyn Task>) {
 
 /// 按优先级升序执行所有已注册的 `before` 钩子（应用启动前调用）。
 /// 任一任务返回错误时立即停止并向上传播。
+///
+/// 注意本阶段**没有超时**：启动钩子卡住会让应用一直起不来，但那是可见的
+/// （readiness 探针不通过，编排系统会重启），不像关闭阶段那样悄悄挂死。
 pub async fn run_before_tasks() -> Result<()> {
-    run_tasks(TaskType::Before).await
+    run_tasks(TaskType::Before, None).await
 }
 
-/// 按优先级降序执行所有已注册的 `after` 钩子（应用关闭后调用）。
-/// 任务错误仅记日志，所有任务都会被执行；本函数始终返回 `Ok(())`。
+/// 按优先级降序执行所有已注册的 `after` 钩子（应用关闭后调用），使用默认超时预算。
+///
+/// 任务错误仅记日志，所有任务都会被尝试；本函数始终返回 `Ok(())`。
+/// 超时预算见 [`ShutdownTimeouts`]，需要自定义时用 [`run_after_tasks_with`]。
 pub async fn run_after_tasks() -> Result<()> {
-    run_tasks(TaskType::After).await
+    run_after_tasks_with(ShutdownTimeouts::default()).await
+}
+
+/// 同 [`run_after_tasks`]，但使用自定义的超时预算。
+///
+/// 无论钩子如何卡住，本函数都会在 `timeouts.total` 内返回——这是优雅关闭
+/// 能够成立的前提：超过编排系统的宽限期就只剩 SIGKILL，一个清理都做不完。
+pub async fn run_after_tasks_with(timeouts: ShutdownTimeouts) -> Result<()> {
+    run_tasks(TaskType::After, Some(timeouts)).await
 }
 
 #[cfg(test)]
@@ -375,5 +481,133 @@ mod tests {
         reset();
         run_before_tasks().await.unwrap();
         run_after_tasks().await.unwrap();
+    }
+
+    /// 永远不返回的 after 钩子，模拟「等一个已断开的连接」。
+    struct HangingTask {
+        priority: u8,
+    }
+
+    impl Task for HangingTask {
+        fn priority(&self) -> u8 {
+            self.priority
+        }
+        fn after(&self) -> BoxFuture<'_, Result<bool>> {
+            Box::pin(async {
+                // 远超测试设置的超时；若超时机制失效，测试会挂住而非通过
+                tokio::time::sleep(Duration::from_secs(3600)).await;
+                Ok(true)
+            })
+        }
+    }
+
+    /// 卡住的钩子必须被放弃，且**不能**阻断后续清理任务。
+    #[tokio::test]
+    async fn hung_after_task_is_abandoned_and_others_still_run() {
+        let _g = serial();
+        reset();
+        let trace: Trace = Arc::new(Mutex::new(Vec::new()));
+
+        // after 阶段按优先级降序：先跑卡住的，再跑正常的
+        register_task("hung", Arc::new(HangingTask { priority: 100 }));
+        register_task(
+            "cleanup",
+            Arc::new(ProbeTask {
+                name: "cleanup",
+                priority: 10,
+                before_result: ok_true,
+                after_result: ok_true,
+                trace: trace.clone(),
+            }),
+        );
+
+        let started = Instant::now();
+        run_after_tasks_with(
+            ShutdownTimeouts::new()
+                .with_per_task(Duration::from_millis(50))
+                .with_total(Duration::from_secs(5)),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            &*trace.lock().unwrap(),
+            &["cleanup"],
+            "卡住的钩子应被放弃，后续清理必须照常执行"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "不得等待卡住的钩子，实际耗时 {:?}",
+            started.elapsed()
+        );
+    }
+
+    /// 总预算耗尽后，剩余任务整体跳过——保证整个关闭阶段有硬上限。
+    #[tokio::test]
+    async fn total_budget_caps_whole_shutdown() {
+        let _g = serial();
+        reset();
+        let trace: Trace = Arc::new(Mutex::new(Vec::new()));
+
+        // 三个都卡住，单任务上限 50ms，总预算 80ms → 跑完前两个就该耗尽
+        for (i, name) in ["h1", "h2", "h3"].iter().enumerate() {
+            register_task(
+                *name,
+                Arc::new(HangingTask {
+                    priority: (100 - i) as u8,
+                }),
+            );
+        }
+        register_task(
+            "last",
+            Arc::new(ProbeTask {
+                name: "last",
+                priority: 0, // after 降序 → 最后跑
+                before_result: ok_true,
+                after_result: ok_true,
+                trace: trace.clone(),
+            }),
+        );
+
+        let started = Instant::now();
+        run_after_tasks_with(
+            ShutdownTimeouts::new()
+                .with_per_task(Duration::from_millis(50))
+                .with_total(Duration::from_millis(80)),
+        )
+        .await
+        .unwrap();
+
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed < Duration::from_millis(500),
+            "总预算 80ms，实际耗时 {elapsed:?}"
+        );
+        // 预算被前面卡住的任务吃光，最后的清理没机会跑——这是硬上限的代价，
+        // 也正因如此 per_task 必须设得足够小
+        assert!(trace.lock().unwrap().is_empty());
+    }
+
+    /// 正常（不卡）的 after 钩子不受超时影响，全部照常执行。
+    #[tokio::test]
+    async fn healthy_tasks_are_unaffected_by_timeouts() {
+        let _g = serial();
+        reset();
+        let trace: Trace = Arc::new(Mutex::new(Vec::new()));
+        for (name, priority) in [("a", 50u8), ("b", 10u8)] {
+            register_task(
+                name,
+                Arc::new(ProbeTask {
+                    name,
+                    priority,
+                    before_result: ok_true,
+                    after_result: ok_true,
+                    trace: trace.clone(),
+                }),
+            );
+        }
+
+        run_after_tasks().await.unwrap();
+        assert_eq!(&*trace.lock().unwrap(), &["a", "b"]);
     }
 }

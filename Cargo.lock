@@ -6366,6 +6366,7 @@ dependencies = [
  "deadpool",
  "humantime-serde",
  "lru",
+ "pretty_assertions",
  "redis",
  "serde",
  "serde_json",
@@ -6425,7 +6426,10 @@ name = "tibba-error"
 version = "0.2.7"
 dependencies = [
  "axum",
+ "pretty_assertions",
  "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -6618,6 +6622,7 @@ dependencies = [
  "bytes",
  "opentelemetry",
  "pretty_assertions",
+ "rand 0.10.2",
  "reqwest",
  "scopeguard",
  "serde",
@@ -6628,6 +6633,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-opentelemetry",
+ "x509-parser",
 ]
 
 [[package]]

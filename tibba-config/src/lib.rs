@@ -30,6 +30,10 @@ pub enum Error {
     Read { source: config::ConfigError },
     #[snafu(display("parse size: {source}"))]
     ParseSize { source: parse_size::Error },
+    /// 时长配置既不是 humantime 格式（`10s` / `1h`）也不是纯数字秒数。
+    /// 带上键名与实际取值，避免运维只看到一句笼统的类型错误。
+    #[snafu(display("invalid duration at {key}: {value:?}"))]
+    InvalidDuration { key: String, value: String },
 }
 
 impl From<Error> for BaseError {
@@ -40,6 +44,10 @@ impl From<Error> for BaseError {
             // 运行期读取错误占绝大多数，沿用外层 category 即可，不再赘加 sub
             Error::Read { source } => BaseError::new(source),
             Error::ParseSize { source } => BaseError::new(source).with_sub_category("parse_size"),
+            Error::InvalidDuration { key, value } => {
+                BaseError::new(format!("invalid duration at {key}: {value:?}"))
+                    .with_sub_category("invalid_duration")
+            }
         };
         err.with_category("config").with_exception(true)
     }

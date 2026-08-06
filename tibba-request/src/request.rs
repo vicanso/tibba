@@ -14,7 +14,7 @@
 
 use super::{BuildSnafu, Error, LOG_TARGET, RequestSnafu, SerdeSnafu, UriSnafu};
 use axum::http::Method;
-use axum::http::header::{HeaderMap, HeaderName, HeaderValue};
+use axum::http::header::{HeaderMap, HeaderName, HeaderValue, LOCATION};
 use axum::http::uri::Uri;
 use bytes::Bytes;
 use reqwest::Client as ReqwestClient;
@@ -30,7 +30,7 @@ use std::pin::Pin;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
-use tibba_util::{Stopwatch, json_get};
+use tibba_util::{Stopwatch, json_get, timestamp};
 use tracing::{info, warn};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
@@ -83,6 +83,27 @@ where
     pub headers: Option<&'a HeaderMap>,
 }
 
+/// 对端 TLS 证书的有效期，用于证书临期告警。
+///
+/// 时间取 Unix 秒而非格式化字符串：本结构的消费者是 `on_done` 里的监控 / 告警逻辑，
+/// 真正要算的是「还有几天过期」，整数直接相减即可，字符串反而要先解析回去。
+/// 需要人类可读格式时由调用方自行格式化。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TlsCertInfo {
+    /// 证书生效时间（Unix 秒）
+    pub not_before: i64,
+    /// 证书过期时间（Unix 秒）
+    pub not_after: i64,
+}
+
+impl TlsCertInfo {
+    /// 距证书过期的剩余秒数；已过期返回负数。
+    #[must_use]
+    pub fn expires_in_secs(&self, now: i64) -> i64 {
+        self.not_after - now
+    }
+}
+
 /// 单次 HTTP 请求的性能统计，各时间字段单位为毫秒。
 #[derive(Default, Clone, Debug)]
 pub struct HttpStats {
@@ -104,12 +125,13 @@ pub struct HttpStats {
     pub serde: u32,
     /// 请求全程总耗时（毫秒）
     pub total: u32,
-    /// TLS 版本
-    pub tls_version: String,
-    /// TLS 证书有效期起始时间
-    pub tls_not_before: String,
-    /// TLS 证书有效期截止时间
-    pub tls_not_after: String,
+    /// 对端 TLS 证书有效期。`None` 表示无可用信息——未启用 `tls-info` feature、
+    /// 请求走的是明文 HTTP、或证书解析失败，三种情况都归于此。
+    ///
+    /// 注：此前这里是 `tls_version` / `tls_not_before` / `tls_not_after` 三个
+    /// `String`，但从未被填充过。`tls_version` 已删除且**无法**补上：reqwest 的
+    /// `TlsInfo` 只暴露 `peer_certificate()`，协商的协议版本不对外提供。
+    pub tls_cert: Option<TlsCertInfo>,
 }
 
 /// HTTP 请求拦截器 trait，用于在请求发出前后注入自定义逻辑（鉴权、日志、错误处理等）。
@@ -191,35 +213,36 @@ impl HttpInterceptor for CommonInterceptor {
     }
 
     /// 请求完成后打印服务名、方法、路径、状态码、耗时等结构化日志。
+    ///
+    /// 日志**在返回 future 之前同步打完**，返回的是一个立即就绪的空 future。
+    /// 此前是把 stats 的 7 个字段全 clone 进 `async move` 再 `Box::pin`——而块内
+    /// 根本没有 await（`info!` 本就是同步的），那些 clone 纯粹是为了满足
+    /// `BoxFuture` 的 `'static` 捕获要求，每请求白白分配 7 个 String。
+    ///
+    /// 需要真正异步上报（如把指标 POST 到外部服务）的实现，照常在 future 里做即可。
     fn on_done(&self, stats: &HttpStats, err: Option<&Error>) -> BoxFuture<'_, Result<()>> {
-        let error = err.map(ToString::to_string);
-        let service = self.service.clone();
-        let method = stats.method.clone();
-        let path = stats.path.clone();
-        let status = stats.status;
-        let remote_addr = stats.remote_addr.clone();
-        let content_length = stats.content_length;
-        let processing = stats.processing;
-        let transfer = stats.transfer;
-        let serde = stats.serde;
-        let total = stats.total;
-        Box::pin(async move {
-            info!(
-                target: LOG_TARGET,
-                service,
-                method,
-                path,
-                status,
-                remote_addr,
-                content_length,
-                processing,
-                transfer,
-                serde,
-                total,
-                error,
-            );
-            Ok(())
-        })
+        // 证书剩余天数：直接给出可告警的数字，省得下游再算一遍。
+        // `tls_cert` 为 None（未启用 tls-info / 明文 HTTP）时 tracing 不输出该字段，
+        // 不给关闭 feature 的部署添噪音。
+        let tls_expires_in_days = stats
+            .tls_cert
+            .map(|cert| cert.expires_in_secs(timestamp()) / 86_400);
+        info!(
+            target: LOG_TARGET,
+            service = self.service,
+            method = stats.method,
+            path = stats.path,
+            status = stats.status,
+            remote_addr = stats.remote_addr,
+            content_length = stats.content_length,
+            processing = stats.processing,
+            transfer = stats.transfer,
+            serde = stats.serde,
+            total = stats.total,
+            tls_expires_in_days,
+            error = err.map(ToString::to_string),
+        );
+        Box::pin(async { Ok(()) })
     }
 }
 
@@ -248,10 +271,63 @@ fn is_retryable_status(status: u16, idempotent: bool) -> bool {
     idempotent && (status == 429 || (500..=599).contains(&status))
 }
 
-/// 指数退避：`base * 2^attempt`，指数封顶 2^6（64 倍）防止过长等待。
-fn retry_backoff(base: Duration, attempt: u32) -> Duration {
+/// 解析 DER 编码的证书取有效期；非法 DER 返回 `None`。
+///
+/// 与 [`extract_tls_cert`] 拆开是为了可测：`reqwest::tls::TlsInfo` 字段私有、
+/// 无公开构造函数，没法在单测里伪造一个带证书的 `Response`，但 DER 解析这段
+/// 可以拿真实证书直接验。
+#[cfg(feature = "tls-info")]
+fn parse_cert_validity(der: &[u8]) -> Option<TlsCertInfo> {
+    let (_, cert) = x509_parser::parse_x509_certificate(der).ok()?;
+    let validity = cert.validity();
+    Some(TlsCertInfo {
+        not_before: validity.not_before.timestamp(),
+        not_after: validity.not_after.timestamp(),
+    })
+}
+
+/// 从响应里取出对端证书有效期。
+///
+/// 全链路 best-effort：明文 HTTP（无 `TlsInfo`）、对端未送证书、DER 解析失败，
+/// 一律返回 `None`。证书信息是观测数据，任何环节出问题都不该影响业务请求的结果。
+#[cfg(feature = "tls-info")]
+fn extract_tls_cert(res: &reqwest::Response) -> Option<TlsCertInfo> {
+    let der = res
+        .extensions()
+        .get::<reqwest::tls::TlsInfo>()?
+        .peer_certificate()?;
+    parse_cert_validity(der)
+}
+
+/// SSRF 防护开启时是否应拦截该响应：3xx 一律拦截。
+///
+/// 重定向目标是响应回来才知道的，没有经过 `ensure_public_target`；跟随即绕过防护。
+/// 未开启防护的客户端不受影响（reqwest 仍按默认策略自动跟随）。
+fn is_blocked_redirect(deny_internal_targets: bool, status: u16) -> bool {
+    deny_internal_targets && (300..400).contains(&status)
+}
+
+/// 指数退避的上界：`base * 2^attempt`，指数封顶 2^6（64 倍）防止过长等待。
+fn retry_backoff_ceiling(base: Duration, attempt: u32) -> Duration {
     let factor = 1u32 << attempt.min(6);
     base.saturating_mul(factor)
+}
+
+/// 带抖动的指数退避：在 `[ceiling/2, ceiling)` 内随机取值。
+///
+/// 纯指数退避的问题是**所有**重试者算出同一个等待时长，于是在下游恢复的瞬间
+/// 一起涌回去，把刚缓过来的服务再打垮（thundering herd）。加抖动把重试时刻摊开。
+///
+/// 取「等量抖动」而非 AWS 的 full jitter（`[0, ceiling)`）：保留一半固定退避，
+/// 保证退避随重试次数单调增长，不会出现第 3 次重试反而比第 1 次等得更短。
+fn retry_backoff(base: Duration, attempt: u32) -> Duration {
+    let ceiling = retry_backoff_ceiling(base, attempt);
+    let half = ceiling / 2;
+    let spread = ceiling.saturating_sub(half);
+    if spread.is_zero() {
+        return ceiling;
+    }
+    half + Duration::from_nanos(rand::random_range(0..spread.as_nanos().max(1) as u64))
 }
 
 /// 简单熔断器：连续失败达 `threshold` 即打开，`cooldown` 内对请求快速失败；冷却结束后
@@ -409,6 +485,17 @@ impl ClientBuilder {
 
     /// 开启 SSRF 防护：拒绝目标解析到内部地址（私网 / 回环 / 链路本地 / 云元数据）的请求。
     /// 用于向用户 / 运维可控 URL 发请求的客户端（webhook 投递、外部探测等）。
+    ///
+    /// # 副作用：不再跟随重定向
+    /// 开启后本客户端一律**不跟随 3xx**，收到重定向直接返回 [`Error::BlockedRedirect`]。
+    ///
+    /// 这不是可选的加固，而是防护成立的前提：目标校验发生在发请求**之前**，而
+    /// 重定向目标是响应回来才知道的。若仍按 reqwest 默认自动跟随，攻击者只需让
+    /// 自己的公网域名回一个 `302 Location: http://169.254.169.254/…`，就能把校验
+    /// 整个绕过去——防护形同虚设。
+    ///
+    /// 代价是「目标端点靠 3xx 跳转」的场景会失败。这类场景应直接配置最终 URL；
+    /// 若确实需要跟随，正确做法是逐跳复跑 `ensure_public_target`，而不是放开策略。
     #[must_use]
     pub fn with_deny_internal_targets(mut self) -> Self {
         self.config.deny_internal_targets = true;
@@ -532,8 +619,19 @@ impl ClientBuilder {
                 builder = builder.resolve_to_addrs(&host, &addrs);
             }
         }
-        // 启用 TLS 信息采集，供拦截器读取证书有效期等元数据
-        builder = builder.tls_info(true);
+        // TLS 信息采集只在 `tls-info` feature 下开启：它会让 reqwest 把对端证书
+        // DER 复制进每个响应的 extensions，是每响应一次的堆分配。此前无条件开启
+        // 却从无人读取，纯属白付成本。
+        #[cfg(feature = "tls-info")]
+        {
+            builder = builder.tls_info(true);
+        }
+        // SSRF 防护开启时必须关掉自动跟随：reqwest 默认最多跟 10 跳，而
+        // ensure_public_target 只在首次发送前校验一次，跟随即等于绕过。
+        // 见 ClientBuilder::with_deny_internal_targets 的说明。
+        if self.config.deny_internal_targets {
+            builder = builder.redirect(reqwest::redirect::Policy::none());
+        }
 
         let client = builder.build().context(BuildSnafu {
             service: self.config.service.clone(),
@@ -585,10 +683,20 @@ fn is_internal_ip(ip: IpAddr) -> bool {
     }
 }
 
+/// `url` 是否已是 http(s) 绝对地址。
+///
+/// 必须匹配完整的 `http://` / `https://`，不能只看 `http` 前缀：`httpfoo/bar`
+/// 这样的相对路径会被误判为绝对地址，于是 base_url 不再拼接、请求打到一个
+/// 根本不存在的主机上。scheme 按 RFC 3986 大小写不敏感。
+fn is_absolute_http_url(url: &str) -> bool {
+    let lower = url.get(..8).unwrap_or_default().to_ascii_lowercase();
+    lower.starts_with("http://") || lower.starts_with("https://")
+}
+
 impl Client {
-    /// 若 `url` 以 "http" 开头则直接使用，否则拼接 base_url。
+    /// 已是 http(s) 绝对地址则直接使用，否则拼接 base_url。
     fn get_url(&self, url: &str) -> String {
-        if url.starts_with("http") {
+        if is_absolute_http_url(url) {
             url.to_string()
         } else {
             // format! 单次分配；此前 base_url.to_string() + url 会分配两次（热路径每请求都走）
@@ -654,7 +762,9 @@ impl Client {
         }
 
         let url = self.get_url(params.url);
-        let uri = url.parse::<Uri>().context(UriSnafu {
+        // 用 with_context 而非 context：后者会**立即**求值上下文表达式，于是
+        // `service.clone()` 在每个成功请求上也照跑一遍。闭包版只在出错时分配。
+        let uri = url.parse::<Uri>().with_context(|_| UriSnafu {
             service: self.config.service.clone(),
         })?;
         stats.path = uri.path().to_string();
@@ -733,9 +843,33 @@ impl Client {
                     if let Some(remote_addr) = res.remote_addr() {
                         stats.remote_addr = remote_addr.to_string();
                     }
+                    // 在读 body 之前采集：证书信息挂在响应 extensions 上，
+                    // `res.bytes()` 会消费掉 res
+                    #[cfg(feature = "tls-info")]
+                    {
+                        stats.tls_cert = extract_tls_cert(&res);
+                    }
                     let status = res.status().as_u16();
+                    // SSRF 防护开启时不跟随重定向（build() 已设 Policy::none，这里把
+                    // 收到的 3xx 显式转成错误）。在读 body 之前返回：3xx 的响应体没有
+                    // 价值，交给下游反序列化只会退化成语义不明的 JSON 解析失败，把真正
+                    // 的原因盖掉。Location 带进错误信息，便于运维定位是哪个目标在跳转。
+                    if is_blocked_redirect(self.config.deny_internal_targets, status) {
+                        stats.status = status;
+                        let location = res
+                            .headers()
+                            .get(LOCATION)
+                            .and_then(|v| v.to_str().ok())
+                            .unwrap_or("<none>")
+                            .to_string();
+                        return Err(Error::BlockedRedirect {
+                            service: self.config.service.clone(),
+                            location,
+                        });
+                    }
                     let transfer_done = Stopwatch::new();
-                    let body = res.bytes().await.context(RequestSnafu {
+                    // 同上：惰性求值，成功路径不做这两次 String 分配
+                    let body = res.bytes().await.with_context(|_| RequestSnafu {
                         service: self.config.service.clone(),
                         path: stats.path.clone(),
                     })?;
@@ -834,7 +968,7 @@ impl Client {
         let full = self.raw(stats, params).await?;
 
         let serde_done = Stopwatch::new();
-        let data = serde_json::from_slice(&full).context(SerdeSnafu {
+        let data = serde_json::from_slice(&full).with_context(|_| SerdeSnafu {
             service: self.config.service.clone(),
         })?;
         stats.serde = serde_done.elapsed_ms();
@@ -997,6 +1131,7 @@ impl Client {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
 
     /// SSRF：内网 / 特殊地址判为内部，公网地址判为外部。
     #[test]
@@ -1034,15 +1169,75 @@ mod tests {
         }
     }
 
-    /// 退避按 2 的幂增长，并在 2^6 处封顶。
+    /// 退避上界按 2 的幂增长，并在 2^6 处封顶。
     #[test]
-    fn backoff_grows_and_caps() {
+    fn backoff_ceiling_grows_and_caps() {
         let base = Duration::from_millis(100);
-        assert_eq!(retry_backoff(base, 0), Duration::from_millis(100));
-        assert_eq!(retry_backoff(base, 1), Duration::from_millis(200));
-        assert_eq!(retry_backoff(base, 3), Duration::from_millis(800));
+        assert_eq!(retry_backoff_ceiling(base, 0), Duration::from_millis(100));
+        assert_eq!(retry_backoff_ceiling(base, 1), Duration::from_millis(200));
+        assert_eq!(retry_backoff_ceiling(base, 3), Duration::from_millis(800));
         // 指数封顶 2^6 = 64
-        assert_eq!(retry_backoff(base, 10), Duration::from_millis(100 * 64));
+        assert_eq!(
+            retry_backoff_ceiling(base, 10),
+            Duration::from_millis(100 * 64)
+        );
+    }
+
+    /// 实际退避落在 `[ceiling/2, ceiling)`，且**多次调用不应相同**——
+    /// 若有人把抖动去掉退回纯指数，这里会退化成单一取值而失败。
+    #[test]
+    fn backoff_is_jittered_within_half_of_ceiling() {
+        let base = Duration::from_millis(100);
+        for attempt in 0..4 {
+            let ceiling = retry_backoff_ceiling(base, attempt);
+            let samples: Vec<Duration> = (0..64).map(|_| retry_backoff(base, attempt)).collect();
+            for d in &samples {
+                assert!(
+                    *d >= ceiling / 2 && *d < ceiling,
+                    "attempt={attempt} 退避 {d:?} 越出 [{:?}, {ceiling:?})",
+                    ceiling / 2
+                );
+            }
+            let unique: HashSet<Duration> = samples.into_iter().collect();
+            assert!(
+                unique.len() > 1,
+                "attempt={attempt} 的 64 次采样只得到一个值，抖动没生效"
+            );
+        }
+    }
+
+    /// 抖动不得破坏单调性：退避随重试次数增长。
+    #[test]
+    fn backoff_stays_monotonic_despite_jitter() {
+        let base = Duration::from_millis(100);
+        // 第 n 次的下界（ceiling/2）必须 ≥ 第 n-1 次的上界，故整体单调不重叠
+        for attempt in 1..6 {
+            let prev_max = retry_backoff_ceiling(base, attempt - 1);
+            let curr_min = retry_backoff_ceiling(base, attempt) / 2;
+            assert!(
+                curr_min >= prev_max,
+                "attempt={attempt} 的下界 {curr_min:?} 低于上一次的上界 {prev_max:?}"
+            );
+        }
+    }
+
+    /// 绝对地址判定必须匹配完整 scheme，不能只看 `http` 前缀。
+    #[test]
+    fn absolute_url_requires_full_scheme() {
+        assert!(is_absolute_http_url("http://example.com/a"));
+        assert!(is_absolute_http_url("https://example.com/a"));
+        // scheme 大小写不敏感
+        assert!(is_absolute_http_url("HTTPS://example.com"));
+        assert!(is_absolute_http_url("HtTp://example.com"));
+
+        // 回归守卫：这些是相对路径，必须拼 base_url
+        assert!(!is_absolute_http_url("httpfoo/bar"));
+        assert!(!is_absolute_http_url("https-proxy/status"));
+        assert!(!is_absolute_http_url("/http/health"));
+        assert!(!is_absolute_http_url("http"));
+        assert!(!is_absolute_http_url(""));
+        // 非 http scheme 不算（交给 base_url 拼接后由 reqwest 报错更明确）
+        assert!(!is_absolute_http_url("ftp://example.com"));
     }
 
     /// 幂等性分类：GET/PUT 幂等，POST/PATCH 非幂等。
@@ -1061,6 +1256,54 @@ mod tests {
         assert!(is_retryable_status(429, true));
         assert!(!is_retryable_status(503, false));
         assert!(!is_retryable_status(404, true));
+    }
+
+    /// 证书剩余有效期：未过期为正、已过期为负。
+    #[test]
+    fn cert_expiry_is_signed_distance() {
+        let cert = TlsCertInfo {
+            not_before: 1_000,
+            not_after: 2_000,
+        };
+        assert_eq!(cert.expires_in_secs(1_500), 500);
+        assert_eq!(cert.expires_in_secs(2_000), 0);
+        assert_eq!(cert.expires_in_secs(2_600), -600, "已过期必须是负数");
+    }
+
+    /// 真实自签证书的 DER：有效期须与 openssl 生成时指定的固定日期一致。
+    /// fixture 用固定 notBefore/notAfter 生成，故本例不随时间漂移。
+    #[cfg(feature = "tls-info")]
+    #[test]
+    fn parse_cert_validity_reads_real_der() {
+        const DER: &[u8] = include_bytes!("../tests/fixtures/self_signed.der");
+        let cert = parse_cert_validity(DER).expect("自签证书应能解析");
+        // 2024-01-02T03:04:05Z / 2034-01-02T03:04:05Z
+        assert_eq!(cert.not_before, 1_704_164_645);
+        assert_eq!(cert.not_after, 2_019_783_845);
+    }
+
+    /// 非法 DER 不得 panic，只返回 None——证书信息是观测数据，坏了也不能影响请求。
+    #[cfg(feature = "tls-info")]
+    #[test]
+    fn parse_cert_validity_rejects_garbage() {
+        assert_eq!(parse_cert_validity(b"not a certificate"), None);
+        assert_eq!(parse_cert_validity(&[]), None);
+    }
+
+    /// SSRF 防护开启时 3xx 一律拦截；未开启则不干预（由 reqwest 自动跟随）。
+    #[test]
+    fn redirect_blocked_only_when_ssrf_guard_on() {
+        for status in [300, 301, 302, 303, 307, 308, 399] {
+            assert!(
+                is_blocked_redirect(true, status),
+                "{status} 在开启 SSRF 防护时必须拦截，否则可被 302 到内网绕过"
+            );
+            assert!(!is_blocked_redirect(false, status));
+        }
+        // 边界：299 / 400 不是重定向
+        for status in [200, 299, 400, 404, 500] {
+            assert!(!is_blocked_redirect(true, status));
+        }
     }
 
     /// 熔断器：达阈值打开、冷却内拒绝、冷却后恢复、成功清零。

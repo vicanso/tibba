@@ -36,6 +36,15 @@ pub enum Error {
     Argon2Parse {
         source: argon2::password_hash::Error,
     },
+
+    /// 输入的 secret 超过策略允许的长度上限。
+    /// Argon2 是慢哈希，超长输入等于免费的 CPU 消耗放大器。
+    #[snafu(display("secret too long: {len} bytes (max {max})"))]
+    SecretTooLong { len: usize, max: usize },
+
+    /// Argon2 代价参数非法（如 m_cost 小于 8×p_cost）。
+    #[snafu(display("invalid argon2 params: {source}"))]
+    InvalidParams { source: argon2::Error },
 }
 
 impl From<Error> for BaseError {
@@ -52,6 +61,18 @@ impl From<Error> for BaseError {
                 .with_exception(true),
             Error::Argon2Parse { source } => BaseError::new(source)
                 .with_sub_category("argon2_parse")
+                .with_status(500)
+                .with_exception(true),
+            // 客户端送来的输入过长属请求错误：400、不告警，且文案可直接回给调用方
+            Error::SecretTooLong { len, max } => {
+                BaseError::new(format!("secret too long: {len} bytes (max {max})"))
+                    .with_sub_category("secret_too_long")
+                    .with_status(400)
+                    .with_exception(false)
+            }
+            // 参数非法属部署配置错误，启动期就该被发现
+            Error::InvalidParams { source } => BaseError::new(source)
+                .with_sub_category("invalid_params")
                 .with_status(500)
                 .with_exception(true),
         };
