@@ -231,11 +231,15 @@ serde_urlencoded = "0.7.1"
 sha1 = "0.11.0"
 sha2 = "0.11.0"
 snafu = "0.9.2"
-sqlx = { version = "0.9.0", features = [
+# 关闭默认 feature：any（跨数据库抽象）未使用；数据库时间类型统一用 time（不开 chrono）。
+# macros 不能省：migrate! 宏挂在它下面（仅 derive 不够），FromRow 派生也由它提供
+sqlx = { version = "0.9.0", default-features = false, features = [
     "runtime-tokio",
     "postgres",
+    "macros",
+    "migrate",
+    "json",
     "time",
-    "chrono",
 ] }
 strum = { version = "0.28.0", features = ["derive"] }
 subtle = "2.6.1"

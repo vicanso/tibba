@@ -12,8 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, JsonSnafu, SchemaOption, SchemaView};
-use chrono::DateTime;
+use super::{Error, JsonSnafu, SchemaOption, SchemaView, parse_primitive_datetime};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use snafu::ResultExt;
@@ -147,13 +146,16 @@ pub trait Model: Send + Sync {
             if let Some(modified) = filters.get("modified")
                 && let Some((start, end)) = modified.split_once(',')
             {
-                if let Ok(dt) = DateTime::parse_from_rfc3339(start) {
+                // 与其它时间过滤统一走 parse_primitive_datetime（RFC3339 先归一到 UTC），
+                // 绑定 time::PrimitiveDateTime，不再依赖 sqlx 的 chrono feature；
+                // 解析失败沿用旧行为：忽略该边界而非报错
+                if let Ok(dt) = parse_primitive_datetime(start) {
                     qb.push(" AND modified >= ");
-                    qb.push_bind(dt.naive_utc());
+                    qb.push_bind(dt);
                 }
-                if let Ok(dt) = DateTime::parse_from_rfc3339(end) {
+                if let Ok(dt) = parse_primitive_datetime(end) {
                     qb.push(" AND modified <= ");
-                    qb.push_bind(dt.naive_utc());
+                    qb.push_bind(dt);
                 }
             }
             self.push_filter_conditions(qb, &filters)?;

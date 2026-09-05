@@ -151,12 +151,16 @@ mod tests {
     }
 
     #[test]
-    fn now_primitive_utc_returns_close_to_chrono_now() {
-        // 与 chrono 系统时钟比较，验证「现在」差距在 1 秒内（CI 慢机也够用）
+    fn now_primitive_utc_matches_system_clock() {
+        // 与 std 系统时钟比较，验证「现在」差距在 1 秒内（CI 慢机也够用）
         let ours = now_primitive_utc();
-        let chrono_now = chrono::Utc::now();
+        let system_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock before unix epoch")
+            .as_secs();
+        let system_ts = i64::try_from(system_secs).expect("timestamp fits in i64");
         let ours_ts = ours.assume_utc().unix_timestamp();
-        let diff = (ours_ts - chrono_now.timestamp()).abs();
+        let diff = (ours_ts - system_ts).abs();
         assert!(
             diff <= 1,
             "now_primitive_utc 应与系统时钟一致，差距 {diff}s"

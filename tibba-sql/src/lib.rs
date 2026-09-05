@@ -16,13 +16,15 @@ use serde::Deserialize;
 use snafu::{ResultExt, Snafu};
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
+use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
 use tibba_config::Config;
 use tibba_error::Error as BaseError;
 use tibba_util::parse_uri;
-use tracing::info;
+use tracing::{debug, info};
+use url::Url;
 use validator::Validate;
 
 /// 该 crate 所有日志事件的 tracing target。
@@ -74,13 +76,16 @@ impl From<Error> for BaseError {
 type Result<T> = std::result::Result<T, Error>;
 
 /// 数据库连接池配置，字段均通过 URI 查询参数解析后填充。
-#[derive(Debug, Clone, Default, Validate)]
+///
+/// `url` 含明文密码，因此不派生 `Debug`：手写实现用 `redacted_url` 顶替，
+/// 避免凭据随 `{:?}` 进入日志或错误信息。
+#[derive(Clone, Default, Validate)]
 pub struct DatabaseConfig {
-    /// 原始数据库 URI（含密码，仅内部使用）
-    pub origin_url: String,
-    /// 脱敏后的数据库连接 URL（去除查询参数）
+    /// 实际用于建连的 URL（含密码，已去除连接池查询参数）
     #[validate(length(min = 10))]
     pub url: String,
+    /// 密码已替换为 [`PASSWORD_MASK`] 的 URL，仅用于日志输出
+    pub redacted_url: String,
     /// 连接池最大连接数（2–1000）
     #[validate(range(min = 2, max = 1000))]
     pub max_connections: u32,
@@ -95,8 +100,21 @@ pub struct DatabaseConfig {
     pub max_lifetime: Duration,
     /// 取出连接前是否先执行健康检测
     pub test_before_acquire: bool,
-    /// 数据库密码（从 URI 中提取，用于日志脱敏）
-    pub password: Option<String>,
+}
+
+impl fmt::Debug for DatabaseConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DatabaseConfig")
+            // 用脱敏 URL 顶替含密码的 `url` 字段
+            .field("url", &self.redacted_url)
+            .field("max_connections", &self.max_connections)
+            .field("min_connections", &self.min_connections)
+            .field("connect_timeout", &self.connect_timeout)
+            .field("idle_timeout", &self.idle_timeout)
+            .field("max_lifetime", &self.max_lifetime)
+            .field("test_before_acquire", &self.test_before_acquire)
+            .finish()
+    }
 }
 
 fn default_max_connections() -> u32 {
@@ -159,13 +177,26 @@ impl PoolStat {
     }
 }
 
+/// 脱敏 URL 中替换真实密码的占位符。
+const PASSWORD_MASK: &str = "***";
+
+/// 生成日志用的脱敏 URL：有密码则替换为 [`PASSWORD_MASK`]，无密码原样返回。
+///
+/// 按 URL 结构替换而非 `str::replace`：后者是子串匹配，密码若恰好是 `5432`
+/// 或主机名的一部分，会把端口 / 主机一起改掉。
+fn redact_url(mut url: Url) -> String {
+    if url.password().is_some() && url.set_password(Some(PASSWORD_MASK)).is_err() {
+        // 带密码的 URL 必然有 host，理论上不会失败；兜底也绝不回退到明文
+        return String::from("<unprintable database url>");
+    }
+    url.to_string()
+}
+
 /// 从应用配置中解析并校验 `DatabaseConfig`。
-/// 密码从 URI 中单独提取，用于后续日志脱敏；URL 去除查询参数后存储。
+/// URL 去除连接池查询参数后用于建连，同时生成一份脱敏副本供日志使用。
 fn new_database_config(config: &Config) -> Result<DatabaseConfig> {
     let origin_url = config.get_string("uri").context(ConfigSnafu)?;
-    // ParsedUri 借用字符串，需提前 clone 再将 origin_url 移入结构体
-    let url_str = origin_url.clone();
-    let parsed = parse_uri::<DatabaseQuery>(&url_str).context(ParseUriSnafu)?;
+    let parsed = parse_uri::<DatabaseQuery>(&origin_url).context(ParseUriSnafu)?;
 
     let mut url = parsed.url().context(ParseUriSnafu)?;
     // 去除查询参数，避免将连接池配置混入实际连接 URL
@@ -174,14 +205,13 @@ fn new_database_config(config: &Config) -> Result<DatabaseConfig> {
     let query = &parsed.query;
     let database_config = DatabaseConfig {
         url: url.to_string(),
-        origin_url,
+        redacted_url: redact_url(url),
         max_connections: query.max_connections,
         min_connections: query.min_connections,
         connect_timeout: query.connect_timeout,
         idle_timeout: query.idle_timeout,
         max_lifetime: query.max_lifetime,
         test_before_acquire: query.test_before_acquire,
-        password: parsed.password.map(|v| v.to_string()),
     };
     database_config.validate().context(ValidateSnafu)?;
     Ok(database_config)
@@ -192,13 +222,11 @@ fn new_database_config(config: &Config) -> Result<DatabaseConfig> {
 /// 原子性地记录新建连接数、取出次数和连接空闲时间。
 pub async fn new_pg_pool(config: &Config, pool_stat: Option<Arc<PoolStat>>) -> Result<PgPool> {
     let database_config = new_database_config(config)?;
-    // 日志中脱敏密码：仅在确实存在非空密码时替换；
-    // 否则 `String::replace("", "***")` 会在原 URL 每个字符间插入 "***" 把日志写成乱码
-    let url = match database_config.password.as_deref() {
-        Some(pwd) if !pwd.is_empty() => database_config.url.replace(pwd, "***"),
-        _ => database_config.url.clone(),
-    };
-    info!(target: LOG_TARGET, url, "connect to database");
+    info!(
+        target: LOG_TARGET,
+        url = database_config.redacted_url,
+        "connect to database"
+    );
 
     let mut options = PgPoolOptions::new()
         .max_connections(database_config.max_connections)
@@ -227,9 +255,10 @@ pub async fn new_pg_pool(config: &Config, pool_stat: Option<Arc<PoolStat>>) -> R
             .before_acquire(move |_conn, meta| {
                 let stat = before_acquire_pool_stat.clone();
                 Box::pin(async move {
-                    // 取出连接前记录空闲时间和连接年龄，便于监控连接复用情况
+                    // 取出连接前记录空闲时间和连接年龄，便于监控连接复用情况。
+                    // 每次取连接（≈ 每条查询）都会触发，用 debug 级别避免生产环境刷屏
                     let idle = meta.idle_for.as_secs();
-                    info!(
+                    debug!(
                         target: LOG_TARGET,
                         age = meta.age.as_secs(),
                         idle,
@@ -246,4 +275,38 @@ pub async fn new_pg_pool(config: &Config, pool_stat: Option<Arc<PoolStat>>) -> R
         .connect(database_config.url.as_str())
         .await
         .context(SqlxSnafu)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn redact_url_replaces_only_the_password_component() {
+        // 密码与端口同为 5432：子串替换会连端口一起改掉，按结构替换不会
+        let url = Url::parse("postgres://app:5432@db.internal:5432/tibba").expect("valid url");
+        assert_eq!(redact_url(url), "postgres://app:***@db.internal:5432/tibba");
+    }
+
+    #[test]
+    fn redact_url_keeps_password_free_url_unchanged() {
+        let raw = "postgres://app@db.internal:5432/tibba";
+        let url = Url::parse(raw).expect("valid url");
+        assert_eq!(redact_url(url), raw);
+    }
+
+    #[test]
+    fn debug_output_never_contains_the_password() {
+        let config = DatabaseConfig {
+            url: "postgres://app:s3cret@db.internal:5432/tibba".into(),
+            redacted_url: "postgres://app:***@db.internal:5432/tibba".into(),
+            ..Default::default()
+        };
+        let debug = format!("{config:?}");
+        assert!(
+            !debug.contains("s3cret"),
+            "密码不得出现在 Debug 输出中: {debug}"
+        );
+        assert!(debug.contains("***"), "应输出脱敏 URL: {debug}");
+    }
 }
