@@ -46,8 +46,12 @@ impl Context {
     }
 
     /// 返回自请求开始以来经过的毫秒数。
+    ///
+    /// 超过 `u64::MAX` 毫秒时饱和，不回绕——与 `tibba_util::Stopwatch::elapsed_ms`
+    /// 的溢出行为保持一致（此前这里是裸 `as u64` 截断，同一个「经过毫秒数」的
+    /// 概念在两处有两种溢出语义）。
     pub fn elapsed_ms(&self) -> u64 {
-        self.start_time.elapsed().as_millis() as u64
+        u64::try_from(self.start_time.elapsed().as_millis()).unwrap_or(u64::MAX)
     }
 
     /// 返回当前上下文关联的登录账号。

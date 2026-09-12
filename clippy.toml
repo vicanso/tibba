@@ -1,3 +1,6 @@
 allow-unwrap-in-tests = true
 cognitive-complexity-threshold = 10
-msrv = "1.83.0"
+# 与 [workspace.package] 的 rust-version 保持一致。
+# 1.88 是 let-chains（`if let ... && let ...`，全仓库 14 处）的稳定版本；
+# 此前写的 1.83 连 edition 2024 都编不过，等于一个永远不会被满足的声明。
+msrv = "1.88.0"

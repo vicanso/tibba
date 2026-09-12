@@ -21,7 +21,6 @@ use axum::middleware::{from_fn, from_fn_with_state};
 use opentelemetry_otlp::WithExportConfig;
 use std::env;
 use std::net::SocketAddr;
-use std::str::FromStr;
 use std::sync::Arc;
 use tibba_middleware::{
     Cors, HttpCache, MiddlewareOptions, SecurityHeaders, cors, entry, http_cache, otel_trace,
@@ -35,7 +34,8 @@ use tokio::signal;
 use tower::ServiceBuilder;
 use tower_http::compression::CompressionLayer;
 use tower_http::compression::predicate::{NotForContentType, Predicate, SizeAbove};
-use tracing::{Level, error, info, warn};
+use tracing::{error, info, warn};
+use tracing_subscriber::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
@@ -141,14 +141,25 @@ async fn shutdown_signal() {
 ///   缺省 / 空时 telemetry 完全关闭，仅打 fmt 日志，0 网络开销
 /// - `OTEL_SERVICE_NAME` —— 资源 `service.name` 标签；缺省 `tibba`
 ///
-/// 与既有 RUST_LOG 兼容：fmt 日志的级别仍由 RUST_LOG 决定。
+/// ## 日志级别：`RUST_LOG` 支持**按 target 过滤**
+///
+/// 各 `tibba-*` crate 都给自己的日志打了 target（`tibba:cache` / `tibba:hook`
+/// …），`RUST_LOG` 因此可以精确到模块：
+///
+/// ```text
+/// RUST_LOG=info                      # 全局 info
+/// RUST_LOG=info,tibba:cache=debug    # 只把缓存模块调到 debug
+/// RUST_LOG=warn,tibba:request=info   # 只看出站请求
+/// ```
+///
+/// 此前这里用的是 `Level::from_str(RUST_LOG)` + `LevelFilter`：只认单个级别名，
+/// `tibba:cache=debug` 这种写法解析失败后**静默**回退到全局 info——各 crate 文档
+/// 里承诺的 target 过滤其实一直不可用，唯一的调节手段是把全局级别整体抬高或
+/// 压低。换成 `EnvFilter` 后那套约定才真正生效。
+///
+/// 解析失败（写错指令）时回退到 `info`，不让日志配置写错把进程拦在启动前。
 fn init_logger() {
-    let mut level = Level::INFO;
-    if let Ok(log_level) = env::var("RUST_LOG")
-        && let Ok(value) = Level::from_str(log_level.as_str())
-    {
-        level = value;
-    }
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
     let timer = tracing_subscriber::fmt::time::OffsetTime::local_rfc_3339().unwrap_or_else(|_| {
         tracing_subscriber::fmt::time::OffsetTime::new(
@@ -160,8 +171,6 @@ fn init_logger() {
     let fmt_layer = tracing_subscriber::fmt::layer()
         .with_timer(timer)
         .with_ansi(is_development());
-
-    let filter = tracing_subscriber::filter::LevelFilter::from_level(level);
 
     // OTLP layer 由环境变量决定是否启用；endpoint 为空 → 直接 None，零开销
     let otel_layer = build_otel_layer();
@@ -447,4 +456,60 @@ fn main() {
         .build()
         .unwrap_or_else(|e| panic!("failed to build tokio runtime: {}", e))
         .block_on(start());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tracing::Level;
+    use tracing_subscriber::filter::LevelFilter;
+
+    /// **回归守卫**：`RUST_LOG` 必须支持按 target 过滤。
+    ///
+    /// 各 `tibba-*` crate 的文档都在承诺 `RUST_LOG=tibba:cache=debug` 可用，
+    /// 而这只有在订阅器装的是 `EnvFilter` 时才成立。此前装的是 `LevelFilter`，
+    /// 这类指令解析失败后静默回退全局 info——承诺一直是空的。
+    ///
+    /// target 里带 `:` 是本项目的命名约定（`tibba:cache`），这里一并钉住
+    /// EnvFilter 确实接受这种写法。
+    #[test]
+    fn rust_log_supports_per_target_directives() {
+        for spec in [
+            "info",
+            // 旧写法（含大写）必须继续可用，否则升级会静默改变现网日志级别
+            "INFO",
+            "Debug",
+            "warn",
+            "tibba:cache=debug",
+            "info,tibba:cache=debug",
+            "warn,tibba:request=info,tibba:hook=trace",
+        ] {
+            assert!(
+                EnvFilter::try_new(spec).is_ok(),
+                "RUST_LOG={spec:?} 应当可被解析"
+            );
+        }
+    }
+
+    /// 按 target 抬高级别时，整体的 max level 必须跟着抬高，
+    /// 否则事件会在更外层就被静态过滤掉，指令等于没写。
+    #[test]
+    fn per_target_directive_raises_max_level() {
+        let filter = EnvFilter::try_new("warn,tibba:cache=debug").expect("指令应可解析");
+        assert_eq!(filter.max_level_hint(), Some(LevelFilter::DEBUG));
+
+        // 未抬高时不应误报
+        let filter = EnvFilter::try_new("warn").expect("指令应可解析");
+        assert_eq!(filter.max_level_hint(), Some(LevelFilter::WARN));
+    }
+
+    /// 写错的指令不能把进程拦在启动前，回退到 info。
+    #[test]
+    fn malformed_directive_falls_back_to_info() {
+        assert!(EnvFilter::try_new("=not a level=").is_err());
+        // init_logger 的回退路径
+        let filter = EnvFilter::try_new("=not a level=")
+            .unwrap_or_else(|_| EnvFilter::new(Level::INFO.as_str()));
+        assert_eq!(filter.max_level_hint(), Some(LevelFilter::INFO));
+    }
 }

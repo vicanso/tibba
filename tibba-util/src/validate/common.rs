@@ -104,6 +104,16 @@ pub fn x_sha256(value: &str) -> Result<()> {
     Ok(())
 }
 
+/// 对象键（文件名）长度上限。对齐常见对象存储与 POSIX 的单段文件名限制。
+const FILE_NAME_MAX_LEN: usize = 255;
+
+/// 校验存储对象键：单段文件名，不得含路径分隔符、`..` 或控制字符，且须有扩展名。
+///
+/// # 为什么不止「非空 + 有扩展名」
+/// 此前只查这两条，`../../etc/passwd.txt` 能直接通过。当前调用链恰好安全
+/// （上传的键由 `uuid()` 生成，下载前先在库里查登记记录），但这个校验器的名字
+/// 就叫「文件名」，任何新写的处理器都会默认它已经保证了「这是一段合法文件名」。
+/// 纵深防御的那一层应当真的存在，而不是依赖调用方每次都记得自己再查一遍。
 pub fn x_file_name(name: &str) -> Result<()> {
     if is_disabled(CODE_FILE_NAME) {
         return Ok(());
@@ -112,6 +122,39 @@ pub fn x_file_name(name: &str) -> Result<()> {
         return Err(new_error(
             CODE_FILE_NAME,
             "file name cannot be empty".to_string(),
+        ));
+    }
+    if name.len() > FILE_NAME_MAX_LEN {
+        return Err(new_error(
+            CODE_FILE_NAME,
+            format!("file name must be at most {FILE_NAME_MAX_LEN} characters"),
+        ));
+    }
+    // 控制字符：会进日志与响应头（Content-Disposition），必须挡掉
+    if name.chars().any(|c| c.is_ascii_control()) {
+        return Err(new_error(
+            CODE_FILE_NAME,
+            "file name must not contain control characters".to_string(),
+        ));
+    }
+    // 路径穿越：分隔符与 `..` 一律拒绝，保证这是**单段**文件名
+    if name.contains('/') || name.contains('\\') {
+        return Err(new_error(
+            CODE_FILE_NAME,
+            "file name must not contain path separators".to_string(),
+        ));
+    }
+    if name.split('.').any(|seg| seg == "..") || name == ".." || name == "." {
+        return Err(new_error(
+            CODE_FILE_NAME,
+            "file name must not contain path traversal".to_string(),
+        ));
+    }
+    // 以 `.` 开头的隐藏文件既无正当用途，也会让「扩展名」的判定变得含糊
+    if name.starts_with('.') {
+        return Err(new_error(
+            CODE_FILE_NAME,
+            "file name must not start with '.'".to_string(),
         ));
     }
     if Path::new(name).extension().is_none() {
@@ -217,6 +260,48 @@ mod tests {
         assert!(x_listen_addr(":0").is_err());
         assert!(x_listen_addr("0.0.0.0:0").is_err());
         assert!(x_listen_addr("[::1]:0").is_err());
+    }
+
+    /// **回归守卫**：`x_file_name` 必须拒绝路径穿越与控制字符。
+    ///
+    /// 旧实现只查「非空 + 有扩展名」，下面这些全部会被放行。
+    #[test]
+    fn file_name_rejects_traversal_and_control_chars() {
+        // 正常的对象键（上传侧生成的形态：uuid + 扩展名）
+        assert!(x_file_name("67e55044-10b1-426f-9247-bb680e5fe0c8.png").is_ok());
+        assert!(x_file_name("report.tar.gz").is_ok());
+
+        for bad in [
+            "../../etc/passwd.txt",
+            "..",
+            ".",
+            "a/b.png",
+            "a\\b.png",
+            ".hidden.png",
+            "bad\nname.png",
+            "bad\0name.png",
+        ] {
+            assert!(x_file_name(bad).is_err(), "{bad:?} 应被拒绝");
+        }
+
+        // 无扩展名与超长仍按原规则拒绝
+        assert!(x_file_name("noext").is_err());
+        assert!(x_file_name("").is_err());
+        assert!(x_file_name(&format!("{}.png", "a".repeat(FILE_NAME_MAX_LEN))).is_err());
+    }
+
+    /// 文件分组 / 模型名走共享白名单，分隔符与控制字符不得放行。
+    #[test]
+    fn group_and_schema_names_use_identifier_allowlist() {
+        assert!(x_file_group("avatars").is_ok());
+        assert!(x_file_group("team-a_2024").is_ok());
+        assert!(x_schema_name("user").is_ok());
+
+        for bad in ["a/b", "a b", "a\nb", "a:b", "组"] {
+            assert!(x_file_group(bad).is_err(), "{bad:?} 应被拒绝");
+            assert!(x_schema_name(bad).is_err(), "{bad:?} 应被拒绝");
+        }
+        assert!(x_file_group("").is_err());
     }
 
     #[test]

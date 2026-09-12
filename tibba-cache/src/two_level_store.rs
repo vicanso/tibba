@@ -142,9 +142,11 @@ impl<T> Expired for ExpiredCache<T> {
 pub struct TwoLevelStore<T> {
     /// 第一层：带 TTL 的进程内定容缓存（按写入顺序淘汰，非 LRU）
     l1: TtlFifoStore<ExpiredCache<T>>,
-    /// 缓存条目的默认 TTL
+    /// L1 的对齐周期，同时是 L2 的默认 TTL
     ttl: Duration,
-    /// L2 抖动幅度占 `ttl` 的百分比，见 [`Self::with_jitter_percent`]
+    /// L2 的 TTL；`None` 表示沿用 `ttl`，见 [`Self::with_l2_ttl`]
+    l2_ttl: Option<Duration>,
+    /// L2 抖动幅度占 L2 TTL 的百分比，见 [`Self::with_jitter_percent`]
     jitter_percent: u8,
     /// 第二层：Redis 缓存
     redis: RedisCache,
@@ -163,12 +165,42 @@ impl<T: Clone + Serialize + DeserializeOwned> TwoLevelStore<T> {
         Self {
             l1: TtlFifoStore::new(size),
             ttl,
+            l2_ttl: None,
             jitter_percent: DEFAULT_L2_JITTER_PERCENT,
             redis,
         }
     }
 
-    /// 设置 L2 抖动幅度占 `ttl` 的百分比，支持链式调用。超过 100 会被钳到 100。
+    /// 单独设置 L2（Redis）的 TTL，与 L1 的对齐周期解耦，支持链式调用。
+    ///
+    /// 默认两者同为 `new` 传入的 `ttl`。但它们本来就是**两个独立的轴**：
+    ///
+    /// - L1 的 TTL 决定「本节点多久回源一次」——即跨节点分歧窗口的上界；
+    /// - L2 的 TTL 决定「数据在 Redis 里存多久」——即多久穿透回数据源。
+    ///
+    /// 把两者绑死，就无法表达「Redis 里长期保存、进程内只缓存几秒」这种形态，
+    /// 而特性开关、配置字典这类**低频写、高频读**的数据恰恰是这个形状：
+    /// 它们在 Redis 里近似永不过期，但每个节点只需要缓存几秒就够了。
+    ///
+    /// ```ignore
+    /// // Redis 侧近似永久，进程内 10s 刷新一次
+    /// let store = TwoLevelStore::new(cache, size, Duration::from_secs(10))
+    ///     .with_l2_ttl(Duration::from_secs(10 * 365 * 24 * 3600))
+    ///     .with_jitter_percent(0);
+    /// ```
+    #[must_use]
+    pub fn with_l2_ttl(mut self, ttl: Duration) -> Self {
+        self.l2_ttl = Some(ttl);
+        self
+    }
+
+    /// L2 实际使用的 TTL 秒数（下限 1）。
+    #[inline]
+    fn l2_unit(&self) -> u64 {
+        unit_secs(self.l2_ttl.unwrap_or(self.ttl))
+    }
+
+    /// 设置 L2 抖动幅度占 L2 TTL 的百分比，支持链式调用。超过 100 会被钳到 100。
     ///
     /// 抖动把「同一周期写入的 key 集中过期」摊开，避免它们同时穿透到数据库。
     /// key 数量越多、回源代价越高，越值得调大。
@@ -202,7 +234,11 @@ impl<T: Clone + Serialize + DeserializeOwned> TwoLevelStore<T> {
         let unit = unit_secs(self.ttl);
 
         // L2：完整 TTL + 抖动，避免同周期写入的 key 在同一时刻集体穿透到数据库
-        let redis_ttl = Duration::from_secs(l2_ttl_secs(unit, key, self.jitter_percent));
+        let redis_ttl = Duration::from_secs(l2_ttl_secs(
+            self.l2_unit(),
+            key,
+            self.jitter_percent,
+        ));
         self.redis.set_struct(key, &value, Some(redis_ttl)).await?;
 
         // L1：对齐到边界，使所有节点在同一秒回源刷新
@@ -290,6 +326,20 @@ mod tests {
             "同周期内写入的条目必须落在同一个绝对过期时刻，否则跨节点一致性不成立"
         );
         assert!(expiries.contains(&(base + UNIT)));
+    }
+
+    /// L1 与 L2 的 TTL 必须能各走各的：
+    /// 默认相同；一旦 `with_l2_ttl` 覆盖，L1 仍按原 `ttl` 对齐边界。
+    #[test]
+    fn l2_ttl_can_be_decoupled_from_l1() {
+        // 默认：两者同源
+        let unit = UNIT;
+        assert_eq!(l2_ttl_secs(unit, "k", 0), unit);
+
+        // 覆盖后 L2 用新的 unit，L1 的边界计算完全不受影响
+        let persist = 10 * 365 * 24 * 3600_u64;
+        assert_eq!(l2_ttl_secs(persist, "k", 0), persist);
+        assert_eq!(secs_to_next_boundary(unit, 10 * UNIT + 1), UNIT - 1);
     }
 
     #[test]

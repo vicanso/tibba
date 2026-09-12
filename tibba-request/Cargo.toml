@@ -6,6 +6,7 @@ authors.workspace = true
 license.workspace = true
 homepage.workspace = true
 repository.workspace = true
+rust-version.workspace = true
 keywords = ["tibba", "request"]
 description = "request for tibba"
 
@@ -48,3 +49,9 @@ x509-parser = { workspace = true, optional = true }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }
+# 响应体上限要跑一个真实的本地 HTTP 服务端才测得准（rt/macros 仅测试用）
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }
+futures = { workspace = true }
+
+[lints]
+workspace = true

@@ -20,7 +20,7 @@
 //! | Session | `RedisCache` + 前缀 `session:` | 中间件层已用，勿在 handler 再绕过 |
 //! | API Key 校验 | `get_struct` / 短 TTL | 避免每次请求查 DB |
 //! | 登录防爆破 | `incr` 固定窗口 | 见 `login_guard` / `RedisIpRateLimit` |
-//! | Feature flag | 进程内 + Redis 双层 | `two_level_store`；L1 对齐边界保一致性、L2 抖动防雪崩 |
+//! | Feature flag | `TwoLevelStore` | `tibba-feature` 的 `with_local_cache` opt-in；L1 对齐边界保一致性、L2 抖动防雪崩 |
 //! | 分布式锁 | `lock` | 定时任务 singleton；**只靠 TTL 释放，无 unlock**（见 `RedisCache::lock`） |
 //! | **长阻塞**（BRPOP） | [`RedisClient::dedicated_blocking_conn`]`(max_block)` | **不归池** + **按 max_block 设置 response timeout** |
 //! | 专用短写（reply loop） | [`RedisClient::dedicated_command_conn`] | 不归池，显式 5s response timeout |
@@ -42,6 +42,13 @@
 //! | `max_conn_age` | `24h` | 连接最大存活时间 |
 //! | `response_timeout` | `5s` | **单次命令响应超时；`0` = 不超时** |
 //! | `slow` | `200ms` | 慢命令阈值，交由应用侧 `stat_callback` 判定 |
+//! | `recycle_min_idle` | `1s` | 空闲不足该时长的连接跳过 PING 探活；`0` = 每次都探活 |
+//!
+//! ### `recycle_min_idle` 解决什么
+//! deadpool 在**每次** `Pool::get()` 复用池内连接时都会调 `Manager::recycle`，
+//! 本 crate 的 `RedisCache` 又是一个方法一次 `conn()`——于是每条 Redis 命令前
+//! 都要先付一次 PING 往返，P50 直接翻倍。1s 内刚用过的连接断开概率极低，
+//! 跳过探活基本不损失可靠性；空闲更久的仍照常探活。
 //!
 //! ### `response_timeout` 为什么必须可配
 //! redis-rs 1.x 把默认值定为 **500ms**，且不只影响阻塞命令——大 pipeline、慢 Lua 脚本、
@@ -102,6 +109,9 @@ pub enum Error {
         category: String,
         source: redis::RedisError,
     },
+    /// URI 语义非法（如集群模式下指定了非 0 的 db 编号）。
+    #[snafu(display("invalid redis uri: {message}"))]
+    InvalidUri { message: String },
     #[snafu(display("{source}"))]
     Compression { source: tibba_util::Error },
     #[snafu(display("{source}"))]
@@ -162,6 +172,8 @@ pub struct RedisConfig {
     pub response_timeout: Option<Duration>,
     /// 慢命令统计阈值：超过则由应用侧 `stat_callback` 记为 slow（阻塞命令会豁免）。
     pub slow_cmd_threshold: Duration,
+    /// 复用连接时，空闲时长小于该值就跳过 PING 探活（`0` = 每次都探活）。
+    pub recycle_min_idle: Duration,
 }
 
 /// 手写 `Debug` 而非 derive：本结构有**两处**都带着 Redis 口令。
@@ -188,6 +200,7 @@ impl std::fmt::Debug for RedisConfig {
             .field("max_conn_age", &self.max_conn_age)
             .field("response_timeout", &self.response_timeout)
             .field("slow_cmd_threshold", &self.slow_cmd_threshold)
+            .field("recycle_min_idle", &self.recycle_min_idle)
             .finish()
     }
 }
@@ -201,6 +214,13 @@ fn default_pool_size() -> u32 {
 const DEFAULT_RESPONSE_TIMEOUT: Duration = Duration::from_secs(5);
 /// 默认慢命令阈值（与常见 `slow=200ms` 运维约定一致；URI `slow=` 可覆盖）。
 const DEFAULT_SLOW_CMD_THRESHOLD: Duration = Duration::from_millis(200);
+/// 默认「跳过探活」的空闲阈值：1s。
+///
+/// deadpool 每次从池里取连接都会调 `Manager::recycle`（对本 crate 而言就是每条
+/// Redis 命令一次 PING 往返）。1s 内刚成功用过的连接几乎不可能已断开——服务端
+/// `timeout`、keepalive、网络中断的时间尺度都远大于此——这次探活买不到信息，
+/// 却要实打实多付一个 RTT。空闲更久的连接照常探活。
+const DEFAULT_RECYCLE_MIN_IDLE: Duration = Duration::from_secs(1);
 
 #[derive(Deserialize, Debug, Clone)]
 struct RedisParams {
@@ -230,6 +250,10 @@ struct RedisParams {
     #[serde(with = "humantime_serde")]
     #[serde(alias = "slow")]
     slow: Option<Duration>,
+    /// 跳过 PING 探活的空闲阈值。省略 → 1s；`0` → 每次复用都探活。
+    #[serde(default)]
+    #[serde(with = "humantime_serde")]
+    recycle_min_idle: Option<Duration>,
     password: Option<String>,
 }
 
@@ -250,10 +274,24 @@ fn new_redis_config(config: &Config) -> Result<RedisConfig> {
         (Some(u), None) => format!("{u}@"),
         (None, None) => String::new(),
     };
-    let nodes = parsed
-        .host_strings()
+    // URI 的 path 段是 **db 编号**（`redis://host:6379/3`）。`host_strings()` 只输出
+    // `host:port`，此前直接丢掉了 path——配了 db 3 的部署会静默连到 db 0，读写全落
+    // 在错误的库上而没有任何提示。与之前「硬编码 redis:// 导致 TLS 静默降级」同类。
+    let db = parsed.path.filter(|p| !p.is_empty());
+    let hosts = parsed.host_strings();
+    // Redis Cluster 只有 db 0；与其让连接建起来之后行为诡异，不如启动期直接拒绝
+    if hosts.len() > 1
+        && let Some(db) = db
+        && db != "0"
+    {
+        return Err(Error::InvalidUri {
+            message: format!("redis cluster does not support db index (got {db:?})"),
+        });
+    }
+    let db_suffix = db.map(|d| format!("/{d}")).unwrap_or_default();
+    let nodes = hosts
         .iter()
-        .map(|item| format!("{scheme}://{auth}{item}"))
+        .map(|item| format!("{scheme}://{auth}{item}{db_suffix}"))
         .collect();
     let query = parsed.query;
     // 密码优先取 userinfo（redis://:pw@host），回退到查询串 ?password=。
@@ -281,6 +319,8 @@ fn new_redis_config(config: &Config) -> Result<RedisConfig> {
             .slow
             .filter(|d| !d.is_zero())
             .unwrap_or(DEFAULT_SLOW_CMD_THRESHOLD),
+        // 显式 0 表示「每次都探活」，故与 slow 不同，这里不过滤零值
+        recycle_min_idle: query.recycle_min_idle.unwrap_or(DEFAULT_RECYCLE_MIN_IDLE),
     };
     redis_config
         .validate()
@@ -312,6 +352,11 @@ impl From<Error> for BaseError {
             Error::Redis { category, source } => {
                 infra(BaseError::new(source).with_sub_category(&category))
             }
+            // 部署配置错误，启动期就该被发现
+            Error::InvalidUri { message } => BaseError::new(message)
+                .with_sub_category("invalid_uri")
+                .with_status(500)
+                .with_exception(true),
             Error::Compression { source } => BaseError::new(source)
                 .with_sub_category("compression")
                 .with_exception(true),
@@ -383,6 +428,56 @@ mod tests {
             ]
         );
         assert_eq!(redis_config.password.as_deref(), Some("secret"));
+    }
+
+    /// **回归守卫**：URI 里的 db 编号必须拼回节点 URL。
+    ///
+    /// 旧实现只取 `host_strings()`（仅 `host:port`），path 段被丢掉——
+    /// `redis://host:6379/3` 会静默连到 db 0，全部读写落在错误的库上。
+    #[test]
+    fn db_index_is_preserved_in_node_url() {
+        let config = config_with_uri("redis://127.0.0.1:6379/3");
+        let redis_config = new_redis_config(&config).unwrap();
+        assert_eq!(redis_config.nodes, vec!["redis://127.0.0.1:6379/3".to_string()]);
+
+        // 带 auth 与 IPv6 时同样要带上
+        let config = config_with_uri("redis://:pw@[::1]:6379/2");
+        let redis_config = new_redis_config(&config).unwrap();
+        assert_eq!(redis_config.nodes, vec!["redis://:pw@[::1]:6379/2".to_string()]);
+
+        // 未指定 db 时不得凭空加斜杠
+        let config = config_with_uri("redis://127.0.0.1:6379");
+        let redis_config = new_redis_config(&config).unwrap();
+        assert_eq!(redis_config.nodes, vec!["redis://127.0.0.1:6379".to_string()]);
+    }
+
+    /// 集群不支持非 0 的 db，应在启动期报错而不是连上之后行为诡异。
+    #[test]
+    fn cluster_rejects_non_zero_db_index() {
+        let config = config_with_uri("redis://host1:6379,host2:6380/3");
+        let err = new_redis_config(&config).expect_err("集群 + db 3 应当被拒绝");
+        assert!(
+            err.to_string().contains("does not support db index"),
+            "错误信息应说明原因，实际: {err}"
+        );
+
+        // db 0 等价于不指定，应放行
+        let config = config_with_uri("redis://host1:6379,host2:6380/0");
+        assert!(new_redis_config(&config).is_ok());
+    }
+
+    /// 口令含未转义 `@` 时，节点 URL 与打码都要正确（依赖 parse_uri 的 rsplit 修复）。
+    #[test]
+    fn password_with_at_sign_yields_correct_node_url() {
+        let config = config_with_uri("redis://user:p@ss@host:6379");
+        let redis_config = new_redis_config(&config).unwrap();
+        assert_eq!(
+            redis_config.nodes,
+            vec!["redis://user:p@ss@host:6379".to_string()]
+        );
+        assert_eq!(redis_config.password.as_deref(), Some("p@ss"));
+        let debug = format!("{redis_config:?}");
+        assert!(!debug.contains("p@ss"), "Debug 输出泄漏了口令: {debug}");
     }
 
     /// IPv4 路径不能被 IPv6 支持改坏。

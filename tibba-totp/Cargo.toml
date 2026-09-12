@@ -6,6 +6,7 @@ authors.workspace = true
 license.workspace = true
 homepage.workspace = true
 repository.workspace = true
+rust-version.workspace = true
 keywords = ["tibba", "totp", "2fa", "mfa"]
 description = "RFC 6238 TOTP core and secret-at-rest encryption for tibba"
 
@@ -23,3 +24,6 @@ sha2 = { workspace = true }
 snafu = { workspace = true }
 subtle = { workspace = true }
 tibba-error = { path = "../tibba-error", version = "0.2.6" }
+
+[lints]
+workspace = true

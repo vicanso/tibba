@@ -6,6 +6,7 @@ authors.workspace = true
 license.workspace = true
 homepage.workspace = true
 repository.workspace = true
+rust-version.workspace = true
 keywords = ["tibba", "model"]
 description = "built-in models for tibba (file, detector, http-stat, etc.)"
 
@@ -21,3 +22,6 @@ snafu = { workspace = true }
 sqlx = { workspace = true }
 tibba-model = { path = "../tibba-model", version = "0.2.6" }
 time = { workspace = true }
+
+[lints]
+workspace = true

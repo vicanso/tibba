@@ -162,7 +162,12 @@ where
     let (main, query_str) = rest.split_once('?').unwrap_or((rest, ""));
     let (authority, path) = main.split_once('/').unwrap_or((main, ""));
     let path = if path.is_empty() { None } else { Some(path) };
-    let (user_info, hosts_str) = authority.split_once('@').unwrap_or(("", authority));
+    // 按**最后一个** `@` 切分 userinfo 与 host。RFC 3986 要求 userinfo 里的 `@`
+    // 转义，但现实中的口令经常直接塞原文；取第一个 `@` 会把
+    // `redis://user:p@ss@host:6379` 解析成 password="p" / host="ss@host:6379"——
+    // 口令和主机同时错，且不会报任何错。同 crate 的 `redact_node_url`
+    // （tibba-cache）早已用 rsplit，这里此前与它不一致。
+    let (user_info, hosts_str) = authority.rsplit_once('@').unwrap_or(("", authority));
     let (username, password) = if user_info.is_empty() {
         (None, None)
     } else {
@@ -362,6 +367,44 @@ mod tests {
             parsed.url().unwrap().as_str(),
             "postgres://u:p@db.internal:5432/app"
         );
+    }
+
+    /// **回归守卫**：口令含未转义 `@` 时，必须按最后一个 `@` 切分。
+    ///
+    /// 旧实现用 `split_once`（第一个 `@`），于是
+    /// `redis://user:p@ss@host:6379` 被解析成 password=`p`、host=`ss@host:6379`——
+    /// 主机名整个是错的，`endpoint()` / `host_strings()` 会把连接指向一个不存在
+    /// 的地址（`tibba-opendal` 的 S3 endpoint 正是这么取的），且全程没有报错。
+    #[test]
+    fn unescaped_at_in_password_splits_on_last_separator() {
+        let parsed = parse_uri::<HashMap<String, String>>("redis://user:p@ss@host:6379").unwrap();
+        assert_eq!(parsed.username, Some("user"));
+        assert_eq!(parsed.password, Some("p@ss"));
+        assert_eq!(parsed.host_strings(), vec!["host:6379".to_string()]);
+        assert_eq!(parsed.endpoint(), "redis://host:6379");
+
+        // 无用户名、仅口令的形式（redis 常见写法）
+        let parsed = parse_uri::<HashMap<String, String>>("redis://:p@ss@host:6379").unwrap();
+        assert_eq!(parsed.username, Some(""));
+        assert_eq!(parsed.password, Some("p@ss"));
+        assert_eq!(parsed.host_strings(), vec!["host:6379".to_string()]);
+
+        // 重建 URL 时也要还原得回去
+        let parsed =
+            parse_uri::<HashMap<String, String>>("postgres://u:pa@ss@db.internal:5432/app").unwrap();
+        assert_eq!(parsed.hosts, vec![Host { name: "db.internal", port: Some(5432) }]);
+        let url = parsed.url().unwrap();
+        assert_eq!(url.host_str(), Some("db.internal"));
+        assert_eq!(url.port(), Some(5432));
+    }
+
+    /// 无 userinfo 的 URI 不能被 rsplit 改坏。
+    #[test]
+    fn no_userinfo_is_unaffected() {
+        let parsed = parse_uri::<HashMap<String, String>>("redis://host:6379").unwrap();
+        assert_eq!(parsed.username, None);
+        assert_eq!(parsed.password, None);
+        assert_eq!(parsed.host_strings(), vec!["host:6379".to_string()]);
     }
 
     /// 全是分隔符的 authority 必须报错。

@@ -6,6 +6,7 @@ authors.workspace = true
 license.workspace = true
 homepage.workspace = true
 repository.workspace = true
+rust-version.workspace = true
 keywords = ["tibba", "jwt", "auth", "hs256"]
 description = "JWT (HS256) auth path for tibba — access token + opaque refresh"
 
@@ -27,3 +28,6 @@ tracing = { workspace = true }
 [package.metadata.cargo-machete]
 # humantime-serde 通过 #[serde(with = "humantime_serde")] 属性字符串使用，machete 无法识别
 ignored = ["humantime-serde"]
+
+[lints]
+workspace = true

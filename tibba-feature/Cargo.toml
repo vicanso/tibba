@@ -6,6 +6,7 @@ authors.workspace = true
 license.workspace = true
 homepage.workspace = true
 repository.workspace = true
+rust-version.workspace = true
 keywords = ["tibba", "feature", "flags"]
 description = "Redis-backed feature flags for tibba"
 
@@ -17,3 +18,6 @@ path = "src/lib.rs"
 serde = { workspace = true }
 tibba-cache = { path = "../tibba-cache", version = "0.2.6" }
 tibba-error = { path = "../tibba-error", version = "0.2.6" }
+
+[lints]
+workspace = true

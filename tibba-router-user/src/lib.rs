@@ -41,7 +41,7 @@ use tibba_session::{Session, SessionResponse, UserSession};
 use tibba_util::{
     JsonParams, JsonResult, generate_device_id_cookie, get_device_id_from_cookie, is_development,
     is_test, now, timestamp, timestamp_hash, uuid, validate_timestamp_hash, x_sha256,
-    x_user_account, x_user_email, x_user_password, x_uuid,
+    x_user_account, x_user_account_strict, x_user_email, x_user_password, x_uuid,
 };
 use tracing::warn;
 use utoipa::{OpenApi, ToSchema};
@@ -155,7 +155,7 @@ struct LoginTokenResp {
 )]
 async fn login_token(State(secret): State<String>) -> JsonResult<LoginTokenResp> {
     let token = uuid();
-    let (ts, hash) = timestamp_hash(&token, &secret);
+    let (ts, hash) = timestamp_hash(&token, &secret)?;
 
     Ok(Json(LoginTokenResp { ts, hash, token }))
 }
@@ -485,7 +485,12 @@ async fn me(
 /// 注册请求参数。
 #[derive(Deserialize, Validate, ToSchema)]
 struct RegisterParams {
-    #[validate(custom(function = "x_user_account"))]
+    /// 新账号名。
+    ///
+    /// 注册路径用 `x_user_account_strict`（字符白名单），而登录 / 找回密码沿用
+    /// 较宽松的 `x_user_account`：白名单只对**新建**的账号收口，不能把库里可能
+    /// 存在的历史形态（如早期用邮箱注册的账号）挡在登录门外。
+    #[validate(custom(function = "x_user_account_strict"))]
     account: String,
     #[validate(custom(function = "x_user_password"))]
     password: String,

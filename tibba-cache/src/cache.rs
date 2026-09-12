@@ -26,7 +26,21 @@ const DEFAULT_ZSTD: Algorithm = Algorithm::Zstd(3);
 
 type Result<T> = std::result::Result<T, Error>;
 
+/// `Duration` → Redis 毫秒过期时长，下限 1、上限饱和。
+///
+/// 抽成自由函数只为可测：`RedisCache` 需要一个 `&'static RedisClient` 才能构造，
+/// 而这段纯算术是最容易出错、也最该被钉住的部分。
+#[inline]
+fn ttl_to_millis(ttl: Duration) -> u64 {
+    u64::try_from(ttl.as_millis()).unwrap_or(u64::MAX).max(1)
+}
+
 /// Redis 缓存封装，提供键值读写、分布式锁、计数器等常用缓存操作。
+///
+/// `Clone` 很廉价：只有一个 `Duration`、一个前缀 `String` 和一个 `&'static`
+/// 连接池引用，不复制任何连接。需要「同一个池、不同 TTL / 前缀」的视图时
+/// （例如把它交给 [`crate::TwoLevelStore`]）克隆一份再链式改写即可。
+#[derive(Clone)]
 pub struct RedisCache {
     /// 缓存条目的默认过期时长
     ttl: Duration,
@@ -84,9 +98,19 @@ impl RedisCache {
         self
     }
 
+    /// 解析出本次操作要用的 TTL，单位**毫秒**，下限钳为 1。
+    ///
+    /// # 为什么是毫秒
+    /// 此前是 `as_secs()`：任何亚秒 TTL 都会被截断成 0，随后 `SET ... EX 0` /
+    /// `EXPIRE ... 0` 被 Redis 直接拒绝（`invalid expire time`）。也就是说
+    /// `with_ttl(Duration::from_millis(500))` 不是「按 500ms 过期」，而是
+    /// **运行期报错**——而限流这类场景恰恰会想要亚秒窗口。
+    ///
+    /// 改用 Redis 原生的毫秒指令族（`PSETEX` / `PX` / `PEXPIRE`）后，亚秒 TTL
+    /// 按真实值生效。下限 1ms 只为挡住 `Duration::ZERO`（同样会被 Redis 拒绝）。
     #[inline]
-    fn get_ttl(&self, ttl: Option<Duration>) -> u64 {
-        ttl.unwrap_or(self.ttl).as_secs()
+    fn get_ttl_ms(&self, ttl: Option<Duration>) -> u64 {
+        ttl_to_millis(ttl.unwrap_or(self.ttl))
     }
 
     /// 拼接前缀与键名，生成完整的缓存键。
@@ -123,17 +147,17 @@ impl RedisCache {
         Ok(result)
     }
 
-    /// 向 Redis 写入原始值，并设置过期时间（秒）。
+    /// 向 Redis 写入原始值，并设置过期时间（毫秒）。
     async fn set_value<T: redis::ToSingleRedisArg + Send + Sync>(
         &self,
         key: &str,
         value: T,
-        ttl: u64,
+        ttl_ms: u64,
     ) -> Result<()> {
         let () = self
             .conn()
             .await?
-            .set_ex(key, value, ttl)
+            .pset_ex(key, value, ttl_ms)
             .await
             .context(RedisSnafu { category: "set" })?;
         Ok(())
@@ -165,8 +189,9 @@ impl RedisCache {
             .arg(self.get_key(key))
             .arg(true)
             .arg("NX")
-            .arg("EX")
-            .arg(self.get_ttl(ttl))
+            // PX 而非 EX：亚秒锁期在限流 / 高频去重里是合理需求，用秒会被截断成 0
+            .arg("PX")
+            .arg(self.get_ttl_ms(ttl))
             .query_async(&mut conn)
             .await
             .context(RedisSnafu { category: "lock" })?;
@@ -186,8 +211,11 @@ impl RedisCache {
     }
 
     /// 原子性地将计数器累加 delta，返回累加后的值。
-    /// INCRBY 在键不存在时自动创建（初值 0），随后 `EXPIRE ... NX` 仅在键尚无 TTL
+    /// INCRBY 在键不存在时自动创建（初值 0），随后 `PEXPIRE ... NX` 仅在键尚无 TTL
     /// （即刚创建）时设置过期，避免每次累加都刷新 TTL。用 pipeline 保证两条命令原子执行。
+    ///
+    /// 用 `PEXPIRE` 而非 `EXPIRE`：固定窗口限流常要亚秒窗口，秒级会被截断成 0
+    /// 并让整条命令失败。
     pub async fn incr(&self, key: &str, delta: i64, ttl: Option<Duration>) -> Result<i64> {
         let mut conn = self.conn().await?;
         let k = self.get_key(key);
@@ -195,9 +223,9 @@ impl RedisCache {
             .cmd("INCRBY")
             .arg(&k)
             .arg(delta) // 1. 累加（键不存在自动创建，初值 0，此时无 TTL）
-            .cmd("EXPIRE")
+            .cmd("PEXPIRE")
             .arg(&k)
-            .arg(self.get_ttl(ttl))
+            .arg(self.get_ttl_ms(ttl))
             .arg("NX") // 2. 仅当键尚无 TTL（刚创建）时才设，避免每次累加刷新过期
             .query_async::<(i64, bool)>(&mut conn)
             .await
@@ -212,7 +240,7 @@ impl RedisCache {
         value: T,
         ttl: Option<Duration>,
     ) -> Result<()> {
-        self.set_value(&self.get_key(key), value, self.get_ttl(ttl))
+        self.set_value(&self.get_key(key), value, self.get_ttl_ms(ttl))
             .await
     }
 
@@ -227,7 +255,7 @@ impl RedisCache {
         T: ?Sized + Serialize,
     {
         let value = serde_json::to_vec(&value).context(SerdeJsonSnafu)?;
-        self.set_value(&self.get_key(key), &value, self.get_ttl(ttl))
+        self.set_value(&self.get_key(key), &value, self.get_ttl_ms(ttl))
             .await?;
         Ok(())
     }
@@ -285,12 +313,25 @@ impl RedisCache {
     /// 刷新指定键的过期时间而不修改其值。
     /// 返回 `true` 表示刷新成功，`false` 表示键不存在。
     pub async fn expire(&self, key: &str, ttl: Option<Duration>) -> Result<bool> {
+        let ms = i64::try_from(self.get_ttl_ms(ttl)).unwrap_or(i64::MAX);
         let result = self
             .conn()
             .await?
-            .expire(self.get_key(key), self.get_ttl(ttl) as i64)
+            .pexpire(self.get_key(key), ms)
             .await
             .context(RedisSnafu { category: "expire" })?;
+        Ok(result)
+    }
+
+    /// 获取指定键的剩余过期时间（毫秒），精度高于 [`Self::ttl`]。
+    /// 返回 -2 表示键不存在，-1 表示键无过期时间。
+    pub async fn ttl_ms(&self, key: &str) -> Result<i64> {
+        let result = self
+            .conn()
+            .await?
+            .pttl(self.get_key(key))
+            .await
+            .context(RedisSnafu { category: "pttl" })?;
         Ok(result)
     }
 
@@ -298,7 +339,7 @@ impl RedisCache {
         &self,
         key: &str,
         value: &T,
-        ttl: u64,
+        ttl_ms: u64,
         algorithm: Algorithm,
     ) -> Result<()>
     where
@@ -306,7 +347,7 @@ impl RedisCache {
     {
         let value = serde_json::to_vec(value).context(SerdeJsonSnafu)?;
         let buf = compress(&value, algorithm).context(CompressionSnafu)?;
-        self.set_value(key, &buf, ttl).await
+        self.set_value(key, &buf, ttl_ms).await
     }
 
     async fn get_struct_compressed<T>(&self, key: &str, algorithm: Algorithm) -> Result<Option<T>>
@@ -331,7 +372,7 @@ impl RedisCache {
     where
         T: ?Sized + Serialize,
     {
-        self.set_struct_compressed(&self.get_key(key), value, self.get_ttl(ttl), Algorithm::Lz4)
+        self.set_struct_compressed(&self.get_key(key), value, self.get_ttl_ms(ttl), Algorithm::Lz4)
             .await
     }
 
@@ -354,7 +395,7 @@ impl RedisCache {
     where
         T: ?Sized + Serialize,
     {
-        self.set_struct_compressed(&self.get_key(key), value, self.get_ttl(ttl), DEFAULT_ZSTD)
+        self.set_struct_compressed(&self.get_key(key), value, self.get_ttl_ms(ttl), DEFAULT_ZSTD)
             .await
     }
 
@@ -364,5 +405,41 @@ impl RedisCache {
         T: DeserializeOwned,
     {
         self.get_struct_compressed(key, DEFAULT_ZSTD).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    /// **回归守卫**：亚秒 TTL 必须按真实值下发，而不是被截断成 0。
+    ///
+    /// 旧实现是 `as_secs()`：`500ms` → `0` → `SET ... EX 0`，Redis 直接回
+    /// `invalid expire time`。也就是说 `with_ttl(500ms)` 不是「按 500ms 过期」，
+    /// 而是让**每一次写入**在运行期失败。
+    #[test]
+    fn sub_second_ttl_is_preserved() {
+        assert_eq!(ttl_to_millis(Duration::from_millis(500)), 500);
+        assert_eq!(ttl_to_millis(Duration::from_millis(1)), 1);
+        assert_eq!(ttl_to_millis(Duration::from_micros(100)), 1, "不足 1ms 取下限");
+    }
+
+    /// 零时长同样会被 Redis 拒绝，钳到 1ms。
+    #[test]
+    fn zero_ttl_is_clamped_to_one_millisecond() {
+        assert_eq!(ttl_to_millis(Duration::ZERO), 1);
+    }
+
+    #[test]
+    fn whole_seconds_convert_exactly() {
+        assert_eq!(ttl_to_millis(Duration::from_secs(1)), 1_000);
+        assert_eq!(ttl_to_millis(Duration::from_secs(600)), 600_000);
+    }
+
+    /// 超长时长饱和而非回绕（回绕会得到一个极短 TTL，缓存瞬间失效）。
+    #[test]
+    fn absurd_ttl_saturates_instead_of_wrapping() {
+        assert_eq!(ttl_to_millis(Duration::MAX), u64::MAX);
     }
 }

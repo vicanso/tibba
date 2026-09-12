@@ -6,6 +6,7 @@ authors.workspace = true
 license.workspace = true
 homepage.workspace = true
 repository.workspace = true
+rust-version.workspace = true
 keywords = ["tibba", "i18n", "l10n"]
 description = "Accept-Language negotiation and error-message localization for tibba"
 
@@ -20,3 +21,6 @@ tibba-error = { path = "../tibba-error", version = "0.2.6" }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }
+
+[lints]
+workspace = true

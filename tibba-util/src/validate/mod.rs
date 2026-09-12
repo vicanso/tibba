@@ -69,6 +69,27 @@ fn new_error(code: &'static str, message: String) -> ValidationError {
     ValidationError::new(code).with_message(message.into())
 }
 
+/// 标识符允许的字符集：ASCII 字母、数字、`_`、`-`、`.`。
+///
+/// 账号、角色、用户组、文件分组、模型名共用这一套白名单。它们都会进日志、
+/// 进权限判定、进各类键名拼接，任何带分隔符语义的字符（`:`、`/`、空白、
+/// 控制符）留在里面都只是风险敞口，没有任何正当用途。
+pub(super) fn is_identifier_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.')
+}
+
+/// 是否含 ASCII 控制字符或空格。
+///
+/// 这是最低限度必须挡掉的一类：`\n` 能伪造日志行，`\r` 可用于头注入，
+/// `\0` 会截断下游 C 实现的字符串。
+pub(super) fn has_control_or_space(value: &str) -> bool {
+    value.chars().any(|c| c.is_ascii_control() || c == ' ')
+}
+
+/// 校验一个 ASCII 标识符：非空、长度上限、且只含 [`is_identifier_char`] 允许的字符。
+///
+/// 此前只查「非空 + ASCII + 长度」，于是控制字符、空格、`/`、`..` 全部放行——
+/// 而这些值会被用作存储分组、模型注册名，是拼进键名与日志的。
 fn validate_ascii_name(
     name: &str,
     code: &'static str,
@@ -76,7 +97,6 @@ fn validate_ascii_name(
     field_name: &str,
 ) -> Result<()> {
     if name.is_empty() {
-        // 修复：直接传递 String，而不是它的引用
         return Err(new_error(code, format!("{field_name} cannot be empty")));
     }
     if !name.is_ascii() {
@@ -86,6 +106,12 @@ fn validate_ascii_name(
         return Err(new_error(
             code,
             format!("{field_name} must be less than {max_len} characters"),
+        ));
+    }
+    if !name.chars().all(is_identifier_char) {
+        return Err(new_error(
+            code,
+            format!("{field_name} may only contain letters, digits, '_', '-' and '.'"),
         ));
     }
     Ok(())
@@ -107,6 +133,7 @@ macro_rules! validate_codes {
 validate_codes! {
     // user validate
     CODE_USER_ACCOUNT = "x-user-account";
+    CODE_USER_ACCOUNT_STRICT = "x-user-account-strict";
     CODE_USER_PASSWORD = "x-user-password";
     CODE_USER_EMAIL = "x-user-email";
     CODE_USER_ROLES = "x-user-roles";

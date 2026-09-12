@@ -33,6 +33,7 @@ use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, Salt
 use argon2::{Algorithm, Argon2, Params, Version};
 use rand_core::OsRng;
 use snafu::{ResultExt, ensure};
+use subtle::ConstantTimeEq;
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -209,7 +210,14 @@ impl PasswordPolicy {
         }
 
         let parsed = PasswordHash::new(stored).context(Argon2ParseSnafu)?;
-        match Argon2::default().verify_password(secret, &parsed) {
+        // 用本策略构造的实例而非 `Argon2::default()`。
+        //
+        // 两者今天等价：`PasswordVerifier` 会从 PHC 串里读出算法 / 版本 / 代价参数
+        // 重建 hasher，**只**保留实例上的 `secret`（pepper）。也正因为只保留 secret，
+        // 一旦将来给策略加上 pepper（`Argon2::new_with_secret`），`default()` 会把它
+        // 丢掉，于是所有验签静默失败——而这类故障在测试里极难发现（本地没配 pepper
+        // 时行为完全正常）。这里始终走同一个构造入口，堵死这条路。
+        match self.hasher()?.verify_password(secret, &parsed) {
             Ok(()) => {
                 if self.needs_rehash(stored) {
                     Ok(PasswordCheck::MatchedNeedsRehash)
@@ -246,14 +254,11 @@ fn is_legacy_sha256(stored: &str) -> bool {
 }
 
 /// 常数时间比较，避免按字节短路造成的时序泄漏。
+///
+/// 走 `subtle` 而非手写 XOR 折叠：后者依赖「编译器不会把循环优化成短路比较」
+/// 这一无法在源码层保证的假设。workspace 内 `tibba-totp` / `tibba-util` 同此。
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    a.iter()
-        .zip(b.iter())
-        .fold(0u8, |acc, (x, y)| acc | (x ^ y))
-        == 0
+    a.ct_eq(b).into()
 }
 
 #[cfg(test)]

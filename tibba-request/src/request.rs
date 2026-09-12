@@ -13,10 +13,11 @@
 // limitations under the License.
 
 use super::{BuildSnafu, Error, LOG_TARGET, RequestSnafu, SerdeSnafu, UriSnafu};
+use axum::http::header::RETRY_AFTER;
 use axum::http::Method;
 use axum::http::header::{HeaderMap, HeaderName, HeaderValue, LOCATION};
 use axum::http::uri::Uri;
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use reqwest::Client as ReqwestClient;
 use reqwest::RequestBuilder;
 use scopeguard::defer;
@@ -56,31 +57,115 @@ impl opentelemetry::propagation::Injector for HeaderInjector<'_> {
 /// crate 版本号，注入 User-Agent。
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// 空查询参数占位符，避免调用方每次传 `None::<&[(&str, &str)]>`。
-const EMPTY_QUERY: Option<&[(&str, &str)]> = None;
-/// 空请求体占位符。
-const EMPTY_BODY: Option<&[(&str, &str)]> = None;
+/// 无查询参数 / 无请求体时的占位类型。
+///
+/// `Params` 的两个泛型必须有个具体类型才能推断，这个空切片类型就是它的默认值；
+/// 调用方无需再手写 `None::<&[(&str, &str)]>` 之类的标注。
+pub type NoParams = [(&'static str, &'static str)];
 
 /// HTTP 请求参数，泛型 `Q` 为查询参数类型，`P` 为请求体类型，均须实现 `Serialize`。
+///
+/// 必填项（方法、URL）由 [`Params::new`] 接收，可选项通过链式 `with_xxx` 设置：
+///
+/// ```ignore
+/// let params = Params::new(Method::POST, "/orders")
+///     .with_body(&order)
+///     .with_timeout(Duration::from_secs(5));
+/// ```
+///
+/// 字段私有：此前是 6 个 `pub` 字段 + 结构体字面量构造，于是每个调用点都要写
+/// 一遍 `timeout: None, query: None, headers: None`——四个可选项里通常只用到
+/// 一个。链式写法同时也是本项目对「多可选参数结构体」的统一约定。
+///
+/// `with_query` / `with_body` 会改变对应的泛型参数，因此返回的是新类型。
 #[derive(Clone, Debug, Default)]
-pub struct Params<'a, Q, P>
+pub struct Params<'a, Q = NoParams, P = NoParams>
 where
     Q: Serialize + ?Sized,
     P: Serialize + ?Sized,
 {
     /// HTTP 方法
-    pub method: Method,
+    method: Method,
     /// 单次请求超时，覆盖客户端默认值；`None` 则沿用客户端配置。
-    pub timeout: Option<Duration>,
+    timeout: Option<Duration>,
     /// URL 查询参数
-    pub query: Option<&'a Q>,
+    query: Option<&'a Q>,
     /// JSON 请求体
-    pub body: Option<&'a P>,
+    body: Option<&'a P>,
     /// 请求 URL（绝对地址或相对于 base_url 的路径）
-    pub url: &'a str,
+    url: &'a str,
     /// 单次请求附加头（如 webhook 签名、幂等键、追踪头）；在拦截器之前应用，
     /// 仍可被后续拦截器覆盖。`None` 则不附加。
-    pub headers: Option<&'a HeaderMap>,
+    headers: Option<&'a HeaderMap>,
+}
+
+impl<'a> Params<'a> {
+    /// 以 HTTP 方法与 URL 创建请求参数，其余项走链式方法设置。
+    ///
+    /// `url` 为 http(s) 绝对地址时直接使用，否则拼接客户端的 `base_url`。
+    #[must_use]
+    pub fn new(method: Method, url: &'a str) -> Self {
+        Self {
+            method,
+            timeout: None,
+            query: None,
+            body: None,
+            url,
+            headers: None,
+        }
+    }
+}
+
+impl<'a, Q, P> Params<'a, Q, P>
+where
+    Q: Serialize + ?Sized,
+    P: Serialize + ?Sized,
+{
+    /// 设置本次请求的超时，覆盖客户端默认值，支持链式调用。
+    #[must_use]
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = Some(timeout);
+        self
+    }
+
+    /// 设置本次请求附加的请求头，支持链式调用。
+    #[must_use]
+    pub fn with_headers(mut self, headers: &'a HeaderMap) -> Self {
+        self.headers = Some(headers);
+        self
+    }
+
+    /// 设置 URL 查询参数，支持链式调用。查询参数的类型由此确定。
+    #[must_use]
+    pub fn with_query<Q2>(self, query: &'a Q2) -> Params<'a, Q2, P>
+    where
+        Q2: Serialize + ?Sized,
+    {
+        Params {
+            method: self.method,
+            timeout: self.timeout,
+            query: Some(query),
+            body: self.body,
+            url: self.url,
+            headers: self.headers,
+        }
+    }
+
+    /// 设置 JSON 请求体，支持链式调用。请求体的类型由此确定。
+    #[must_use]
+    pub fn with_body<P2>(self, body: &'a P2) -> Params<'a, Q, P2>
+    where
+        P2: Serialize + ?Sized,
+    {
+        Params {
+            method: self.method,
+            timeout: self.timeout,
+            query: self.query,
+            body: Some(body),
+            url: self.url,
+            headers: self.headers,
+        }
+    }
 }
 
 /// 对端 TLS 证书的有效期，用于证书临期告警。
@@ -424,6 +509,8 @@ struct ClientConfig {
     /// 开启后拒绝目标解析到内部地址（私网 / 回环 / 链路本地 / 云元数据）的请求，防 SSRF。
     /// 对投递到用户 / 运维可控 URL 的客户端（webhook、探测）应开启。
     deny_internal_targets: bool,
+    /// 响应体字节上限；`None` = 不限制（仅在调用方显式关闭时出现）
+    max_response_bytes: Option<usize>,
 }
 
 /// 默认整体请求超时（含建连 + 传输）。未调用 [`ClientBuilder::with_timeout`] 时生效。
@@ -432,6 +519,43 @@ pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 pub const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 /// 默认重试退避基数（仅在 `with_retry` 开启后使用）。
 pub const DEFAULT_RETRY_BASE_DELAY: Duration = Duration::from_millis(100);
+
+/// 默认响应体上限：64 MiB（与 `tibba_util::DEFAULT_DECOMPRESS_LIMIT` 同量级）。
+///
+/// # 为什么必须有默认值
+/// `reqwest` 不限制响应体大小，`Response::bytes()` 会把对端发来的一切读进内存。
+/// 本 crate 的主要用途之一是向**用户 / 运维可控的 URL** 发请求（webhook 投递、
+/// 外部探测）——对端只要回一个几 GB 的流就能把进程撑爆，而 30s 的整体超时在
+/// 内网带宽下根本拦不住。
+///
+/// 上限只能是**默认开启**：指望每个调用点都记得自己配一个，等于没有。64 MiB
+/// 对任何 JSON API 响应都绰绰有余；确有大响应的场景用
+/// [`ClientBuilder::with_max_response_bytes`] 显式调整。
+pub const DEFAULT_MAX_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
+
+/// 尊重 `Retry-After` 时允许的最长等待。
+///
+/// 上限必不可少：`Retry-After` 完全由对端指定，一个写着 `86400` 的响应会把
+/// 我们的任务挂起一整天。超过上限时退回本地退避算法。
+const MAX_RETRY_AFTER: Duration = Duration::from_secs(60);
+
+/// 解析 `Retry-After` 头，仅接受 delta-seconds 形式。
+///
+/// 规范还允许 HTTP-date，但实践中限流响应几乎都用秒数；为一个边缘形态引入
+/// 日期解析依赖不划算，解析不出来就退回本地退避（只是等得久一点，不影响正确性）。
+///
+/// 超过 [`MAX_RETRY_AFTER`] 的值视为不可信，返回 `None`。
+fn parse_retry_after(headers: &HeaderMap) -> Option<Duration> {
+    let secs: u64 = headers
+        .get(RETRY_AFTER)?
+        .to_str()
+        .ok()?
+        .trim()
+        .parse()
+        .ok()?;
+    let delay = Duration::from_secs(secs);
+    (delay <= MAX_RETRY_AFTER).then_some(delay)
+}
 
 /// HTTP 客户端构建器，通过链式调用配置后调用 `.build()` 生成 `Client`。
 ///
@@ -472,6 +596,7 @@ impl ClientBuilder {
                 retry_base_delay: DEFAULT_RETRY_BASE_DELAY,
                 circuit_breaker: None,
                 deny_internal_targets: false,
+                max_response_bytes: Some(DEFAULT_MAX_RESPONSE_BYTES),
             },
         }
     }
@@ -577,10 +702,38 @@ impl ClientBuilder {
 
     /// 启用自动重试：`max_retries` 为最大重试次数，`base_delay` 为退避基数（指数增长）。
     /// 仅幂等方法按状态码 / 超时重试；非幂等方法仅在「连接未建立」时重试。默认不重试。
+    ///
+    /// # 超时是**每次尝试**的，不是整体
+    /// [`Self::with_timeout`] 设的是单次请求的超时。开启重试后，最坏耗时约为
+    /// `(max_retries + 1) × timeout + 各次退避之和`——`with_retry(3, …)` 配
+    /// 30s 超时意味着这个调用最久可能占用两分钟。若调用方自身有 SLA，应当把
+    /// 单次 `timeout` 相应调小，或在外层再包一个整体 deadline。
+    ///
+    /// 退避时长优先采用响应里的 `Retry-After`（仅 delta-seconds 形式，且不超过
+    /// 60s），否则用带抖动的指数退避。
     #[must_use]
     pub fn with_retry(mut self, max_retries: u32, base_delay: Duration) -> Self {
         self.config.max_retries = max_retries;
         self.config.retry_base_delay = base_delay;
+        self
+    }
+
+    /// 设置响应体字节上限，超出即中止读取并返回 [`Error::ResponseTooLarge`]。
+    ///
+    /// 默认 [`DEFAULT_MAX_RESPONSE_BYTES`]（64 MiB），见其文档说明为何默认开启。
+    #[must_use]
+    pub fn with_max_response_bytes(mut self, max_response_bytes: usize) -> Self {
+        self.config.max_response_bytes = Some(max_response_bytes);
+        self
+    }
+
+    /// 关闭响应体大小限制。
+    ///
+    /// **仅用于确实需要拉取超大响应、且对端完全可信的场景**。对端不可信时
+    /// 这等于把进程内存交给对方支配，见 [`DEFAULT_MAX_RESPONSE_BYTES`]。
+    #[must_use]
+    pub fn without_response_limit(mut self) -> Self {
+        self.config.max_response_bytes = None;
         self
     }
 
@@ -740,6 +893,53 @@ impl Client {
         Ok(())
     }
 
+    /// 读取响应体，并在超过 `max_response_bytes` 时**中止**读取。
+    ///
+    /// 关键是「中止」而非「读完再判断」：后者该占的内存早就占了，限制形同虚设。
+    /// 这里逐块累加并在越界的那一块就返回，`res` 随即被 drop、连接关闭，对端
+    /// 再往下发多少都与我们无关。
+    ///
+    /// 未配置上限时走 `Response::bytes()` 的快路径，不额外分配。
+    async fn read_body_limited(&self, mut res: reqwest::Response, path: &str) -> Result<Bytes> {
+        let Some(limit) = self.config.max_response_bytes else {
+            return res.bytes().await.with_context(|_| RequestSnafu {
+                service: self.config.service.clone(),
+                path: path.to_string(),
+            });
+        };
+
+        // 对端如实声明 Content-Length 时直接拒绝，一个字节都不必读
+        if let Some(declared) = res.content_length()
+            && declared > limit as u64
+        {
+            return Err(Error::ResponseTooLarge {
+                service: self.config.service.clone(),
+                limit,
+            });
+        }
+
+        // 预分配取「声明长度」与「上限」的较小值：Content-Length 可能是伪造的
+        // 天文数字，照它预分配本身就是一次 OOM
+        let capacity = res
+            .content_length()
+            .map_or(8 * 1024, |len| len.min(limit as u64) as usize);
+        let mut buf = BytesMut::with_capacity(capacity);
+
+        while let Some(chunk) = res.chunk().await.with_context(|_| RequestSnafu {
+            service: self.config.service.clone(),
+            path: path.to_string(),
+        })? {
+            if buf.len() + chunk.len() > limit {
+                return Err(Error::ResponseTooLarge {
+                    service: self.config.service.clone(),
+                    limit,
+                });
+            }
+            buf.extend_from_slice(&chunk);
+        }
+        Ok(buf.freeze())
+    }
+
     /// 执行 HTTP 请求并返回原始响应字节。
     /// 负责并发计数、拦截器链调用（request / fail / response）及统计采集。
     async fn raw<Q, P>(&self, stats: &mut HttpStats, params: Params<'_, Q, P>) -> Result<Bytes>
@@ -867,19 +1067,21 @@ impl Client {
                             location,
                         });
                     }
+                    // 读 body 之前先留下重试要用的 Retry-After：`res` 马上会被消费掉
+                    let retry_after = parse_retry_after(res.headers());
                     let transfer_done = Stopwatch::new();
-                    // 同上：惰性求值，成功路径不做这两次 String 分配
-                    let body = res.bytes().await.with_context(|_| RequestSnafu {
-                        service: self.config.service.clone(),
-                        path: stats.path.clone(),
-                    })?;
+                    let body = self.read_body_limited(res, &stats.path).await?;
                     stats.transfer = transfer_done.elapsed_ms();
 
                     // 5xx / 429 且仍可重试 → 退避后重试
                     if is_retryable_status(status, idempotent)
                         && let Some(next) = retry_candidate
                     {
-                        let delay = retry_backoff(self.config.retry_base_delay, attempt);
+                        // 对端明确给了 Retry-After 就照办：它比我们的本地猜测更准，
+                        // 也是 429 场景下唯一能真正避免继续挨打的做法。
+                        // 超出 MAX_RETRY_AFTER 的值不可信，退回本地退避。
+                        let delay = retry_after
+                            .unwrap_or_else(|| retry_backoff(self.config.retry_base_delay, attempt));
                         warn!(
                             target: LOG_TARGET,
                             service = self.config.service,
@@ -887,6 +1089,7 @@ impl Client {
                             status,
                             attempt = attempt + 1,
                             delay_ms = delay.as_millis() as u64,
+                            retry_after_honored = retry_after.is_some(),
                             "retry on server error",
                         );
                         tokio::time::sleep(delay).await;
@@ -1009,15 +1212,7 @@ impl Client {
     where
         T: DeserializeOwned,
     {
-        self.request(Params {
-            timeout: None,
-            headers: None,
-            method: Method::GET,
-            url,
-            query: EMPTY_QUERY,
-            body: EMPTY_BODY,
-        })
-        .await
+        self.request(Params::new(Method::GET, url)).await
     }
 
     /// 发送带查询参数的 GET 请求并将响应反序列化为 `T`。
@@ -1026,15 +1221,8 @@ impl Client {
         P: Serialize + ?Sized,
         T: DeserializeOwned,
     {
-        self.request(Params {
-            timeout: None,
-            headers: None,
-            method: Method::GET,
-            url,
-            query: Some(query),
-            body: EMPTY_BODY,
-        })
-        .await
+        self.request(Params::new(Method::GET, url).with_query(query))
+            .await
     }
 
     /// 发送带 JSON 请求体的 POST 请求并将响应反序列化为 `T`。
@@ -1043,15 +1231,8 @@ impl Client {
         P: Serialize + ?Sized,
         T: DeserializeOwned,
     {
-        self.request(Params {
-            timeout: None,
-            headers: None,
-            method: Method::POST,
-            url,
-            query: EMPTY_QUERY,
-            body: Some(json),
-        })
-        .await
+        self.request(Params::new(Method::POST, url).with_body(json))
+            .await
     }
 
     /// 发送带 JSON 请求体和查询参数的 POST 请求并将响应反序列化为 `T`。
@@ -1061,14 +1242,11 @@ impl Client {
         Q: Serialize + ?Sized,
         T: DeserializeOwned,
     {
-        self.request(Params {
-            timeout: None,
-            headers: None,
-            method: Method::POST,
-            url,
-            query: Some(query),
-            body: Some(json),
-        })
+        self.request(
+            Params::new(Method::POST, url)
+                .with_query(query)
+                .with_body(json),
+        )
         .await
     }
 
@@ -1078,15 +1256,8 @@ impl Client {
         P: Serialize + ?Sized,
         T: DeserializeOwned,
     {
-        self.request(Params {
-            timeout: None,
-            headers: None,
-            method: Method::PUT,
-            url,
-            query: EMPTY_QUERY,
-            body: Some(json),
-        })
-        .await
+        self.request(Params::new(Method::PUT, url).with_body(json))
+            .await
     }
 
     /// 发送带 JSON 请求体的 PATCH 请求并将响应反序列化为 `T`。
@@ -1095,15 +1266,8 @@ impl Client {
         P: Serialize + ?Sized,
         T: DeserializeOwned,
     {
-        self.request(Params {
-            timeout: None,
-            headers: None,
-            method: Method::PATCH,
-            url,
-            query: EMPTY_QUERY,
-            body: Some(json),
-        })
-        .await
+        self.request(Params::new(Method::PATCH, url).with_body(json))
+            .await
     }
 
     /// 发送 DELETE 请求并将响应反序列化为 `T`。
@@ -1111,15 +1275,7 @@ impl Client {
     where
         T: DeserializeOwned,
     {
-        self.request(Params {
-            timeout: None,
-            headers: None,
-            method: Method::DELETE,
-            url,
-            query: EMPTY_QUERY,
-            body: EMPTY_BODY,
-        })
-        .await
+        self.request(Params::new(Method::DELETE, url)).await
     }
 
     /// 获取当前在途请求数。
@@ -1167,6 +1323,32 @@ mod tests {
                 "{ip} 应判为公网地址"
             );
         }
+    }
+
+    /// `Retry-After` 只接受 delta-seconds，且必须有上界。
+    #[test]
+    fn retry_after_parses_seconds_and_caps_absurd_values() {
+        let header = |v: &str| {
+            let mut headers = HeaderMap::new();
+            headers.insert(RETRY_AFTER, HeaderValue::from_str(v).expect("合法头部值"));
+            parse_retry_after(&headers)
+        };
+
+        assert_eq!(header("5"), Some(Duration::from_secs(5)));
+        assert_eq!(header(" 30 "), Some(Duration::from_secs(30)));
+        assert_eq!(header("0"), Some(Duration::ZERO));
+        // 恰好等于上限仍接受
+        assert_eq!(header("60"), Some(MAX_RETRY_AFTER));
+
+        // 超出上限的值由对端指定，不可信——退回本地退避，别被挂住一整天
+        assert_eq!(header("86400"), None);
+        assert_eq!(header("61"), None);
+        // HTTP-date 形式不支持，退回本地退避
+        assert_eq!(header("Wed, 21 Oct 2015 07:28:00 GMT"), None);
+        assert_eq!(header("soon"), None);
+        assert_eq!(header("-5"), None);
+        // 没有这个头
+        assert_eq!(parse_retry_after(&HeaderMap::new()), None);
     }
 
     /// 退避上界按 2 的幂增长，并在 2^6 处封顶。

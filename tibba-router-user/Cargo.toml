@@ -6,6 +6,7 @@ authors.workspace = true
 license.workspace = true
 homepage.workspace = true
 repository.workspace = true
+rust-version.workspace = true
 keywords = ["tibba", "router", "user"]
 description = "user router for tibba"
 
@@ -37,3 +38,6 @@ tibba-totp = { path = "../tibba-totp", version = "0.2.6" }
 tibba-util = { path = "../tibba-util", version = "0.2.6", default-features = false, features = ["http"] }
 utoipa = { workspace = true }
 validator = { workspace = true }
+
+[lints]
+workspace = true

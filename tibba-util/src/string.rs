@@ -14,30 +14,51 @@
 
 use super::timestamp;
 use hex::encode;
+use hmac::{Hmac, KeyInit, Mac};
 use nanoid::nanoid;
 use sha2::{Digest, Sha256};
 use std::time::{SystemTime, UNIX_EPOCH};
+use subtle::ConstantTimeEq;
 use tibba_error::Error;
 use uuid::{NoContext, Timestamp, Uuid};
 
 type Result<T> = std::result::Result<T, Error>;
 
+/// HMAC-SHA256 类型别名，与 `tibba-crypto::KeyGrip` 保持一致。
+type HmacSha256 = Hmac<Sha256>;
+
 const SIGNATURE_TTL_SECS: i64 = 5 * 60; // 5 minutes
 
-/// 常数时间字节切片比较，避免哈希校验时按字节短路泄露时序侧信道。
+/// 常数时间字节切片比较，避免签名校验时按字节短路泄露时序侧信道。
 ///
-/// 注意：长度不一致直接早返回 false——签名长度固定（SHA-256 hex 始终 64 字符），
-/// 长度本身是公开信息，不构成额外侧信道。
+/// 走 `subtle`（workspace 内 `tibba-totp` 已在用）而不是手写 XOR 折叠：手写版本
+/// 依赖「编译器不会把这个循环优化成短路比较」这一无法在源码层保证的假设，
+/// `subtle` 用优化屏障把它落实下来。长度不一致直接 false——签名长度固定
+/// （hex 恒为 64 字符），长度本身是公开信息，不构成额外侧信道。
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
+    a.ct_eq(b).into()
+}
+
+/// 以 `secret` 为密钥对各段做 HMAC-SHA256，返回小写十六进制摘要。
+///
+/// # 为什么是 HMAC 而不是 `sha256(value ":" secret)`
+/// 此前用的是 secret-suffix 构造（把密钥拼在消息后面再整体哈希）。它虽然躲开了
+/// secret-prefix 的长度扩展攻击，却是一个**未经标准化审视**的自制 MAC：其安全性
+/// 直接押在底层哈希的抗碰撞性上，而 HMAC 的安全性只需要压缩函数是伪随机的，
+/// 论证强度完全不同。既然 `hmac` 已经是 workspace 依赖（`tibba-crypto::KeyGrip`
+/// 在用），没有理由在另一处自造一个。
+///
+/// 输出仍是 64 字符十六进制，与旧实现同形，`x_sha256` 这类格式校验无需改动。
+fn hmac_sha256(secret: &[u8], parts: &[&[u8]]) -> Result<String> {
+    // `Hmac` 接受任意长度密钥（超出块长时先哈希），这里的 Err 实际不可达；
+    // 但仍如实上抛而非 unwrap——crate 内禁止 unwrap，且真出错时静默产生一个
+    // 错误签名远比报错更难排查。
+    let mut mac = HmacSha256::new_from_slice(secret)
+        .map_err(|e| Error::new(e).with_category("sign_hash"))?;
+    for part in parts {
+        mac.update(part);
     }
-    // XOR 累加：所有字节相等 ⇔ acc == 0；不论结果如何，循环总扫完整个切片
-    let acc = a
-        .iter()
-        .zip(b.iter())
-        .fold(0u8, |acc, (x, y)| acc | (x ^ y));
-    acc == 0
+    Ok(encode(mac.finalize().into_bytes()))
 }
 
 /// Generates a UUIDv7 string
@@ -121,85 +142,68 @@ pub fn sha256(data: &[u8]) -> String {
     sha256_multi(&[data])
 }
 
-/// Computes the SHA-256 hash of the input data and signs it with the secret key
+/// 用 `secret` 对 `value` 做 HMAC-SHA256 签名，返回 64 字符十六进制摘要。
 ///
-/// # Arguments
-/// * `value` - Input data to hash
-/// * `secret` - Secret key
+/// 校验用 [`validate_sign_hash`]。需要带时效的签名用 [`timestamp_hash`]。
 ///
-/// # Returns
-/// * String containing the signed hash
-pub fn sign_hash(value: &str, secret: &str) -> String {
-    sha256_multi(&[value.as_bytes(), b":", secret.as_bytes()])
+/// # 兼容性
+/// 返回值由 secret-suffix SHA-256 改为 HMAC-SHA256，**同一输入的签名与旧版本不同**。
+/// 格式（64 位小写十六进制）未变。
+pub fn sign_hash(value: &str, secret: &str) -> Result<String> {
+    hmac_sha256(secret.as_bytes(), &[value.as_bytes()])
 }
 
-/// Computes the SHA-256 hash of the input data and signs it with the secret key
+/// 用 `secret` 对「当前时间戳 + `value`」做 HMAC-SHA256 签名。
 ///
-/// # Arguments
-/// * `value` - Input data to hash
-/// * `secret` - Secret key
+/// 返回 `(ts, hash)`，两者都要回给客户端并在后续请求中原样带回，由
+/// [`validate_timestamp_hash`] 校验时效与签名。
 ///
-/// # Returns
-/// * Tuple containing the timestamp and the signed hash
-pub fn timestamp_hash(value: &str, secret: &str) -> (i64, String) {
+/// 时间戳**参与签名**，因此客户端无法在不失效的前提下篡改它来延长有效期。
+///
+/// # 兼容性
+/// 同 [`sign_hash`]：算法已换成 HMAC-SHA256，旧签名不再通过校验。签名有效期只有
+/// [`SIGNATURE_TTL_SECS`]（5 分钟），滚动发布期间最多出现这一窗口的校验失败，
+/// 客户端重新取一次令牌即可。
+pub fn timestamp_hash(value: &str, secret: &str) -> Result<(i64, String)> {
     let ts = timestamp();
     let ts_str = ts.to_string();
-    let hash = sha256_multi(&[
-        ts_str.as_bytes(),
-        b":",
-        value.as_bytes(),
-        b":",
-        secret.as_bytes(),
-    ]);
-    (ts, hash)
+    let hash = hmac_sha256(secret.as_bytes(), &[ts_str.as_bytes(), b":", value.as_bytes()])?;
+    Ok((ts, hash))
 }
 
-/// Validates the signature of the input data
+/// 校验 [`sign_hash`] 产生的签名，不匹配时返回错误。
 ///
-/// # Arguments
-/// * `value` - Input data to hash
-/// * `hash` - Signature to validate
-/// * `secret` - Secret key
-///
-/// # Returns
-/// * Result containing the validation result
+/// 比较走常数时间：直接 `!=` 比 hex 字符串会泄露逐字节比较的时序，
+/// 攻击者可借此逐字节推断出合法签名。
 pub fn validate_sign_hash(value: &str, hash: &str, secret: &str) -> Result<()> {
-    // 走常数时间比较：直接 `!=` 比较 hex 字符串会泄露逐字节比较的时序，
-    // 攻击者可借此推断签名前缀字节（同 tibba-crypto/key_grip 的 verify_slice 修复）
-    let expected = sign_hash(value, secret);
+    let expected = sign_hash(value, secret)?;
     if !constant_time_eq(expected.as_bytes(), hash.as_bytes()) {
-        return Err(Error::new("signature is invalid").with_category("sign_hash"));
+        return Err(Error::new("signature is invalid")
+            .with_category("sign_hash")
+            .with_status(401));
     }
     Ok(())
 }
 
-/// Validates the signature of the input data
+/// 校验 [`timestamp_hash`] 产生的签名：先查时效，再常数时间比对摘要。
 ///
-/// # Arguments
-/// * `ts` - Timestamp
-/// * `value` - Input data to hash
-/// * `hash` - Signature to validate
-/// * `secret` - Secret key
-///
-/// # Returns
-/// * Result containing the validation result
+/// `ts` 与当前时间相差超过 [`SIGNATURE_TTL_SECS`] 即判为过期。用绝对值比较，
+/// 未来时间戳同样受限，避免客户端把 `ts` 调到远期换取一个长期有效的签名。
 pub fn validate_timestamp_hash(ts: i64, value: &str, hash: &str, secret: &str) -> Result<()> {
     let category = "timestamp_hash";
-    if (timestamp() - ts).abs() > SIGNATURE_TTL_SECS {
-        return Err(Error::new("signature is expired").with_category(category));
+    if timestamp().saturating_sub(ts).saturating_abs() > SIGNATURE_TTL_SECS {
+        return Err(Error::new("signature is expired")
+            .with_category(category)
+            .with_status(401));
     }
     let ts_str = ts.to_string();
-    let expected_hash = sha256_multi(&[
-        ts_str.as_bytes(),
-        b":",
-        value.as_bytes(),
-        b":",
-        secret.as_bytes(),
-    ]);
+    let expected_hash =
+        hmac_sha256(secret.as_bytes(), &[ts_str.as_bytes(), b":", value.as_bytes()])?;
 
-    // 走常数时间比较，避免按字节短路泄露时序（同 validate_sign_hash 的处理）
     if !constant_time_eq(expected_hash.as_bytes(), hash.as_bytes()) {
-        return Err(Error::new("signature is invalid").with_category(category));
+        return Err(Error::new("signature is invalid")
+            .with_category(category)
+            .with_status(401));
     }
     Ok(())
 }
@@ -234,7 +238,11 @@ mod tests {
 
     #[test]
     fn sign_hash_round_trip() {
-        let sig = sign_hash("payload", "secret");
+        let sig = sign_hash("payload", "secret").unwrap();
+        // 与旧实现同形：64 位小写十六进制，x_sha256 之类的格式校验无需改动
+        assert_eq!(sig.len(), 64);
+        assert!(sig.bytes().all(|b| b.is_ascii_hexdigit()));
+
         assert!(validate_sign_hash("payload", &sig, "secret").is_ok());
         // 任一字段变化都应当让校验失败
         assert!(validate_sign_hash("payloadX", &sig, "secret").is_err());
@@ -242,24 +250,61 @@ mod tests {
         assert!(validate_sign_hash("payload", "deadbeef", "secret").is_err());
     }
 
+    /// 签名必须真的依赖密钥：换密钥要得到不同结果，且不能等于无密钥的裸哈希。
+    #[test]
+    fn sign_hash_is_keyed() {
+        let a = sign_hash("payload", "secret-a").unwrap();
+        let b = sign_hash("payload", "secret-b").unwrap();
+        assert_ne!(a, b);
+        assert_ne!(a, sha256(b"payload"), "签名不得退化成无密钥哈希");
+    }
+
+    /// **回归守卫**：HMAC 与旧的 secret-suffix 构造必须产出不同摘要。
+    /// 若有人把实现改回 `sha256(value ":" secret)`，本例会失败。
+    #[test]
+    fn sign_hash_is_not_secret_suffix_sha256() {
+        let legacy = sha256_multi(&[b"payload", b":", b"secret"]);
+        assert_ne!(sign_hash("payload", "secret").unwrap(), legacy);
+    }
+
     #[test]
     fn timestamp_hash_round_trip() {
-        let (ts, sig) = timestamp_hash("payload", "secret");
+        let (ts, sig) = timestamp_hash("payload", "secret").unwrap();
         assert!(validate_timestamp_hash(ts, "payload", &sig, "secret").is_ok());
-        // 过期时间戳应当被拒绝
+
+        // 过期时间戳应当被拒绝（签名本身是对的，只是超出有效期）
         let expired_ts = ts - (SIGNATURE_TTL_SECS + 1);
-        let expired_sig = sha256_multi(&[
-            expired_ts.to_string().as_bytes(),
-            b":",
-            b"payload",
-            b":",
+        let expired_sig = hmac_sha256(
             b"secret",
-        ]);
+            &[expired_ts.to_string().as_bytes(), b":", b"payload"],
+        )
+        .unwrap();
         let err =
             validate_timestamp_hash(expired_ts, "payload", &expired_sig, "secret").unwrap_err();
         assert!(err.to_string().contains("expired"));
-        // 篡改 payload 也应失败
+
+        // 未来时间戳同样受限，避免用远期 ts 换一个长期有效的签名
+        let future_ts = ts + (SIGNATURE_TTL_SECS + 1);
+        let future_sig = hmac_sha256(
+            b"secret",
+            &[future_ts.to_string().as_bytes(), b":", b"payload"],
+        )
+        .unwrap();
+        assert!(validate_timestamp_hash(future_ts, "payload", &future_sig, "secret").is_err());
+
+        // 篡改 payload 或时间戳都应失败（ts 参与签名）
         assert!(validate_timestamp_hash(ts, "payloadX", &sig, "secret").is_err());
+        assert!(validate_timestamp_hash(ts + 1, "payload", &sig, "secret").is_err());
+    }
+
+    /// 签名失败统一是 401，而非默认回退的 500。
+    #[test]
+    fn signature_failures_are_unauthorized() {
+        let err = validate_sign_hash("payload", &"0".repeat(64), "secret").unwrap_err();
+        assert_eq!(err.status(), 401);
+
+        let err = validate_timestamp_hash(0, "payload", &"0".repeat(64), "secret").unwrap_err();
+        assert_eq!(err.status(), 401);
     }
 
     #[test]

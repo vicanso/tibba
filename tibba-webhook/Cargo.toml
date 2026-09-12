@@ -6,6 +6,7 @@ authors.workspace = true
 license.workspace = true
 homepage.workspace = true
 repository.workspace = true
+rust-version.workspace = true
 keywords = ["tibba", "webhook"]
 description = "Outbound webhook delivery (HMAC-signed, queue-backed retry/dead-letter) for tibba"
 
@@ -27,3 +28,6 @@ tibba-request = { path = "../tibba-request", version = "0.2.6" }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }
+
+[lints]
+workspace = true

@@ -20,6 +20,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::LazyLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tibba_error::Error;
 use tokio::time::timeout;
@@ -107,8 +108,19 @@ pub trait Task: Send + Sync {
     }
 }
 
-/// 全局任务注册表，键为任务名称，值为线程安全的任务实例。
-static TASKS: LazyLock<DashMap<String, Arc<dyn Task>>> = LazyLock::new(DashMap::new);
+/// 注册序号发生器，用于在优先级相同时给出确定的执行次序。
+static REGISTRATION_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// 全局任务注册表，键为任务名称，值为 `(注册序号, 任务实例)`。
+///
+/// 之所以要存注册序号：`DashMap` 的迭代顺序不确定，而排序只按 `priority`——
+/// 于是**同优先级**任务的执行次序每次进程启动都可能不同。启动钩子之间经常存在
+/// 隐式依赖（先建连接池、再预热缓存），这种不确定性会变成「偶发启动失败」，
+/// 且本地几乎复现不出来。
+static TASKS: LazyLock<DashMap<String, RegisteredTask>> = LazyLock::new(DashMap::new);
+
+/// 注册表里的一项：注册序号 + 任务实例。
+type RegisteredTask = (u64, Arc<dyn Task>);
 
 /// 任务执行阶段：启动前（Before）或关闭后（After）。
 #[derive(Clone, Copy)]
@@ -128,21 +140,34 @@ impl TaskType {
 }
 
 /// 收集所有已注册任务并按当前阶段所需顺序排序。
+///
+/// 先整体收集再排序，**不**在持有 `DashMap` 分片锁的状态下执行任务。
+///
+/// 排序键是 `(优先级, 注册序号)`：优先级相同时按注册先后决定，保证每次启动
+/// 的执行次序完全一致。`after` 阶段两者都取反，使其严格是 `before` 的逆序——
+/// 「后初始化的先清理」是资源释放的正确方向（例如先关连接池的使用者，再关池）。
 fn collect_sorted(task_type: TaskType) -> Vec<(String, Arc<dyn Task>)> {
-    let mut tasks: Vec<(String, Arc<dyn Task>)> = TASKS
+    let mut tasks: Vec<(u64, String, Arc<dyn Task>)> = TASKS
         .iter()
-        .map(|item| (item.key().clone(), item.value().clone()))
+        .map(|item| {
+            let (seq, task) = item.value();
+            (*seq, item.key().clone(), task.clone())
+        })
         .collect();
 
-    // 用 i16 承载 priority 以便取负数实现降序，u8 无法直接配合 sort_by_key + Reverse
-    tasks.sort_by_key(|(_, task)| {
-        let p = task.priority() as i16;
+    // 用 i64 承载以便取负数实现降序：u8 / u64 无法直接配合 sort_by_key
+    tasks.sort_by_key(|(seq, _, task)| {
+        let p = i64::from(task.priority());
+        let seq = *seq as i64;
         match task_type {
-            TaskType::Before => p,
-            TaskType::After => -p,
+            TaskType::Before => (p, seq),
+            TaskType::After => (-p, -seq),
         }
     });
     tasks
+        .into_iter()
+        .map(|(_, name, task)| (name, task))
+        .collect()
 }
 
 /// 按优先级顺序执行所有已注册的钩子任务。
@@ -225,9 +250,11 @@ async fn run_tasks(task_type: TaskType, timeouts: Option<ShutdownTimeouts>) -> R
     Ok(())
 }
 
-/// 注册一个具名钩子任务。同名任务重复注册时，新任务会覆盖旧任务。
+/// 注册一个具名钩子任务。同名任务重复注册时，新任务会覆盖旧任务
+/// （并取得一个新的注册序号，即排到同优先级的末尾）。
 pub fn register_task(name: impl Into<String>, task: Arc<dyn Task>) {
-    TASKS.insert(name.into(), task);
+    let seq = REGISTRATION_SEQ.fetch_add(1, Ordering::Relaxed);
+    TASKS.insert(name.into(), (seq, task));
 }
 
 /// 按优先级升序执行所有已注册的 `before` 钩子（应用启动前调用）。
@@ -380,6 +407,61 @@ mod tests {
         run_after_tasks().await.unwrap();
         // priority=50 先于 priority=10
         assert_eq!(&*trace.lock().unwrap(), &["b", "a"]);
+    }
+
+    /// **回归守卫**：同优先级任务必须按注册先后执行，且每次都一样。
+    ///
+    /// 此前排序只看 `priority`，次序取决于 `DashMap` 的迭代顺序——同优先级
+    /// 的启动钩子每次进程启动都可能换个顺序跑，隐式依赖会变成偶发启动失败。
+    #[tokio::test]
+    async fn equal_priority_follows_registration_order() {
+        let _g = serial();
+        // 多跑几轮：顺序若依赖哈希迭代，重复运行会暴露出来
+        for _ in 0..8 {
+            reset();
+            let trace: Trace = Arc::new(Mutex::new(Vec::new()));
+            for name in ["first", "second", "third", "fourth"] {
+                register_task(
+                    name,
+                    Arc::new(ProbeTask {
+                        name,
+                        priority: 7,
+                        before_result: ok_true,
+                        after_result: ok_true,
+                        trace: trace.clone(),
+                    }),
+                );
+            }
+
+            run_before_tasks().await.unwrap();
+            assert_eq!(
+                &*trace.lock().unwrap(),
+                &["first", "second", "third", "fourth"]
+            );
+        }
+    }
+
+    /// `after` 必须是 `before` 的严格逆序：后初始化的先清理。
+    #[tokio::test]
+    async fn after_reverses_registration_order_within_same_priority() {
+        let _g = serial();
+        reset();
+        let trace: Trace = Arc::new(Mutex::new(Vec::new()));
+        for name in ["pool", "cache", "warmup"] {
+            register_task(
+                name,
+                Arc::new(ProbeTask {
+                    name,
+                    priority: 0,
+                    before_result: ok_true,
+                    after_result: ok_true,
+                    trace: trace.clone(),
+                }),
+            );
+        }
+
+        run_after_tasks().await.unwrap();
+        assert_eq!(&*trace.lock().unwrap(), &["warmup", "cache", "pool"]);
     }
 
     #[tokio::test]

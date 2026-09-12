@@ -8,11 +8,11 @@ homepage.workspace = true
 repository.workspace = true
 keywords = ["tibba"]
 description = "tibba is a framework for building web applications"
+rust-version.workspace = true
 default-run = "tibba"
 
-[lints.clippy]
-# Set the unwrap_used lint level to deny
-unwrap_used = "deny"
+[lints]
+workspace = true
 
 # 可选业务样板：默认 full 与历史行为一致。
 # 最小二进制：cargo build --no-default-features
@@ -90,7 +90,9 @@ tower-http = { version = "0.7.0", features = [
 ] }
 tracing = { workspace = true }
 tracing-opentelemetry = { workspace = true }
-tracing-subscriber = { version = "0.3.23", features = ["local-time"] }
+# env-filter：让 RUST_LOG 支持 `tibba:cache=debug` 这类按 target 过滤的指令。
+# 没有它，各 crate 的 LOG_TARGET 约定形同虚设（只能整体调级别）。
+tracing-subscriber = { version = "0.3.23", features = ["local-time", "env-filter"] }
 utoipa = { workspace = true }
 utoipa-swagger-ui = { workspace = true }
 opentelemetry = { workspace = true }
@@ -144,9 +146,20 @@ members = [
 
 
 
+# 全 workspace 统一的 lint 级别。
+#
+# 此前 `unwrap_used = "deny"` 只写在根 package 的 `[lints.clippy]` 下，
+# 30 个 `tibba-*` 库 crate 一个都不受约束——而真正会被下游依赖、
+# panic 影响面最大的恰恰是它们。测试内的 unwrap 由 clippy.toml 的
+# `allow-unwrap-in-tests` 放行。
+[workspace.lints.clippy]
+unwrap_used = "deny"
+
 [workspace.package]
 version = "0.2.7"
 edition = "2024"
+# edition 2024 本身要求 1.85；let-chains（全仓库 14 处）要求 1.88
+rust-version = "1.88"
 authors = ["Tree Xie <tree.xie@outlook.com>"]
 license = "Apache-2.0"
 homepage = "https://github.com/vicanso/tibba"

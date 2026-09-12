@@ -6,6 +6,7 @@ authors.workspace = true
 license.workspace = true
 homepage.workspace = true
 repository.workspace = true
+rust-version.workspace = true
 keywords = ["tibba", "notify", "wecom", "email"]
 description = "unified notifier trait for tibba (email + wecom + ...)"
 
@@ -21,3 +22,6 @@ tibba-email = { path = "../tibba-email", version = "0.2.6" }
 tibba-error = { path = "../tibba-error", version = "0.2.6" }
 tibba-request = { path = "../tibba-request", version = "0.2.6" }
 tracing = { workspace = true }
+
+[lints]
+workspace = true

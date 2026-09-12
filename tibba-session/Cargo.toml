@@ -6,6 +6,7 @@ authors.workspace = true
 license.workspace = true
 homepage.workspace = true
 repository.workspace = true
+rust-version.workspace = true
 keywords = ["tibba", "session"]
 description = "session for tibba"
 
@@ -27,3 +28,6 @@ tibba-runtime = { path = "../tibba-runtime", version = "0.2.6" }
 tibba-util = { path = "../tibba-util", version = "0.2.6", default-features = false }
 time = { workspace = true }
 tracing = { workspace = true }
+
+[lints]
+workspace = true

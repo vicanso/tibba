@@ -6,6 +6,7 @@ authors.workspace = true
 license.workspace = true
 homepage.workspace = true
 repository.workspace = true
+rust-version.workspace = true
 keywords = ["tibba", "email", "resend"]
 description = "email service abstraction for tibba"
 
@@ -20,3 +21,6 @@ serde = { workspace = true }
 snafu = { workspace = true }
 tibba-error = { path = "../tibba-error", version = "0.2.6" }
 tracing = { workspace = true }
+
+[lints]
+workspace = true

@@ -132,9 +132,19 @@ pub fn register_job_task(name: impl Into<String>, job: Job) {
 pub async fn run_scheduler_jobs() -> Result<JobScheduler> {
     let scheduler = JobScheduler::new().await.context(CreateSnafu)?;
 
+    // 先整体收集再逐个添加：`JOB_TASKS.iter()` 的 Ref 会持有 DashMap 的分片读锁，
+    // 而 `scheduler.add(..).await` 是一个 await 点——持锁跨 await 期间，任何
+    // 并发的 `register_job_task`（同分片）都会阻塞在同步锁上，而且阻塞的是
+    // tokio worker 线程。`hook.rs` 的 `collect_sorted` 早已是这个写法，这里
+    // 此前没跟上。按名称排序顺带让「添加任务」的日志次序稳定下来。
+    let mut jobs: Vec<(String, Job)> = JOB_TASKS
+        .iter()
+        .map(|item| (item.key().clone(), item.value().clone()))
+        .collect();
+    jobs.sort_by(|(a, _), (b, _)| a.cmp(b));
+
     let mut added = 0_usize;
-    for item in JOB_TASKS.iter() {
-        let (name, job) = item.pair();
+    for (name, job) in &jobs {
         if let Err(err) = scheduler.add(job.clone()).await {
             // 失败任务在 fail-fast 前先记一条带 name 的错误日志；
             // 让操作员一眼看到是哪个任务在启动期掉链子，无需再去 grep snafu Display

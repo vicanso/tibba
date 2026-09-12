@@ -6403,6 +6403,7 @@ dependencies = [
  "rand_core 0.6.4",
  "sha2 0.11.0",
  "snafu",
+ "subtle",
  "tibba-error",
 ]
 
@@ -6616,6 +6617,7 @@ version = "0.2.7"
 dependencies = [
  "axum",
  "bytes",
+ "futures",
  "opentelemetry",
  "pretty_assertions",
  "rand 0.10.2",
@@ -6806,9 +6808,11 @@ dependencies = [
  "chrono",
  "cookie",
  "hex",
+ "hmac 0.13.0",
  "http-body-util",
  "humantime",
  "lz4_flex",
+ "mime",
  "nanoid",
  "pretty_assertions",
  "serde",
@@ -6816,7 +6820,9 @@ dependencies = [
  "serde_urlencoded",
  "sha2 0.11.0",
  "snafu",
+ "subtle",
  "tibba-error",
+ "tokio",
  "url",
  "uuid",
  "validator",

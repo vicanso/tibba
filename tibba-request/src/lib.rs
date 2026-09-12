@@ -57,6 +57,9 @@ pub enum Error {
     /// 目标地址指向内部网络（私网 / 回环 / 链路本地 / 云元数据），被 SSRF 防护拦截。
     #[snafu(display("{service} blocked internal target: {host}"))]
     BlockedTarget { service: String, host: String },
+    /// 响应体超过客户端配置的上限，已中止读取。
+    #[snafu(display("{service} response too large: exceeds {limit} bytes"))]
+    ResponseTooLarge { service: String, limit: usize },
     /// 开启 SSRF 防护的客户端收到 3xx。重定向目标未经 `ensure_public_target` 校验，
     /// 跟随即等于绕过防护，故直接拒绝并把 Location 带出来供排查。
     #[snafu(display("{service} blocked redirect to: {location}"))]
@@ -97,6 +100,14 @@ impl From<Error> for BaseError {
                 )
             }
             Error::Serde { service, source } => (service, BaseError::new(source)),
+            // 下游回了一个超出预期的巨大响应：502（上游行为异常）并告警——
+            // 这既可能是对端故障，也可能是投递目标在有意撑爆我们的内存
+            Error::ResponseTooLarge { service, limit } => (
+                service,
+                BaseError::new(format!("response too large: exceeds {limit} bytes"))
+                    .with_status(502)
+                    .with_exception(true),
+            ),
             Error::BlockedTarget { service, host } => (
                 service,
                 BaseError::new(format!("blocked internal target: {host}"))

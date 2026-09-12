@@ -19,15 +19,24 @@ use serde::{Deserialize, Serialize};
 
 /// 不常用的可选字段集合，装箱存放以控制 [`Error`] 的内存占用。
 /// 仅作为 `Error` 内部实现，不对外暴露。
+///
+/// 每个字段都带 `skip_serializing_if`：未设置的字段不进响应体。此前每个错误
+/// 响应都要拖着 `"code":null,"exception":null,"extra":null` 三段常量噪音——
+/// 对一个**每次出错都会发**的结构而言，这既是带宽浪费，也让前端无法用
+/// 「字段是否存在」判断服务端有没有给出该信息。
 #[derive(Debug, Default, Serialize, Deserialize, Clone)]
 struct ErrorData {
     /// 错误子分类，用于在同一 category 下进一步区分错误来源。
+    #[serde(skip_serializing_if = "Option::is_none")]
     sub_category: Option<String>,
     /// 业务错误码，供前端按码处理特定错误。
+    #[serde(skip_serializing_if = "Option::is_none")]
     code: Option<String>,
     /// 是否为需要告警的异常级错误。
+    #[serde(skip_serializing_if = "Option::is_none")]
     exception: Option<bool>,
     /// 附加信息列表，可携带多条上下文说明。
+    #[serde(skip_serializing_if = "Option::is_none")]
     extra: Option<Vec<String>>,
     /// 是否对客户端隐去 `message` / `extra`；`None` 表示按状态码判定。
     ///
@@ -258,7 +267,11 @@ impl IntoResponse for Error {
             let redacted = ErrorData {
                 sub_category: self.data.sub_category.clone(),
                 code: self.data.code.clone(),
-                exception: self.data.exception,
+                // `exception` 是「要不要告警」的**服务端**分级，客户端没有任何用途，
+                // 却会告诉调用方「这条错误我们内部当事故处理」——在已经决定脱敏的
+                // 响应里外泄这一位，等于把刚藏起来的内部状态又说了一半。
+                // 服务端侧不受影响：完整 Error 仍进 extensions 供 tracker 读取。
+                exception: None,
                 extra: None,
                 // 服务端控制位，不参与序列化，取值无关紧要
                 redact: None,
@@ -404,6 +417,52 @@ mod tests {
     fn redact_flag_is_not_serialized() {
         let json = serde_json::to_string(&Error::new("m").with_redact(true)).unwrap();
         assert!(!json.contains("redact"), "序列化结果不应含 redact: {json}");
+    }
+
+    /// 未设置的可选字段不得出现在响应体里（此前恒为 `"code":null` 等噪音）。
+    #[tokio::test]
+    async fn unset_optional_fields_are_omitted() {
+        let res = Error::new("bad email")
+            .with_category("params")
+            .with_status(400)
+            .into_response();
+        let body = body_json(res).await;
+        let obj = body.as_object().expect("响应体应是 JSON 对象");
+
+        assert_eq!(obj.len(), 2, "只应剩 category / message，实际: {obj:?}");
+        assert!(!obj.contains_key("code"));
+        assert!(!obj.contains_key("exception"));
+        assert!(!obj.contains_key("extra"));
+        assert!(!obj.contains_key("sub_category"));
+    }
+
+    /// 脱敏响应不得外泄 `exception`——它只表示服务端要不要告警。
+    #[tokio::test]
+    async fn redacted_response_hides_exception_flag() {
+        let res = Error::new("sqlx: connection refused")
+            .with_category("db")
+            .with_status(500)
+            .with_exception(true)
+            .into_response();
+        let body = body_json(res).await;
+
+        assert_eq!(body["message"], "internal server error");
+        assert!(
+            body.get("exception").is_none(),
+            "脱敏响应仍暴露了告警分级: {body}"
+        );
+        // 服务端侧必须仍拿得到，否则 tracker 无法告警
+    }
+
+    /// 与上一条配套：脱敏不影响服务端读取 `exception`。
+    #[test]
+    fn redacted_response_still_carries_exception_in_extensions() {
+        let res = Error::new("boom")
+            .with_status(500)
+            .with_exception(true)
+            .into_response();
+        let stored = res.extensions().get::<Error>().expect("Error 应存入 extensions");
+        assert!(stored.is_exception());
     }
 
     #[test]

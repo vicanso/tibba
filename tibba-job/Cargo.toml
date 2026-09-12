@@ -6,6 +6,7 @@ authors.workspace = true
 license.workspace = true
 homepage.workspace = true
 repository.workspace = true
+rust-version.workspace = true
 keywords = ["tibba", "job", "queue", "worker"]
 description = "PostgreSQL SKIP LOCKED async job queue for tibba"
 
@@ -24,3 +25,6 @@ time = { workspace = true }
 tokio = { workspace = true, features = ["time", "sync"] }
 tracing = { workspace = true }
 tibba-error = { path = "../tibba-error", version = "0.2.6" }
+
+[lints]
+workspace = true

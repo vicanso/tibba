@@ -30,7 +30,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
 use tibba_config::Config;
-use tracing::info;
+use tracing::{debug, info};
 
 use super::LOG_TARGET;
 
@@ -92,11 +92,29 @@ pub struct RedisClient {
     hook_stat: HookStat,
 }
 
+/// 连接是否「刚用过、无需再探活」。
+///
+/// deadpool 在**每次** `Pool::get()` 复用池内连接时都会调用 `Manager::recycle`，
+/// 而本 crate 的 `RedisCache` 是一个方法一次 `conn()`——于是每条 Redis 命令前
+/// 都要先付一次 PING 的往返，P50 直接翻倍。
+///
+/// 连接在 `min_idle` 内刚被成功使用过时，它断开的概率极低（服务端 timeout、
+/// 网络中断都远不止这个量级），这次探活买不到什么，却要实打实付一个 RTT。
+/// 空闲更久的连接仍照常探活——那才是探活真正要覆盖的场景。
+///
+/// `min_idle` 为 0 时退化为「每次都探活」（URI `recycle_min_idle=0`）。
+#[inline]
+fn is_recently_verified(metrics: &Metrics, min_idle: Duration) -> bool {
+    !min_idle.is_zero() && metrics.last_used() < min_idle
+}
+
 /// 单节点 Manager：在 create 时注入 response_timeout，覆盖 redis-rs 默认 500ms。
 struct TimeoutAwareManager {
     client: RedisRawClient,
     response_timeout: Option<Duration>,
     connection_timeout: Option<Duration>,
+    /// 小于该空闲时长的连接跳过 PING 探活，见 [`is_recently_verified`]
+    recycle_min_idle: Duration,
     ping_number: AtomicUsize,
 }
 
@@ -116,8 +134,12 @@ impl managed::Manager for TimeoutAwareManager {
     async fn recycle(
         &self,
         conn: &mut MultiplexedConnection,
-        _: &Metrics,
+        metrics: &Metrics,
     ) -> managed::RecycleResult<RedisError> {
+        // 刚用过的连接跳过探活，省掉每条命令前的一次往返
+        if is_recently_verified(metrics, self.recycle_min_idle) {
+            return Ok(());
+        }
         let ping_number = self.ping_number.fetch_add(1, Ordering::Relaxed).to_string();
         // 与 deadpool-redis 一致：UNWATCH + PING 合并成一次 round trip
         let (n,) = redis::Pipeline::with_capacity(2)
@@ -138,6 +160,8 @@ impl managed::Manager for TimeoutAwareManager {
 /// 集群 Manager：在 `ClusterClient` 上应用 URI `response_timeout` / `connection_timeout`。
 struct TimeoutAwareClusterManager {
     client: ClusterClient,
+    /// 小于该空闲时长的连接跳过 PING 探活，见 [`is_recently_verified`]
+    recycle_min_idle: Duration,
     ping_number: AtomicUsize,
 }
 
@@ -152,8 +176,12 @@ impl managed::Manager for TimeoutAwareClusterManager {
     async fn recycle(
         &self,
         conn: &mut ClusterConnection,
-        _: &Metrics,
+        metrics: &Metrics,
     ) -> managed::RecycleResult<RedisError> {
+        // 同单节点：刚用过的连接不再探活
+        if is_recently_verified(metrics, self.recycle_min_idle) {
+            return Ok(());
+        }
         let ping_number = self.ping_number.fetch_add(1, Ordering::Relaxed).to_string();
         // 集群连接不支持 UNWATCH 的跨槽 pipeline，只 PING
         let n = redis::cmd("PING")
@@ -584,9 +612,13 @@ macro_rules! impl_connection_like {
                 }
             }
 
-            /// 获取当前数据库编号，集群模式固定返回 0（不支持多 DB）。
+            /// 获取当前数据库编号。
+            ///
+            /// 转发给底层连接而非恒返回 0：URI 里的 db 编号现在会被保留
+            /// （见 `new_redis_config`），恒返回 0 会对不上真实连接。集群连接
+            /// 自身就返回 0（Redis Cluster 只有 db 0），语义仍然正确。
             fn get_db(&self) -> i64 {
-                0
+                self.conn.get_db()
             }
         }
     };
@@ -632,9 +664,13 @@ impl HookStat {
     }
 
     /// 新物理连接建立后回调，累计创建计数并打印日志。
+    ///
+    /// 用 `debug!` 而非 `info!`：建连在扩容 / 重连风暴时是高频事件，而这里真正
+    /// 要长期观测的量已经由 [`RedisStat::conn_created`] 以计数器形式给出，
+    /// 逐条日志只在排查具体问题时才有价值。
     fn post_create(&self) {
         self.inner.created.fetch_add(1, Ordering::Relaxed);
-        info!(target: LOG_TARGET, label = self.label, "new connection");
+        debug!(target: LOG_TARGET, label = self.label, "new connection");
     }
 
     /// 连接回池前回调。超过空闲时限或最大存活时限时丢弃连接并返回 Err。
@@ -644,7 +680,7 @@ impl HookStat {
             self.inner
                 .idle_timeout_dropped
                 .fetch_add(1, Ordering::Relaxed);
-            info!(
+            debug!(
                 target: LOG_TARGET,
                 label = self.label,
                 idle = idle.as_secs(),
@@ -655,7 +691,7 @@ impl HookStat {
         let age = metrics.age();
         if !self.max_conn_age.is_zero() && age > self.max_conn_age {
             self.inner.max_age_dropped.fetch_add(1, Ordering::Relaxed);
-            info!(
+            debug!(
                 target: LOG_TARGET,
                 label = self.label,
                 age = age.as_secs(),
@@ -666,10 +702,15 @@ impl HookStat {
         Ok(())
     }
 
-    /// 连接成功回池后回调，累计复用计数并打印日志。
+    /// 连接成功复用后回调，累计复用计数并打印日志。
+    ///
+    /// **必须是 `debug!`**：deadpool 在每次 `Pool::get()` 复用池内连接时都会触发
+    /// 本钩子，而 `RedisCache` 是一个方法一次 `conn()`——用 `info!` 等于每条
+    /// Redis 命令打一行日志，一个正常请求就是 3~5 行纯噪音。累计值见
+    /// [`RedisStat::conn_recycled`]。
     fn post_recycle(&self, metrics: &Metrics) {
         self.inner.recycled.fetch_add(1, Ordering::Relaxed);
-        info!(
+        debug!(
             target: LOG_TARGET,
             label = self.label,
             age = metrics.age().as_secs(),
@@ -746,6 +787,7 @@ pub fn new_redis_client(config: &Config) -> Result<RedisClient> {
             client: raw,
             response_timeout: redis_config.response_timeout,
             connection_timeout: Some(redis_config.connection_timeout),
+            recycle_min_idle: redis_config.recycle_min_idle,
             ping_number: AtomicUsize::new(0),
         };
         let builder = managed::Pool::builder(mgr)
@@ -769,6 +811,7 @@ pub fn new_redis_client(config: &Config) -> Result<RedisClient> {
         })?;
         let mgr = TimeoutAwareClusterManager {
             client,
+            recycle_min_idle: redis_config.recycle_min_idle,
             ping_number: AtomicUsize::new(0),
         };
         let builder = managed::Pool::builder(mgr)
@@ -784,6 +827,7 @@ pub fn new_redis_client(config: &Config) -> Result<RedisClient> {
         nodes = nodes.join(","),
         response_timeout_ms = redis_config.response_timeout.map(|d| d.as_millis()),
         slow_cmd_threshold_ms = redis_config.slow_cmd_threshold.as_millis(),
+        recycle_min_idle_ms = redis_config.recycle_min_idle.as_millis(),
         "connect to redis"
     );
     Ok(RedisClient {

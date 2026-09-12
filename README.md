@@ -24,7 +24,7 @@ Workspace 内约 35 个 `tibba-*` crate；依赖关系图见 [docs/modules.md](d
 
 ### 依赖
 
-- Rust **1.85+**（edition 2024）
+- Rust **1.88+**（edition 2024 + let-chains）
 - PostgreSQL 14+
 - Redis 6+
 - （可选）Node 20+：构建 `admin/` SPA

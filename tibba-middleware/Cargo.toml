@@ -6,6 +6,7 @@ authors.workspace = true
 license.workspace = true
 homepage.workspace = true
 repository.workspace = true
+rust-version.workspace = true
 keywords = ["tibba", "middleware"]
 description = "middleware for tibba"
 
@@ -33,3 +34,6 @@ tracing = { workspace = true }
 opentelemetry = { workspace = true }
 tracing-opentelemetry = { workspace = true }
 urlencoding = { workspace = true }
+
+[lints]
+workspace = true

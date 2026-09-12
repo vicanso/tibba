@@ -220,14 +220,11 @@ impl WebhookHandler {
         }
 
         self.client
-            .request_raw(Params {
-                method: Method::POST,
-                timeout: None,
-                url: &delivery.url,
-                query: None::<&()>,
-                body: Some(&delivery.payload),
-                headers: Some(&headers),
-            })
+            .request_raw(
+                Params::new(Method::POST, &delivery.url)
+                    .with_body(&delivery.payload)
+                    .with_headers(&headers),
+            )
             .await
             .context(DeliverSnafu {
                 url: delivery.url.clone(),

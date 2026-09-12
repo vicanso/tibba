@@ -6,6 +6,7 @@ authors.workspace = true
 license.workspace = true
 homepage.workspace = true
 repository.workspace = true
+rust-version.workspace = true
 keywords = ["tibba", "tenant", "multi-tenancy"]
 description = "Row-level multi-tenancy primitives (tenant extractor) for tibba"
 
@@ -18,3 +19,6 @@ axum = { workspace = true }
 snafu = { workspace = true }
 tibba-error = { path = "../tibba-error", version = "0.2.6" }
 tibba-session = { path = "../tibba-session", version = "0.2.6" }
+
+[lints]
+workspace = true

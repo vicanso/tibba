@@ -78,8 +78,20 @@ impl<T: Expired + Clone> TtlFifoStore<T> {
     ///
     /// 走 `peek` 而非 `get`：不更新访问时序。这正是本结构退化为 FIFO 的原因，
     /// 见模块文档。
+    ///
+    /// 命中过期条目时**顺手删除**它。此前只是「读不到」，条目仍占着容量——
+    /// 一个装满过期条目的 store 会在下次写入时把**活着**的条目淘汰掉，
+    /// 而清理全靠调用方记得定期调 [`Self::purge_expired`]（实际上没人调）。
+    /// 顺带清理让容量语义回到「最多 N 个**有效**条目」这个直觉上。
     pub fn get(&self, key: &str) -> Option<T> {
-        self.lock().peek(key).filter(|v| !v.is_expired()).cloned()
+        let mut cache = self.lock();
+        if let Some(value) = cache.peek(key) {
+            if !value.is_expired() {
+                return Some(value.clone());
+            }
+            cache.pop(key);
+        }
+        None
     }
 
     /// 删除指定键，键不存在时为空操作。
@@ -87,7 +99,11 @@ impl<T: Expired + Clone> TtlFifoStore<T> {
         self.lock().pop(key);
     }
 
-    /// 清除所有已过期的条目，应定期调用以释放内存。
+    /// 一次性清除所有已过期条目。
+    ///
+    /// [`Self::get`] 已经会顺手删除读到的过期条目，因此本方法**不是**正确性
+    /// 的必要条件；它用于「从此不再被读到的键」——那些条目只能靠容量淘汰
+    /// 或这里的批量清理来释放。
     pub fn purge_expired(&self) {
         let mut cache = self.lock();
         // LruCache 不支持迭代中删除，需先收集过期键再批量移除
@@ -202,6 +218,28 @@ mod tests {
         );
         assert_eq!(s.get("fresh"), Some(Entry::live("fresh")));
         assert_eq!(s.get("dead"), None);
+    }
+
+    /// 读到过期条目时必须顺手腾出槽位，而不只是「读不到」。
+    ///
+    /// 构造：容量 2，先写 dead（过期）再写 live。读一次 dead 应当把它删掉，
+    /// 于是接下来写 fresh 无需淘汰任何东西，live 得以存活。
+    /// 若 `get` 只过滤不删除，这次写入会把 live 挤掉。
+    #[test]
+    fn get_evicts_expired_entry_and_frees_capacity() {
+        let s = store(2);
+        s.set("dead", Entry::dead("dead"));
+        s.set("live", Entry::live("live"));
+
+        assert_eq!(s.get("dead"), None);
+
+        s.set("fresh", Entry::live("fresh"));
+        assert_eq!(
+            s.get("live"),
+            Some(Entry::live("live")),
+            "读取过期条目应已腾出槽位，新写入不该再淘汰 live"
+        );
+        assert_eq!(s.get("fresh"), Some(Entry::live("fresh")));
     }
 
     #[test]
