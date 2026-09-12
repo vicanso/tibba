@@ -29,13 +29,18 @@ serde = { workspace = true, optional = true }
 snafu = { workspace = true, optional = true }
 sysinfo = { workspace = true, optional = true }
 tibba-error = { path = "../tibba-error", version = "0.2.6" }
-# time：关闭钩子的超时控制（run_after_tasks），workspace 默认未启用该特性
-tokio = { workspace = true, features = ["time"] }
+# time：关闭钩子的超时控制（run_after_tasks）
+# sync：停机信号的 watch 广播（src/shutdown.rs）
+# signal：SIGINT / SIGTERM 处理，容器里发的是 SIGTERM，不能只认 ctrl_c
+# 以上三项 workspace 默认未全部启用，这里显式声明而非依赖 feature 合并
+# rt：安装信号处理与调度器停机都要 spawn 任务
+tokio = { workspace = true, features = ["time", "sync", "signal", "rt"] }
 tokio-cron-scheduler = { workspace = true, optional = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt", "time", "sync", "signal"] }
 
 [lints]
 workspace = true

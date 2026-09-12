@@ -351,11 +351,10 @@ impl Model for TokenUsageModel {
         qb: &mut QueryBuilder<Postgres>,
         filters: &HashMap<String, String>,
     ) -> Result<()> {
-        if let Some(user_id) = filters.get("user_id") {
-            if let Ok(v) = user_id.parse::<i64>() {
+        if let Some(user_id) = filters.get("user_id")
+            && let Ok(v) = user_id.parse::<i64>() {
                 qb.push(" AND user_id = ").push_bind(v);
             }
-        }
         if let Some(service) = filters.get("service") {
             qb.push(" AND service = ").push_bind(service.clone());
         }

@@ -109,14 +109,14 @@ impl RedisCache {
     /// 改用 Redis 原生的毫秒指令族（`PSETEX` / `PX` / `PEXPIRE`）后，亚秒 TTL
     /// 按真实值生效。下限 1ms 只为挡住 `Duration::ZERO`（同样会被 Redis 拒绝）。
     #[inline]
-    fn get_ttl_ms(&self, ttl: Option<Duration>) -> u64 {
+    pub(crate) fn get_ttl_ms(&self, ttl: Option<Duration>) -> u64 {
         ttl_to_millis(ttl.unwrap_or(self.ttl))
     }
 
     /// 拼接前缀与键名，生成完整的缓存键。
     /// 前缀为空时直接借用原始键，避免额外分配。
     #[inline]
-    fn get_key<'a>(&'a self, key: &'a str) -> Cow<'a, str> {
+    pub(crate) fn get_key<'a>(&'a self, key: &'a str) -> Cow<'a, str> {
         if self.prefix.is_empty() {
             Cow::Borrowed(key)
         } else {
@@ -372,8 +372,13 @@ impl RedisCache {
     where
         T: ?Sized + Serialize,
     {
-        self.set_struct_compressed(&self.get_key(key), value, self.get_ttl_ms(ttl), Algorithm::Lz4)
-            .await
+        self.set_struct_compressed(
+            &self.get_key(key),
+            value,
+            self.get_ttl_ms(ttl),
+            Algorithm::Lz4,
+        )
+        .await
     }
 
     /// 从 Redis 读取并以 LZ4 解压后反序列化为结构体，键不存在时返回 `None`。
@@ -395,8 +400,13 @@ impl RedisCache {
     where
         T: ?Sized + Serialize,
     {
-        self.set_struct_compressed(&self.get_key(key), value, self.get_ttl_ms(ttl), DEFAULT_ZSTD)
-            .await
+        self.set_struct_compressed(
+            &self.get_key(key),
+            value,
+            self.get_ttl_ms(ttl),
+            DEFAULT_ZSTD,
+        )
+        .await
     }
 
     /// 从 Redis 读取并以 Zstd 解压后反序列化为结构体，键不存在时返回 `None`。
@@ -422,7 +432,11 @@ mod tests {
     fn sub_second_ttl_is_preserved() {
         assert_eq!(ttl_to_millis(Duration::from_millis(500)), 500);
         assert_eq!(ttl_to_millis(Duration::from_millis(1)), 1);
-        assert_eq!(ttl_to_millis(Duration::from_micros(100)), 1, "不足 1ms 取下限");
+        assert_eq!(
+            ttl_to_millis(Duration::from_micros(100)),
+            1,
+            "不足 1ms 取下限"
+        );
     }
 
     /// 零时长同样会被 Redis 拒绝，钳到 1ms。

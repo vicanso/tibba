@@ -18,10 +18,14 @@
 //! | 场景 | 推荐 API | 说明 |
 //! |------|----------|------|
 //! | Session | `RedisCache` + 前缀 `session:` | 中间件层已用，勿在 handler 再绕过 |
-//! | API Key 校验 | `get_struct` / 短 TTL | 避免每次请求查 DB |
+//! | API Key 校验 | `get_or_set` + 短 TTL | 避免每次请求查 DB；`Option<T>` 顺带负缓存挡无效令牌 |
+//! | 回源合并 | `get_or_set` | 进程内 singleflight，热点 key 失效时不打穿数据库 |
 //! | 登录防爆破 | `incr` 固定窗口 | 见 `login_guard` / `RedisIpRateLimit` |
 //! | Feature flag | `TwoLevelStore` | `tibba-feature` 的 `with_local_cache` opt-in；L1 对齐边界保一致性、L2 抖动防雪崩 |
-//! | 分布式锁 | `lock` | 定时任务 singleton；**只靠 TTL 释放，无 unlock**（见 `RedisCache::lock`） |
+//! | 分布式锁（任务去重） | `lock` | 定时任务 singleton；**只靠 TTL 释放，无 unlock**（见 `RedisCache::lock`） |
+//! | 分布式锁（互斥临界区） | `lock_with_token` + `unlock` | 带属主令牌，Lua CAS 释放，只删自己的锁 |
+//! | 精确限流 | `rate_limit_sliding` | Redis 滑动窗口，跨实例共享配额，无固定窗口的边界双倍效应 |
+//! | 自定义原子操作 | `eval` | Lua 脚本（EVALSHA + 自动回退），见 `script` 模块 |
 //! | **长阻塞**（BRPOP） | [`RedisClient::dedicated_blocking_conn`]`(max_block)` | **不归池** + **按 max_block 设置 response timeout** |
 //! | 专用短写（reply loop） | [`RedisClient::dedicated_command_conn`] | 不归池，显式 5s response timeout |
 //!
@@ -384,11 +388,14 @@ pub use redis;
 
 mod cache;
 mod pool;
+mod script;
+mod single_flight;
 mod ttl_fifo_store;
 mod two_level_store;
 
 pub use cache::*;
 pub use pool::*;
+pub use script::*;
 pub use ttl_fifo_store::*;
 pub use two_level_store::*;
 
@@ -438,17 +445,26 @@ mod tests {
     fn db_index_is_preserved_in_node_url() {
         let config = config_with_uri("redis://127.0.0.1:6379/3");
         let redis_config = new_redis_config(&config).unwrap();
-        assert_eq!(redis_config.nodes, vec!["redis://127.0.0.1:6379/3".to_string()]);
+        assert_eq!(
+            redis_config.nodes,
+            vec!["redis://127.0.0.1:6379/3".to_string()]
+        );
 
         // 带 auth 与 IPv6 时同样要带上
         let config = config_with_uri("redis://:pw@[::1]:6379/2");
         let redis_config = new_redis_config(&config).unwrap();
-        assert_eq!(redis_config.nodes, vec!["redis://:pw@[::1]:6379/2".to_string()]);
+        assert_eq!(
+            redis_config.nodes,
+            vec!["redis://:pw@[::1]:6379/2".to_string()]
+        );
 
         // 未指定 db 时不得凭空加斜杠
         let config = config_with_uri("redis://127.0.0.1:6379");
         let redis_config = new_redis_config(&config).unwrap();
-        assert_eq!(redis_config.nodes, vec!["redis://127.0.0.1:6379".to_string()]);
+        assert_eq!(
+            redis_config.nodes,
+            vec!["redis://127.0.0.1:6379".to_string()]
+        );
     }
 
     /// 集群不支持非 0 的 db，应在启动期报错而不是连上之后行为诡异。
@@ -485,7 +501,10 @@ mod tests {
     fn ipv4_uri_is_unaffected() {
         let config = config_with_uri("redis://127.0.0.1:6379");
         let redis_config = new_redis_config(&config).unwrap();
-        assert_eq!(redis_config.nodes, vec!["redis://127.0.0.1:6379".to_string()]);
+        assert_eq!(
+            redis_config.nodes,
+            vec!["redis://127.0.0.1:6379".to_string()]
+        );
     }
 
     #[test]
@@ -524,7 +543,12 @@ mod tests {
 
         // 前提：口令确实同时存在于两处，否则本测试是空转
         assert_eq!(redis_config.password.as_deref(), Some("sup3r-s3cret"));
-        assert!(redis_config.nodes.iter().any(|n| n.contains("sup3r-s3cret")));
+        assert!(
+            redis_config
+                .nodes
+                .iter()
+                .any(|n| n.contains("sup3r-s3cret"))
+        );
 
         let debug = format!("{redis_config:?}");
         assert!(
@@ -534,7 +558,10 @@ mod tests {
         // 结构信息仍需可见，否则排查连接问题时 Debug 就没用了
         assert!(debug.contains("host1:6379"));
         assert!(debug.contains("host2:6380"));
-        assert!(debug.contains("<redacted>"), "应能看出「配了口令」这一位信息");
+        assert!(
+            debug.contains("<redacted>"),
+            "应能看出「配了口令」这一位信息"
+        );
 
         // 未配口令时不应显示 <redacted>，避免误导
         let plain = new_redis_config(&config_with_uri("redis://host:6379")).unwrap();

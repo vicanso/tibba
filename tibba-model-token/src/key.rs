@@ -158,13 +158,11 @@ impl Model for TokenKeyModel {
 
     async fn insert(&self, pool: &Pool<Postgres>, mut data: serde_json::Value) -> Result<u64> {
         // user_id 支持前端以字符串形式传入
-        if let Some(obj) = data.as_object_mut() {
-            if let Some(id_str) = obj.get("user_id").and_then(|v| v.as_str()) {
-                if let Ok(id) = id_str.parse::<i64>() {
+        if let Some(obj) = data.as_object_mut()
+            && let Some(id_str) = obj.get("user_id").and_then(|v| v.as_str())
+                && let Ok(id) = id_str.parse::<i64>() {
                     obj.insert("user_id".to_string(), id.into());
                 }
-            }
-        }
         let p: TokenKeyInsertParams = serde_json::from_value(data).context(JsonSnafu)?;
         let token = uuid::Uuid::new_v4().to_string();
         let row: (i64,) = sqlx::query_as(
@@ -268,11 +266,10 @@ impl Model for TokenKeyModel {
         qb: &mut QueryBuilder<Postgres>,
         filters: &HashMap<String, String>,
     ) -> Result<()> {
-        if let Some(user_id) = filters.get("user_id") {
-            if let Ok(v) = user_id.parse::<i64>() {
+        if let Some(user_id) = filters.get("user_id")
+            && let Ok(v) = user_id.parse::<i64>() {
                 qb.push(" AND user_id = ").push_bind(v);
             }
-        }
         Ok(())
     }
 }

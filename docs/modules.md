@@ -28,12 +28,12 @@ graph TD
 
     runtime --> error
 
-    totp --> error
-
     util --> error
 
     model --> crypto
     model --> error
+
+    totp --> crypto
 
     cache --> config
     cache --> error

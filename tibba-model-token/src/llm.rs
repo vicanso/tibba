@@ -342,11 +342,10 @@ impl Model for TokenLlmModel {
         if let Some(provider) = filters.get("provider") {
             qb.push(" AND provider = ").push_bind(provider.clone());
         }
-        if let Some(status) = filters.get("status") {
-            if let Ok(v) = status.parse::<i16>() {
+        if let Some(status) = filters.get("status")
+            && let Ok(v) = status.parse::<i16>() {
                 qb.push(" AND status = ").push_bind(v);
             }
-        }
         Ok(())
     }
 }

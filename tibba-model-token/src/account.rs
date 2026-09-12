@@ -220,13 +220,11 @@ impl Model for TokenAccountModel {
 
     async fn insert(&self, pool: &Pool<Postgres>, mut data: serde_json::Value) -> Result<u64> {
         // user_id 支持前端以字符串形式传入
-        if let Some(obj) = data.as_object_mut() {
-            if let Some(id_str) = obj.get("user_id").and_then(|v| v.as_str()) {
-                if let Ok(id) = id_str.parse::<i64>() {
+        if let Some(obj) = data.as_object_mut()
+            && let Some(id_str) = obj.get("user_id").and_then(|v| v.as_str())
+                && let Ok(id) = id_str.parse::<i64>() {
                     obj.insert("user_id".to_string(), id.into());
                 }
-            }
-        }
         let params: TokenAccountInsertParams = serde_json::from_value(data).context(JsonSnafu)?;
         let row: (i64,) = sqlx::query_as(
             r#"INSERT INTO token_accounts (user_id, remark) VALUES ($1, $2) RETURNING id"#,
@@ -315,11 +313,10 @@ impl Model for TokenAccountModel {
         qb: &mut QueryBuilder<Postgres>,
         filters: &HashMap<String, String>,
     ) -> Result<()> {
-        if let Some(status) = filters.get("status") {
-            if let Ok(s) = status.parse::<i16>() {
+        if let Some(status) = filters.get("status")
+            && let Ok(s) = status.parse::<i16>() {
                 qb.push(" AND status = ").push_bind(s);
             }
-        }
         Ok(())
     }
 }

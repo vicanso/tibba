@@ -21,6 +21,8 @@ deadpool = { version = "0.13", default-features = false, features = [
     "managed",
     "rt_tokio_1",
 ] }
+# singleflight 的按 key 互斥锁注册表
+dashmap = { workspace = true }
 humantime-serde = { workspace = true }
 lru = { workspace = true }
 # cluster-async（含 cluster + aio）：集群池与 dedicated_conn 走 ClusterClient
@@ -34,13 +36,15 @@ tibba-error = { path = "../tibba-error", version = "0.2.6" }
 tibba-util = { path = "../tibba-util", version = "0.2.6", default-features = false, features = [
     "compression",
 ] }
-tokio = { workspace = true }
+# sync：singleflight 的按 key 互斥锁
+tokio = { workspace = true, features = ["sync"] }
 tracing = { workspace = true }
 url = { workspace = true }
 validator = { workspace = true }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "time", "sync"] }
 
 [package.metadata.cargo-machete]
 ignored = ["humantime-serde"]

@@ -12,11 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{has_control_or_space, is_disabled, is_identifier_char, new_error};
 use super::{
     CODE_USER_ACCOUNT, CODE_USER_ACCOUNT_STRICT, CODE_USER_EMAIL, CODE_USER_GROUPS,
     CODE_USER_PASSWORD, CODE_USER_ROLES,
 };
+use super::{has_control_or_space, is_disabled, is_identifier_char, new_error};
 use validator::{ValidateEmail, ValidationError};
 
 type Result<T> = std::result::Result<T, ValidationError>;

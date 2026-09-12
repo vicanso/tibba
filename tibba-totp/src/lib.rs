@@ -19,7 +19,8 @@
 //! - [`base32_encode`] / [`otpauth_uri`]：把密钥编码成 app 可扫描的 `otpauth://` URI
 //! - [`verify_code`]：校验用户输入的 6 位动态码（HMAC-SHA1，±1 时间窗容差）
 //! - [`generate_recovery_codes`] / [`hash_recovery_code`]：一次性恢复码生成与哈希
-//! - [`SecretCipher`]：AES-256-GCM 对密钥做落库加密（密钥派生自应用 secret）
+//! - [`secret_cipher`]：取得密钥落库加密器（AES-256-GCM）。加密器本身是
+//!   `tibba_crypto::SecretCipher`，本 crate 只固定用途域 [`SECRET_KEY_DOMAIN`]
 //!
 //! ## 算法选择
 //! - **SHA1**：authenticator app（Google Authenticator / Authy 等）默认算法，
@@ -36,9 +37,9 @@ use hmac::{Hmac, KeyInit, Mac};
 use rand::Rng;
 use sha1::Sha1;
 use sha2::{Digest, Sha256};
-use snafu::{OptionExt, ResultExt, Snafu};
 use subtle::ConstantTimeEq;
-use tibba_error::Error as BaseError;
+// 字段加密的通用实现在 core 层的 tibba-crypto；本 crate 只固定 TOTP 的用途域
+pub use tibba_crypto::SecretCipher;
 
 type HmacSha1 = Hmac<Sha1>;
 
@@ -51,55 +52,18 @@ pub const SECRET_BYTES: usize = 20;
 /// 时间窗容差：允许相邻 ±1 个步长，吸收客户端/服务端时钟漂移（约 ±30s）。
 const SKEW: i64 = 1;
 
+/// TOTP 密钥加密的用途域，参与密钥派生（`SHA256(app_secret || ":" || domain)`）。
+///
+/// **不可更改**：它决定既有密文能否解开。取值 `"totp"` 与上一版硬编码的
+/// `SHA256(app_secret || ":totp")` 逐字节一致，故存量数据无需迁移。
+pub const SECRET_KEY_DOMAIN: &str = "totp";
+
 /// base32 标准字母表（RFC 4648），authenticator app 解析密钥时使用。
 const BASE32_ALPHABET: &[u8; 32] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 
 /// 恢复码字母表：32 个无歧义字符（去掉 l/o，避免与 1/0 混淆）。
 /// 恰为 32 个，使「字节 & 0x1f」映射无取模偏置。
 const RECOVERY_ALPHABET: &[u8; 32] = b"abcdefghijkmnpqrstuvwxyz23456789";
-
-/// tibba-totp 错误。多数函数（密钥/码生成、验证）不会失败，仅加解密会。
-#[derive(Debug, Snafu)]
-pub enum Error {
-    /// AES-GCM 加密失败（实际几乎不发生；GCM 加密无业务前置条件）。
-    #[snafu(display("totp secret encryption failed"))]
-    Encrypt,
-    /// AES-GCM 解密/校验失败：密文被篡改、密钥变更或数据损坏。
-    #[snafu(display("totp secret decryption failed"))]
-    Decrypt,
-    /// 落库密文的 base64 解码失败。
-    #[snafu(display("decode encrypted secret: {source}"))]
-    Base64 { source: base64::DecodeError },
-    /// 密文长度不足以容纳 12 字节 nonce + 密文，数据已损坏。
-    #[snafu(display("encrypted secret blob too short"))]
-    BlobTooShort,
-}
-
-impl From<Error> for BaseError {
-    fn from(val: Error) -> Self {
-        let err = match val {
-            Error::Encrypt => BaseError::new("totp secret encryption failed")
-                .with_sub_category("encrypt")
-                .with_status(500)
-                .with_exception(true),
-            Error::Decrypt => BaseError::new("totp secret decryption failed")
-                .with_sub_category("decrypt")
-                .with_status(500)
-                .with_exception(true),
-            Error::Base64 { source } => BaseError::new(source)
-                .with_sub_category("base64")
-                .with_exception(true),
-            Error::BlobTooShort => BaseError::new("encrypted secret blob too short")
-                .with_sub_category("blob_too_short")
-                .with_status(500)
-                .with_exception(true),
-        };
-        err.with_category("totp")
-    }
-}
-
-/// 模块内部 Result，公开函数通过 `?` 自动转 [`BaseError`]。
-type Result<T, E = Error> = std::result::Result<T, E>;
 
 /// 生成一个新的随机 TOTP 密钥（[`SECRET_BYTES`] 字节）。
 pub fn generate_secret() -> Vec<u8> {
@@ -241,68 +205,22 @@ fn percent_encode(s: &str) -> String {
     out
 }
 
-/// TOTP 密钥落库加密器：AES-256-GCM，密钥派生自应用 secret。
+/// 取得 TOTP 密钥落库加密器，用途域固定为 [`SECRET_KEY_DOMAIN`]。
 ///
-/// ## 密钥派生
-/// `key = SHA256(app_secret || ":totp")`。复用应用已有的强 `secret`，
-/// 部署侧无需额外配置加密密钥。**注意**：`secret` 轮换会导致已有密文无法解密
-/// （与登录令牌签名同样的取舍）——轮换 secret 时需要求用户重新绑定 2FA。
+/// 加密器本体（AES-256-GCM）在 core 层的 `tibba-crypto`：字段加密是通用能力，
+/// OAuth refresh token、PII 都会用到。此前整份实现躺在本 crate 里，别的模块要用
+/// 只能反过来依赖 `tibba-totp`，或者原地重写一遍 nonce 拼接——而这恰恰是最容易
+/// 写错的那类代码。
 ///
-/// ## 落库格式
-/// `base64(nonce[12] || ciphertext)`。每次加密用全新随机 nonce，GCM 提供
-/// 机密性 + 完整性（解密时自动校验 tag，篡改会触发 [`Error::Decrypt`]）。
-pub struct SecretCipher {
-    key: [u8; 32],
-}
-
-impl SecretCipher {
-    /// 从应用 secret 派生加密密钥。
-    pub fn from_app_secret(secret: &str) -> Self {
-        let mut h = Sha256::new();
-        h.update(secret.as_bytes());
-        h.update(b":totp");
-        let key: [u8; 32] = h.finalize().into();
-        Self { key }
-    }
-
-    /// 加密明文密钥，返回 `base64(nonce || ciphertext)`。
-    pub fn encrypt(&self, plaintext: &[u8]) -> Result<String> {
-        // aes-gcm 0.11 起用 hybrid-array 的 `Array` 取代 `generic_array::GenericArray`，
-        // `Key<C>` / `Nonce<N>` 均为其别名，可由定长数组直接 From 转换
-        use aes_gcm::aead::Aead;
-        use aes_gcm::{Aes256Gcm, Key, KeyInit, Nonce};
-
-        let cipher = Aes256Gcm::new(&Key::<Aes256Gcm>::from(self.key));
-        let mut nonce = [0u8; 12];
-        rand::rng().fill_bytes(&mut nonce);
-        // GCM 加密失败无业务可恢复信息（aes_gcm::Error 故意不透出细节），
-        // 故用 ok().context() 归一为 Encrypt，避免 map_err 闭包
-        let ct = cipher
-            .encrypt(&Nonce::from(nonce), plaintext)
-            .ok()
-            .context(EncryptSnafu)?;
-        let mut blob = Vec::with_capacity(12 + ct.len());
-        blob.extend_from_slice(&nonce);
-        blob.extend_from_slice(&ct);
-        Ok(STANDARD.encode(blob))
-    }
-
-    /// 解密 [`encrypt`](Self::encrypt) 产出的 base64 串，返回明文密钥字节。
-    pub fn decrypt(&self, blob_b64: &str) -> Result<Vec<u8>> {
-        use aes_gcm::aead::Aead;
-        use aes_gcm::{Aes256Gcm, Key, KeyInit, Nonce};
-
-        let blob = STANDARD.decode(blob_b64).context(Base64Snafu)?;
-        if blob.len() < 12 {
-            return BlobTooShortSnafu.fail();
-        }
-        let (nonce, ct) = blob.split_at(12);
-        // split_at(12) 保证长度恰为 12，转换不会失败；万一失败按解密失败处理，不 panic
-        let nonce = <&Nonce<_>>::try_from(nonce).ok().context(DecryptSnafu)?;
-        let cipher = Aes256Gcm::new(&Key::<Aes256Gcm>::from(self.key));
-        let pt = cipher.decrypt(nonce, ct).ok().context(DecryptSnafu)?;
-        Ok(pt)
-    }
+/// domain 由本函数独占，不散落到调用点：写错一个字符就会让既有密文再也解不开，
+/// 而且要等到用户下次验证 2FA 才会暴露。
+///
+/// # ⚠️ secret 轮换
+/// 密钥派生自 `app_secret`，轮换后已绑定用户的密文无法解密，需要求其重新绑定
+/// 2FA。详见 [`SecretCipher`]。
+#[must_use]
+pub fn secret_cipher(app_secret: &str) -> SecretCipher {
+    SecretCipher::from_app_secret(app_secret, SECRET_KEY_DOMAIN)
 }
 
 #[cfg(test)]
@@ -371,17 +289,45 @@ mod tests {
         assert!(s.bytes().all(|b| BASE32_ALPHABET.contains(&b)));
     }
 
-    /// 加解密 round-trip，且错误密钥/篡改密文应解密失败。
+    /// 加解密 round-trip，且错误密钥应解密失败。
     #[test]
     fn cipher_round_trip() {
-        let cipher = SecretCipher::from_app_secret("super-secret-app-key");
+        let cipher = secret_cipher("super-secret-app-key");
         let secret = generate_secret();
         let blob = cipher.encrypt(&secret).expect("encrypt");
         assert_eq!(cipher.decrypt(&blob).expect("decrypt"), secret);
 
         // 不同 app secret 派生不同密钥，解密失败
-        let other = SecretCipher::from_app_secret("different-key");
+        let other = secret_cipher("different-key");
         assert!(other.decrypt(&blob).is_err());
+    }
+
+    /// **兼容性守卫**：用途域改走 `tibba-crypto` 之后，派生出的密钥必须与
+    /// 上一版硬编码的 `SHA256(app_secret || ":totp")` 完全一致。
+    ///
+    /// 不一致就意味着所有已绑定 2FA 的用户在升级后再也验证不了——而且直到
+    /// 他们下次登录才会暴露。这里直接比对密钥字节，不依赖任何密文样本。
+    #[test]
+    fn key_derivation_matches_legacy_hardcoded_domain() {
+        use sha2::{Digest, Sha256};
+
+        let app_secret = "super-secret-app-key";
+        // 旧实现：h.update(secret); h.update(b":totp")
+        let mut legacy = Sha256::new();
+        legacy.update(app_secret.as_bytes());
+        legacy.update(b":totp");
+        let legacy_key: [u8; 32] = legacy.finalize().into();
+
+        // 新实现的等价路径：SHA256(secret || ":" || domain)
+        let blob = SecretCipher::from_key(legacy_key)
+            .encrypt(b"probe")
+            .expect("encrypt");
+        assert_eq!(
+            secret_cipher(app_secret).decrypt(&blob).expect("decrypt"),
+            b"probe",
+            "用途域必须仍等价于旧的 \":totp\" 后缀，否则存量密文全部失效"
+        );
+        assert_eq!(SECRET_KEY_DOMAIN, "totp");
     }
 
     /// 恢复码：格式 xxxxx-xxxxx，且带不带横杠/大小写都能哈希一致。

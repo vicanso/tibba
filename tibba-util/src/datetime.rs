@@ -108,7 +108,11 @@ mod tests {
     fn sub_millisecond_reports_zero_not_one() {
         let sw = Stopwatch::new();
         // 刚创建，耗时远小于 1ms
-        assert_eq!(sw.elapsed_ms(), 0, "亚毫秒操作应报 0，此前被 .max(1) 抬成 1");
+        assert_eq!(
+            sw.elapsed_ms(),
+            0,
+            "亚毫秒操作应报 0，此前被 .max(1) 抬成 1"
+        );
     }
 
     #[test]

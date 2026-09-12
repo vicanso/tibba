@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use super::{BuildSnafu, Error, LOG_TARGET, RequestSnafu, SerdeSnafu, UriSnafu};
-use axum::http::header::RETRY_AFTER;
 use axum::http::Method;
+use axum::http::header::RETRY_AFTER;
 use axum::http::header::{HeaderMap, HeaderName, HeaderValue, LOCATION};
 use axum::http::uri::Uri;
 use bytes::{Bytes, BytesMut};
@@ -1080,8 +1080,9 @@ impl Client {
                         // 对端明确给了 Retry-After 就照办：它比我们的本地猜测更准，
                         // 也是 429 场景下唯一能真正避免继续挨打的做法。
                         // 超出 MAX_RETRY_AFTER 的值不可信，退回本地退避。
-                        let delay = retry_after
-                            .unwrap_or_else(|| retry_backoff(self.config.retry_base_delay, attempt));
+                        let delay = retry_after.unwrap_or_else(|| {
+                            retry_backoff(self.config.retry_base_delay, attempt)
+                        });
                         warn!(
                             target: LOG_TARGET,
                             service = self.config.service,

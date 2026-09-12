@@ -18,7 +18,7 @@
 //! - [`ApiKeyModel::create`] —— 新建 key（写入哈希 + 前缀 + 可选过期）
 //! - [`ApiKeyModel::find_active_by_hash`] —— 鉴权热点：按哈希命中未撤销且未过期的 key
 //! - [`ApiKeyModel::list_by_user`] —— 个人中心展示（不含哈希）
-//! - [`ApiKeyModel::revoke`] —— 吊销（软删除，校验归属）
+//! - [`ApiKeyModel::revoke`] —— 吊销（软删除，校验归属，返回 key_hash 供缓存失效）
 //! - [`ApiKeyModel::touch_last_used`] —— 鉴权成功后更新 `last_used_at`
 
 use serde::{Deserialize, Serialize};
@@ -68,7 +68,11 @@ impl From<ApiKeySchema> for ApiKey {
 }
 
 /// 鉴权命中结果：仅暴露定位用户所需的最小字段。
-#[derive(FromRow, Debug, Clone)]
+///
+/// 带 serde 是为了能进缓存（见 `tibba-router-user` 的 `lookup_api_key`）：
+/// 鉴权在每个请求上都要跑，结果必须可序列化才谈得上缓存。字段只有 id 与
+/// user_id，不含任何凭据material，落 Redis 不扩大泄漏面。
+#[derive(FromRow, Debug, Clone, Serialize, Deserialize)]
 pub struct ApiKeyAuth {
     pub id: i64,
     pub user_id: i64,
@@ -152,18 +156,31 @@ impl ApiKeyModel {
         Ok(rows.into_iter().map(ApiKey::from).collect())
     }
 
-    /// 吊销（软删除）指定 key，校验归属（只能删自己的）。返回受影响行数。
-    pub async fn revoke(&self, pool: &Pool<Postgres>, user_id: i64, id: i64) -> Result<u64> {
-        let result = sqlx::query(
+    /// 吊销（软删除）指定 key，校验归属（只能删自己的）。
+    ///
+    /// 返回被吊销记录的 `key_hash`；`None` 表示没有匹配记录（不存在、已吊销，
+    /// 或属于别人）。
+    ///
+    /// 之所以返回 hash 而不是行数：鉴权侧按 `key_hash` 缓存查询结果，吊销后必须
+    /// 立刻把那条缓存删掉。只拿到行数的话，调用方还得再查一次库才知道要失效哪个
+    /// key，而这里用 `RETURNING` 顺手就带回来了。
+    pub async fn revoke(
+        &self,
+        pool: &Pool<Postgres>,
+        user_id: i64,
+        id: i64,
+    ) -> Result<Option<String>> {
+        let row: Option<(String,)> = sqlx::query_as(
             r#"UPDATE api_keys SET deleted_at = NOW()
-               WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL"#,
+               WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
+               RETURNING key_hash"#,
         )
         .bind(id)
         .bind(user_id)
-        .execute(pool)
+        .fetch_optional(pool)
         .await
         .context(SqlxSnafu)?;
-        Ok(result.rows_affected())
+        Ok(row.map(|(hash,)| hash))
     }
 
     /// 鉴权成功后更新最近使用时间。尽力而为，调用方可忽略错误。

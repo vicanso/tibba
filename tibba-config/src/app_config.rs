@@ -85,7 +85,10 @@ pub struct ConfigBuilder {
 impl std::fmt::Debug for ConfigBuilder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ConfigBuilder")
-            .field("sources", &format_args!("<{} redacted>", self.sources.len()))
+            .field(
+                "sources",
+                &format_args!("<{} redacted>", self.sources.len()),
+            )
             .field("env_prefix", &self.env_prefix)
             .field("env_separator", &self.env_separator)
             .finish()
@@ -388,7 +391,10 @@ mod tests {
             .unwrap();
         let err = config.get_duration("timeout").unwrap_err();
         let msg = err.to_string();
-        assert!(msg.contains("invalid duration"), "错误应指向时长格式: {msg}");
+        assert!(
+            msg.contains("invalid duration"),
+            "错误应指向时长格式: {msg}"
+        );
         assert!(msg.contains("timeout"), "错误应带上键名: {msg}");
         assert!(msg.contains("abc"), "错误应带上实际取值: {msg}");
 

@@ -27,10 +27,11 @@ use tibba_middleware::{
     processing_limit, request_id, security_headers, stats, validate_csrf,
 };
 use tibba_router_user::api_key_auth;
-use tibba_runtime::{run_after_tasks, run_before_tasks, run_scheduler_jobs};
+use tibba_runtime::{
+    install_shutdown_signal, run_after_tasks, run_before_tasks, run_scheduler_jobs, shutdown_token,
+};
 use tibba_session::session;
 use tibba_util::{is_development, is_production};
-use tokio::signal;
 use tower::ServiceBuilder;
 use tower_http::compression::CompressionLayer;
 use tower_http::compression::predicate::{NotForContentType, Predicate, SizeAbove};
@@ -109,31 +110,6 @@ pub async fn handle_error(
         .with_status(status)
 }
 
-async fn shutdown_signal() {
-    let ctrl_c = async {
-        signal::ctrl_c()
-            .await
-            .expect("failed to install Ctrl+C handler");
-    };
-
-    #[cfg(unix)]
-    let terminate = async {
-        // TODO 后续有需要可在此设置ping的状态
-        signal::unix::signal(signal::unix::SignalKind::terminate())
-            .expect("failed to install signal handler")
-            .recv()
-            .await;
-    };
-
-    #[cfg(not(unix))]
-    let terminate = std::future::pending::<()>();
-
-    tokio::select! {
-        _ = ctrl_c => {},
-        _ = terminate => {},
-    }
-    info!("signal received, starting graceful shutdown");
-}
 /// 初始化日志 + 可选 OTLP 分布式追踪。
 ///
 /// OTel 配置走标准环境变量（与 OTel SDK 约定一致）：
@@ -242,6 +218,9 @@ fn shutdown_otel() {
 }
 
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
+    // 尽早安装：SIGINT / SIGTERM 都触发同一个进程级信号，HTTP 服务、cron 调度器
+    // 与各后台循环共享它。放在 before hooks 之前，使启动阶段收到的信号也不会丢。
+    install_shutdown_signal();
     run_before_tasks().await?;
     // before hooks 已就绪 DB/Redis/OpenDAL/AppState → 组装显式 DI 容器
     let ctx = app_ctx::AppCtx::install_from_globals()?;
@@ -346,7 +325,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
-    .with_graceful_shutdown(shutdown_signal())
+    .with_graceful_shutdown(shutdown_token().cancelled_owned())
     .await?;
 
     // HTTP 已优雅排空（不再有新请求入队任务），再排空在途异步任务：

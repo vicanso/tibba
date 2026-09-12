@@ -29,13 +29,13 @@ workspace 内全部 `tibba-*` 均可发布，无例外。
 | `tibba-error` | HTTP 错误类型 | |
 | `tibba-util` | 通用工具 + 自定义校验器（`x_*`） | `compression`（zstd/lz4）、`http`（cookie/header 辅助），默认全开 |
 | `tibba-config` | 配置加载 | |
-| `tibba-crypto` | 密码哈希 / 密钥 | |
-| `tibba-runtime` | AppState / 请求上下文 / 进程指标 / 启停钩子 / Cron | `process-info`、`scheduler` |
-| `tibba-cache` | Redis 缓存 | |
+| `tibba-crypto` | 密码哈希（Argon2id）/ 签名密钥轮换 / 字段对称加密（AES-256-GCM） | |
+| `tibba-runtime` | AppState / 请求上下文 / 进程指标 / 启停钩子 / 停机信号 / Cron | `process-info`、`scheduler` |
+| `tibba-cache` | Redis 缓存 / Lua 脚本 / 分布式锁 / 滑动窗口限流 / cache-aside + singleflight | |
 | `tibba-request` | 出站 HTTP 客户端 | |
 
 7 个 core 与「重依赖簇」一一对应，这是有原则的下限：`error`→axum、
-`util`→编码/时间/HTTP 杂项、`config`→config-rs、`crypto`→argon2/hmac/sha2、
+`util`→编码/时间/HTTP 杂项、`config`→config-rs、`crypto`→argon2/hmac/sha2/aes-gcm、
 `runtime`→arc-swap/tokio/dashmap、`cache`→redis/deadpool、`request`→reqwest/otel。
 每对 crate 的消费者集合都不相同，任何进一步合并都会让某个 crate 背上用不到的依赖簇。
 
@@ -53,7 +53,7 @@ workspace 内全部 `tibba-*` 均可发布，无例外。
 | `tibba-email` | 邮件发送 |
 | `tibba-oauth` | OAuth 客户端 |
 | `tibba-jwt` | JWT 鉴权 |
-| `tibba-totp` | TOTP 两步验证 |
+| `tibba-totp` | TOTP 两步验证（密钥加密复用 `tibba-crypto`） |
 | `tibba-i18n` | 错误消息本地化 |
 | `tibba-middleware` | HTTP 中间件栈 |
 | `tibba-rbac` | 权限中间件 |

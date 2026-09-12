@@ -6359,6 +6359,7 @@ dependencies = [
 name = "tibba-cache"
 version = "0.2.7"
 dependencies = [
+ "dashmap",
  "deadpool",
  "humantime-serde",
  "lru",
@@ -6395,8 +6396,10 @@ dependencies = [
 name = "tibba-crypto"
 version = "0.2.7"
 dependencies = [
+ "aes-gcm",
  "arc-swap",
  "argon2",
+ "base64 0.23.0",
  "hex",
  "hmac 0.13.0",
  "pretty_assertions",
@@ -6502,6 +6505,7 @@ dependencies = [
  "governor",
  "metrics",
  "opentelemetry",
+ "pretty_assertions",
  "scopeguard",
  "serde",
  "snafu",
@@ -6788,15 +6792,13 @@ dependencies = [
 name = "tibba-totp"
 version = "0.2.7"
 dependencies = [
- "aes-gcm",
  "base64 0.23.0",
  "hmac 0.13.0",
  "rand 0.10.2",
  "sha1 0.11.0",
  "sha2 0.11.0",
- "snafu",
  "subtle",
- "tibba-error",
+ "tibba-crypto",
 ]
 
 [[package]]

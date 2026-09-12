@@ -132,7 +132,10 @@ mod tests {
 
     impl Entry {
         fn live(tag: &'static str) -> Self {
-            Self { tag, expired: false }
+            Self {
+                tag,
+                expired: false,
+            }
         }
         fn dead(tag: &'static str) -> Self {
             Self { tag, expired: true }

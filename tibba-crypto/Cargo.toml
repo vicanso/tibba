@@ -15,7 +15,10 @@ name = "tibba_crypto"
 path = "src/lib.rs"
 
 [dependencies]
+# 落库字段的对称加密（src/cipher.rs）
+aes-gcm = { workspace = true }
 arc-swap = { workspace = true }
+base64 = { workspace = true }
 # Argon2id 密码哈希 + 盐随机源（rand_core 0.6）
 argon2 = { workspace = true }
 rand_core = { workspace = true }

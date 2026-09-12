@@ -22,9 +22,11 @@
 //! | `ctx` | task-local 请求上下文 [`CTX`] / [`Context`] | 始终编译 |
 //! | `process` | 进程 CPU / 内存 / 文件描述符 / 磁盘读写采样 | `process-info` |
 //! | `hook` | 启动前 / 关闭后钩子：[`register_task`] + [`run_before_tasks`] / [`run_after_tasks`] | 始终编译 |
+//! | `shutdown` | 进程级停机信号：[`install_shutdown_signal`] + [`shutdown_token`] | 始终编译 |
 //! | `scheduler` | cron 定时任务：[`register_job_task`] + `run_scheduler_jobs` | `scheduler` |
 //!
-//! `hook` 管「启动/关闭各跑一次」，`scheduler` 管「按 cron 周期性反复跑」。
+//! `shutdown` 管「通知大家该停了」，`hook` 的 `run_after_tasks` 管「大家停完之后
+//! 做清理」；`hook` 管「启动/关闭各跑一次」，`scheduler` 管「按 cron 周期性反复跑」。
 //! 与 `tibba-job`（Postgres 异步任务队列）的分工：本 crate 是进程内编排，
 //! 不落库、不跨进程重试。
 //!
@@ -38,6 +40,7 @@ mod hook;
 mod process;
 #[cfg(feature = "scheduler")]
 mod scheduler;
+mod shutdown;
 
 pub use app_state::*;
 pub use ctx::*;
@@ -46,6 +49,7 @@ pub use hook::*;
 pub use process::*;
 #[cfg(feature = "scheduler")]
 pub use scheduler::*;
+pub use shutdown::*;
 
 /// 钩子相关日志事件的 tracing target。
 /// 可通过 `RUST_LOG=tibba:hook=info`（或 `debug`）进行过滤。

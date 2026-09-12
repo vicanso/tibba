@@ -302,12 +302,19 @@ mod tests {
 
     #[test]
     fn ipv6_with_userinfo_path_and_query() {
-        let parsed =
-            parse_uri::<HashMap<String, String>>("postgres://user:pw@[::1]:5432/mydb?sslmode=require")
-                .unwrap();
+        let parsed = parse_uri::<HashMap<String, String>>(
+            "postgres://user:pw@[::1]:5432/mydb?sslmode=require",
+        )
+        .unwrap();
         assert_eq!(parsed.username, Some("user"));
         assert_eq!(parsed.password, Some("pw"));
-        assert_eq!(parsed.hosts, vec![Host { name: "::1", port: Some(5432) }]);
+        assert_eq!(
+            parsed.hosts,
+            vec![Host {
+                name: "::1",
+                port: Some(5432)
+            }]
+        );
         assert_eq!(parsed.path, Some("mydb"));
         assert_eq!(
             parsed.url().unwrap().as_str(),
@@ -391,8 +398,15 @@ mod tests {
 
         // 重建 URL 时也要还原得回去
         let parsed =
-            parse_uri::<HashMap<String, String>>("postgres://u:pa@ss@db.internal:5432/app").unwrap();
-        assert_eq!(parsed.hosts, vec![Host { name: "db.internal", port: Some(5432) }]);
+            parse_uri::<HashMap<String, String>>("postgres://u:pa@ss@db.internal:5432/app")
+                .unwrap();
+        assert_eq!(
+            parsed.hosts,
+            vec![Host {
+                name: "db.internal",
+                port: Some(5432)
+            }]
+        );
         let url = parsed.url().unwrap();
         assert_eq!(url.host_str(), Some("db.internal"));
         assert_eq!(url.port(), Some(5432));

@@ -125,8 +125,33 @@ pub fn register_job_task(name: impl Into<String>, job: Job) {
     }
 }
 
+/// 订阅进程级停机信号，收到后优雅关闭调度器。
+///
+/// # 为什么不用 `JobScheduler::shutdown_on_ctrl_c`
+/// 那个方法内部只有 `tokio::signal::ctrl_c()`，即**只认 SIGINT**。而容器编排器
+/// （Docker / K8s）停止容器时发的是 **SIGTERM**——于是容器部署下调度器从来不会
+/// 优雅退出，正在执行的定时任务会被进程退出直接腰斩。
+///
+/// 改订阅 [`crate::shutdown_token`]，两种信号都覆盖，也与 HTTP 服务、任务队列
+/// 走同一个停机时刻。
+fn spawn_shutdown_watcher(scheduler: &JobScheduler) {
+    let mut scheduler = scheduler.clone();
+    let token = crate::shutdown_token();
+    tokio::spawn(async move {
+        token.cancelled().await;
+        match scheduler.shutdown().await {
+            Ok(()) => info!(target: SCHEDULER_LOG_TARGET, "scheduler shutdown"),
+            Err(err) => error!(
+                target: SCHEDULER_LOG_TARGET,
+                error = %err,
+                "scheduler shutdown failed",
+            ),
+        }
+    });
+}
+
 /// 启动调度器，将所有已注册的定时任务逐一添加并开始运行。
-/// 注册 Ctrl-C 信号处理，进程退出时自动优雅关闭调度器。
+/// 订阅进程级停机信号（SIGINT / SIGTERM），进程退出时自动优雅关闭调度器。
 /// 返回正在运行的 `JobScheduler` 句柄，调用方可持有以便后续管理。
 /// 任一任务添加失败均 fail-fast——启动期半数任务在跑是更糟糕的状态。
 pub async fn run_scheduler_jobs() -> Result<JobScheduler> {
@@ -163,7 +188,7 @@ pub async fn run_scheduler_jobs() -> Result<JobScheduler> {
         added += 1;
     }
 
-    scheduler.shutdown_on_ctrl_c();
+    spawn_shutdown_watcher(&scheduler);
     scheduler.start().await.context(StartSnafu)?;
 
     info!(target: SCHEDULER_LOG_TARGET, jobs = added, "scheduler started");

@@ -45,6 +45,24 @@ pub enum Error {
     /// Argon2 代价参数非法（如 m_cost 小于 8×p_cost）。
     #[snafu(display("invalid argon2 params: {source}"))]
     InvalidParams { source: argon2::Error },
+
+    /// AES-GCM 加密失败（GCM 加密无业务前置条件，实际几乎不发生）。
+    #[snafu(display("encryption failed"))]
+    Encrypt,
+
+    /// AES-GCM 解密 / 完整性校验失败：密文被篡改、密钥或 AAD 不匹配、数据损坏。
+    ///
+    /// 刻意不区分这几种原因——区分开就成了攻击者可用的 oracle。
+    #[snafu(display("decryption failed"))]
+    Decrypt,
+
+    /// 落库密文的 base64 解码失败。
+    #[snafu(display("decode encrypted blob: {source}"))]
+    Base64 { source: base64::DecodeError },
+
+    /// 密文长度不足以容纳 nonce 与 tag，数据已损坏。
+    #[snafu(display("encrypted blob too short"))]
+    BlobTooShort,
 }
 
 impl From<Error> for BaseError {
@@ -75,13 +93,33 @@ impl From<Error> for BaseError {
                 .with_sub_category("invalid_params")
                 .with_status(500)
                 .with_exception(true),
+            // 加解密失败一律 500 + 告警：要么是密钥配置错了，要么是数据被动过，
+            // 两种都不是调用方能自行恢复的，且都需要人来看一眼
+            Error::Encrypt => BaseError::new("encryption failed")
+                .with_sub_category("encrypt")
+                .with_status(500)
+                .with_exception(true),
+            Error::Decrypt => BaseError::new("decryption failed")
+                .with_sub_category("decrypt")
+                .with_status(500)
+                .with_exception(true),
+            Error::Base64 { source } => BaseError::new(source)
+                .with_sub_category("base64")
+                .with_status(500)
+                .with_exception(true),
+            Error::BlobTooShort => BaseError::new("encrypted blob too short")
+                .with_sub_category("blob_too_short")
+                .with_status(500)
+                .with_exception(true),
         };
         err.with_category("crypto")
     }
 }
 
+mod cipher;
 mod key_grip;
 mod password;
 
+pub use cipher::*;
 pub use key_grip::*;
 pub use password::*;

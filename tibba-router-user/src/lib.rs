@@ -813,8 +813,9 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
                 .with_state(params.pool),
         )
         .route(
+            // 吊销要顺带失效鉴权侧的 key 缓存，故 state 里也需要 cache
             "/api-keys/{id}",
-            delete(api_key::revoke_api_key).with_state(params.pool),
+            delete(api_key::revoke_api_key).with_state((params.pool, params.cache)),
         )
         // 邮箱验证（登录态调用，request 端点带 user_tracker 防刷）
         .route(

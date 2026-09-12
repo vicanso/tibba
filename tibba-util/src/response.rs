@@ -168,6 +168,9 @@ mod tests {
 
     #[test]
     fn zero_duration_means_no_cache() {
-        assert_eq!(cache_control(CacheJson::new(Duration::ZERO, "x")), "no-cache");
+        assert_eq!(
+            cache_control(CacheJson::new(Duration::ZERO, "x")),
+            "no-cache"
+        );
     }
 }

@@ -40,7 +40,8 @@ use tibba_middleware::{ClientIp, RequestId};
 use tibba_model::{Model, UserModel};
 use tibba_model_builtin::{AuditLogModel, AuditLogParams};
 use tibba_session::UserSession;
-use tibba_totp::SecretCipher;
+// 本文件多处用 `secret_cipher` 作局部变量（对应数据库列名），导入改名避免遮蔽
+use tibba_totp::secret_cipher as totp_cipher;
 use tibba_util::{JsonParams, JsonResult, timestamp, uuid};
 use utoipa::ToSchema;
 use validator::Validate;
@@ -152,7 +153,7 @@ pub(crate) async fn enroll(
     }
 
     let secret = tibba_totp::generate_secret();
-    let cipher = SecretCipher::from_app_secret(&state.secret);
+    let cipher = totp_cipher(&state.secret);
     let secret_cipher = cipher.encrypt(&secret)?;
     UserModel::new()
         .set_totp_pending(state.pool, user_id, &secret_cipher)
@@ -208,7 +209,7 @@ pub(crate) async fn activate(
     let secret_cipher = totp.secret_cipher.as_deref().context(NotPendingSnafu)?;
 
     // 仅接受 TOTP 动态码激活（此时尚无恢复码）
-    let cipher = SecretCipher::from_app_secret(&state.secret);
+    let cipher = totp_cipher(&state.secret);
     let secret = cipher.decrypt(secret_cipher)?;
     if !tibba_totp::verify_code(&secret, params.code.trim(), timestamp()) {
         return Err(Error::BadCode.into());
@@ -332,7 +333,7 @@ pub(crate) async fn verify_second_factor(
     let totp = UserModel::new().get_totp_state(pool, user_id).await?;
     // 1) TOTP 动态码
     if let Some(secret_cipher) = &totp.secret_cipher {
-        let cipher = SecretCipher::from_app_secret(app_secret);
+        let cipher = totp_cipher(app_secret);
         let secret = cipher.decrypt(secret_cipher)?;
         if let Some(counter) = tibba_totp::verify_code_step(&secret, code, timestamp()) {
             // 防重放：同一 step 只接受一次。incr 原子自增并在首次设 TTL（覆盖有效窗），

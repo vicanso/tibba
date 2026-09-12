@@ -45,7 +45,11 @@ async fn sized_big() -> Response {
 
 /// 正常的小 JSON 响应。
 async fn small_json() -> Response {
-    ([(header::CONTENT_TYPE, "application/json")], r#"{"ok":true}"#).into_response()
+    (
+        [(header::CONTENT_TYPE, "application/json")],
+        r#"{"ok":true}"#,
+    )
+        .into_response()
 }
 
 /// 起一个本地服务端，返回其地址。

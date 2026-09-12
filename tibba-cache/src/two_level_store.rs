@@ -234,11 +234,7 @@ impl<T: Clone + Serialize + DeserializeOwned> TwoLevelStore<T> {
         let unit = unit_secs(self.ttl);
 
         // L2：完整 TTL + 抖动，避免同周期写入的 key 在同一时刻集体穿透到数据库
-        let redis_ttl = Duration::from_secs(l2_ttl_secs(
-            self.l2_unit(),
-            key,
-            self.jitter_percent,
-        ));
+        let redis_ttl = Duration::from_secs(l2_ttl_secs(self.l2_unit(), key, self.jitter_percent));
         self.redis.set_struct(key, &value, Some(redis_ttl)).await?;
 
         // L1：对齐到边界，使所有节点在同一秒回源刷新
@@ -358,7 +354,13 @@ mod tests {
     #[test]
     fn l2_ttl_is_spread_across_keys() {
         let ttls: HashSet<u64> = (0..500)
-            .map(|i| l2_ttl_secs(UNIT, &format!("feature:flag:{i}"), DEFAULT_L2_JITTER_PERCENT))
+            .map(|i| {
+                l2_ttl_secs(
+                    UNIT,
+                    &format!("feature:flag:{i}"),
+                    DEFAULT_L2_JITTER_PERCENT,
+                )
+            })
             .collect();
         assert!(
             ttls.len() > 30,
@@ -385,7 +387,10 @@ mod tests {
         };
         let narrow = spread(5);
         let wide = spread(50);
-        assert!(wide > narrow, "50% 的铺开范围应明显大于 5%：{wide} vs {narrow}");
+        assert!(
+            wide > narrow,
+            "50% 的铺开范围应明显大于 5%：{wide} vs {narrow}"
+        );
         assert!(wide <= UNIT / 2);
     }
 
@@ -395,7 +400,11 @@ mod tests {
         let ttls: HashSet<u64> = (0..100)
             .map(|i| l2_ttl_secs(UNIT, &format!("k{i}"), 0))
             .collect();
-        assert_eq!(ttls, HashSet::from([UNIT]), "抖动为 0 时所有 key 应同时过期");
+        assert_eq!(
+            ttls,
+            HashSet::from([UNIT]),
+            "抖动为 0 时所有 key 应同时过期"
+        );
     }
 
     /// 百分比超过 100 被钳住，抖动不会超过一整个周期。

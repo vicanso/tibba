@@ -135,11 +135,12 @@ pub trait Model: Send + Sync {
         qb.push(" WHERE deleted_at IS NULL");
 
         let col = self.keyword();
-        if !col.is_empty() && col.chars().all(|c| c.is_alphanumeric() || c == '_') {
-            if let Some(keyword) = &params.keyword {
-                qb.push(format!(" AND {col} LIKE "));
-                qb.push_bind(format!("%{keyword}%"));
-            }
+        if !col.is_empty()
+            && col.chars().all(|c| c.is_alphanumeric() || c == '_')
+            && let Some(keyword) = &params.keyword
+        {
+            qb.push(format!(" AND {col} LIKE "));
+            qb.push_bind(format!("%{keyword}%"));
         }
 
         if let Some(filters) = params.parse_filters()? {

@@ -135,7 +135,10 @@ mod tests {
         let bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
             .await
             .expect("读取响应体");
-        (status, serde_json::from_slice(&bytes).expect("响应体应是合法 JSON"))
+        (
+            status,
+            serde_json::from_slice(&bytes).expect("响应体应是合法 JSON"),
+        )
     }
 
     /// **回归守卫**：校验失败必须是 400，且原因要如实回给调用方。

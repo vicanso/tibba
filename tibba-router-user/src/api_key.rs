@@ -40,7 +40,9 @@ use std::time::Duration;
 use tibba_cache::RedisCache;
 use tibba_error::Error as BaseError;
 use tibba_model::{Model, UserModel};
-use tibba_model_builtin::{ApiKey, ApiKeyModel, CreateApiKeyParams, RolePermissionModel};
+use tibba_model_builtin::{
+    ApiKey, ApiKeyAuth, ApiKeyModel, CreateApiKeyParams, RolePermissionModel,
+};
 use tibba_session::{Session, SessionParams, UserSession};
 use tibba_util::{JsonParams, JsonResult, sha256, uuid};
 use tracing::warn;
@@ -61,6 +63,20 @@ const PREFIX_DISPLAY_LEN: usize = 14;
 const API_KEY_RATE_WINDOW: Duration = Duration::from_secs(60);
 /// 单个 API Key 每窗口最大请求数，超出返回 429。M2M 场景的粗粒度兜底。
 const API_KEY_RATE_MAX: i64 = 600;
+
+/// API Key 查询结果的缓存时长。
+///
+/// 鉴权在**每个**请求上都要跑一次，此前每次都打两条 SQL（按 hash 查 key、更新
+/// last_used_at），再加 `build_session` 的查用户，热路径上三次数据库往返。
+///
+/// 30 秒是安全与开销的折中：吊销走 [`revoke_api_key`] 的显式失效，**立即生效**，
+/// 不依赖这个 TTL；TTL 只兜底「绕过接口直接改库」这类场外操作。
+const API_KEY_CACHE_TTL: Duration = Duration::from_secs(30);
+
+/// API Key 查询缓存的键前缀。吊销时按同样规则拼键失效。
+fn api_key_cache_key(key_hash: &str) -> String {
+    format!("apikey:{key_hash}")
+}
 
 /// 生成新令牌，返回 `(明文 token, key_hash, key_prefix)`。
 ///
@@ -193,14 +209,20 @@ pub(crate) async fn list_api_keys(
     )
 )]
 pub(crate) async fn revoke_api_key(
-    State(pool): State<&'static PgPool>,
+    State((pool, cache)): State<(&'static PgPool, &'static RedisCache)>,
     session: UserSession,
     Path(id): Path<i64>,
 ) -> Result<StatusCode> {
     // revoke 已带 user_id 归属校验：删别人的 key 影响 0 行，对外同样返回 204（不泄露存在性）
-    ApiKeyModel::new()
+    let revoked = ApiKeyModel::new()
         .revoke(pool, session.get_user_id(), id)
         .await?;
+
+    // 鉴权侧按 key_hash 缓存查询结果，这里必须显式失效——否则被吊销的 key
+    // 还能继续用满一个 TTL。吊销是安全操作，「最终一致」在这里不够。
+    if let Some(key_hash) = revoked {
+        cache.del(&api_key_cache_key(&key_hash)).await?;
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -217,6 +239,39 @@ fn extract_token(headers: &HeaderMap) -> Option<String> {
         .get("x-api-key")
         .and_then(|v| v.to_str().ok())
         .map(|v| v.trim().to_string())
+}
+
+/// 按 `key_hash` 查 API Key，结果缓存 [`API_KEY_CACHE_TTL`]。
+///
+/// # 为什么连「查不到」也缓存
+/// 返回类型是 `Option<ApiKeyAuth>`，`None` 同样进缓存。无效令牌是这个端点最常见
+/// 的流量形态（扫描器、过期客户端、配错的集成），不做负缓存的话它们每一次请求
+/// 都会落到数据库上——一个不需要任何凭据就能触发的放大器。
+///
+/// # last_used_at 的精度
+/// 刷新只在**回源时**发生，因此 `last_used_at` 的粒度变成了缓存 TTL（30s）。
+/// 这个字段的用途是「这把 key 最近还在用吗」，30 秒的粒度完全够；换来的是把
+/// 每请求一次的 UPDATE 降到每 30 秒一次。刷新失败只记日志，不影响鉴权。
+async fn lookup_api_key(
+    pool: &'static PgPool,
+    cache: &'static RedisCache,
+    key_hash: &str,
+) -> Result<Option<ApiKeyAuth>> {
+    cache
+        .get_or_set(
+            &api_key_cache_key(key_hash),
+            Some(API_KEY_CACHE_TTL),
+            || async {
+                let auth = ApiKeyModel::new().find_active_by_hash(pool, key_hash).await?;
+                if let Some(auth) = &auth
+                    && let Err(e) = ApiKeyModel::new().touch_last_used(pool, auth.id).await
+                {
+                    warn!(target: LOG_TARGET, error = %e, "touch api key last_used failed");
+                }
+                Ok(auth)
+            },
+        )
+        .await
 }
 
 /// 根据 user_id 装配一个「已登录」Session（account + roles + groups + permissions）。
@@ -282,6 +337,14 @@ async fn api_key_rate_limited(cache: &RedisCache, key_id: i64) -> Option<Respons
 /// 固定窗口配额（[`API_KEY_RATE_MAX`]/[`API_KEY_RATE_WINDOW`]）时直接返回 429；
 /// 限流用 Redis 计数、跨实例一致，Redis 异常仍放行（见 [`api_key_rate_limited`]）。
 /// 须挂在 session 中间件「之后」（更内层），以便用有效 key 的 Session 覆盖空 Session。
+///
+/// # 热路径开销
+/// key 查询结果缓存 [`API_KEY_CACHE_TTL`]（见 [`lookup_api_key`]），有效与无效
+/// 令牌都缓存。此前每个请求要打三次数据库（按 hash 查 key、更新 last_used_at、
+/// 查用户装配 Session），现在前两次降到每 30 秒一次。
+///
+/// `build_session` 的查用户**尚未**缓存：角色 / 权限变更需要立即生效，缓存它
+/// 会让降权出现窗口期，这个取舍与 key 本身不同（key 吊销有显式失效兜底）。
 pub async fn api_key_auth(
     State((pool, cache, params)): State<(&'static PgPool, &'static RedisCache, Arc<SessionParams>)>,
     mut req: Request,
@@ -291,10 +354,7 @@ pub async fn api_key_auth(
         && token.starts_with(TOKEN_PREFIX)
     {
         let key_hash = sha256(token.as_bytes());
-        match ApiKeyModel::new()
-            .find_active_by_hash(pool, &key_hash)
-            .await
-        {
+        match lookup_api_key(pool, cache, &key_hash).await {
             Ok(Some(auth)) => {
                 // 有效 key 先过每-key 限流：超配额直接 429，防止单 key 打爆后端
                 if let Some(resp) = api_key_rate_limited(cache, auth.id).await {
@@ -302,10 +362,6 @@ pub async fn api_key_auth(
                 }
                 if let Some(session) = build_session(pool, cache, params, auth.user_id).await {
                     req.extensions_mut().insert(session);
-                    // 更新最近使用时间，best-effort：失败不影响鉴权
-                    if let Err(e) = ApiKeyModel::new().touch_last_used(pool, auth.id).await {
-                        warn!(target: LOG_TARGET, error = %e, "touch api key last_used failed");
-                    }
                 }
             }
             // 无效令牌：不注入，按未登录处理

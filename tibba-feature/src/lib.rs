@@ -103,10 +103,7 @@ impl Clone for FeatureFlags {
 impl FeatureFlags {
     /// 以给定的 RedisCache 创建服务，每次读取都直连 Redis。
     pub fn new(cache: &'static RedisCache) -> Self {
-        Self {
-            cache,
-            local: None,
-        }
+        Self { cache, local: None }
     }
 
     /// 挂上进程内缓存，`ttl` 为本地快照的刷新周期，支持链式调用。
@@ -136,7 +133,11 @@ impl FeatureFlags {
     /// 读-改-写路径必须用它：若基于陈旧的本地快照改写，另一个节点在此期间的
     /// 改动会被整片覆盖掉。
     async fn load_authoritative(&self) -> Result<Flags> {
-        Ok(self.cache.get_struct::<Flags>(FLAGS_KEY).await?.unwrap_or_default())
+        Ok(self
+            .cache
+            .get_struct::<Flags>(FLAGS_KEY)
+            .await?
+            .unwrap_or_default())
     }
 
     /// 读取全部开关，开启进程内缓存时优先走缓存。

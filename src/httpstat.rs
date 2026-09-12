@@ -32,7 +32,9 @@ use tibba_model::{AlarmConfig, ConfigurationModel, Model, ResultValue};
 use tibba_model_builtin::{
     HttpDetector, HttpDetectorModel, HttpStat, HttpStatInsertParams, HttpStatModel, REGION_ANY,
 };
-use tibba_runtime::{BoxFuture, Task, register_job_task, register_task, singleton_cron_job};
+use tibba_runtime::{
+    BoxFuture, Task, is_shutting_down, register_job_task, register_task, singleton_cron_job,
+};
 use time::OffsetDateTime;
 use tokio::sync::Semaphore;
 use tokio::time::timeout;
@@ -323,6 +325,17 @@ async fn run_detector_stat() -> Result<(i32, i32, i32)> {
     let region = must_get_basic_config().region.clone();
 
     loop {
+        // 进程正在停机时不再翻下一页：探测是分页扫描，任务量大时一轮可能跑很久，
+        // 而 cron 调度器已经在关闭流程里了，继续翻页只会被进程退出腰斩。
+        // 已经派发出去的这一批仍会跑完（下面 join 全部 handle）。
+        if is_shutting_down() {
+            info!(
+                target: LOG_TARGET_DETECTOR,
+                offset,
+                "shutting down; stop paging detectors"
+            );
+            break;
+        }
         // 最大并行任务数
         let max_concurrent = 3;
         let semaphore = Arc::new(Semaphore::new(max_concurrent));

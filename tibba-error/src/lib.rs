@@ -320,7 +320,10 @@ mod tests {
         assert!(!should_redact(StatusCode::OK, None));
         // 显式设置双向覆盖默认
         assert!(should_redact(StatusCode::BAD_REQUEST, Some(true)));
-        assert!(!should_redact(StatusCode::INTERNAL_SERVER_ERROR, Some(false)));
+        assert!(!should_redact(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Some(false)
+        ));
     }
 
     /// 回归守卫：`exception` 只管告警，不得触发脱敏。
@@ -461,7 +464,10 @@ mod tests {
             .with_status(500)
             .with_exception(true)
             .into_response();
-        let stored = res.extensions().get::<Error>().expect("Error 应存入 extensions");
+        let stored = res
+            .extensions()
+            .get::<Error>()
+            .expect("Error 应存入 extensions");
         assert!(stored.is_exception());
     }
 

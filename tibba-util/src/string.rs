@@ -53,8 +53,8 @@ fn hmac_sha256(secret: &[u8], parts: &[&[u8]]) -> Result<String> {
     // `Hmac` 接受任意长度密钥（超出块长时先哈希），这里的 Err 实际不可达；
     // 但仍如实上抛而非 unwrap——crate 内禁止 unwrap，且真出错时静默产生一个
     // 错误签名远比报错更难排查。
-    let mut mac = HmacSha256::new_from_slice(secret)
-        .map_err(|e| Error::new(e).with_category("sign_hash"))?;
+    let mut mac =
+        HmacSha256::new_from_slice(secret).map_err(|e| Error::new(e).with_category("sign_hash"))?;
     for part in parts {
         mac.update(part);
     }
@@ -167,7 +167,10 @@ pub fn sign_hash(value: &str, secret: &str) -> Result<String> {
 pub fn timestamp_hash(value: &str, secret: &str) -> Result<(i64, String)> {
     let ts = timestamp();
     let ts_str = ts.to_string();
-    let hash = hmac_sha256(secret.as_bytes(), &[ts_str.as_bytes(), b":", value.as_bytes()])?;
+    let hash = hmac_sha256(
+        secret.as_bytes(),
+        &[ts_str.as_bytes(), b":", value.as_bytes()],
+    )?;
     Ok((ts, hash))
 }
 
@@ -197,8 +200,10 @@ pub fn validate_timestamp_hash(ts: i64, value: &str, hash: &str, secret: &str) -
             .with_status(401));
     }
     let ts_str = ts.to_string();
-    let expected_hash =
-        hmac_sha256(secret.as_bytes(), &[ts_str.as_bytes(), b":", value.as_bytes()])?;
+    let expected_hash = hmac_sha256(
+        secret.as_bytes(),
+        &[ts_str.as_bytes(), b":", value.as_bytes()],
+    )?;
 
     if !constant_time_eq(expected_hash.as_bytes(), hash.as_bytes()) {
         return Err(Error::new("signature is invalid")
