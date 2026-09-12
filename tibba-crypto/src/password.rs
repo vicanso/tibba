@@ -28,9 +28,7 @@
 //! [`PasswordCheck::MatchedNeedsRehash`]，调用方应借这次成功登录用 Argon2 重写该用户
 //! 的密码列，使旧值自然消亡。
 
-use crate::{
-    Argon2HashSnafu, Error, InvalidParamsSnafu, PhcParseSnafu, SecretTooLongSnafu,
-};
+use crate::{Argon2HashSnafu, Error, InvalidParamsSnafu, PhcParseSnafu, SecretTooLongSnafu};
 use argon2::password_hash::phc::PasswordHash;
 use argon2::password_hash::{PasswordHasher, PasswordVerifier};
 use argon2::{Algorithm, Argon2, Params, Version};

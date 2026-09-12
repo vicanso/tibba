@@ -262,7 +262,9 @@ async fn lookup_api_key(
             &api_key_cache_key(key_hash),
             Some(API_KEY_CACHE_TTL),
             || async {
-                let auth = ApiKeyModel::new().find_active_by_hash(pool, key_hash).await?;
+                let auth = ApiKeyModel::new()
+                    .find_active_by_hash(pool, key_hash)
+                    .await?;
                 if let Some(auth) = &auth
                     && let Err(e) = ApiKeyModel::new().touch_last_used(pool, auth.id).await
                 {

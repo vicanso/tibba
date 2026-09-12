@@ -43,8 +43,8 @@
 use crate::{ClientIp, Error, LOG_TARGET};
 use axum::extract::{Request, State};
 use axum::http::{HeaderValue, header};
-use axum::response::IntoResponse;
 use axum::middleware::Next;
+use axum::response::IntoResponse;
 use axum::response::Response;
 use governor::clock::DefaultClock;
 use governor::state::keyed::DashMapStateStore;
@@ -243,11 +243,26 @@ mod tests {
     /// 报 0 等于邀请客户端立刻重试，比不给这个头更糟。
     #[test]
     fn retry_after_rounds_up_to_whole_seconds() {
-        assert_eq!(header_value(Some(Duration::from_millis(1))).as_deref(), Some("1"));
-        assert_eq!(header_value(Some(Duration::from_millis(999))).as_deref(), Some("1"));
-        assert_eq!(header_value(Some(Duration::from_secs(1))).as_deref(), Some("1"));
-        assert_eq!(header_value(Some(Duration::from_millis(1001))).as_deref(), Some("2"));
-        assert_eq!(header_value(Some(Duration::from_secs(60))).as_deref(), Some("60"));
+        assert_eq!(
+            header_value(Some(Duration::from_millis(1))).as_deref(),
+            Some("1")
+        );
+        assert_eq!(
+            header_value(Some(Duration::from_millis(999))).as_deref(),
+            Some("1")
+        );
+        assert_eq!(
+            header_value(Some(Duration::from_secs(1))).as_deref(),
+            Some("1")
+        );
+        assert_eq!(
+            header_value(Some(Duration::from_millis(1001))).as_deref(),
+            Some("2")
+        );
+        assert_eq!(
+            header_value(Some(Duration::from_secs(60))).as_deref(),
+            Some("60")
+        );
         // 零等待同样至少给 1 秒
         assert_eq!(header_value(Some(Duration::ZERO)).as_deref(), Some("1"));
     }

@@ -182,7 +182,11 @@ impl RedisCache {
     /// 实例立刻抢到锁重跑一遍，正好破坏「只跑一次」的目的。
     ///
     /// 临界区仍须幂等：执行超过 `ttl` 时锁会自然过期并可能被他人持有。
-    pub async fn lock_with_token(&self, key: &str, ttl: Option<Duration>) -> Result<Option<LockToken>> {
+    pub async fn lock_with_token(
+        &self,
+        key: &str,
+        ttl: Option<Duration>,
+    ) -> Result<Option<LockToken>> {
         // 令牌必须不可预测且不重复：它是「这把锁是我的」的唯一凭据
         let token = nanoid(24);
         let acquired: bool = redis::cmd("SET")

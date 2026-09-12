@@ -162,9 +162,10 @@ impl Model for DetectorGroupModel {
         // owner_id 未指定时默认与 created_by 相同（创建者即为拥有者）
         if let Some(obj) = params.as_object_mut()
             && !obj.contains_key("owner_id")
-                && let Some(created_by) = obj.get("created_by").cloned() {
-                    obj.insert("owner_id".to_string(), created_by);
-                }
+            && let Some(created_by) = obj.get("created_by").cloned()
+        {
+            obj.insert("owner_id".to_string(), created_by);
+        }
         let params: DetectorGroupInsertParams =
             serde_json::from_value(params).context(JsonSnafu)?;
         let row: (i64,) = sqlx::query_as(

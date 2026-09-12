@@ -237,13 +237,15 @@ impl Model for DetectorGroupUserModel {
         // user_id 支持前端以字符串形式传入（JS 大整数安全）
         if let Some(obj) = params.as_object_mut() {
             if !obj.contains_key("invited_by")
-                && let Some(created_by) = obj.get("created_by").cloned() {
-                    obj.insert("invited_by".to_string(), created_by);
-                }
+                && let Some(created_by) = obj.get("created_by").cloned()
+            {
+                obj.insert("invited_by".to_string(), created_by);
+            }
             if let Some(id_str) = obj.get("user_id").and_then(|v| v.as_str())
-                && let Ok(id) = id_str.parse::<u64>() {
-                    obj.insert("user_id".to_string(), id.into());
-                }
+                && let Ok(id) = id_str.parse::<u64>()
+            {
+                obj.insert("user_id".to_string(), id.into());
+            }
         }
         let params: DetectorGroupUserInsertParams =
             serde_json::from_value(params).context(JsonSnafu)?;

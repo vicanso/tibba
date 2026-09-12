@@ -206,9 +206,10 @@ impl Model for TokenRechargeModel {
         // user_id 支持前端以字符串形式传入
         if let Some(obj) = data.as_object_mut()
             && let Some(id_str) = obj.get("user_id").and_then(|v| v.as_str())
-                && let Ok(id) = id_str.parse::<i64>() {
-                    obj.insert("user_id".to_string(), id.into());
-                }
+            && let Ok(id) = id_str.parse::<i64>()
+        {
+            obj.insert("user_id".to_string(), id.into());
+        }
         let p: TokenRechargeInsertParams = serde_json::from_value(data).context(JsonSnafu)?;
         let row: (i64,) = sqlx::query_as(
             r#"INSERT INTO token_recharges (user_id, amount, source, order_id, remark, created_by)
@@ -282,13 +283,15 @@ impl Model for TokenRechargeModel {
         filters: &HashMap<String, String>,
     ) -> Result<()> {
         if let Some(user_id) = filters.get("user_id")
-            && let Ok(v) = user_id.parse::<i64>() {
-                qb.push(" AND user_id = ").push_bind(v);
-            }
+            && let Ok(v) = user_id.parse::<i64>()
+        {
+            qb.push(" AND user_id = ").push_bind(v);
+        }
         if let Some(source) = filters.get("source")
-            && let Ok(v) = source.parse::<i16>() {
-                qb.push(" AND source = ").push_bind(v);
-            }
+            && let Ok(v) = source.parse::<i16>()
+        {
+            qb.push(" AND source = ").push_bind(v);
+        }
         Ok(())
     }
 }

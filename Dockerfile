@@ -8,7 +8,7 @@ RUN npm ci --ignore-scripts
 COPY admin/ ./
 RUN npm run build
 
-FROM rust:1.95.0 AS builder
+FROM rust:1.98.1 AS builder
 ARG GIT_COMMIT_ID
 WORKDIR /tibba
 

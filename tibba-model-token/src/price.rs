@@ -367,9 +367,10 @@ impl Model for TokenPriceModel {
             qb.push(" AND service = ").push_bind(service.clone());
         }
         if let Some(status) = filters.get("status")
-            && let Ok(v) = status.parse::<i16>() {
-                qb.push(" AND status = ").push_bind(v);
-            }
+            && let Ok(v) = status.parse::<i16>()
+        {
+            qb.push(" AND status = ").push_bind(v);
+        }
         Ok(())
     }
 }
