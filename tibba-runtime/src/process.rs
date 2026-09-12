@@ -82,7 +82,7 @@ pub async fn get_process_system_info_async(pid: usize) -> ProcessSystemInfo {
 /// 在 async 上下文中请改用 [`get_process_system_info_async`]，否则会堵住
 /// tokio worker 线程。
 // max_size 上限：按 PID 缓存，加 LRU 容量上限防高基数 PID 调用导致 map 无界增长
-#[cached(max_size = 64, ttl = 10, sync_writes = "by_key")]
+#[cached(max_size = 64, ttl_secs = 10, sync_writes = "by_key")]
 pub fn get_process_system_info(pid: usize) -> ProcessSystemInfo {
     let mut sys = System::new();
     let sysinfo_pid = Pid::from(pid);

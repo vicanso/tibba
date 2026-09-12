@@ -44,9 +44,11 @@ impl Task for DalTask {
                 .set(storage)
                 .map_err(|_| Error::new("set opendal storage fail"))?;
 
+            // opendal 0.58 移除了 native_capability / full_capability，
+            // capability() 现在就是「组装完各 layer 之后」对外的能力契约
             info!(
                 schema = ?info.scheme(),
-                full_capability = ?info.full_capability(),
+                capability = ?info.capability(),
                 "open dal storage init success"
             );
 

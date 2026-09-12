@@ -115,10 +115,10 @@ fn finalize_dal<B>(builder: B) -> Result<Storage>
 where
     B: opendal::Builder,
 {
+    // opendal 0.58 起 `Operator::new` 直接返回构造完成的 Operator，不再需要 `finish()`
     let dal = Operator::new(builder)
         .context(OpenDalSnafu)?
-        .layer(MimeGuessLayer::default())
-        .finish();
+        .layer(MimeGuessLayer::default());
     Ok(Storage::new(dal))
 }
 

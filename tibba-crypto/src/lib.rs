@@ -31,7 +31,17 @@ pub enum Error {
         source: argon2::password_hash::Error,
     },
 
-    /// 解析已存储的 Argon2 PHC 串失败（库中哈希损坏 / 校验阶段内部异常）。
+    /// 解析已存储的 PHC 串失败——库里的哈希损坏了。
+    ///
+    /// 与 [`Error::Argon2Parse`] 分开：password-hash 0.6 起把「PHC 文本解析」
+    /// 与「哈希计算」拆成了两个错误类型，合并只会丢掉这层区分——前者指向数据
+    /// 损坏，后者指向参数或实现问题，排查方向完全不同。
+    #[snafu(display("phc parse error: {source}"))]
+    PhcParse {
+        source: argon2::password_hash::phc::Error,
+    },
+
+    /// 校验阶段的 Argon2 内部异常（参数非法等，非「密码不匹配」）。
     #[snafu(display("argon2 parse error: {source}"))]
     Argon2Parse {
         source: argon2::password_hash::Error,
@@ -75,6 +85,10 @@ impl From<Error> for BaseError {
                 .with_exception(true),
             Error::Argon2Hash { source } => BaseError::new(source)
                 .with_sub_category("argon2_hash")
+                .with_status(500)
+                .with_exception(true),
+            Error::PhcParse { source } => BaseError::new(source)
+                .with_sub_category("phc_parse")
                 .with_status(500)
                 .with_exception(true),
             Error::Argon2Parse { source } => BaseError::new(source)

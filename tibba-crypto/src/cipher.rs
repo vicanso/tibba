@@ -43,7 +43,6 @@ use aes_gcm::aead::{Aead, Payload};
 use aes_gcm::{Aes256Gcm, Key, KeyInit, Nonce};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
-use rand_core::{OsRng, RngCore};
 use sha2::{Digest, Sha256};
 use snafu::{OptionExt, ResultExt, ensure};
 
@@ -107,9 +106,10 @@ impl SecretCipher {
     /// 写库，也无法把 A 行的密文搬到 B 行——[`Self::encrypt`] 本身挡不住这个。
     pub fn encrypt_with_aad(&self, plaintext: &[u8], aad: &[u8]) -> Result<String> {
         let mut nonce = [0u8; NONCE_LEN];
-        // OsRng 直接取系统熵源；nonce 重用会彻底摧毁 GCM 的安全性，
-        // 这里不能用任何可预测的伪随机源
-        OsRng.fill_bytes(&mut nonce);
+        // 直接取系统熵源：nonce 重用会彻底摧毁 GCM 的安全性，不能用任何可预测的
+        // 伪随机源。走 getrandom 而非 rand——rand_core 0.10 起已不再提供 OsRng，
+        // 而 password-hash 生成盐用的也是 getrandom 这条路径。
+        getrandom::fill(&mut nonce).ok().context(EncryptSnafu)?;
 
         // aes_gcm::Error 刻意不透出细节（避免成为 oracle），故归一为 Encrypt
         let ciphertext = self

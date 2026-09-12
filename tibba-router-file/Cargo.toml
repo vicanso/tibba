@@ -18,7 +18,7 @@ path = "src/lib.rs"
 [dependencies]
 axum = { workspace = true }
 image = { workspace = true }
-imageoptimize = "0.4.1"
+imageoptimize = "0.4.4"
 mime_guess2 = { workspace = true }
 serde = { workspace = true }
 snafu = { workspace = true }

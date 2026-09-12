@@ -19,9 +19,10 @@ path = "src/lib.rs"
 aes-gcm = { workspace = true }
 arc-swap = { workspace = true }
 base64 = { workspace = true }
-# Argon2id 密码哈希 + 盐随机源（rand_core 0.6）
+# Argon2id 密码哈希（盐由其内部生成）
 argon2 = { workspace = true }
-rand_core = { workspace = true }
+# AES-GCM nonce 的系统熵源
+getrandom = { workspace = true }
 hex = { workspace = true }
 hmac = { workspace = true }
 sha2 = { workspace = true }

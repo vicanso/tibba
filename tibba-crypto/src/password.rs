@@ -28,10 +28,12 @@
 //! [`PasswordCheck::MatchedNeedsRehash`]，调用方应借这次成功登录用 Argon2 重写该用户
 //! 的密码列，使旧值自然消亡。
 
-use crate::{Argon2HashSnafu, Argon2ParseSnafu, Error, InvalidParamsSnafu, SecretTooLongSnafu};
-use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
+use crate::{
+    Argon2HashSnafu, Error, InvalidParamsSnafu, PhcParseSnafu, SecretTooLongSnafu,
+};
+use argon2::password_hash::phc::PasswordHash;
+use argon2::password_hash::{PasswordHasher, PasswordVerifier};
 use argon2::{Algorithm, Argon2, Params, Version};
-use rand_core::OsRng;
 use snafu::{ResultExt, ensure};
 use subtle::ConstantTimeEq;
 
@@ -150,12 +152,14 @@ impl PasswordPolicy {
     }
 
     /// 用当前策略对 `secret` 加盐哈希，返回可直接入库的 PHC 字符串。
+    ///
+    /// 盐由 `hash_password` 内部经 getrandom 生成（password-hash 0.6 起的行为），
+    /// 调用方不再需要、也不应该自己传 RNG——少一个能传错的参数。
     pub fn hash(&self, secret: &[u8]) -> Result<String> {
         self.ensure_len(secret)?;
-        let salt = SaltString::generate(&mut OsRng);
-        let hash = self
+        let hash: PasswordHash = self
             .hasher()?
-            .hash_password(secret, &salt)
+            .hash_password(secret)
             .context(Argon2HashSnafu)?;
         Ok(hash.to_string())
     }
@@ -176,8 +180,9 @@ impl PasswordPolicy {
             return true;
         };
         // argon2i / argon2d 用于口令存储都弱于 argon2id，一并升级
+        // password-hash 0.6 起 Algorithm 只实现 TryFrom<&str>（不再有 TryFrom<Ident>）
         if !matches!(
-            Algorithm::try_from(parsed.algorithm),
+            Algorithm::try_from(parsed.algorithm.as_str()),
             Ok(Algorithm::Argon2id)
         ) {
             return true;
@@ -209,7 +214,7 @@ impl PasswordPolicy {
             };
         }
 
-        let parsed = PasswordHash::new(stored).context(Argon2ParseSnafu)?;
+        let parsed = PasswordHash::new(stored).context(PhcParseSnafu)?;
         // 用本策略构造的实例而非 `Argon2::default()`。
         //
         // 两者今天等价：`PasswordVerifier` 会从 PHC 串里读出算法 / 版本 / 代价参数
@@ -226,7 +231,8 @@ impl PasswordPolicy {
                 }
             }
             // 仅「密码不匹配」归为 Mismatch；其余（哈希损坏 / 参数异常）作为服务端错误上抛
-            Err(argon2::password_hash::Error::Password) => Ok(PasswordCheck::Mismatch),
+            // password-hash 0.6 起该变体由 Password 更名为 PasswordInvalid
+            Err(argon2::password_hash::Error::PasswordInvalid) => Ok(PasswordCheck::Mismatch),
             Err(source) => Err(Error::Argon2Parse { source }),
         }
     }
@@ -399,13 +405,42 @@ mod tests {
         assert!(policy.needs_rehash(""), "空串");
     }
 
+    /// **跨版本兼容守卫**：argon2 0.5 产出的哈希必须仍能验证通过。
+    ///
+    /// 这个 PHC 串是用 **argon2 0.5.3 + password-hash 0.5** 实际生成的，不是本
+    /// 代码的产物。「本进程 hash 一次再 verify 一次」只能证明自洽，证明不了库
+    /// 升级（argon2 0.5→0.6，PHC 解析换成 phc crate）之后**库里已有的**哈希
+    /// 还认不认——而密码存储一旦认不回去，就是全量用户被锁在门外。
+    ///
+    /// 参数取的是 `PasswordPolicy::default()` 的组合（m=19456, t=2, p=1），
+    /// 即线上存量哈希的实际形态。
+    #[test]
+    fn hash_from_argon2_0_5_still_verifies() {
+        let stored = "$argon2id$v=19$m=19456,t=2,p=1$0e2N3DNvIUvEizt0BfRMjw$\
+                      bz8bPlMbKr3+1LVhk/YRVKYTPu9GGZD9okPSWzV4Iis";
+        let secret = b"correct horse battery staple";
+
+        assert_eq!(
+            verify_password(stored, secret).unwrap(),
+            PasswordCheck::Matched,
+            "argon2 0.5 生成的哈希必须仍然验得过"
+        );
+        assert_eq!(
+            verify_password(stored, b"wrong").unwrap(),
+            PasswordCheck::Mismatch
+        );
+        // 参数与当前默认策略一致，不应被判为需要重算
+        assert!(!PasswordPolicy::default().needs_rehash(stored));
+    }
+
     /// 非 argon2id（argon2i/argon2d）用于口令存储更弱，应被标记升级。
     #[test]
     fn non_argon2id_algorithm_needs_rehash() {
         let params = Params::new(8, 1, 1, None).unwrap();
-        let salt = SaltString::generate(&mut OsRng);
         let argon2i = Argon2::new(Algorithm::Argon2i, Version::V0x13, params);
-        let stored = argon2i.hash_password(b"secret", &salt).unwrap().to_string();
+        // 盐由 hash_password 内部生成（password-hash 0.6 起不再接收 RNG 参数）
+        let stored: PasswordHash = argon2i.hash_password(b"secret").unwrap();
+        let stored = stored.to_string();
         assert!(stored.starts_with("$argon2i$"));
 
         let policy = cheap(8, 1);
