@@ -484,6 +484,15 @@ impl RedisClient {
         }
     }
 
+    /// 建池时使用的节点 URL 列表。
+    ///
+    /// 供需要**自建连接**的场景使用（pub/sub 必须独占连接，不能走 deadpool）。
+    /// 返回的 URL 含 auth 信息，**不要**直接打日志——打印用 `redact_node_url`。
+    #[must_use]
+    pub fn node_urls(&self) -> &[String] {
+        &self.nodes
+    }
+
     /// 是否为集群模式。
     pub fn is_cluster(&self) -> bool {
         matches!(self.pool, RedisPool::Cluster(_))

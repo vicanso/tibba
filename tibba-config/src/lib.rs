@@ -34,6 +34,28 @@ pub enum Error {
     /// 带上键名与实际取值，避免运维只看到一句笼统的类型错误。
     #[snafu(display("invalid duration at {key}: {value:?}"))]
     InvalidDuration { key: String, value: String },
+
+    /// `*_FILE` 指向的密钥文件读不出来。
+    ///
+    /// **必须 fail fast**：读不到密钥就退回 TOML 里的占位值，等于带着一个
+    /// 人畜无害的默认口令跑起来——这比起不来危险得多。
+    #[snafu(display("read secret file for {key} at {path}: {source}"))]
+    SecretFile {
+        key: String,
+        path: String,
+        source: std::io::Error,
+    },
+
+    /// `*_FILE` 指向的文件内容为空。
+    ///
+    /// 空密钥一定是部署失误（secret 没挂上、挂错了路径）。若放行，
+    /// `ignore_empty` 会把它当作「未设置」，于是静默回落到 TOML 的默认值。
+    #[snafu(display("secret file for {key} at {path} is empty"))]
+    EmptySecretFile { key: String, path: String },
+
+    /// 同一项同时给了 `X` 与 `X_FILE`，无法判断该用哪个。
+    #[snafu(display("both {key} and {file_key} are set; they are exclusive"))]
+    ConflictingSecret { key: String, file_key: String },
 }
 
 impl From<Error> for BaseError {
@@ -48,6 +70,20 @@ impl From<Error> for BaseError {
                 BaseError::new(format!("invalid duration at {key}: {value:?}"))
                     .with_sub_category("invalid_duration")
             }
+            // 三者都是启动期的部署配置错误。注意只带 key / path，
+            // 绝不把读出来的内容放进错误信息——那正是要保护的密钥
+            Error::SecretFile { key, path, source } => {
+                BaseError::new(format!("read secret file for {key} at {path}: {source}"))
+                    .with_sub_category("secret_file")
+            }
+            Error::EmptySecretFile { key, path } => {
+                BaseError::new(format!("secret file for {key} at {path} is empty"))
+                    .with_sub_category("empty_secret_file")
+            }
+            Error::ConflictingSecret { key, file_key } => BaseError::new(format!(
+                "both {key} and {file_key} are set; they are exclusive"
+            ))
+            .with_sub_category("conflicting_secret"),
         };
         err.with_category("config").with_exception(true)
     }

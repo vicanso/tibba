@@ -31,7 +31,8 @@ use std::pin::Pin;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
-use tibba_util::{Stopwatch, json_get, timestamp};
+use tibba_error::Error as BaseError;
+use tibba_util::{Stopwatch, timestamp};
 use tracing::{info, warn};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
@@ -262,16 +263,22 @@ async fn run_on_done(config: &ClientConfig, stats: &HttpStats, err: Option<&Erro
     }
 }
 
-/// 从响应体中提取 `message` 字段，状态码 ≥400 时构造业务错误。
+/// 状态码 ≥400 时，把上游响应体重建成结构化错误。
+///
+/// 此前这里是 `json_get(data, "message")`——只捞一个字符串，上游的
+/// `category` / `sub_category` / `code` / `extra` 全部丢弃，且因为没设状态码，
+/// 最终一律落地成本服务的 500 并被脱敏；运维在客户端侧只看得到
+/// "internal server error"，连是哪个上游、回了什么都不知道。
+///
+/// 改走 [`BaseError::from_upstream`]：上游若是同样用 `tibba-error` 的服务，
+/// 结构化字段原样带回；否则退化为截断后的响应体文本。对外状态码由
+/// `From<Error> for BaseError` 统一映射成 502，见那里的说明。
 pub fn handle_fail(service: &str, status: u16, data: &Bytes) -> Result<()> {
     if status >= 400 {
-        let mut message = json_get(data, "message");
-        if message.is_empty() {
-            message = "unknown error".to_string();
-        }
-        return Err(Error::Common {
+        return Err(Error::Upstream {
             service: service.to_string(),
-            message,
+            status,
+            source: BaseError::from_upstream(status, data),
         });
     }
     Ok(())

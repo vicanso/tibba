@@ -31,6 +31,10 @@
 //! 默认不开启是有意的：本模块的用途包含「线上急停」，而急停的生效速度应当由
 //! 部署方按自己的 SLA 决定，不该由库替他做主。
 //!
+//! 开了本地缓存又要求急停立刻生效时，再加
+//! [`FeatureFlags::with_instant_invalidation`]：改动经 Redis pub/sub 广播到各
+//! 节点，`ttl` 退居为广播丢失时的兜底。
+//!
 //! ## 故障默认安全
 //! [`FeatureFlags::is_enabled`] 在读失败 / 开关缺失时一律返回 `false`——宁可不开新
 //! 特性，也不在 Redis 抖动时误放量。
@@ -46,7 +50,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::num::NonZeroUsize;
 use std::time::Duration;
-use tibba_cache::{RedisCache, TwoLevelStore};
+use tibba_cache::{InvalidationBus, InvalidationListener, RedisCache, TwoLevelStore};
 use tibba_error::Error as BaseError;
 
 /// 存放所有开关的 Redis 键。
@@ -79,6 +83,10 @@ pub struct FeatureFlag {
 pub struct FeatureFlags {
     /// 权威存储。读-改-写与未开启本地缓存时的读取都走这里。
     cache: &'static RedisCache,
+    /// 进程内缓存的刷新周期，见 [`FeatureFlags::with_local_cache`]。
+    local_ttl: Option<Duration>,
+    /// 跨节点即时失效的频道名，见 [`FeatureFlags::with_instant_invalidation`]。
+    channel: Option<String>,
     /// 可选的进程内缓存层（L1 进程内 + L2 Redis）。
     ///
     /// L1 的 TTL 对齐到墙钟边界，使集群内各节点在**同一秒**回源刷新——
@@ -95,6 +103,8 @@ impl Clone for FeatureFlags {
     fn clone(&self) -> Self {
         Self {
             cache: self.cache,
+            local_ttl: self.local_ttl,
+            channel: self.channel.clone(),
             local: None,
         }
     }
@@ -103,7 +113,12 @@ impl Clone for FeatureFlags {
 impl FeatureFlags {
     /// 以给定的 RedisCache 创建服务，每次读取都直连 Redis。
     pub fn new(cache: &'static RedisCache) -> Self {
-        Self { cache, local: None }
+        Self {
+            cache,
+            local_ttl: None,
+            channel: None,
+            local: None,
+        }
     }
 
     /// 挂上进程内缓存，`ttl` 为本地快照的刷新周期，支持链式调用。
@@ -118,14 +133,54 @@ impl FeatureFlags {
     /// Redis 侧的存储时长不受影响，仍是 [`PERSIST_TTL`]（近似永久）。
     #[must_use]
     pub fn with_local_cache(mut self, ttl: Duration) -> Self {
-        self.local = Some(
-            TwoLevelStore::new(self.cache.clone(), LOCAL_CACHE_SIZE, ttl)
-                // 开关在 Redis 里近似永不过期，不能跟着 L1 的刷新周期一起失效
-                .with_l2_ttl(PERSIST_TTL)
-                // 只有一个键，没有「大量 key 同时过期」可打散，抖动无意义
-                .with_jitter_percent(0),
-        );
+        self.local_ttl = Some(ttl);
+        self.rebuild_local()
+    }
+
+    /// 开启跨节点**即时**失效，`channel` 为 Redis pub/sub 频道名，支持链式调用。
+    ///
+    /// 只在同时开了 [`Self::with_local_cache`] 时有意义（两者调用顺序随意）。
+    /// 开启后任一节点改动开关，其余节点会立刻丢弃本地快照，而不是等满一个 `ttl`。
+    ///
+    /// # 这正是「线上急停」想要的
+    /// 没有它，急停的生效上界就是本地缓存的 `ttl`；有了它，正常情况下只差一次
+    /// pub/sub 往返。`ttl` 退居为「广播丢了」时的兜底——pub/sub 是至多一次投递，
+    /// 订阅方断线期间的消息不补发。
+    ///
+    /// 还需调 [`Self::spawn_invalidation_listener`] 启动订阅，否则本节点只发不收。
+    #[must_use]
+    pub fn with_instant_invalidation(mut self, channel: impl Into<String>) -> Self {
+        self.channel = Some(channel.into());
+        self.rebuild_local()
+    }
+
+    /// 按当前的 `local_ttl` / `channel` 重建进程内缓存层。
+    ///
+    /// 两个链式方法都调它，因此调用顺序无关——否则「先 invalidation 后
+    /// local_cache」会静默丢掉广播配置，而这种顺序敏感的 API 迟早有人踩。
+    fn rebuild_local(mut self) -> Self {
+        let Some(ttl) = self.local_ttl else {
+            self.local = None;
+            return self;
+        };
+        let mut store = TwoLevelStore::new(self.cache.clone(), LOCAL_CACHE_SIZE, ttl)
+            // 开关在 Redis 里近似永不过期，不能跟着 L1 的刷新周期一起失效
+            .with_l2_ttl(PERSIST_TTL)
+            // 只有一个键，没有「大量 key 同时过期」可打散，抖动无意义
+            .with_jitter_percent(0);
+        if let Some(channel) = &self.channel {
+            store = store.with_invalidation(InvalidationBus::new(self.cache.client(), channel));
+        }
+        self.local = Some(store);
         self
+    }
+
+    /// 启动跨节点失效的订阅任务；未开启本地缓存或未配频道时返回 `None`。
+    ///
+    /// 返回的句柄**必须持有**——drop 即停止订阅。
+    #[must_use]
+    pub fn spawn_invalidation_listener(&self) -> Option<InvalidationListener> {
+        self.local.as_ref()?.spawn_invalidation_listener()
     }
 
     /// 读取全部开关，**始终直连 Redis**，绕过进程内缓存。

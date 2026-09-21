@@ -243,6 +243,57 @@ impl Error {
     pub fn extra(&self) -> &[String] {
         self.data.extra.as_deref().unwrap_or(&[])
     }
+
+    /// 由上游服务的 HTTP 错误响应重建 `Error`。
+    ///
+    /// 上游若是同样用本类型的 tibba 服务，`category` / `sub_category` / `code` /
+    /// `extra` 会被**原样保留**；否则退化为「把响应体当纯文本作 message」。
+    ///
+    /// # 为什么 status 从参数来而不是从响应体解析
+    /// 状态码本来就在 HTTP 状态行上，把它再塞进 JSON body 是冗余——也正因如此
+    /// `Error` 的序列化形式里没有它，单纯 `serde_json::from_slice` 得到的 Error
+    /// 状态码是 0（落到 `IntoResponse` 会变成 500）。这个构造函数就是那块拼图：
+    /// 由调用方把状态行上的值传进来，结构化字段从 body 来。
+    ///
+    /// # 注意：这是**上游的**状态码
+    /// 返回的 `Error` 带的是上游给的状态码，不代表本服务该回什么。直接透传给
+    /// 自己的客户端通常是错的（上游 401 不等于调用方未登录）。调用方应显式
+    /// 决定对外状态码，见 `tibba-request` 的 `handle_fail` 如何映射成 502。
+    ///
+    /// 响应体不是本类型的 JSON 时，message 取响应体文本并截断到
+    /// [`MAX_UPSTREAM_MESSAGE_LEN`] 字节——上游回一整页 HTML 错误页是常事，
+    /// 整页塞进 message 只会把日志冲垮。
+    #[must_use]
+    pub fn from_upstream(status: u16, body: &[u8]) -> Self {
+        match serde_json::from_slice::<Self>(body) {
+            // 结构化错误：字段全部保留，只补上状态码
+            Ok(err) if !err.message.is_empty() => err.with_status(status),
+            _ => Self::new(truncate_upstream_body(body)).with_status(status),
+        }
+    }
+}
+
+/// 非结构化上游响应体转成 message 时的长度上限（字节）。
+pub const MAX_UPSTREAM_MESSAGE_LEN: usize = 512;
+
+/// 把上游响应体截成一条能进日志的 message。
+///
+/// 按字符边界截断：直接切字节会在多字节字符中间断开，得到非法 UTF-8。
+fn truncate_upstream_body(body: &[u8]) -> String {
+    if body.is_empty() {
+        return "upstream returned an empty body".to_string();
+    }
+    let text = String::from_utf8_lossy(body);
+    let trimmed = text.trim();
+    if trimmed.len() <= MAX_UPSTREAM_MESSAGE_LEN {
+        return trimmed.to_string();
+    }
+    // floor_char_boundary 尚未稳定，自行往前找最近的字符边界
+    let mut end = MAX_UPSTREAM_MESSAGE_LEN;
+    while end > 0 && !trimmed.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}…", &trimmed[..end])
 }
 
 /// 依据状态码与显式设置，判定响应体是否需要隐去 `message` / `extra`。
@@ -469,6 +520,72 @@ mod tests {
             .get::<Error>()
             .expect("Error 应存入 extensions");
         assert!(stored.is_exception());
+    }
+
+    /// 上游是同用本类型的 tibba 服务时，结构化字段必须一路带回来。
+    ///
+    /// 此前跨服务只能靠 `json_get(body, "message")` 取一个字符串，
+    /// category / sub_category / code / extra 全丢，status 也归 0（落地成 500）。
+    #[test]
+    fn from_upstream_restores_structured_fields() {
+        let upstream = Error::new("account is locked")
+            .with_category("user")
+            .with_sub_category("locked")
+            .with_code("E4031")
+            .add_extra("retry_after=600")
+            .with_status(403);
+        let body = serde_json::to_vec(&upstream).expect("序列化上游错误");
+
+        let restored = Error::from_upstream(403, &body);
+        assert_eq!(restored.message(), "account is locked");
+        assert_eq!(restored.category(), "user");
+        assert_eq!(restored.sub_category(), Some("locked"));
+        assert_eq!(restored.code(), Some("E4031"));
+        assert_eq!(restored.extra(), ["retry_after=600".to_string()]);
+        // 状态码来自状态行参数，补上了序列化丢失的那一块
+        assert_eq!(restored.status(), 403);
+    }
+
+    /// 上游不是 tibba 服务时退化为纯文本，且仍带上状态码。
+    #[test]
+    fn from_upstream_falls_back_to_plain_text() {
+        let err = Error::from_upstream(502, b"  <html>Bad Gateway</html>  ");
+        assert_eq!(err.message(), "<html>Bad Gateway</html>");
+        assert_eq!(err.status(), 502);
+
+        // 合法 JSON 但不是本类型（没有 message 字段）同样走回退
+        let err = Error::from_upstream(400, br#"{"error":"invalid_grant"}"#);
+        assert_eq!(err.status(), 400);
+        assert!(err.message().contains("invalid_grant"));
+
+        // 空响应体
+        let err = Error::from_upstream(504, b"");
+        assert_eq!(err.status(), 504);
+        assert!(!err.message().is_empty(), "空 body 也要有可读的 message");
+    }
+
+    /// 上游回一整页 HTML 是常事，整页塞进 message 会把日志冲垮。
+    #[test]
+    fn from_upstream_truncates_oversized_body() {
+        let body = "x".repeat(MAX_UPSTREAM_MESSAGE_LEN * 4);
+        let err = Error::from_upstream(500, body.as_bytes());
+        assert!(
+            err.message().len() <= MAX_UPSTREAM_MESSAGE_LEN + 4,
+            "实际长度 {}",
+            err.message().len()
+        );
+        assert!(err.message().ends_with('…'));
+    }
+
+    /// 截断必须按字符边界，切在多字节字符中间会产生非法 UTF-8。
+    #[test]
+    fn from_upstream_truncation_respects_char_boundaries() {
+        // 每个汉字 3 字节，上限不是 3 的倍数，必然切在字符中间
+        let body = "错".repeat(MAX_UPSTREAM_MESSAGE_LEN);
+        let err = Error::from_upstream(500, body.as_bytes());
+        // 能取到 &str 本身就说明没切坏；再确认确实被截断了
+        assert!(err.message().chars().all(|c| c == '错' || c == '…'));
+        assert!(err.message().len() <= MAX_UPSTREAM_MESSAGE_LEN + 4);
     }
 
     #[test]

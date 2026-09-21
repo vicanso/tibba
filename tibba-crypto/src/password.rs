@@ -71,7 +71,9 @@ pub enum PasswordCheck {
 ///     .with_t_cost(3);
 /// let stored = policy.hash(secret)?;
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// 可选的 pepper 见 [`Self::with_pepper`]。
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct PasswordPolicy {
     /// 内存代价，单位 KiB
     m_cost: u32,
@@ -81,6 +83,24 @@ pub struct PasswordPolicy {
     p_cost: u32,
     /// 输入 secret 的字节数上限
     max_secret_len: usize,
+    /// 可选 pepper（Argon2 的 keyed 模式密钥），见 [`Self::with_pepper`]
+    pepper: Option<&'static [u8]>,
+}
+
+/// 手写 `Debug`：pepper 是不在库里的那一半密钥，derive 会把它打进日志与
+/// panic 回溯——而 `PasswordPolicy` 常被放进各模块的 struct 里，一次上层
+/// derive 就会连带泄漏。同 `tibba_config::Config` 的处理。
+impl std::fmt::Debug for PasswordPolicy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PasswordPolicy")
+            .field("m_cost", &self.m_cost)
+            .field("t_cost", &self.t_cost)
+            .field("p_cost", &self.p_cost)
+            .field("max_secret_len", &self.max_secret_len)
+            // 只暴露「配没配」，不暴露值
+            .field("pepper", &self.pepper.map(|_| "<redacted>"))
+            .finish()
+    }
 }
 
 impl Default for PasswordPolicy {
@@ -91,6 +111,7 @@ impl Default for PasswordPolicy {
             t_cost: Params::DEFAULT_T_COST,
             p_cost: Params::DEFAULT_P_COST,
             max_secret_len: DEFAULT_MAX_SECRET_LEN,
+            pepper: None,
         }
     }
 }
@@ -130,6 +151,37 @@ impl PasswordPolicy {
         self
     }
 
+    /// 设置 pepper（Argon2 keyed 模式的密钥），支持链式调用。
+    ///
+    /// # 它挡住什么
+    /// 盐挡的是彩虹表与「一次爆破命中多个账号」；它和哈希一起存在库里，所以
+    /// **库泄漏之后盐帮不上忙**——攻击者拿着盐照样能逐个离线爆破。
+    ///
+    /// pepper 是那半把**不在库里**的密钥（配置、KMS、环境变量里）。只拖走一份
+    /// 数据库备份的攻击者，没有 pepper 就连一次 Argon2 都算不对，离线爆破从
+    /// 「慢但可行」变成「不可能」。只有同时拿到库和应用配置才回到原点。
+    ///
+    /// 取 `&'static [u8]`：pepper 是进程级常量，启动时从配置读一次即可
+    /// （`Box::leak` 或 `OnceLock`）。这样 [`PasswordPolicy`] 仍是 `Copy`，
+    /// 也杜绝了「pepper 生命周期短于 policy」这类用法。
+    ///
+    /// # ⚠️ 这是一次单向迁移
+    /// 加 pepper 会让**所有既有哈希立刻失效**，而且 PHC 串里看不出某个哈希当初
+    /// 有没有用 pepper，[`Self::needs_rehash`] 也判断不出来——无法像调高代价参数
+    /// 那样靠登录逐步升级。
+    ///
+    /// 因此只有两条可行路径：
+    /// 1. **新部署从第一天就配上**；
+    /// 2. 存量系统引入时，同步做一次强制密码重置（或双写迁移：先用旧策略验证
+    ///    通过，再用带 pepper 的策略重新哈希写回——需要调用方自己实现这段过渡）。
+    ///
+    /// 同理，**轮换 pepper 等价于让所有人重设密码**。
+    #[must_use]
+    pub fn with_pepper(mut self, pepper: &'static [u8]) -> Self {
+        self.pepper = Some(pepper);
+        self
+    }
+
     /// 拒绝超长输入，挡住慢哈希 DoS。
     fn ensure_len(&self, secret: &[u8]) -> Result<()> {
         ensure!(
@@ -143,10 +195,20 @@ impl PasswordPolicy {
     }
 
     /// 按当前参数构造 Argon2id 实例。
+    ///
+    /// 配了 pepper 就走 keyed 模式（`new_with_secret`）。`hash` 与 `verify` 都经由
+    /// 这一个入口取实例，两边用的一定是同一把 pepper——这正是上一轮把 `verify`
+    /// 从 `Argon2::default()` 改成 `self.hasher()?` 时预留的位置。
     fn hasher(&self) -> Result<Argon2<'static>> {
         let params =
             Params::new(self.m_cost, self.t_cost, self.p_cost, None).context(InvalidParamsSnafu)?;
-        Ok(Argon2::new(Algorithm::Argon2id, Version::V0x13, params))
+        match self.pepper {
+            Some(pepper) => {
+                Argon2::new_with_secret(pepper, Algorithm::Argon2id, Version::V0x13, params)
+                    .context(InvalidParamsSnafu)
+            }
+            None => Ok(Argon2::new(Algorithm::Argon2id, Version::V0x13, params)),
+        }
     }
 
     /// 用当前策略对 `secret` 加盐哈希，返回可直接入库的 PHC 字符串。
@@ -401,6 +463,78 @@ mod tests {
         assert!(policy.needs_rehash(&"e".repeat(64)), "旧式明文 sha256");
         assert!(policy.needs_rehash("not-a-phc-string"), "无法解析的哈希");
         assert!(policy.needs_rehash(""), "空串");
+    }
+
+    /// pepper 的核心性质：同一口令 + 同一参数，配了 pepper 就是另一个哈希，
+    /// 且**没有 pepper 的一方验不过**。
+    ///
+    /// 这正是它要买的东西：只拖走数据库备份的攻击者算不出正确的 Argon2 输出，
+    /// 离线爆破从「慢但可行」变成不可能。
+    #[test]
+    fn pepper_is_required_to_verify() {
+        let plain = cheap(8, 1);
+        let peppered = cheap(8, 1).with_pepper(b"server-side-pepper");
+
+        let stored = peppered.hash(b"secret").expect("hash");
+        assert_eq!(
+            peppered.verify(&stored, b"secret").unwrap(),
+            PasswordCheck::Matched
+        );
+        // 拿到库但没拿到 pepper —— 验不过
+        assert_eq!(
+            plain.verify(&stored, b"secret").unwrap(),
+            PasswordCheck::Mismatch
+        );
+        // 错的 pepper 同样验不过
+        let wrong = cheap(8, 1).with_pepper(b"another-pepper");
+        assert_eq!(
+            wrong.verify(&stored, b"secret").unwrap(),
+            PasswordCheck::Mismatch
+        );
+    }
+
+    /// 反向也要成立：不带 pepper 的存量哈希，配了 pepper 之后验不过。
+    ///
+    /// 这不是缺陷，是 [`PasswordPolicy::with_pepper`] 文档里写明的单向迁移
+    /// 代价——本例把它钉成显式行为，免得有人以为能平滑升级。
+    #[test]
+    fn adding_pepper_invalidates_existing_hashes() {
+        let plain = cheap(8, 1);
+        let stored = plain.hash(b"secret").expect("hash");
+
+        let peppered = cheap(8, 1).with_pepper(b"newly-added-pepper");
+        assert_eq!(
+            peppered.verify(&stored, b"secret").unwrap(),
+            PasswordCheck::Mismatch
+        );
+        // 而且 needs_rehash 判断不出来——PHC 串里没有这个信息
+        assert!(!peppered.needs_rehash(&stored));
+    }
+
+    /// pepper 不得出现在落库的 PHC 串里——它的价值全在「不在库里」。
+    #[test]
+    fn pepper_never_appears_in_the_stored_hash() {
+        let pepper = b"do-not-store-me";
+        let stored = cheap(8, 1)
+            .with_pepper(pepper)
+            .hash(b"secret")
+            .expect("hash");
+        assert!(!stored.contains("do-not-store-me"));
+        // PHC 串的形态与不带 pepper 时完全一致，看不出差别
+        assert!(stored.starts_with("$argon2id$"));
+    }
+
+    /// Debug 不得泄漏 pepper。
+    #[test]
+    fn debug_does_not_leak_pepper() {
+        let debug = format!("{:?}", PasswordPolicy::new().with_pepper(b"top-secret"));
+        assert!(!debug.contains("top-secret"), "{debug}");
+        assert!(debug.contains("<redacted>"), "{debug}");
+        // 未配置时不应显示 <redacted>，避免误导
+        let debug = format!("{:?}", PasswordPolicy::new());
+        assert!(!debug.contains("<redacted>"), "{debug}");
+        // 代价参数仍需可见，否则排查调参问题时 Debug 就没用了
+        assert!(debug.contains("m_cost"));
     }
 
     /// **跨版本兼容守卫**：argon2 0.5 产出的哈希必须仍能验证通过。

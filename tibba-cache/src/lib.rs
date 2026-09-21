@@ -387,6 +387,7 @@ pub(crate) const LOG_TARGET: &str = "tibba:cache";
 pub use redis;
 
 mod cache;
+mod invalidation;
 mod pool;
 mod script;
 mod single_flight;
@@ -394,6 +395,7 @@ mod ttl_fifo_store;
 mod two_level_store;
 
 pub use cache::*;
+pub use invalidation::*;
 pub use pool::*;
 pub use script::*;
 pub use ttl_fifo_store::*;

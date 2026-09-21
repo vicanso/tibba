@@ -17,6 +17,8 @@ path = "src/lib.rs"
 [dependencies]
 axum = { workspace = true }
 serde = { workspace = true }
+# from_upstream：把上游服务的错误响应体反序列化回本类型
+serde_json = { workspace = true }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }

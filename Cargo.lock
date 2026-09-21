@@ -6431,6 +6431,7 @@ version = "0.2.7"
 dependencies = [
  "dashmap",
  "deadpool",
+ "futures",
  "humantime-serde",
  "lru",
  "pretty_assertions",

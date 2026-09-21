@@ -26,6 +26,14 @@ pub enum Error {
     /// 服务返回业务错误（状态码 ≥400 且响应体包含 message 字段）。
     #[snafu(display("{service} request fail, {message}"))]
     Common { service: String, message: String },
+    /// 上游返回 ≥400，`source` 是从响应体重建出来的上游错误。
+    #[snafu(display("{service} upstream returned {status}: {source}"))]
+    Upstream {
+        service: String,
+        /// **上游的**状态码，不是本服务对外的状态码
+        status: u16,
+        source: BaseError,
+    },
     /// 熔断器处于打开状态，未发起请求直接快速失败（保护持续故障的下游）。
     #[snafu(display("{service} circuit breaker open"))]
     CircuitOpen { service: String },
@@ -100,6 +108,32 @@ impl From<Error> for BaseError {
                 )
             }
             Error::Serde { service, source } => (service, BaseError::new(source)),
+            // 上游失败 → 本服务回 **502**。
+            //
+            // 不回 500：那是「我方出 bug」的语义，而这里我方逻辑完好，是依赖挂了；
+            // 也不透传上游状态码：上游的 401 不代表**我们的**调用方未登录，照搬
+            // 会让客户端收到毫无意义的指令。502 是这件事唯一诚实的表达。
+            //
+            // 告警分级按上游状态码：5xx 是对方基础设施故障，值得叫人；
+            // 4xx 说明我们发出的请求或配置有问题，该修但不是深夜告警。
+            Error::Upstream {
+                service,
+                status,
+                source,
+            } => {
+                let err = BaseError::new(source.message())
+                    .with_status(502)
+                    .with_exception(status >= 500)
+                    // 上游的分类信息进 extra：既留给日志排查，又不会与本服务
+                    // 自己的 category / code 混淆（前端按码分流的是我们的码）
+                    .add_extra(format!("upstream_status={status}"))
+                    .add_extra(format!("upstream_category={}", source.category()));
+                let err = match source.code() {
+                    Some(code) => err.add_extra(format!("upstream_code={code}")),
+                    None => err,
+                };
+                (service, err)
+            }
             // 下游回了一个超出预期的巨大响应：502（上游行为异常）并告警——
             // 这既可能是对端故障，也可能是投递目标在有意撑爆我们的内存
             Error::ResponseTooLarge { service, limit } => (
@@ -133,6 +167,57 @@ pub use request::*;
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+
+    /// 上游 ≥400 → 本服务 502，且上游的结构化字段要能带回来。
+    ///
+    /// 回归守卫：此前只取一个 message 字符串、不设状态码，于是上游的 404 也好、
+    /// 503 也好，一律变成本服务的 500 并被脱敏。
+    #[test]
+    fn upstream_failure_maps_to_bad_gateway_with_context() {
+        let upstream = BaseError::new("account is locked")
+            .with_category("user")
+            .with_code("E4031");
+        let body = serde_json::to_vec(&upstream).expect("序列化");
+
+        let base = BaseError::from(Error::Upstream {
+            service: "billing".to_string(),
+            status: 403,
+            source: BaseError::from_upstream(403, &body),
+        });
+
+        // 我方逻辑完好、是依赖挂了 → 502，而不是 500，也不是照搬上游的 403
+        assert_eq!(base.status(), 502);
+        assert_eq!(base.category(), "request");
+        assert_eq!(base.sub_category(), Some("billing"));
+        assert_eq!(base.message(), "account is locked");
+        // 上游的分类信息进 extra，供日志排查
+        let extra = base.extra().join(",");
+        assert!(extra.contains("upstream_status=403"), "{extra}");
+        assert!(extra.contains("upstream_category=user"), "{extra}");
+        assert!(extra.contains("upstream_code=E4031"), "{extra}");
+    }
+
+    /// 告警分级按**上游**状态码：5xx 是对方基础设施故障，4xx 是我们发错了。
+    #[test]
+    fn only_upstream_server_errors_are_alertable() {
+        let make = |status: u16| {
+            BaseError::from(Error::Upstream {
+                service: "billing".to_string(),
+                status,
+                source: BaseError::from_upstream(status, b"boom"),
+            })
+        };
+        assert!(make(503).is_exception(), "上游 5xx 应当告警");
+        assert!(make(500).is_exception());
+        assert!(
+            !make(404).is_exception(),
+            "上游 4xx 是配置/请求问题，不该深夜告警"
+        );
+        assert!(!make(429).is_exception());
+        // 无论哪种，对外都是 502
+        assert_eq!(make(404).status(), 502);
+        assert_eq!(make(503).status(), 502);
+    }
 
     /// SSRF 策略拒绝（目标内网 / 不可跟随的重定向）统一映射为 403 且不触发告警。
     #[test]

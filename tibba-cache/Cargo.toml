@@ -23,6 +23,8 @@ deadpool = { version = "0.13", default-features = false, features = [
 ] }
 # singleflight 的按 key 互斥锁注册表
 dashmap = { workspace = true }
+# 消费 pub/sub 消息流（跨节点失效）
+futures = { workspace = true }
 humantime-serde = { workspace = true }
 lru = { workspace = true }
 # cluster-async（含 cluster + aio）：集群池与 dedicated_conn 走 ClusterClient

@@ -35,16 +35,29 @@
 //! 但集中失效只打到 Redis（L2 里数据还在，是命中而非穿透），不会打到数据库，
 //! 这个代价是可接受的。此前本文件把该行为注释成「防止缓存雪崩」，说反了。
 //!
+//! ### 跨节点失效（可选）
+//! 上面两条 TTL 机制都是「等」——本节点改完数据，其余节点要等到边界才知道。
+//! 对「改完要立刻生效」的数据，用 [`TwoLevelStore::with_invalidation`] +
+//! [`TwoLevelStore::spawn_invalidation_listener`] 挂上 Redis pub/sub 广播，
+//! 写入时主动通知各节点丢弃本地副本。
+//!
+//! 它是**加速**而非替代：pub/sub 至多一次投递，断线期间的消息不补发，
+//! L1 的 TTL 仍是兜底。
+//!
 //! ### L2 为什么要抖动
 //! Redis 层若同样对齐，则一个周期内写入的所有 key 会在同一边界一起**真正过期**，
 //! 届时全部请求穿透到数据库——这才是雪崩。故 L2 用完整 `ttl` 加一段按 key
 //! 派生的抖动，把过期时刻打散开。
 
-use super::{Error, Expired, RedisCache, TtlFifoStore};
+use super::{
+    Error, Expired, InvalidationBus, InvalidationListener, LOG_TARGET, RedisCache, TtlFifoStore,
+};
 use serde::{Serialize, de::DeserializeOwned};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::num::NonZeroUsize;
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tracing::warn;
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -141,7 +154,9 @@ impl<T> Expired for ExpiredCache<T> {
 /// 读操作优先命中 L1，未命中再查 Redis 并回填 L1。
 pub struct TwoLevelStore<T> {
     /// 第一层：带 TTL 的进程内定容缓存（按写入顺序淘汰，非 LRU）
-    l1: TtlFifoStore<ExpiredCache<T>>,
+    ///
+    /// 用 `Arc`：开启跨节点失效后，后台订阅任务要和读写路径共享同一份 L1。
+    l1: Arc<TtlFifoStore<ExpiredCache<T>>>,
     /// L1 的对齐周期，同时是 L2 的默认 TTL
     ttl: Duration,
     /// L2 的 TTL；`None` 表示沿用 `ttl`，见 [`Self::with_l2_ttl`]
@@ -150,6 +165,8 @@ pub struct TwoLevelStore<T> {
     jitter_percent: u8,
     /// 第二层：Redis 缓存
     redis: RedisCache,
+    /// 可选的跨节点失效广播，见 [`Self::with_invalidation`]
+    invalidation: Option<InvalidationBus>,
 }
 
 impl<T: Clone + Serialize + DeserializeOwned> TwoLevelStore<T> {
@@ -163,11 +180,70 @@ impl<T: Clone + Serialize + DeserializeOwned> TwoLevelStore<T> {
     /// [`Self::with_jitter_percent`] 调整。
     pub fn new(redis: RedisCache, size: NonZeroUsize, ttl: Duration) -> Self {
         Self {
-            l1: TtlFifoStore::new(size),
+            l1: Arc::new(TtlFifoStore::new(size)),
             ttl,
             l2_ttl: None,
             jitter_percent: DEFAULT_L2_JITTER_PERCENT,
             redis,
+            invalidation: None,
+        }
+    }
+
+    /// 开启跨节点失效广播，支持链式调用。
+    ///
+    /// 开启后 [`Self::set`] / [`Self::del`] 会向 `bus` 的频道广播这个 key，
+    /// 各节点收到后清掉自己的 L1，下次读取自然回源。
+    ///
+    /// # 它解决的是什么
+    /// 没有它时，本节点改完数据，**其余节点的 L1 仍返回旧值**，直到各自到达
+    /// 下一个对齐边界。对特性开关这类容忍短暂陈旧的数据够用；对「改完要立刻
+    /// 生效」的数据（权限变更、账号封禁、配置下发）不够。
+    ///
+    /// # 仍然需要配 [`Self::spawn_invalidation_listener`]
+    /// 本方法只负责**发**。不启动订阅任务的话，本节点收不到别人的通知——
+    /// 两者要一起用。
+    ///
+    /// # 不能去掉 TTL
+    /// Redis pub/sub 是至多一次投递，订阅方断线期间的消息不补发。广播让失效
+    /// **更快**，TTL 仍然是兜底。
+    #[must_use]
+    pub fn with_invalidation(mut self, bus: InvalidationBus) -> Self {
+        self.invalidation = Some(bus);
+        self
+    }
+
+    /// 启动跨节点失效的订阅任务，收到他节点通知时清掉本地 L1。
+    ///
+    /// 未调用 [`Self::with_invalidation`] 时返回 `None`。
+    ///
+    /// 返回的句柄**必须持有**——drop 即停止订阅。通常放进进程级状态，
+    /// 或在停机钩子里显式 `stop()`。
+    #[must_use]
+    pub fn spawn_invalidation_listener(&self) -> Option<InvalidationListener>
+    where
+        T: Send + Sync + 'static,
+    {
+        let bus = self.invalidation.as_ref()?;
+        let l1 = Arc::clone(&self.l1);
+        Some(bus.spawn_listener(move |key| l1.del(key)))
+    }
+
+    /// 广播一条失效通知；未开启时是空操作。
+    ///
+    /// **best-effort**：失败只记日志，不影响调用方的写入结果。Redis 里的数据
+    /// 已经写对了，边界对齐仍在兜底——让一次 pub/sub 抖动把业务写入判为失败
+    /// 是本末倒置。
+    async fn broadcast_invalidation(&self, key: &str) {
+        let Some(bus) = &self.invalidation else {
+            return;
+        };
+        if let Err(err) = bus.publish(key).await {
+            warn!(
+                target: LOG_TARGET,
+                key,
+                error = %err,
+                "broadcast invalidation failed; peers fall back to L1 TTL",
+            );
         }
     }
 
@@ -241,6 +317,10 @@ impl<T: Clone + Serialize + DeserializeOwned> TwoLevelStore<T> {
         let l1_ttl = Duration::from_secs(l1_ttl_for_set(unit, now_secs()));
         self.fill_l1(key, value, l1_ttl);
 
+        // 通知其余节点丢弃旧副本。放在本地 L1 填好之后：广播是 best-effort，
+        // 不该让它的耗时或失败挡在本节点的写入路径上。
+        self.broadcast_invalidation(key).await;
+
         Ok(())
     }
 
@@ -273,6 +353,7 @@ impl<T: Clone + Serialize + DeserializeOwned> TwoLevelStore<T> {
     pub async fn del(&self, key: &str) -> Result<()> {
         self.redis.del(key).await?;
         self.l1.del(key);
+        self.broadcast_invalidation(key).await;
         Ok(())
     }
 

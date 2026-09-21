@@ -12,11 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{BuildSnafu, Error, ParseSizeSnafu, ReadSnafu};
+use super::{
+    BuildSnafu, ConflictingSecretSnafu, EmptySecretFileSnafu, Error, ParseSizeSnafu, ReadSnafu,
+    SecretFileSnafu,
+};
 use config::{Config as RawConfig, Environment, File, FileFormat, Map};
 use parse_size::parse_size;
 use serde::Deserialize;
-use snafu::ResultExt;
+use snafu::{ResultExt, ensure};
 use std::borrow::Cow;
 use std::sync::Arc;
 use std::time::Duration;
@@ -28,6 +31,67 @@ type Result<T> = std::result::Result<T, Error>;
 /// 用 `__` 而非单 `_`：后者会把 `llm_api_key` 这类含下划线的字段名误拆成
 /// `llm.api.key`，导致配置读不到。
 const ENV_SEPARATOR: &str = "__";
+
+/// 密钥文件环境变量的后缀，见 [`ConfigBuilder::with_env_prefix`]。
+const SECRET_FILE_SUFFIX: &str = "_FILE";
+
+/// 把 `X_FILE=<路径>` 展开成 `X=<文件内容>`。
+///
+/// # 为什么需要这个
+/// 环境变量是**进程可见**的：`kubectl describe pod`、`docker inspect`、
+/// `/proc/<pid>/environ` 都能看到，而且会被所有子进程继承。而 K8s Secret 与
+/// Docker secret 的原生投递方式是**挂载成文件**。`*_FILE` 就是在这两者之间搭桥，
+/// 也是 postgres / mysql / redis 官方镜像通行的约定。
+///
+/// # 匹配规则
+/// 与 config-rs 的 `Environment` 保持一致：键名先转小写再比前缀，因此大小写
+/// 不敏感。只处理带本配置前缀的变量——否则 `SSL_CERT_FILE` 这类系统环境变量
+/// 会被当成密钥去读，把进程拦在启动前。
+///
+/// # 取值处理
+/// 去掉**末尾**的换行（`\n` / `\r\n`）：`echo "secret" > file` 会带一个换行，
+/// 而这类失误太常见。只去尾部，不做 trim——密钥中间与开头的空白都是有效内容。
+fn expand_secret_files(
+    raw: Map<String, String>,
+    prefix: &str,
+    separator: &str,
+) -> Result<Map<String, String>> {
+    let pattern = format!("{prefix}{separator}").to_lowercase();
+    let suffix = SECRET_FILE_SUFFIX.to_lowercase();
+
+    let mut expanded = raw.clone();
+    for (file_key, path) in &raw {
+        let lower = file_key.to_lowercase();
+        if !lower.starts_with(&pattern) || !lower.ends_with(&suffix) {
+            continue;
+        }
+        // 去掉 `_FILE` 得到真正的配置键
+        let key = file_key[..file_key.len() - SECRET_FILE_SUFFIX.len()].to_string();
+        // 同时设了 X 与 X_FILE：无法判断该用哪个，宁可起不来也不要用错密钥
+        ensure!(
+            !raw.contains_key(&key),
+            ConflictingSecretSnafu {
+                key,
+                file_key: file_key.clone(),
+            }
+        );
+
+        let content = std::fs::read_to_string(path).context(SecretFileSnafu {
+            key: key.clone(),
+            path: path.clone(),
+        })?;
+        let value = content.trim_end_matches(['\n', '\r']).to_string();
+        ensure!(
+            !value.is_empty(),
+            EmptySecretFileSnafu {
+                key: key.clone(),
+                path: path.clone(),
+            }
+        );
+        expanded.insert(key, value);
+    }
+    Ok(expanded)
+}
 
 /// 应用配置，封装底层 `config::Config`，提供命名空间与便捷读取方法。
 ///
@@ -112,6 +176,26 @@ impl ConfigBuilder {
     /// `TIBBA_WEB__EMAIL__API_KEY` 覆盖 `email.api_key`（单 `_` 是字段名的一部分）。
     ///
     /// 不调用本方法则**完全不挂载**环境变量源。空串等同于不设置。
+    ///
+    /// # 密钥从文件读取：`*_FILE`
+    /// 任意配置项都可以改用 `<变量名>_FILE=<路径>` 的形式，值取自该文件的内容：
+    ///
+    /// ```text
+    /// TIBBA_WEB__DATABASE__URI_FILE=/run/secrets/db_uri
+    /// TIBBA_WEB__SESSION__SECRET_FILE=/run/secrets/session_secret
+    /// ```
+    ///
+    /// 这不是可有可无的便利。环境变量是**进程可见**的——`kubectl describe pod`、
+    /// `docker inspect`、`/proc/<pid>/environ` 都能读到，并且会被每一个子进程
+    /// 继承；而 K8s Secret 与 Docker secret 的原生投递方式恰恰是挂载成文件。
+    /// 同一套约定在 postgres / mysql / redis 官方镜像里已经用了很多年。
+    ///
+    /// 三条 fail-fast 规则（都属于部署失误，宁可起不来也不要带病运行）：
+    /// - 文件读不出来 → [`Error::SecretFile`]（否则会静默回落到 TOML 里的占位口令）
+    /// - 文件内容为空 → [`Error::EmptySecretFile`]
+    /// - 同时设了 `X` 与 `X_FILE` → [`Error::ConflictingSecret`]
+    ///
+    /// 文件内容会去掉**末尾**换行（`echo "x" > f` 会带一个），其余字节原样保留。
     #[must_use]
     pub fn with_env_prefix(mut self, prefix: impl Into<String>) -> Self {
         self.env_prefix = Some(prefix.into());
@@ -143,14 +227,24 @@ impl ConfigBuilder {
         // 等于要求所有环境变量以 `__` 开头，覆盖能力静默失效。故空前缀直接不挂该源。
         if let Some(prefix) = self.env_prefix.filter(|p| !p.is_empty()) {
             let separator = self.env_separator.as_deref().unwrap_or(ENV_SEPARATOR);
-            let mut env = Environment::with_prefix(&prefix)
+            // 自行物化环境映射，而不是让 config-rs 去读：`*_FILE` 的展开必须发生在
+            // config-rs 看到这批变量**之前**。
+            //
+            // 用 vars_os 而非 vars：后者遇到非 UTF-8 的环境变量会 panic，而那与本
+            // 进程的配置毫不相干——跳过即可，不该让别人的脏环境变量掀翻启动。
+            let raw: Map<String, String> = env_source.unwrap_or_else(|| {
+                std::env::vars_os()
+                    .filter_map(|(k, v)| Some((k.into_string().ok()?, v.into_string().ok()?)))
+                    .collect()
+            });
+            let source = expand_secret_files(raw, &prefix, separator)?;
+
+            let env = Environment::with_prefix(&prefix)
                 .prefix_separator(separator)
                 .separator(separator)
                 // 空值视为未设置：`export XXX=` 不应把 TOML 里的值抹成空串
-                .ignore_empty(true);
-            if env_source.is_some() {
-                env = env.source(env_source);
-            }
+                .ignore_empty(true)
+                .source(Some(source));
             builder = builder.add_source(env);
         }
 
@@ -570,6 +664,160 @@ mod tests {
             .build_with_env(Some(env_map(&[("MYAPP_DATABASE_HOST", "from-env")])))
             .unwrap();
         assert_eq!(config.get_string("database.host").unwrap(), "from-env");
+    }
+
+    /// 在临时目录里写一个密钥文件，返回其路径。
+    fn write_secret(dir: &std::path::Path, name: &str, content: &str) -> String {
+        let path = dir.join(name);
+        std::fs::write(&path, content).expect("写密钥文件");
+        path.to_string_lossy().into_owned()
+    }
+
+    /// 每个用例一个独立目录，避免并行测试互相踩。
+    fn temp_dir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("tibba-config-{tag}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("创建临时目录");
+        dir
+    }
+
+    /// `*_FILE` 把文件内容取成配置值，并去掉尾部换行。
+    ///
+    /// 这条是给 K8s / Docker secret 用的：它们把密钥挂成文件，而环境变量
+    /// 在 `kubectl describe pod` / `/proc/<pid>/environ` 里是明文可见的。
+    #[test]
+    fn secret_file_supplies_value_and_trims_trailing_newline() {
+        let dir = temp_dir("basic");
+        // `echo "x" > f` 会带一个尾换行，这是最常见的失误
+        let path = write_secret(
+            &dir,
+            "session_secret",
+            "s3cr3t
+",
+        );
+        let uri_path = write_secret(
+            &dir,
+            "db_uri",
+            "postgres://u:p@h/db
+",
+        );
+
+        let config = Config::builder()
+            .add_toml(
+                r#"
+                [session]
+                secret = "from-toml"
+                [database]
+                uri = "from-toml"
+                "#,
+            )
+            .with_env_prefix("MYAPP")
+            .build_with_env(Some(env_map(&[
+                ("MYAPP__SESSION__SECRET_FILE", &path),
+                ("MYAPP__DATABASE__URI_FILE", &uri_path),
+            ])))
+            .expect("构建配置");
+
+        assert_eq!(config.get_string("session.secret").unwrap(), "s3cr3t");
+        assert_eq!(
+            config.get_string("database.uri").unwrap(),
+            "postgres://u:p@h/db"
+        );
+    }
+
+    /// 只去尾部换行，密钥中间与开头的空白是有效内容，不得 trim 掉。
+    #[test]
+    fn secret_file_preserves_inner_and_leading_whitespace() {
+        let dir = temp_dir("whitespace");
+        let path = write_secret(
+            &dir,
+            "pw",
+            "  a b	c  
+",
+        );
+        let config = Config::builder()
+            .with_env_prefix("MYAPP")
+            .build_with_env(Some(env_map(&[("MYAPP__PW_FILE", &path)])))
+            .expect("构建配置");
+        assert_eq!(config.get_string("pw").unwrap(), "  a b	c  ");
+    }
+
+    /// **fail fast**：文件读不出来必须报错。
+    ///
+    /// 若放行，`ignore_empty` 会把它当作未设置，于是静默回落到 TOML 里的
+    /// 占位口令——带着一个人畜无害的默认密钥跑起来，比起不来危险得多。
+    #[test]
+    fn missing_secret_file_fails_startup() {
+        let err = Config::builder()
+            .add_toml(r#"secret = "from-toml""#)
+            .with_env_prefix("MYAPP")
+            .build_with_env(Some(env_map(&[(
+                "MYAPP__SECRET_FILE",
+                "/nonexistent/tibba/secret",
+            )])))
+            .expect_err("读不到密钥文件应当失败");
+        assert!(matches!(err, Error::SecretFile { .. }), "{err}");
+        // 错误信息里只能有键名与路径，不能有内容
+        assert!(err.to_string().contains("MYAPP__SECRET"));
+    }
+
+    /// 空密钥文件同样是部署失误（secret 没挂上 / 挂错路径）。
+    #[test]
+    fn empty_secret_file_fails_startup() {
+        let dir = temp_dir("empty");
+        let path = write_secret(
+            &dir, "empty", "
+",
+        );
+        let err = Config::builder()
+            .with_env_prefix("MYAPP")
+            .build_with_env(Some(env_map(&[("MYAPP__SECRET_FILE", &path)])))
+            .expect_err("空密钥文件应当失败");
+        assert!(matches!(err, Error::EmptySecretFile { .. }), "{err}");
+    }
+
+    /// 同时给 `X` 与 `X_FILE` 无法判断该用哪个，直接拒绝——
+    /// 静默挑一个就可能用错密钥，而这种错极难排查。
+    #[test]
+    fn conflicting_secret_sources_are_rejected() {
+        let dir = temp_dir("conflict");
+        let path = write_secret(&dir, "s", "from-file");
+        let err = Config::builder()
+            .with_env_prefix("MYAPP")
+            .build_with_env(Some(env_map(&[
+                ("MYAPP__SECRET", "from-env"),
+                ("MYAPP__SECRET_FILE", &path),
+            ])))
+            .expect_err("同时设置两者应当被拒绝");
+        assert!(matches!(err, Error::ConflictingSecret { .. }), "{err}");
+    }
+
+    /// **关键**：不带本配置前缀的 `*_FILE` 必须被无视。
+    ///
+    /// `SSL_CERT_FILE`、`GIT_CONFIG_FILE` 这类系统环境变量到处都是，
+    /// 若不按前缀过滤，它们会被当成密钥去读，把进程直接拦在启动前。
+    #[test]
+    fn unrelated_file_env_vars_are_ignored() {
+        let config = Config::builder()
+            .add_toml(r#"ok = "yes""#)
+            .with_env_prefix("MYAPP")
+            .build_with_env(Some(env_map(&[
+                ("SSL_CERT_FILE", "/nonexistent/ca.pem"),
+                ("OTHER__SECRET_FILE", "/nonexistent/other"),
+            ])))
+            .expect("无关的 *_FILE 不应影响启动");
+        assert_eq!(config.get_string("ok").unwrap(), "yes");
+    }
+
+    /// 键名匹配大小写不敏感，与 config-rs 的 Environment 规则一致。
+    #[test]
+    fn secret_file_matching_is_case_insensitive() {
+        let dir = temp_dir("case");
+        let path = write_secret(&dir, "lower", "v");
+        let config = Config::builder()
+            .with_env_prefix("MYAPP")
+            .build_with_env(Some(env_map(&[("myapp__secret_file", &path)])))
+            .expect("构建配置");
+        assert_eq!(config.get_string("secret").unwrap(), "v");
     }
 
     #[test]
