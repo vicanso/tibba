@@ -32,9 +32,24 @@ type HmacSha256 = Hmac<Sha256>;
 /// 后续密钥用于校验旧签名的有效性以支持平滑过渡。
 ///
 /// 类型不变量：密钥列表始终非空（由 [`Self::new`] / [`Self::update_keys`] 保证）。
-#[derive(Debug)]
 pub struct KeyGrip {
     keys: ArcSwap<Vec<Vec<u8>>>,
+}
+
+/// 手写 `Debug`：derive 会把**签名密钥原文**逐字节打出来。
+///
+/// `KeyGrip` 常被放进别的结构（例如 webhook 的投递器），只要外层有人
+/// `derive(Debug)` 再 `{:?}` 一下，密钥就进了日志或 panic 回溯。这里只暴露
+/// 密钥个数——轮换排查时唯一有用、又不泄密的信息。同 `SecretCipher` 的处理。
+impl std::fmt::Debug for KeyGrip {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("KeyGrip")
+            .field(
+                "keys",
+                &format_args!("<{} redacted>", self.keys.load().len()),
+            )
+            .finish()
+    }
 }
 
 /// 使用指定密钥对数据进行 HMAC-SHA256 签名，返回十六进制编码的签名字符串。
@@ -83,25 +98,57 @@ impl KeyGrip {
         sign_with_key(data, key)
     }
 
-    /// 验证签名是否与数据匹配，返回 `(is_valid, is_current)`：
-    /// - `is_valid`：签名与任意密钥匹配则为 `true`
-    /// - `is_current`：签名与当前主密钥（第一个）匹配则为 `true`
+    /// 验证签名，返回匹配到的是哪一代密钥。
+    ///
+    /// 此前返回 `(is_valid, is_current)` 两个布尔——调用方得记住哪个是哪个，
+    /// 而且 `(false, true)` 这种不可能的组合在类型上也合法。改成枚举后三种
+    /// 状态一目了然，也不存在非法组合。
     ///
     /// 比较走常数时间路径（[`verify_with_key`]）；`digest` 非合法 hex 字符串时
-    /// 视为无效签名，返回 `(false, false)`。
-    pub fn verify(&self, data: &[u8], digest: &str) -> Result<(bool, bool)> {
+    /// 视为 [`Verification::Invalid`]，不向上游报错。
+    pub fn verify(&self, data: &[u8], digest: &str) -> Result<Verification> {
         // hex 解码失败说明客户端送了非法签名，等同于不匹配；不向上游报错
         let Ok(expected) = hex::decode(digest) else {
-            return Ok((false, false));
+            return Ok(Verification::Invalid);
         };
 
         let keys = self.keys.load();
         for (index, key) in keys.iter().enumerate() {
             if verify_with_key(data, key, &expected)? {
-                return Ok((true, index == 0));
+                return Ok(if index == 0 {
+                    Verification::Current
+                } else {
+                    Verification::Rotated
+                });
             }
         }
-        Ok((false, false))
+        Ok(Verification::Invalid)
+    }
+}
+
+/// [`KeyGrip::verify`] 的结果。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Verification {
+    /// 与当前主密钥匹配。
+    Current,
+    /// 与某个历史密钥匹配：签名仍然有效，但调用方应借机用主密钥**重新签发**，
+    /// 让旧密钥早日退役。
+    Rotated,
+    /// 与任何密钥都不匹配（或签名格式非法）。
+    Invalid,
+}
+
+impl Verification {
+    /// 签名是否有效（当前或历史密钥皆可）。
+    #[must_use]
+    pub fn is_valid(self) -> bool {
+        !matches!(self, Self::Invalid)
+    }
+
+    /// 是否需要用主密钥重新签发。
+    #[must_use]
+    pub fn needs_resign(self) -> bool {
+        matches!(self, Self::Rotated)
     }
 }
 
@@ -129,18 +176,18 @@ mod tests {
         let kg = KeyGrip::new(keys(b"primary", &[])).unwrap();
         let sig = kg.sign(b"hello").unwrap();
         assert_eq!(sig.len(), 64); // 32 bytes * 2 hex chars
-        assert_eq!(kg.verify(b"hello", &sig).unwrap(), (true, true));
+        assert_eq!(kg.verify(b"hello", &sig).unwrap(), Verification::Current);
     }
 
     #[test]
     fn verify_with_rotated_key_marks_not_current() {
-        // 主密钥换成 primary，旧密钥 legacy 仍能验签但 is_current=false
+        // 主密钥换成 primary，旧密钥 legacy 仍能验签，但结果是 Rotated
         let kg = KeyGrip::new(keys(b"primary", &[b"legacy"])).unwrap();
         let legacy_sig = sign_with_key(b"hello", b"legacy").unwrap();
         assert_eq!(
             kg.verify(b"hello", &legacy_sig).unwrap(),
-            (true, false),
-            "签名匹配历史密钥应返回 is_valid=true, is_current=false（提示调用方重新签名）"
+            Verification::Rotated,
+            "签名匹配历史密钥应返回 Rotated（提示调用方重新签名）"
         );
     }
 
@@ -148,22 +195,28 @@ mod tests {
     fn verify_unknown_signature_returns_invalid() {
         let kg = KeyGrip::new(keys(b"primary", &[])).unwrap();
         let foreign_sig = sign_with_key(b"hello", b"someone-else").unwrap();
-        assert_eq!(kg.verify(b"hello", &foreign_sig).unwrap(), (false, false));
+        assert_eq!(
+            kg.verify(b"hello", &foreign_sig).unwrap(),
+            Verification::Invalid
+        );
     }
 
     #[test]
     fn verify_malformed_hex_returns_invalid_not_error() {
         let kg = KeyGrip::new(keys(b"primary", &[])).unwrap();
         // "zzz" 既不是合法 hex 也长度不对——应当视为无效签名而非传播错误
-        assert_eq!(kg.verify(b"hello", "zzz").unwrap(), (false, false));
-        assert_eq!(kg.verify(b"hello", "").unwrap(), (false, false));
+        assert_eq!(kg.verify(b"hello", "zzz").unwrap(), Verification::Invalid);
+        assert_eq!(kg.verify(b"hello", "").unwrap(), Verification::Invalid);
     }
 
     #[test]
     fn update_keys_atomically_rotates_primary() {
         let kg = KeyGrip::new(keys(b"v1", &[])).unwrap();
         let old_sig = kg.sign(b"payload").unwrap();
-        assert_eq!(kg.verify(b"payload", &old_sig).unwrap(), (true, true));
+        assert_eq!(
+            kg.verify(b"payload", &old_sig).unwrap(),
+            Verification::Current
+        );
 
         // 轮换：v2 升为主密钥，v1 沦为历史密钥
         kg.update_keys(keys(b"v2", &[b"v1"])).unwrap();
@@ -172,12 +225,12 @@ mod tests {
         assert_ne!(new_sig, old_sig, "新主密钥应产生不同签名");
         assert_eq!(
             kg.verify(b"payload", &new_sig).unwrap(),
-            (true, true),
+            Verification::Current,
             "新签名应匹配主密钥"
         );
         assert_eq!(
             kg.verify(b"payload", &old_sig).unwrap(),
-            (true, false),
+            Verification::Rotated,
             "旧签名应仍有效但标记为非当前"
         );
     }
@@ -191,7 +244,18 @@ mod tests {
         ));
         // 失败的 update 不应影响原密钥
         let sig = kg.sign(b"x").unwrap();
-        assert_eq!(kg.verify(b"x", &sig).unwrap(), (true, true));
+        assert_eq!(kg.verify(b"x", &sig).unwrap(), Verification::Current);
+    }
+
+    /// Debug 不得泄漏密钥。回归到 derive(Debug) 时本例会失败。
+    #[test]
+    fn debug_does_not_leak_keys() {
+        let kg = KeyGrip::new(keys(b"super-secret-key", &[b"old-secret"])).unwrap();
+        let debug = format!("{kg:?}");
+        assert!(!debug.contains("super-secret-key"), "{debug}");
+        // derive 出来的形态是字节数组，把首字节 's'(115) 也排除掉
+        assert!(!debug.contains("115"), "{debug}");
+        assert!(debug.contains("<2 redacted>"), "{debug}");
     }
 
     #[test]
@@ -199,11 +263,11 @@ mod tests {
         let kg = KeyGrip::new(keys(&[0xDE, 0xAD, 0xBE, 0xEF], &[])).unwrap();
         let data = &[0x00, 0xFF, 0x42, 0x00, 0x7F];
         let sig = kg.sign(data).unwrap();
-        assert_eq!(kg.verify(data, &sig).unwrap(), (true, true));
+        assert_eq!(kg.verify(data, &sig).unwrap(), Verification::Current);
         // 篡改后不应匹配
         assert_eq!(
             kg.verify(&[0x00, 0xFF, 0x42, 0x00, 0x80], &sig).unwrap(),
-            (false, false)
+            Verification::Invalid
         );
     }
 }

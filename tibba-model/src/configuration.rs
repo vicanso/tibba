@@ -16,7 +16,8 @@ use super::Model;
 use super::user::{ROLE_ADMIN, ROLE_SUPER_ADMIN};
 use super::{
     Error, JsonSnafu, ModelListParams, Schema, SchemaAllowCreate, SchemaAllowEdit, SchemaType,
-    SchemaView, SqlxSnafu, Status, format_datetime, new_schema_options, now_primitive_utc,
+    SchemaView, SqlxSnafu, Status, StoredJsonSnafu, ensure_affected, format_datetime,
+    is_data_overridable_response_header, new_schema_options, now_primitive_utc,
     parse_primitive_datetime,
 };
 use http::header::{HeaderMap, HeaderName, HeaderValue};
@@ -215,7 +216,7 @@ impl Model for ConfigurationModel {
     }
 
     async fn delete_by_id(&self, pool: &Pool<Postgres>, id: u64) -> Result<()> {
-        sqlx::query(
+        let result = sqlx::query(
             r#"UPDATE configurations SET deleted_at = NOW(), modified = NOW() WHERE id = $1 AND deleted_at IS NULL"#,
         )
         .bind(id as i64)
@@ -223,7 +224,7 @@ impl Model for ConfigurationModel {
         .await
         .context(SqlxSnafu)?;
 
-        Ok(())
+        ensure_affected(&result)
     }
 
     async fn update_by_id(
@@ -233,7 +234,7 @@ impl Model for ConfigurationModel {
         data: serde_json::Value,
     ) -> Result<()> {
         let params: ConfigurationUpdateParams = serde_json::from_value(data).context(JsonSnafu)?;
-        let _ = sqlx::query(
+        let result = sqlx::query(
             r#"UPDATE configurations SET data = COALESCE($1, data), description = COALESCE($2, description), status = COALESCE($3, status), effective_start_time = COALESCE($4, effective_start_time), effective_end_time = COALESCE($5, effective_end_time), modified = NOW() WHERE id = $6 AND deleted_at IS NULL"#,
         )
         .bind(params.data)
@@ -246,7 +247,7 @@ impl Model for ConfigurationModel {
         .await
         .context(SqlxSnafu)?;
 
-        Ok(())
+        ensure_affected(&result)
     }
 
     async fn count(&self, pool: &Pool<Postgres>, params: &ModelListParams) -> Result<i64> {
@@ -323,6 +324,10 @@ impl ConfigurationModel {
                 let Ok(header_name) = HeaderName::from_str(key) else {
                     continue;
                 };
+                // 安全相关头不许由配置改写，见 is_data_overridable_response_header
+                if !is_data_overridable_response_header(&header_name) {
+                    continue;
+                }
                 headers.insert(header_name, header_value);
             }
         }
@@ -345,13 +350,18 @@ impl ConfigurationModel {
                AND name = $3
                AND deleted_at IS NULL
                AND effective_start_time <= $4
-               AND effective_end_time >= $5"#,
+               AND effective_end_time >= $5
+               ORDER BY modified DESC, id DESC
+               LIMIT 1"#,
         )
         .bind(category)
         .bind(Status::Enabled as i16)
         .bind(name)
         .bind(now)
         .bind(now)
+        // 同名配置可能有多条同时生效（例如新旧两版的生效期重叠）。此前不排序，
+        // fetch_optional 拿到的是「执行计划恰好先返回的那一条」，同一份数据在
+        // 不同实例、不同时刻可能读出不同配置。现在固定取最近修改的一条。
         .fetch_optional(pool)
         .await
         .context(SqlxSnafu)?;
@@ -361,8 +371,9 @@ impl ConfigurationModel {
         };
         // 之前先 `as_object` 再 `Value::Object(map.clone())` 套回再反序列化，
         // 既多一次 Map clone，又把「数据形状不对」误报成 NotFound。
-        // 直接消费内层 Value 一次反序列化即可——形状错误自然走 JsonSnafu
-        let data: T = serde_json::from_value(configuration.data.0).context(JsonSnafu)?;
+        // 直接消费内层 Value 一次反序列化即可——形状错误走 StoredJsonSnafu（500）
+        // 库里存的数据解不开是服务端问题（数据损坏或 schema 改了没迁移），不是 400
+        let data: T = serde_json::from_value(configuration.data.0).context(StoredJsonSnafu)?;
         Ok(Some(data))
     }
 }

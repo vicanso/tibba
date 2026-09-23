@@ -21,8 +21,8 @@ path = "src/lib.rs"
 default = ["compression", "http"]
 # src/compression.rs：zstd（含 zstd-sys C 编译）+ lz4
 compression = ["dep:lz4_flex", "dep:zstd"]
-# src/http.rs：cookie / header / body 辅助（axum-extra 一族约 25 个传递依赖）
-http = ["dep:axum-extra", "dep:cookie", "dep:http-body-util"]
+# src/http.rs：cookie / header 辅助（axum-extra 一族约 25 个传递依赖）
+http = ["dep:axum-extra", "dep:cookie"]
 
 [dependencies]
 # axum 本体不做门控：request/response 的 extractor 始终需要，
@@ -36,7 +36,6 @@ hex = { workspace = true }
 hmac = { workspace = true }
 mime = { workspace = true }
 humantime = { workspace = true }
-http-body-util = { workspace = true, optional = true }
 lz4_flex = { workspace = true, optional = true }
 nanoid = { workspace = true }
 serde = { workspace = true }
@@ -56,6 +55,8 @@ zstd = { workspace = true, optional = true }
 pretty_assertions = { workspace = true }
 # extractor 的拒绝路径要在 async 上下文里断言状态码
 tokio = { workspace = true, features = ["macros", "rt"] }
+# oneshot 驱动 Router，验证 DefaultBodyLimit 下的 413 映射
+tower = { workspace = true, features = ["util"] }
 
 [lints]
 workspace = true

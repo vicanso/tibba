@@ -369,7 +369,10 @@ mod tests {
         let body = br#"{"amount":100}"#;
         let signature = kg.sign(body).unwrap();
         assert_eq!(signature.len(), 64);
-        assert_eq!(kg.verify(body, &signature).unwrap(), (true, true));
+        assert_eq!(
+            kg.verify(body, &signature).unwrap(),
+            tibba_crypto::Verification::Current
+        );
     }
 
     /// 含非法字符的 header 值被拒绝（不会静默发出残缺头）。

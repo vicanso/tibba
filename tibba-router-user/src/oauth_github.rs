@@ -40,7 +40,7 @@ use std::time::Duration;
 use tibba_cache::RedisCache;
 use tibba_error::Error as BaseError;
 use tibba_middleware::{ClientIp, RequestId};
-use tibba_model::{Model, ROLE_SUPER_ADMIN, UserModel};
+use tibba_model::{Model, UserModel};
 use tibba_model_builtin::{
     AuditLogModel, AuditLogParams, CreateLinkParams, RolePermissionModel, UserOauthLinkModel,
 };
@@ -190,6 +190,7 @@ pub(crate) async fn callback(
         .await
         .unwrap_or_default();
 
+    crate::ensure_enabled(&user)?;
     let session = session
         .with_account(&user.account, user.id)
         .with_groups(groups)
@@ -246,9 +247,9 @@ async fn land_user(
         return Ok(user);
     }
 
-    // 档二：自动合并（verified email 命中本地）
+    // 档二：自动合并（第三方已验证邮箱命中本地**已验证**邮箱，见 get_by_verified_email）
     if let Some(email) = gh.primary_verified_email.as_deref()
-        && let Some(existing) = user_model.get_by_email(pool, email).await?
+        && let Some(existing) = user_model.get_by_verified_email(pool, email).await?
     {
         link_model
             .create(
@@ -273,19 +274,14 @@ async fn land_user(
         .register(pool, &account, &random_password)
         .await?;
 
-    // 首个注册用户自动 ROLE_SUPER_ADMIN（与表单注册流程对齐）
-    if new_id == 1 {
-        user_model
-            .update_by_id(pool, new_id, json!({ "roles": [ROLE_SUPER_ADMIN] }))
-            .await?;
-    }
-
     // 有 verified email 直接写入 + 标记已验证
     if let Some(email) = gh.primary_verified_email.as_deref() {
         user_model
             .update_by_id(pool, new_id, json!({ "email": email }))
             .await?;
-        user_model.mark_email_verified(pool, new_id as i64).await?;
+        user_model
+            .mark_email_verified(pool, new_id as i64, email)
+            .await?;
     }
 
     link_model

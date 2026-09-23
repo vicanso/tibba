@@ -32,10 +32,32 @@ use validator::Validate;
 /// 三个 sub_category（`from_json` / `from_query` / `validate`）都是客户端输入问题，
 /// 没有需要对外隐藏的内部细节，故一律 400 并保留原始 message。
 fn map_err(err: impl ToString, sub_category: &str) -> Error {
+    map_err_with_status(err, sub_category, 400)
+}
+
+/// 同 [`map_err`]，但使用给定的状态码（仍须是 4xx）。
+fn map_err_with_status(err: impl ToString, sub_category: &str, status: u16) -> Error {
     Error::new(err)
         .with_category("params")
         .with_sub_category(sub_category)
-        .with_status(400)
+        .with_status(status)
+}
+
+/// JSON 提取被拒时沿用 axum 给出的状态码。
+///
+/// axum 的 `JsonRejection` 本身就区分得很清楚：请求体超过 `DefaultBodyLimit`
+/// 是 413、正文不是合法 JSON 是 400、JSON 合法但字段类型对不上是 422。此前一律
+/// 压成 400，客户端没法区分「请求太大，别重试了」和「字段写错了」，网关侧的
+/// 413 监控也永远是零。
+fn json_rejection(err: axum::extract::rejection::JsonRejection) -> Error {
+    let status = err.status().as_u16();
+    // 防御：只认 4xx，axum 将来若返回别的类别也不至于把输入错误报成服务端故障
+    let status = if (400..500).contains(&status) {
+        status
+    } else {
+        400
+    };
+    map_err_with_status(err.body_text(), "from_json", status)
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -52,12 +74,18 @@ where
         if json_content_type(req.headers()) {
             let Json(value) = Json::<T>::from_request(req, state)
                 .await
-                .map_err(|err| map_err(err, "from_json"))?;
+                .map_err(json_rejection)?;
             value.validate().map_err(|e| map_err(e, "validate"))?;
 
             Ok(JsonParams(value))
         } else {
-            Err(map_err("Missing json content type", "from_json"))
+            // 415 Unsupported Media Type 才是这件事的准确状态码：请求本身可能完全
+            // 合法，只是没按约定声明成 JSON
+            Err(map_err_with_status(
+                "expected request with `Content-Type: application/json`",
+                "from_json",
+                415,
+            ))
         }
     }
 }
@@ -167,15 +195,51 @@ mod tests {
         assert_eq!(body["sub_category"], "from_json");
     }
 
-    /// 缺少 JSON content-type 也应是 400 而非 500。
+    /// 缺少 JSON content-type 是 415，而不是笼统的 400 / 500。
     #[tokio::test]
-    async fn missing_content_type_is_client_error() {
+    async fn missing_content_type_is_unsupported_media_type() {
         let req = Request::builder()
             .body(Body::from(r#"{"email":"a@b.com"}"#))
             .expect("构造测试请求");
         let (status, body) = reject(req).await;
-        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
         assert_eq!(body["sub_category"], "from_json");
+    }
+
+    /// JSON 合法但字段类型不对：沿用 axum 的 422，与「根本不是 JSON」（400）区分开。
+    #[tokio::test]
+    async fn type_mismatch_is_unprocessable_entity() {
+        let (status, body) = reject(json_request(r#"{"email":123}"#)).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(body["sub_category"], "from_json");
+    }
+
+    /// 请求体超过 `DefaultBodyLimit` 必须是 413——客户端据此知道「别重试了」。
+    #[tokio::test]
+    async fn oversized_body_is_payload_too_large() {
+        use axum::extract::DefaultBodyLimit;
+        use axum::routing::post;
+        use tower::ServiceExt;
+
+        async fn handler(JsonParams(_p): JsonParams<Payload>) -> &'static str {
+            "ok"
+        }
+        let app = axum::Router::new()
+            .route("/", post(handler))
+            .layer(DefaultBodyLimit::max(64));
+        let big = format!(r#"{{"email":"{}@b.com"}}"#, "a".repeat(256));
+        let res = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(big))
+                    .expect("构造测试请求"),
+            )
+            .await
+            .expect("请求应得到响应");
+        assert_eq!(res.status(), StatusCode::PAYLOAD_TOO_LARGE);
     }
 
     #[test]

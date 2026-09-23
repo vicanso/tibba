@@ -52,7 +52,7 @@ impl From<PermissionSchema> for Permission {
     }
 }
 
-/// 权限点的 CRUD 接口。`code` 字段唯一约束，重复插入返回 SQL 错误（由调用方决定如何处理）。
+/// 权限点的 CRUD 接口。`code` 在未删除行中唯一（部分唯一索引），`upsert` 按此幂等。
 #[derive(Default)]
 pub struct PermissionModel;
 
@@ -119,18 +119,35 @@ impl PermissionModel {
         Ok(row.0)
     }
 
-    /// 软删除指定权限点。注意：role_permissions 中引用此 code 的记录不会自动清理，
-    /// 调用方若需要级联应自行处理。
+    /// 软删除指定权限点，**并在同一事务里撤销所有角色对它的授予**。返回删除的权限点行数。
+    ///
+    /// 此前只删 `permissions` 表，文档写着「调用方若需要级联应自行处理」。但授权
+    /// 判定（`RolePermissionModel::list_permissions_for_roles`）只查映射表，于是
+    /// 「删除权限点」对已授予它的角色**完全不生效**——删除一个危险权限的唯一效果
+    /// 是它从管理界面上消失，持有它的人照用不误。
+    ///
+    /// 放进事务：避免权限点已删、映射还在的中间态被并发的登录读到。
     pub async fn soft_delete_by_code(&self, pool: &Pool<Postgres>, code: &str) -> Result<u64> {
+        let mut tx = pool.begin().await.context(SqlxSnafu)?;
         let result = sqlx::query(
             r#"UPDATE permissions
                SET deleted_at = NOW(), modified = NOW()
                WHERE code = $1 AND deleted_at IS NULL"#,
         )
         .bind(code)
-        .execute(pool)
+        .execute(&mut *tx)
         .await
         .context(SqlxSnafu)?;
+        sqlx::query(
+            r#"UPDATE role_permissions
+               SET deleted_at = NOW()
+               WHERE permission_code = $1 AND deleted_at IS NULL"#,
+        )
+        .bind(code)
+        .execute(&mut *tx)
+        .await
+        .context(SqlxSnafu)?;
+        tx.commit().await.context(SqlxSnafu)?;
         Ok(result.rows_affected())
     }
 }

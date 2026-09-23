@@ -158,8 +158,10 @@ unwrap_used = "deny"
 [workspace.package]
 version = "0.2.7"
 edition = "2024"
-# edition 2024 本身要求 1.85；let-chains（全仓库 14 处）要求 1.88
-rust-version = "1.88"
+# 取依赖图的真实下限，而不是本仓库语法特性的下限：let-chains 只要 1.88，但
+# sysinfo 0.39 要 1.95、sqlx 0.9 要 1.94。声明低于依赖下限等于对下游撒谎——
+# 用 1.88 的人会在 cargo 的依赖 MSRV 检查上直接失败，却以为自己满足了要求。
+rust-version = "1.95"
 authors = ["Tree Xie <tree.xie@outlook.com>"]
 license = "Apache-2.0"
 homepage = "https://github.com/vicanso/tibba"
@@ -217,7 +219,9 @@ mime_guess2 = "2.3.1"
 nanoid = "0.5.0"
 once_cell = "1.21.4"
 opendal = { version = "0.59.1", features = [
-    "services-mysql",
+    # 数据库存储后端用 Postgres（与主库一致，复用 objects 表）；此前是 services-mysql，
+    # 而本项目早已全面迁到 Postgres、objects 表的 DDL 也是 PG 语法，MySQL 后端用不上它
+    "services-postgresql",
     "layers-mime-guess",
     "services-s3",
     "services-fs",

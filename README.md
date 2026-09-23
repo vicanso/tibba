@@ -24,7 +24,7 @@ Workspace 内约 35 个 `tibba-*` crate；依赖关系图见 [docs/modules.md](d
 
 ### 依赖
 
-- Rust **1.88+**（edition 2024 + let-chains）
+- Rust **1.95+**（依赖图下限：sysinfo 0.39）
 - PostgreSQL 14+
 - Redis 6+
 - （可选）Node 20+：构建 `admin/` SPA
@@ -59,6 +59,7 @@ docker run -d --name tibba-redis -p 6379:6379 redis:7-alpine
 |------|------|
 | `TIBBA_WEB__BASIC__SECRET` | 生产**必须**覆盖（≥32 字符） |
 | `TIBBA_WEB__BASIC__CORS_ALLOW_ORIGINS` | 生产**必须**配置来源白名单 |
+| `TIBBA_WEB__BASIC__SUPER_ADMINS` | 启动时授予超管的账号列表（先注册再重启生效）；首个注册用户不再自动成为超管 |
 | `TIBBA_WEB__BASIC__LISTEN` | 监听地址，默认 `127.0.0.1:5000` |
 | `TIBBA_WEB__DATABASE__URI` | Postgres 连接串 |
 | `TIBBA_WEB__REDIS__URI` | Redis 连接串 |
@@ -72,10 +73,12 @@ docker run -d --name tibba-redis -p 6379:6379 redis:7-alpine
 
 ```bash
 # 开发（需 bacon 可选）
-cargo run
+# RUST_ENV 未设置时按 production 运行（安全默认）：示例 secret 会被拒绝、
+# 验证码无 1234 旁路、cookie 带 Secure、不挂 Swagger。本地开发需显式声明：
+RUST_ENV=dev cargo run
 
 # 或
-make dev   # bacon run
+make dev   # bacon run（bacon.toml 已为 run 任务设置 RUST_ENV=dev）
 
 # 检查
 make fmt

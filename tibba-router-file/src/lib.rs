@@ -261,11 +261,55 @@ async fn create_file(
 /// 若 inline 服务于同源，浏览器会直接渲染 → 存储型 XSS。强制 attachment 让顶层导航下载
 /// 而非渲染；`<img>`/`<video>` 等嵌入式加载不受 attachment 影响，仍正常工作。
 fn content_disposition_for(content_type: &str) -> &'static str {
-    if content_type.starts_with("image/") {
+    // 只有**栅格**图片允许 inline。此前是 `starts_with("image/")`，把
+    // `image/svg+xml` 也放了进去——SVG 是能内嵌 <script> 的 XML 文档，上传一个
+    // evil.svg 再直接打开下载链接，脚本就在应用同源执行（存储型 XSS）。
+    let essence = content_type
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    const INLINE_SAFE: &[&str] = &[
+        "image/png",
+        "image/jpeg",
+        "image/gif",
+        "image/webp",
+        "image/avif",
+        "image/bmp",
+    ];
+    if INLINE_SAFE.contains(&essence.as_str()) {
         "inline"
     } else {
         "attachment"
     }
+}
+
+/// 在响应头的**最后**写入决定「内容如何被解释」的头，保证不被数据驱动的头覆盖。
+///
+/// 下载 / 预览会合并文件元数据与分组配置里的响应头。此前安全相关头先写、合并
+/// 后写，而 `HeaderMap::extend` 对同名头是替换语义——数据里一条
+/// `Content-Disposition: inline` 就能把这里的防护整个抵消。模型层已拒绝这类
+/// 头（`is_data_overridable_response_header`），这里再按「最后写者赢」兜一层。
+///
+/// `Content-Security-Policy: sandbox`：即便某种类型被浏览器渲染成文档，也会被
+/// 当作不透明源、禁止脚本执行，与应用同源隔离开。对 `<img>` 引用无影响。
+fn apply_file_security_headers(headers: &mut header::HeaderMap, content_type: &str) {
+    if let Ok(value) = HeaderValue::from_str(content_type) {
+        headers.insert(header::CONTENT_TYPE, value);
+    }
+    headers.insert(
+        header::CONTENT_DISPOSITION,
+        HeaderValue::from_static(content_disposition_for(content_type)),
+    );
+    headers.insert(
+        header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static("sandbox"),
+    );
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
 }
 
 #[derive(Debug, Deserialize, Clone, Validate, IntoParams)]
@@ -348,14 +392,6 @@ async fn get_file(
         }
     }
 
-    if let Ok(header_value) = HeaderValue::from_str(&content_type) {
-        headers.insert(header::CONTENT_TYPE, header_value);
-    }
-    // 非图片强制 attachment，防止被浏览器在本站源内 inline 渲染（存储型 XSS）
-    headers.insert(
-        header::CONTENT_DISPOSITION,
-        HeaderValue::from_static(content_disposition_for(&content_type)),
-    );
     let size = data.len();
     if size > 0 {
         headers.insert(header::CONTENT_LENGTH, HeaderValue::from(size));
@@ -369,6 +405,8 @@ async fn get_file(
     {
         headers.extend(response_headers);
     }
+    // 最后写：数据驱动的头不得覆盖内容解释相关的头（防存储型 XSS）
+    apply_file_security_headers(&mut headers, &content_type);
     Ok((headers, data.to_bytes()))
 }
 
@@ -473,14 +511,6 @@ async fn download_file(
     let mut resp_headers = header::HeaderMap::with_capacity(8);
     // 声明支持 Range，客户端据此发起分片请求
     resp_headers.insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
-    if let Ok(content_type) = HeaderValue::from_str(&file.content_type) {
-        resp_headers.insert(header::CONTENT_TYPE, content_type);
-    }
-    // 非图片强制 attachment，防止被浏览器在本站源内 inline 渲染（存储型 XSS）
-    resp_headers.insert(
-        header::CONTENT_DISPOSITION,
-        HeaderValue::from_static(content_disposition_for(&file.content_type)),
-    );
     if let Some(metadata) = file.get_metadata() {
         resp_headers.extend(metadata);
     }
@@ -490,6 +520,8 @@ async fn download_file(
     {
         resp_headers.extend(response_headers);
     }
+    // 最后写：数据驱动的头不得覆盖内容解释相关的头（防存储型 XSS）
+    apply_file_security_headers(&mut resp_headers, &file.content_type);
 
     let range = headers
         .get(header::RANGE)
@@ -688,7 +720,37 @@ pub fn openapi() -> utoipa::openapi::OpenApi {
 
 #[cfg(test)]
 mod tests {
-    use super::{RangeSpec, parse_byte_range};
+    use super::{
+        HeaderValue, RangeSpec, apply_file_security_headers, content_disposition_for, header,
+        parse_byte_range,
+    };
+
+    /// **回归守卫**：SVG 可内嵌脚本，不得 inline；栅格图片仍可 inline。
+    #[test]
+    fn only_raster_images_are_inline() {
+        for ct in ["image/png", "IMAGE/JPEG", "image/webp; charset=binary"] {
+            assert_eq!(content_disposition_for(ct), "inline", "{ct}");
+        }
+        for ct in ["image/svg+xml", "text/html", "application/xhtml+xml", ""] {
+            assert_eq!(content_disposition_for(ct), "attachment", "{ct}");
+        }
+    }
+
+    /// 数据驱动的头先写入，安全头最后覆盖：`Content-Disposition: inline` 等不得生效。
+    #[test]
+    fn security_headers_override_data_headers() {
+        let mut headers = header::HeaderMap::new();
+        headers.insert(
+            header::CONTENT_DISPOSITION,
+            HeaderValue::from_static("inline"),
+        );
+        headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("image/png"));
+        apply_file_security_headers(&mut headers, "text/html");
+        assert_eq!(headers[header::CONTENT_TYPE], "text/html");
+        assert_eq!(headers[header::CONTENT_DISPOSITION], "attachment");
+        assert_eq!(headers[header::CONTENT_SECURITY_POLICY], "sandbox");
+        assert_eq!(headers[header::X_CONTENT_TYPE_OPTIONS], "nosniff");
+    }
 
     /// 断言解析结果为指定闭区间。
     fn assert_partial(value: &str, total: u64, start: u64, end: u64) {

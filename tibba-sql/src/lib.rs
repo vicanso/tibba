@@ -80,6 +80,7 @@ type Result<T> = std::result::Result<T, Error>;
 /// `url` 含明文密码，因此不派生 `Debug`：手写实现用 `redacted_url` 顶替，
 /// 避免凭据随 `{:?}` 进入日志或错误信息。
 #[derive(Clone, Default, Validate)]
+#[validate(schema(function = "validate_pool_bounds"))]
 pub struct DatabaseConfig {
     /// 实际用于建连的 URL（含密码，已去除连接池查询参数）
     #[validate(length(min = 10))]
@@ -92,7 +93,8 @@ pub struct DatabaseConfig {
     /// 连接池最小保活连接数（0–10）
     #[validate(range(min = 0, max = 10))]
     pub min_connections: u32,
-    /// 建立连接的超时时间
+    /// 取得连接的超时时间（含排队等空闲连接与新建连接），映射到 sqlx 的
+    /// `acquire_timeout`。此前解析了却从未应用，实际生效的是 sqlx 默认的 30s。
     pub connect_timeout: Duration,
     /// 连接空闲超时时间，超出后连接将被回收
     pub idle_timeout: Duration,
@@ -177,6 +179,49 @@ impl PoolStat {
     }
 }
 
+/// 本 crate 自己消费的连接池参数名；建连前只剥离这些，其余原样交给 sqlx。
+const POOL_PARAMS: &[&str] = &[
+    "max_connections",
+    "min_connections",
+    "connect_timeout",
+    "idle_timeout",
+    "max_lifetime",
+    "test_before_acquire",
+];
+
+/// 从 URL 查询串里**只**剥离连接池参数，保留 Postgres 自身的连接参数。
+///
+/// 此前是 `url.set_query(None)`——整个查询串一起丢掉，`sslmode=require`、
+/// `sslrootcert`、`application_name`、`options` 全部被静默删除。配置了
+/// `sslmode=require` 的部署实际以 sqlx 默认的 `prefer` 建连：不校验证书，服务端
+/// 不支持 TLS 时直接退回明文，而且没有任何报错或告警。与此前 Redis 的
+/// `rediss://` 被硬编码成 `redis://` 是同一类静默降级。
+fn strip_pool_params(url: &mut Url) {
+    let kept: Vec<(String, String)> = url
+        .query_pairs()
+        .filter(|(k, _)| !POOL_PARAMS.contains(&k.as_ref()))
+        .map(|(k, v)| (k.into_owned(), v.into_owned()))
+        .collect();
+    if kept.is_empty() {
+        url.set_query(None);
+    } else {
+        url.query_pairs_mut().clear().extend_pairs(kept);
+    }
+}
+
+/// 最小连接数不得超过最大连接数：否则连接池的保活目标永远达不到，
+/// sqlx 会在后台不停尝试补齐连接。
+fn validate_pool_bounds(
+    config: &DatabaseConfig,
+) -> std::result::Result<(), validator::ValidationError> {
+    if config.min_connections > config.max_connections {
+        return Err(validator::ValidationError::new(
+            "min_connections must not exceed max_connections",
+        ));
+    }
+    Ok(())
+}
+
 /// 脱敏 URL 中替换真实密码的占位符。
 const PASSWORD_MASK: &str = "***";
 
@@ -199,8 +244,8 @@ fn new_database_config(config: &Config) -> Result<DatabaseConfig> {
     let parsed = parse_uri::<DatabaseQuery>(&origin_url).context(ParseUriSnafu)?;
 
     let mut url = parsed.url().context(ParseUriSnafu)?;
-    // 去除查询参数，避免将连接池配置混入实际连接 URL
-    url.set_query(None);
+    // 只剥离连接池参数；sslmode 等 Postgres 连接参数必须保留，见 strip_pool_params
+    strip_pool_params(&mut url);
 
     let query = &parsed.query;
     let database_config = DatabaseConfig {
@@ -231,6 +276,7 @@ pub async fn new_pg_pool(config: &Config, pool_stat: Option<Arc<PoolStat>>) -> R
     let mut options = PgPoolOptions::new()
         .max_connections(database_config.max_connections)
         .min_connections(database_config.min_connections)
+        .acquire_timeout(database_config.connect_timeout)
         .idle_timeout(database_config.idle_timeout)
         .max_lifetime(database_config.max_lifetime)
         .test_before_acquire(database_config.test_before_acquire);
@@ -293,6 +339,64 @@ mod tests {
         let raw = "postgres://app@db.internal:5432/tibba";
         let url = Url::parse(raw).expect("valid url");
         assert_eq!(redact_url(url), raw);
+    }
+
+    fn config(uri: &str) -> Config {
+        Config::builder()
+            .add_toml(format!("uri = \"{uri}\""))
+            .build()
+            .expect("构造测试配置")
+    }
+
+    /// **回归守卫**：Postgres 自身的连接参数（尤其 sslmode）必须保留到建连 URL。
+    ///
+    /// 此前 `set_query(None)` 把它们和连接池参数一起丢掉，`sslmode=require`
+    /// 被静默降级成 sqlx 默认的 `prefer`。
+    #[test]
+    fn postgres_connection_params_survive_pool_param_stripping() {
+        let cfg = new_database_config(&config(
+            "postgres://app:pw@db:5432/tibba?sslmode=require&max_connections=20&application_name=tibba&idle_timeout=30s",
+        ))
+        .expect("解析配置");
+        let url = Url::parse(&cfg.url).expect("合法 URL");
+        let pairs: Vec<(String, String)> = url
+            .query_pairs()
+            .map(|(k, v)| (k.into_owned(), v.into_owned()))
+            .collect();
+        assert!(
+            pairs.contains(&("sslmode".into(), "require".into())),
+            "{pairs:?}"
+        );
+        assert!(
+            pairs.contains(&("application_name".into(), "tibba".into())),
+            "{pairs:?}"
+        );
+        // 连接池参数不得混进建连 URL
+        assert!(
+            pairs
+                .iter()
+                .all(|(k, _)| !POOL_PARAMS.contains(&k.as_str())),
+            "{pairs:?}"
+        );
+        // 但仍被正确解析
+        assert_eq!(cfg.max_connections, 20);
+        assert_eq!(cfg.idle_timeout, Duration::from_secs(30));
+    }
+
+    #[test]
+    fn url_without_extra_params_has_no_query() {
+        let cfg = new_database_config(&config("postgres://app:pw@db:5432/tibba?max_connections=5"))
+            .expect("解析配置");
+        assert_eq!(cfg.url, "postgres://app:pw@db:5432/tibba");
+    }
+
+    #[test]
+    fn min_connections_above_max_is_rejected() {
+        let err = new_database_config(&config(
+            "postgres://app:pw@db:5432/tibba?max_connections=2&min_connections=5",
+        ))
+        .expect_err("min > max 应当被拒绝");
+        assert!(matches!(err, Error::Validate { .. }), "{err}");
     }
 
     #[test]

@@ -34,7 +34,7 @@ use tibba_error::Error as BaseError;
 use tibba_middleware::{
     ClientIp, RedisIpRateLimit, RequestId, redis_ip_rate_limit, user_tracker, validate_captcha,
 };
-use tibba_model::{Model, ROLE_SUPER_ADMIN, User, UserModel, UserUpdateParams};
+use tibba_model::{Model, User, UserModel, UserUpdateParams};
 use tibba_model_builtin::{AuditLogModel, AuditLogParams, RolePermissionModel};
 use tibba_oauth::OAuthConfig;
 use tibba_session::{Session, SessionResponse, UserSession};
@@ -88,6 +88,19 @@ type Result<T, E = BaseError> = std::result::Result<T, E>;
 
 const ERROR_CATEGORY: &str = "user_router";
 
+/// 禁用账号拒绝建立登录态。
+///
+/// 此前各登录路径（密码 / 2FA / JWT / OAuth / API Key / refresh）都不看
+/// `users.status`，后台把账号设为禁用后，该用户仍能照常登录和调用接口。
+/// 检查放在**凭证校验通过之后**，不给未认证方提供「账号存在且被禁用」的枚举信号。
+pub(crate) fn ensure_enabled(user: &User) -> std::result::Result<(), BaseError> {
+    if user.is_enabled() {
+        Ok(())
+    } else {
+        Err(Error::AccountDisabled.into())
+    }
+}
+
 /// 用户路由模块内部错误，统一通过 `From` 转换为 `tibba_error::Error`。
 #[derive(Debug, Snafu)]
 pub(crate) enum Error {
@@ -106,6 +119,10 @@ pub(crate) enum Error {
     /// 登录失败次数过多，账号或来源 IP 被临时锁定（HTTP 429）
     #[snafu(display("too many failed login attempts, please retry later"))]
     TooManyAttempts,
+
+    /// 账号已被禁用（HTTP 403）
+    #[snafu(display("account is disabled"))]
+    AccountDisabled,
 }
 
 impl From<Error> for BaseError {
@@ -129,6 +146,10 @@ impl From<Error> for BaseError {
                     .with_status(429)
                     .with_exception(false)
             }
+            Error::AccountDisabled => BaseError::new("account is disabled")
+                .with_sub_category("account_disabled")
+                .with_status(403)
+                .with_exception(false),
         };
         err.with_category(ERROR_CATEGORY)
     }
@@ -290,6 +311,7 @@ async fn login(
 
     // 凭证正确：清账号失败计数（IP 计数保留，到期自动解锁）
     login_guard::clear_failures(cache, &account).await;
+    ensure_enabled(&user)?;
 
     // 2FA 闸门：已启用则不建会话，签发挑战令牌要求第二步
     let totp = UserModel::new().get_totp_state(pool, user.id).await?;
@@ -328,6 +350,7 @@ async fn establish_session(
     headers: &HeaderMap,
     action: &'static str,
 ) -> Result<SessionResponse<Json<UserMeResp>>> {
+    ensure_enabled(&user)?;
     let account = user.account.clone();
     let groups = user.groups.clone().unwrap_or_default();
     let roles = user.roles.clone().unwrap_or_default();
@@ -506,7 +529,7 @@ struct RegisterResp {
 }
 
 /// 注册新用户接口。
-/// 第一个注册成功的用户（id=1）自动授予超级管理员角色。
+/// 注册不授予任何角色；超级管理员由配置 `basic.super_admins` 在启动时显式引导。
 /// 注册成功后若配置了 `on_register` 回调，则异步触发；回调失败不影响注册结果。
 #[utoipa::path(
     post,
@@ -526,12 +549,6 @@ async fn register(
     let id = model
         .register(state.pool, &params.account, &params.password)
         .await?;
-    // 首个用户自动升级为超级管理员
-    if id == 1 {
-        model
-            .update_by_id(state.pool, id, json!({ "roles": [ROLE_SUPER_ADMIN] }))
-            .await?;
-    }
     if let Some(cb) = &state.on_register {
         cb(id as i64).await;
     }

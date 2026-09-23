@@ -25,5 +25,8 @@ tibba-error = { path = "../tibba-error", version = "0.2.6" }
 tibba-util = { path = "../tibba-util", version = "0.2.6", default-features = false }
 validator = { workspace = true }
 
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+
 [lints]
 workspace = true

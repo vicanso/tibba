@@ -66,6 +66,7 @@ mod openapi;
 mod router;
 mod sql;
 mod state;
+mod user_admin;
 
 #[cfg(feature = "demo-docker")]
 mod docker;
@@ -217,13 +218,57 @@ fn shutdown_otel() {
     }
 }
 
+/// 按 `basic.super_admins` 为已存在的账号授予超级管理员角色（幂等）。
+///
+/// 超管的来源必须是运维显式声明的配置，而不是「谁先注册谁就是」。账号尚不存在
+/// 时仅告警：先注册，再重启即可生效。
+async fn bootstrap_super_admins(
+    pool: &'static sqlx::PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use tibba_model::Model;
+    let model = tibba_model::UserModel::new();
+    for account in &config::must_get_basic_config().super_admins {
+        let granted = model
+            .grant_role_by_account(pool, account, tibba_model::ROLE_SUPER_ADMIN)
+            .await
+            .map_err(tibba_error::Error::from)?;
+        if granted {
+            warn!(target: LOG_TARGET, account, "granted super admin role");
+        } else if model
+            .get_by_account(pool, account)
+            .await
+            .map_err(tibba_error::Error::from)?
+            .is_none()
+        {
+            warn!(target: LOG_TARGET, account, "super admin account not found, register it then restart");
+        }
+    }
+    Ok(())
+}
+
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // 尽早安装：SIGINT / SIGTERM 都触发同一个进程级信号，HTTP 服务、cron 调度器
     // 与各后台循环共享它。放在 before hooks 之前，使启动阶段收到的信号也不会丢。
     install_shutdown_signal();
+    // 启动第一行就把运行模式打出来：dev / test 会放宽 secret、验证码、cookie 等
+    // 安全要求，运维需要一眼确认线上没有误跑在开发模式。
+    info!(
+        target: LOG_TARGET,
+        rust_env = tibba_util::get_env(),
+        production = tibba_util::is_production(),
+        "starting"
+    );
+    if !tibba_util::is_production() {
+        warn!(
+            target: LOG_TARGET,
+            rust_env = tibba_util::get_env(),
+            "running with development relaxations (demo secret, captcha bypass, insecure cookies); never use in production"
+        );
+    }
     run_before_tasks().await?;
     // before hooks 已就绪 DB/Redis/OpenDAL/AppState → 组装显式 DI 容器
     let ctx = app_ctx::AppCtx::install_from_globals()?;
+    bootstrap_super_admins(ctx.pool).await?;
     run_scheduler_jobs().await?;
 
     // 注册异步任务 handler 并启动 worker（DB 池已在 run_before_tasks 中初始化）。

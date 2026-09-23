@@ -71,6 +71,9 @@ command = [
     "cargo", "run",
     # put launch parameters for your program behind a `--` separator
 ]
+# RUST_ENV 未设置时默认按 production 运行（安全默认，见 tibba_util::DEFAULT_RUST_ENV），
+# 本地开发需显式声明 dev，才能用示例 secret、验证码 1234、Swagger 等开发便利
+env.RUST_ENV = "dev"
 need_stdout = true
 allow_warnings = true
 background = true
@@ -88,6 +91,7 @@ command = [
     "cargo", "run",
     # put launch parameters for your program behind a `--` separator
 ]
+env.RUST_ENV = "dev"
 need_stdout = true
 allow_warnings = true
 background = false

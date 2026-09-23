@@ -23,7 +23,7 @@ use std::str::FromStr;
 use tibba_model::{
     Error, JsonSnafu, Model, ModelListParams, ROLE_ADMIN, ROLE_SUPER_ADMIN, Schema,
     SchemaAllowCreate, SchemaAllowEdit, SchemaOption, SchemaOptionValue, SchemaType, SchemaView,
-    SqlxSnafu, format_datetime,
+    SqlxSnafu, ensure_affected, format_datetime, is_data_overridable_response_header,
 };
 use time::PrimitiveDateTime;
 
@@ -93,6 +93,11 @@ impl File {
             let Ok(header_name) = HeaderName::from_str(key) else {
                 continue;
             };
+            // 元数据不得改写 Content-Type / Content-Disposition 等安全相关头，
+            // 否则一条元数据就能让下载在应用同源下 inline 渲染 HTML（存储型 XSS）
+            if !is_data_overridable_response_header(&header_name) {
+                continue;
+            }
             headers.insert(header_name, header_value);
         }
         Some(headers)
@@ -299,14 +304,14 @@ impl Model for FileModel {
     }
 
     async fn delete_by_id(&self, pool: &Pool<Postgres>, id: u64) -> Result<()> {
-        sqlx::query(
+        let result = sqlx::query(
             r#"UPDATE files SET deleted_at = NOW(), modified = NOW() WHERE id = $1 AND deleted_at IS NULL"#
         )
             .bind(id as i64)
             .execute(pool)
             .await
             .context(SqlxSnafu)?;
-        Ok(())
+        ensure_affected(&result)
     }
 
     async fn update_by_id(
@@ -316,7 +321,7 @@ impl Model for FileModel {
         data: serde_json::Value,
     ) -> Result<()> {
         let params: FileUpdateParams = serde_json::from_value(data).context(JsonSnafu)?;
-        let _ = sqlx::query(
+        let result = sqlx::query(
             r#"UPDATE files SET metadata = COALESCE($1, metadata), "group" = COALESCE($2, "group"), modified = NOW() WHERE id = $3 AND deleted_at IS NULL"#,
         )
             .bind(params.metadata)
@@ -325,7 +330,7 @@ impl Model for FileModel {
             .execute(pool)
             .await
             .context(SqlxSnafu)?;
-        Ok(())
+        ensure_affected(&result)
     }
 
     async fn count(&self, pool: &Pool<Postgres>, params: &ModelListParams) -> Result<i64> {

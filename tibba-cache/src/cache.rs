@@ -274,7 +274,7 @@ impl RedisCache {
 
     /// 获取指定键的剩余过期时间（秒）。
     /// 返回 -2 表示键不存在，-1 表示键无过期时间。
-    pub async fn ttl(&self, key: &str) -> Result<i32> {
+    pub async fn ttl(&self, key: &str) -> Result<i64> {
         let result = self
             .conn()
             .await?

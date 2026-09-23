@@ -55,9 +55,45 @@ impl ModelListParams {
         push_order_by(qb, order_by, allowed);
         // clamp 到 [1, 200]：加下限 1，避免 limit 缺省 / 传 0 时生成 `LIMIT 0` 静默返回空结果
         let limit = self.limit.clamp(1, 200);
-        let offset = (self.page.max(1) - 1) * limit;
-        qb.push(format!(" LIMIT {limit} OFFSET {offset}"));
+        qb.push(format!(
+            " LIMIT {limit} OFFSET {}",
+            page_offset(self.page, limit)
+        ));
     }
+}
+
+/// 由页码与每页条数计算 OFFSET，**饱和**而不溢出。
+///
+/// `page` 直接来自查询串。此前是 `(page - 1) * limit` 的普通 u64 乘法：
+/// `page=18446744073709551615` 在 debug 构建下直接 panic，release 构建（默认
+/// 不开 overflow-checks）下静默回绕成一个随机的巨大值，拼进 SQL 后 Postgres 报
+/// 「OFFSET 超出 bigint 范围」→ 500。这里饱和到 `i64::MAX`（Postgres OFFSET 的
+/// 上限），超出表大小的偏移只会得到空结果。
+fn page_offset(page: u64, limit: u64) -> u64 {
+    page.max(1)
+        .saturating_sub(1)
+        .saturating_mul(limit)
+        .min(i64::MAX as u64)
+}
+
+/// 把用户输入转义成 LIKE 模式里的**字面量**：`\`、`%`、`_` 前加 `\`。
+///
+/// 此前 `format!("%{keyword}%")` 把关键词原样放进模式，于是：
+/// - `keyword=%` 匹配全表，`keyword=_` 匹配任意单字符——搜索框成了「列出一切」；
+/// - `%a%b%c%d%…` 这种多通配符模式在大表上是一次代价极高的回溯匹配，一个
+///   无需任何权限的列表接口就能拖慢数据库。
+///
+/// Postgres 的 LIKE 默认转义符就是 `\`，无需额外写 `ESCAPE` 子句。
+#[must_use]
+pub fn escape_like(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for c in input.chars() {
+        if matches!(c, '\\' | '%' | '_') {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
 }
 
 /// 解析 `order_by`：前缀 `-` 表示 DESC，否则 ASC。
@@ -90,6 +126,19 @@ pub fn push_order_by(qb: &mut QueryBuilder<Postgres>, order_by: &str, allowed: &
         return;
     };
     qb.push(format!(" ORDER BY {col} {dir}"));
+}
+
+/// 要求写操作至少影响一行，否则返回 [`Error::NotFound`]（→ 404）。
+///
+/// 按 ID 的 `UPDATE` / 软删除 `UPDATE` 在目标不存在（或已被软删）时影响 0 行，
+/// 这在 SQL 层面不是错误。此前各 model 一律 `execute(..)?; Ok(())`，于是对一个
+/// 不存在的 ID 做更新 / 删除，通用 model 路由回的是成功——调用方以为改到了，
+/// 实际什么都没发生。所有 `update_by_id` / `delete_by_id` 都应以它收尾。
+pub fn ensure_affected(result: &sqlx::postgres::PgQueryResult) -> Result<()> {
+    if result.rows_affected() == 0 {
+        return Err(Error::NotFound);
+    }
+    Ok(())
 }
 
 /// 按主键查询未删除行的 `WHERE` 片段（绑定 `$1` = id）。
@@ -140,7 +189,7 @@ pub trait Model: Send + Sync {
             && let Some(keyword) = &params.keyword
         {
             qb.push(format!(" AND {col} LIKE "));
-            qb.push_bind(format!("%{keyword}%"));
+            qb.push_bind(format!("%{}%", escape_like(keyword)));
         }
 
         if let Some(filters) = params.parse_filters()? {
@@ -304,6 +353,44 @@ mod tests {
         assert_eq!(
             order_sql("id; drop table users", DEFAULT_ORDERABLE_COLUMNS),
             "SELECT 1 ORDER BY id ASC"
+        );
+    }
+
+    /// **回归守卫**：关键词里的通配符必须按字面量匹配。
+    #[test]
+    fn like_wildcards_are_escaped() {
+        assert_eq!(escape_like("abc"), "abc");
+        assert_eq!(escape_like("%"), "\\%");
+        assert_eq!(escape_like("_"), "\\_");
+        assert_eq!(escape_like("50%_off"), "50\\%\\_off");
+        // 转义符自身也要转义，否则 `a\` 会把后面的 `%` 吃掉
+        assert_eq!(escape_like("a\\"), "a\\\\");
+        // 非 ASCII 原样保留
+        assert_eq!(escape_like("中文%"), "中文\\%");
+    }
+
+    /// **回归守卫**：超大页码不得溢出。
+    #[test]
+    fn page_offset_saturates_instead_of_overflowing() {
+        assert_eq!(page_offset(0, 20), 0);
+        assert_eq!(page_offset(1, 20), 0);
+        assert_eq!(page_offset(3, 20), 40);
+        // 旧实现在这里 debug panic / release 回绕
+        assert_eq!(page_offset(u64::MAX, 200), i64::MAX as u64);
+    }
+
+    #[test]
+    fn pagination_sql_is_well_formed_for_huge_page() {
+        let params = ModelListParams {
+            page: u64::MAX,
+            limit: 200,
+            ..Default::default()
+        };
+        let mut qb = QueryBuilder::<Postgres>::new("SELECT 1");
+        params.push_pagination(&mut qb, DEFAULT_ORDERABLE_COLUMNS);
+        assert_eq!(
+            qb.sql().as_str(),
+            format!("SELECT 1 ORDER BY id ASC LIMIT 200 OFFSET {}", i64::MAX)
         );
     }
 

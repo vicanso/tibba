@@ -17,10 +17,9 @@ use hex::encode;
 use hmac::{Hmac, KeyInit, Mac};
 use nanoid::nanoid;
 use sha2::{Digest, Sha256};
-use std::time::{SystemTime, UNIX_EPOCH};
 use subtle::ConstantTimeEq;
 use tibba_error::Error;
-use uuid::{NoContext, Timestamp, Uuid};
+use uuid::Uuid;
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -61,25 +60,21 @@ fn hmac_sha256(secret: &[u8], parts: &[&[u8]]) -> Result<String> {
     Ok(encode(mac.finalize().into_bytes()))
 }
 
-/// Generates a UUIDv7 string
+/// 生成 UUIDv7 字符串（`xxxxxxxx-xxxx-7xxx-xxxx-xxxxxxxxxxxx`）。
 ///
-/// Creates a time-based UUID (version 7) using the current system time
-/// Format: xxxxxxxx-xxxx-7xxx-xxxx-xxxxxxxxxxxx
+/// 同一进程内生成的 ID **严格按生成顺序递增**，适合作数据库主键 / 游标分页键。
 ///
-/// # Returns
-/// * String containing the formatted UUID
+/// # 此前的实现与文档不符
+/// 旧版手工取 `SystemTime` 再 `Timestamp::from_unix(NoContext, ..)`：`NoContext`
+/// 意味着同一毫秒内的计数位全是随机数，于是同一毫秒生成的两个 ID **先后顺序是随机的**
+/// ——而文档写的恰恰是「Monotonic ordering within the same timestamp」。
+/// 拿它做游标分页时，同毫秒插入的行会被跳过或重复返回。
 ///
-/// # Note
-/// UUIDv7 provides:
-/// - Timestamp-based ordering
-/// - Monotonic ordering within the same timestamp
-/// - Standards compliance
+/// 改用 `Uuid::now_v7()`：它使用进程内共享的计数器上下文，uuid crate 保证
+/// 「All UUIDs generated through this method by the same process are guaranteed
+/// to be ordered by their creation」。
 pub fn uuid() -> String {
-    let d = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default();
-    let ts = Timestamp::from_unix(NoContext, d.as_secs(), d.subsec_nanos());
-    Uuid::new_v7(ts).to_string()
+    Uuid::now_v7().to_string()
 }
 
 /// Generates a NanoID string of specified length
@@ -228,6 +223,25 @@ mod tests {
         assert_eq!("1.1234", float_to_fixed(1.123412, 4));
         // precision >4 被截断为 4，避免过长格式串带来的开销
         assert_eq!("1.1234", float_to_fixed(1.123412, 10));
+    }
+
+    /// **回归守卫**：同一进程内生成的 UUIDv7 必须严格递增。
+    ///
+    /// 旧实现用 `NoContext`，同一毫秒内的 ID 顺序随机；紧密循环里生成大量 ID
+    /// 必然有多个落在同一毫秒，此时旧实现几乎一定会出现逆序。
+    #[test]
+    fn uuid_v7_is_strictly_monotonic_within_process() {
+        let ids: Vec<String> = (0..2000).map(|_| uuid()).collect();
+        for pair in ids.windows(2) {
+            assert!(
+                pair[0] < pair[1],
+                "UUIDv7 出现逆序: {} >= {}",
+                pair[0],
+                pair[1]
+            );
+        }
+        // 版本号位必须是 7
+        assert!(ids.iter().all(|id| id.as_bytes()[14] == b'7'));
     }
 
     #[test]

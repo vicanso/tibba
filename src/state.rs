@@ -52,12 +52,10 @@ static PERFORMANCE: LazyLock<RwLock<Performance>> =
 pub fn get_app_state() -> &'static AppState {
     STATE.get_or_init(|| {
         let basic_config = must_get_basic_config();
-        AppState::new(
-            basic_config.processing_limit,
-            basic_config.commit_id.clone(),
-        )
-        .with_name("tibba")
-        .with_version(env!("CARGO_PKG_VERSION"))
+        AppState::new(basic_config.commit_id.clone())
+            .with_processing_limit(basic_config.processing_limit)
+            .with_name("tibba")
+            .with_version(env!("CARGO_PKG_VERSION"))
     })
 }
 

@@ -31,7 +31,7 @@ struct LoginParams {
 | Feature | 默认 | 内容 | 甩掉的依赖 |
 |---------|------|------|-----------|
 | `compression` | 开 | `compress` / `decompress` / `Algorithm` | zstd（含 zstd-sys C 编译）、lz4_flex |
-| `http` | 开 | header / cookie / body 辅助（`get_header_value`、`generate_device_id_cookie` 等） | axum-extra、cookie、http-body-util |
+| `http` | 开 | header / cookie 辅助（`get_header_value`、`generate_device_id_cookie` 等） | axum-extra、cookie |
 
 ```toml
 # 只要 parse_uri / timestamp / uuid 等轻量函数

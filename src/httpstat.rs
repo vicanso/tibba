@@ -566,14 +566,14 @@ async fn run_stat_alarm() -> Result<(i32, i32)> {
     let now = chrono::Utc::now().timestamp() - 10;
 
     let pool = get_app_ctx().pool;
-    let last_check_time = chrono::DateTime::from_timestamp(alarm_cache.last_check_time, 0)
-        .ok_or(Error::new("parse time error"))?
-        .to_rfc3339();
-    let now_check_time = chrono::DateTime::from_timestamp(now, 0)
-        .ok_or(Error::new("parse time error"))?
-        .to_rfc3339();
+    // 按 UTC 构造时间边界并以 timestamp 类型绑定（created 列存的是 UTC 的 TIMESTAMP）
+    let to_utc = |ts: i64| {
+        time::OffsetDateTime::from_unix_timestamp(ts)
+            .map(|t| time::PrimitiveDateTime::new(t.date(), t.time()))
+            .map_err(|_| Error::new("parse time error"))
+    };
     let stats = HttpStatModel::new()
-        .list_by_created(pool, (&last_check_time, &now_check_time))
+        .list_by_created(pool, (to_utc(alarm_cache.last_check_time)?, to_utc(now)?))
         .await?;
 
     // 因为相同的target id有可能会有多个http stat

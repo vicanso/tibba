@@ -19,7 +19,7 @@ use sqlx::{Pool, Postgres, QueryBuilder};
 use std::collections::HashMap;
 use tibba_model::{
     Error, JsonSnafu, Model, ModelListParams, Schema, SchemaAllowCreate, SchemaAllowEdit,
-    SchemaType, SchemaView, SqlxSnafu, format_datetime,
+    SchemaType, SchemaView, SqlxSnafu, ensure_affected, format_datetime,
 };
 use time::PrimitiveDateTime;
 
@@ -199,7 +199,7 @@ impl Model for DetectorGroupModel {
     async fn delete_by_id(&self, pool: &Pool<Postgres>, id: u64) -> Result<()> {
         // 与其他 Model（files / http_detectors 等）保持一致，加 `deleted_at IS NULL`
         // 守卫：避免重复删除时把原始 deleted_at 覆盖成新时间，丢失审计痕迹
-        sqlx::query(
+        let result = sqlx::query(
             r#"UPDATE detector_groups SET deleted_at = NOW(), modified = NOW() WHERE id = $1 AND deleted_at IS NULL"#,
         )
         .bind(id as i64)
@@ -207,7 +207,7 @@ impl Model for DetectorGroupModel {
         .await
         .context(SqlxSnafu)?;
 
-        Ok(())
+        ensure_affected(&result)
     }
 
     async fn update_by_id(
@@ -219,7 +219,7 @@ impl Model for DetectorGroupModel {
         let params: DetectorGroupUpdateParams =
             serde_json::from_value(params).context(JsonSnafu)?;
 
-        let _ = sqlx::query(
+        let result = sqlx::query(
             r#"UPDATE detector_groups SET name = COALESCE($1, name), owner_id = COALESCE($2, owner_id), status = COALESCE($3, status), remark = COALESCE($4, remark), modified = NOW() WHERE id = $5 AND deleted_at IS NULL"#,
         )
         .bind(params.name)
@@ -231,7 +231,7 @@ impl Model for DetectorGroupModel {
         .await
         .context(SqlxSnafu)?;
 
-        Ok(())
+        ensure_affected(&result)
     }
 
     async fn count(&self, pool: &Pool<Postgres>, params: &ModelListParams) -> Result<i64> {

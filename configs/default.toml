@@ -3,6 +3,7 @@
 # timeout for http request
 timeout = "60s"
 listen = "127.0.0.1:5000"
+# 最大并发请求数，超出回 429；0 表示不限制
 processing_limit = 1_000
 # 仅开发 / 测试用示例值；生产必须通过 TIBBA_WEB__BASIC__SECRET 覆盖，否则启动校验失败。
 # 该值派生 TOTP AES-256-GCM 密钥并签发登录防重放令牌，务必强随机、保密。
@@ -10,6 +11,9 @@ secret = "tibba-dev-insecure-secret-do-not-use-in-production"
 # 生产必须配置 CORS 白名单，否则启动失败。开发可留空（任意来源）。
 # cors_allow_origins = ["http://localhost:5173"]
 # cors_allow_credentials = true
+# 启动时授予超级管理员（su）角色的账号（需已注册；幂等）。首个注册用户**不再**自动成为超管。
+# 环境变量：TIBBA_WEB__BASIC__SUPER_ADMINS
+# super_admins = ["admin"]
 
 
 # session config

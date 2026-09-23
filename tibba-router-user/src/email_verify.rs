@@ -21,7 +21,7 @@
 use crate::user_agent_of;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use snafu::{OptionExt, Snafu};
 use sqlx::PgPool;
 use std::time::Duration;
@@ -33,7 +33,6 @@ use tibba_model::{Model, UserModel};
 use tibba_model_builtin::{AuditLogModel, AuditLogParams};
 use tibba_session::UserSession;
 use tibba_util::{JsonParams, uuid, x_uuid};
-use tracing::warn;
 use utoipa::ToSchema;
 use validator::Validate;
 
@@ -42,7 +41,6 @@ type Result<T, E = BaseError> = std::result::Result<T, E>;
 const ERROR_CATEGORY: &str = "email_verify";
 const REDIS_PREFIX: &str = "email_verify:";
 const TOKEN_TTL_SECS: u64 = 24 * 60 * 60;
-const LOG_TARGET: &str = "tibba:email_verify";
 
 #[derive(Debug, Snafu)]
 pub(crate) enum Error {
@@ -52,6 +50,20 @@ pub(crate) enum Error {
     /// Token 不存在或已过期（HTTP 401）
     #[snafu(display("invalid or expired token"))]
     InvalidToken,
+    /// 申请验证之后邮箱被改过：验证码对应的地址已不是账号当前邮箱（HTTP 409）
+    #[snafu(display("email changed since verification was requested"))]
+    EmailChanged,
+}
+
+/// 验证码在缓存中对应的内容：**用户与验证码实际发往的邮箱**。
+///
+/// 此前只存 user_id，确认时直接把「当前邮箱」标成已验证——于是先对自己的
+/// 邮箱申请、再把资料邮箱改成他人的、最后用自己收到的验证码确认，他人的邮箱
+/// 就成了「已验证」。把邮箱一并存下，确认时要求账号当前邮箱与之一致。
+#[derive(Debug, Serialize, Deserialize)]
+struct PendingVerification {
+    user_id: i64,
+    email: String,
 }
 
 impl From<Error> for BaseError {
@@ -65,6 +77,9 @@ impl From<Error> for BaseError {
                 .with_sub_category("invalid_token")
                 .with_status(401)
                 .with_exception(false),
+            Error::EmailChanged => BaseError::new("email changed since verification was requested")
+                .with_sub_category("email_changed")
+                .with_status(409),
         };
         err.with_category(ERROR_CATEGORY)
     }
@@ -113,7 +128,10 @@ pub(crate) async fn request_verify(
         .cache
         .set_struct(
             &format!("{REDIS_PREFIX}{token}"),
-            &user.id,
+            &PendingVerification {
+                user_id: user.id,
+                email: email.to_string(),
+            },
             Some(Duration::from_secs(TOKEN_TTL_SECS)),
         )
         .await?;
@@ -161,16 +179,18 @@ pub(crate) async fn confirm_verify(
     JsonParams(params): JsonParams<ConfirmParams>,
 ) -> Result<StatusCode> {
     let key = format!("{REDIS_PREFIX}{}", params.token);
-    let user_id: Option<i64> = state.cache.get_struct(&key).await?;
-    let user_id = user_id.context(InvalidTokenSnafu)?;
+    // 取出即删（GETDEL）：验证码是一次性的，读与删之间不留重放窗口
+    let pending: Option<Vec<u8>> = state.cache.get_del(&key).await?;
+    let pending: PendingVerification = pending
+        .and_then(|raw| serde_json::from_slice(&raw).ok())
+        .context(InvalidTokenSnafu)?;
+    let user_id = pending.user_id;
 
-    UserModel::new()
-        .mark_email_verified(state.pool, user_id)
+    let marked = UserModel::new()
+        .mark_email_verified(state.pool, user_id, &pending.email)
         .await?;
-
-    // 异步删 token——失败不阻断主流程（token 自身 24h 内会过期）
-    if let Err(e) = state.cache.del(&key).await {
-        warn!(target: LOG_TARGET, error = %e, "delete used token failed");
+    if !marked {
+        return Err(Error::EmailChanged.into());
     }
 
     // 审计：邮箱验证成功

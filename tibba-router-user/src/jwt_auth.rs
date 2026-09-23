@@ -204,6 +204,7 @@ async fn issue_jwt(
     headers: &HeaderMap,
     action: &'static str,
 ) -> Result<JwtLoginResp, BaseError> {
+    crate::ensure_enabled(&user)?;
     // 角色 → 权限并集（与 session login 一致）
     let roles = user.roles.clone().unwrap_or_default();
     let permissions = RolePermissionModel::new()
@@ -359,6 +360,8 @@ pub(crate) async fn refresh_jwt(
         .get_by_id(state.pool, user_id as u64)
         .await?
         .context(UserGoneSnafu)?;
+    // 禁用账号不得再续签 access
+    crate::ensure_enabled(&user)?;
 
     let roles = user.roles.clone().unwrap_or_default();
     let permissions = RolePermissionModel::new()

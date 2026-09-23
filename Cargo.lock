@@ -3923,7 +3923,7 @@ dependencies = [
  "opendal-layer-timeout",
  "opendal-service-fs",
  "opendal-service-http",
- "opendal-service-mysql",
+ "opendal-service-postgresql",
  "opendal-service-s3",
 ]
 
@@ -4047,10 +4047,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "opendal-service-mysql"
+name = "opendal-service-postgresql"
 version = "0.59.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "28de098a59683ce06792c2cf936a38531e61c8933e1d29ccaca7fb156f082517"
+checksum = "472c5ad30c9827de650d4775d6393eb7556db5606405efef5758b435d4a11756"
 dependencies = [
  "asyncband",
  "opendal-core",
@@ -6666,6 +6666,7 @@ dependencies = [
  "dirs",
  "opendal",
  "path-absolutize",
+ "pretty_assertions",
  "serde",
  "snafu",
  "tibba-config",
@@ -6882,7 +6883,6 @@ dependencies = [
  "cookie",
  "hex",
  "hmac 0.13.0",
- "http-body-util",
  "humantime",
  "lz4_flex",
  "mime",
@@ -6896,6 +6896,7 @@ dependencies = [
  "subtle",
  "tibba-error",
  "tokio",
+ "tower",
  "url",
  "uuid",
  "validator",

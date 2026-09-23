@@ -31,7 +31,7 @@
 //! 一次需要分布式锁（[`RedisCache::lock_with_token`]），代价是每次未命中都多一次
 //! Redis 往返，且锁持有者崩溃时其余请求要等锁过期。对绝大多数场景不划算。
 
-use super::RedisCache;
+use super::{Error as CacheError, LOG_TARGET, RedisCache};
 use dashmap::DashMap;
 use serde::{Serialize, de::DeserializeOwned};
 use std::future::Future;
@@ -39,6 +39,7 @@ use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 use tibba_error::Error as BaseError;
 use tokio::sync::{Mutex, OwnedMutexGuard};
+use tracing::warn;
 
 /// 按完整缓存键（含前缀）分组的回源互斥锁。
 ///
@@ -114,7 +115,7 @@ impl RedisCache {
         Fut: Future<Output = std::result::Result<T, BaseError>>,
     {
         // 第一次读：绝大多数请求在这里就返回了，不碰锁
-        if let Some(value) = self.get_struct::<T>(key).await? {
+        if let Some(value) = self.read_cached::<T>(key).await? {
             return Ok(value);
         }
 
@@ -122,13 +123,41 @@ impl RedisCache {
 
         // 拿到回源权后**再读一次**：等锁期间很可能已经有人填好了。
         // 少了这一步，合并就退化成「排队逐个回源」，一次都没省下。
-        if let Some(value) = self.get_struct::<T>(key).await? {
+        if let Some(value) = self.read_cached::<T>(key).await? {
             return Ok(value);
         }
 
         let value = loader().await?;
         self.set_struct(key, &value, ttl).await?;
         Ok(value)
+    }
+
+    /// cache-aside 专用的读取：**解不开的缓存条目视为未命中**。
+    ///
+    /// 结构体加字段、改类型之后，Redis 里还躺着旧格式的条目。`get_struct` 对它
+    /// 返回反序列化错误是对的（调用方可能需要知道），但在 cache-aside 语义下，
+    /// 这意味着每一次读取都失败，直到旧条目自然过期——一次正常的发版就能让
+    /// 依赖缓存的接口整片报错一个 TTL。这里把它当作未命中：回源重算、覆盖写回，
+    /// 旧格式随之消失。
+    ///
+    /// Redis 连接类错误照常上抛：那是真的读不到，不是数据过时。
+    async fn read_cached<T>(&self, key: &str) -> Result<Option<T>, CacheError>
+    where
+        T: DeserializeOwned,
+    {
+        match self.get_struct::<T>(key).await {
+            Ok(value) => Ok(value),
+            Err(CacheError::SerdeJson { source }) => {
+                warn!(
+                    target: LOG_TARGET,
+                    key,
+                    error = %source,
+                    "cached entry does not match current schema; treating as miss"
+                );
+                Ok(None)
+            }
+            Err(err) => Err(err),
+        }
     }
 }
 

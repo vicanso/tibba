@@ -19,13 +19,15 @@ use crate::config::must_get_token_config;
 use crate::config::{must_get_basic_config, must_get_email_config, must_get_oauth_config};
 use crate::metrics::metrics_handler;
 use crate::sql::ping_db;
+use crate::user_admin::UserAdminModel;
 use axum::Router;
 use axum::routing::get;
 use std::sync::Arc;
+use tibba_cache::RedisCache;
 use tibba_error::Error;
 use tibba_middleware::csrf_token;
 use tibba_model::Model;
-use tibba_model_builtin::{ConfigurationModel, FileModel, UserModel};
+use tibba_model_builtin::{ConfigurationModel, FileModel};
 #[cfg(feature = "demo-detector")]
 use tibba_model_builtin::{
     DetectorGroupModel, DetectorGroupUserModel, HttpDetectorModel, HttpStatModel,
@@ -43,6 +45,7 @@ use tibba_router_model::{
     register_model_with,
 };
 use tibba_router_user::{UserRouterParams, new_user_router};
+use tibba_session::SessionParams;
 use tibba_util::{is_development, is_test};
 // error! 仅用于 demo-token 的 on_register 入队失败日志，minimal 构建下无引用
 #[cfg(feature = "demo-token")]
@@ -54,12 +57,13 @@ type Result<T> = std::result::Result<T, Error>;
 /// `/readyz` 翻红让 K8s 摘流量（减少新任务涌入）。取值很高，避免正常业务积压导致抖动。
 const READINESS_MAX_PENDING: i64 = 5000;
 
-fn register_models() {
+fn register_models(cache: &'static RedisCache, session_params: Arc<SessionParams>) {
     // 敏感模型挂细粒度权限码；Admin 角色仍可通过 authorize 的 admin 逃生舱访问。
     // SuperAdmin 持有 `*`，权限码路径同样放行。未声明权限的模型保持「仅 Admin」。
+    // user 模型改身份字段 / 删除后撤销该用户的会话，见 `UserAdminModel`
     register_model_with(
         "user",
-        Arc::new(ModelAdapter(UserModel::new())),
+        Arc::new(UserAdminModel::new(cache, session_params)),
         ModelPermissions::default()
             .with_read("model:user:read")
             .with_write("model:user:write"),
@@ -149,7 +153,7 @@ fn register_models() {
 /// `ctx` 为 hook 初始化后的共享依赖（池 / 缓存 / 存储 / AppState），避免在本函数内
 /// 再次散落 `get_db_pool()` 等全局读取。配置类仍经 `must_get_*`（启动期一次性读）。
 pub fn new_router(ctx: &AppCtx) -> Result<Router> {
-    register_models();
+    register_models(ctx.cache, Arc::new(crate::config::get_session_params()?));
 
     let basic_config = must_get_basic_config();
     let pool = ctx.pool;

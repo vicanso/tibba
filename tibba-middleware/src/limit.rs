@@ -55,14 +55,12 @@ pub async fn processing_limit(
     // Ensure exit logging happens even if processing panics
     defer!(debug!(target: LOG_TARGET, "<-- processing_limit"););
 
-    // Get configured processing limit from app state
-    let limit = state.get_processing_limit();
-
-    // If limit is negative, processing is unlimited; skip inflight tracking
-    // (gauge 仅在启用流控时镜像 atomic 计数，保持二者一致)
-    if limit < 0 {
+    // 未配置上限即不限流，也不做在途计数
+    // （gauge 仅在启用流控时镜像 atomic 计数，保持二者一致）
+    let Some(limit) = state.get_processing_limit() else {
         return Ok(next.run(req).await);
-    }
+    };
+    let limit = limit.get();
 
     let count = state.inc_processing();
     gauge!(METRIC_HTTP_INFLIGHT).increment(1.0);
@@ -77,8 +75,8 @@ pub async fn processing_limit(
         // 错误响应会经由 IntoResponse 流回 stats 中间件，由其统一计数到
         // http_requests_total{status="error"}，这里不再自行递增
         return Err(Error::TooManyRequests {
-            limit: limit as i64,
-            current: count as i64,
+            limit: i64::from(limit),
+            current: i64::from(count),
         }
         .into());
     }

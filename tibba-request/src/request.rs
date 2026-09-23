@@ -28,8 +28,8 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::net::{IpAddr, SocketAddr};
 use std::pin::Pin;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tibba_error::Error as BaseError;
 use tibba_util::{Stopwatch, timestamp};
@@ -790,7 +790,9 @@ impl ClientBuilder {
         // ensure_public_target 只在首次发送前校验一次，跟随即等于绕过。
         // 见 ClientBuilder::with_deny_internal_targets 的说明。
         if self.config.deny_internal_targets {
-            builder = builder.redirect(reqwest::redirect::Policy::none());
+            builder = builder
+                .redirect(reqwest::redirect::Policy::none())
+                .dns_resolver(Arc::new(PublicOnlyResolver));
         }
 
         let client = builder.build().context(BuildSnafu {
@@ -819,28 +821,124 @@ pub struct Client {
 /// 以及 IPv6 的 ULA / link-local / IPv4-mapped 内部地址。
 fn is_internal_ip(ip: IpAddr) -> bool {
     match ip {
-        IpAddr::V4(v4) => {
-            v4.is_loopback()
-                || v4.is_private()
-                || v4.is_link_local()
-                || v4.is_broadcast()
-                || v4.is_unspecified()
-                || v4.is_documentation()
-                // 共享地址空间 100.64.0.0/10（运营商级 NAT）
-                || (v4.octets()[0] == 100 && (v4.octets()[1] & 0xc0) == 64)
-        }
+        IpAddr::V4(v4) => is_internal_ipv4(v4),
         IpAddr::V6(v6) => {
-            // IPv4-mapped（::ffff:a.b.c.d）按内嵌 v4 判断，防绕过
+            // 各种「IPv6 里夹带 IPv4」的形式都按内嵌的 v4 判断，否则攻击者换一种
+            // 写法就能绕过 v4 的规则：
+            // - IPv4-mapped ::ffff:a.b.c.d
+            // - NAT64 64:ff9b::a.b.c.d：经 NAT64 网关会被翻译成 a.b.c.d
+            // - 6to4 2002:AABB:CCDD::/48：内嵌 v4 AA.BB.CC.DD
             if let Some(v4) = v6.to_ipv4_mapped() {
-                return is_internal_ip(IpAddr::V4(v4));
+                return is_internal_ipv4(v4);
             }
-            let first = v6.segments()[0];
+            let seg = v6.segments();
+            if seg[..6] == [0x64, 0xff9b, 0, 0, 0, 0] {
+                return is_internal_ipv4(embedded_v4(seg[6], seg[7]));
+            }
+            if seg[0] == 0x2002 {
+                return is_internal_ipv4(embedded_v4(seg[1], seg[2]));
+            }
+            let first = seg[0];
             v6.is_loopback()
                 || v6.is_unspecified()
+                || v6.is_multicast()
                 || (first & 0xfe00) == 0xfc00 // ULA fc00::/7
                 || (first & 0xffc0) == 0xfe80 // link-local fe80::/10
+                || (first & 0xffc0) == 0xfec0 // site-local fec0::/10（已废弃，但仍可能路由到内网）
+                // IPv4-compatible ::a.b.c.d（已废弃）：前 96 位全 0。::1 / :: 已在上面处理
+                || seg[..6] == [0; 6]
         }
     }
+}
+
+/// 两个 16 位段拼成一个 IPv4 地址。
+fn embedded_v4(hi: u16, lo: u16) -> std::net::Ipv4Addr {
+    let [a, b] = hi.to_be_bytes();
+    let [c, d] = lo.to_be_bytes();
+    std::net::Ipv4Addr::new(a, b, c, d)
+}
+
+/// IPv4 是否为内部 / 特殊地址。
+///
+/// 除标准库已有的判定外，补上标准库尚未稳定（或没有）的几段：
+/// - `0.0.0.0/8`：「本网络」。Linux 上连 `0.0.0.0` 等价于连本机，
+///   `is_unspecified` 只认恰好 `0.0.0.0`，`0.1.2.3` 之类会漏掉
+/// - `100.64.0.0/10`：运营商级 NAT 共享地址
+/// - `192.0.0.0/24`：IETF 协议分配
+/// - `198.18.0.0/15`：基准测试网段，常被内网拿来用
+/// - `224.0.0.0/4` 组播、`240.0.0.0/4` 保留（含广播）
+fn is_internal_ipv4(v4: std::net::Ipv4Addr) -> bool {
+    let [a, b, c, _] = v4.octets();
+    v4.is_loopback()
+        || v4.is_private()
+        || v4.is_link_local()
+        || v4.is_broadcast()
+        || v4.is_unspecified()
+        || v4.is_documentation()
+        || v4.is_multicast()
+        || a == 0
+        || (a == 100 && (b & 0xc0) == 64)
+        || (a == 192 && b == 0 && c == 0)
+        || (a == 198 && (b & 0xfe) == 18)
+        || a >= 240
+}
+
+/// 开启 SSRF 防护时挂到 reqwest 上的 DNS 解析器：解析结果里只要出现内部地址就拒绝。
+///
+/// # 为什么必须在解析器里做
+/// 此前的做法是发请求前自己 `lookup_host` 一次、校验通过后交给 reqwest——而
+/// reqwest 建连时会**再解析一次**。攻击者控制的域名第一次回公网地址通过校验，
+/// 第二次回 `169.254.169.254`，校验就被绕过了（DNS rebinding，TTL 设成 0 即可）。
+///
+/// 把校验放进 reqwest 自己用来建连的解析器里，**校验的就是将要连接的那组地址**，
+/// 两次解析之间的时间窗不复存在。
+///
+/// IP 字面量不经过解析器，由 [`Client::ensure_public_target`] 单独检查。
+struct PublicOnlyResolver;
+
+/// 解析器拒绝内部地址时返回的错误，供上层从 reqwest 错误链里识别出来，
+/// 转成语义明确的 [`Error::BlockedTarget`]（且不参与重试）。
+#[derive(Debug)]
+struct InternalTargetError {
+    host: String,
+}
+
+impl std::fmt::Display for InternalTargetError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} resolves to an internal address", self.host)
+    }
+}
+
+impl std::error::Error for InternalTargetError {}
+
+impl reqwest::dns::Resolve for PublicOnlyResolver {
+    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+        let host = name.as_str().to_string();
+        Box::pin(async move {
+            // 端口填 0：reqwest 会用 URL 里的端口（或 scheme 默认端口）覆盖它
+            let addrs: Vec<SocketAddr> =
+                tokio::net::lookup_host((host.as_str(), 0)).await?.collect();
+            // 任一地址是内部地址就整体拒绝，而不是过滤掉它们只连公网的那几个：
+            // 一个同时解析到公网与内网的域名本身就是可疑信号，且与字面量校验的
+            // 「一票否决」语义保持一致
+            if addrs.is_empty() || addrs.iter().any(|a| is_internal_ip(a.ip())) {
+                return Err(Box::new(InternalTargetError { host }) as _);
+            }
+            Ok(Box::new(addrs.into_iter()) as reqwest::dns::Addrs)
+        })
+    }
+}
+
+/// 从 reqwest 的错误链里找出解析器抛出的 [`InternalTargetError`]。
+fn blocked_by_resolver(err: &reqwest::Error) -> Option<String> {
+    let mut source: Option<&(dyn std::error::Error + 'static)> = std::error::Error::source(err);
+    while let Some(e) = source {
+        if let Some(blocked) = e.downcast_ref::<InternalTargetError>() {
+            return Some(blocked.host.clone());
+        }
+        source = e.source();
+    }
+    None
 }
 
 /// `url` 是否已是 http(s) 绝对地址。
@@ -864,39 +962,29 @@ impl Client {
         }
     }
 
-    /// SSRF 校验：确保目标 host 解析出的所有 IP 都是公网地址，否则拒绝。
+    /// SSRF 校验（IP 字面量部分）：目标是内部地址则拒绝。
     ///
-    /// host 为 IP 字面量时直接校验；为域名时经 DNS 解析后逐个校验。注意：reqwest 建连时会
-    /// **再次**解析域名，理论上存在 DNS-rebinding 时间窗；此实现足以挡住直连内网 IP、云元数据
-    /// 端点与静态解析到内网的域名（绝大多数真实 SSRF），rebinding 属更高级攻击，后续可用
-    /// 连接前 IP 固定（resolve_to_addrs）进一步收敛。
-    async fn ensure_public_target(&self, uri: &Uri) -> Result<()> {
+    /// 域名目标由挂在 reqwest 上的 [`PublicOnlyResolver`] 在**建连时**校验，
+    /// 与实际连接使用同一次解析结果，不存在 DNS rebinding 时间窗。
+    fn ensure_public_target(&self, uri: &Uri) -> Result<()> {
         let host = uri.host().ok_or_else(|| Error::BlockedTarget {
             service: self.config.service.clone(),
             host: "<none>".to_string(),
         })?;
-        let port = uri.port_u16().unwrap_or(443);
-
-        let addrs: Vec<IpAddr> = if let Ok(ip) = host.parse::<IpAddr>() {
-            vec![ip]
-        } else {
-            tokio::net::lookup_host((host, port))
-                .await
-                .map_err(|e| Error::Common {
-                    service: self.config.service.clone(),
-                    message: format!("dns resolve failed for {host}: {e}"),
-                })?
-                .map(|sa| sa.ip())
-                .collect()
-        };
-
-        // 解析结果为空，或任一 IP 为内部地址，都拒绝
-        if addrs.is_empty() || addrs.iter().any(|ip| is_internal_ip(*ip)) {
+        // IPv6 字面量在 URI 里带方括号（`[::1]`），要先剥掉才能按地址解析。
+        // 此前直接 parse 失败，于是落进 DNS 分支，报的是「解析失败」而不是
+        // 「目标是内网」，排查方向完全被带偏。
+        let literal = host.trim_start_matches('[').trim_end_matches(']');
+        if let Ok(ip) = literal.parse::<IpAddr>()
+            && is_internal_ip(ip)
+        {
             return Err(Error::BlockedTarget {
                 service: self.config.service.clone(),
                 host: host.to_string(),
             });
         }
+        // 域名不在这里解析：交给挂在 reqwest 上的 PublicOnlyResolver，
+        // 让校验与建连用同一次解析结果，见其文档
         Ok(())
     }
 
@@ -979,7 +1067,7 @@ impl Client {
 
         // SSRF 防护：对开启的客户端，拒绝目标解析到内部地址的请求
         if self.config.deny_internal_targets {
-            self.ensure_public_target(&uri).await?;
+            self.ensure_public_target(&uri)?;
         }
 
         // 幂等性决定重试策略（在 match 消费前先算好）
@@ -1108,6 +1196,15 @@ impl Client {
                     break (status, body);
                 }
                 Err(e) => {
+                    // 解析器因目标是内网而拒绝：在 reqwest 看来这是一个 connect 错误，
+                    // 会被下面的重试逻辑当作「连接未建立、可安全重试」——必须先截住。
+                    // 这是策略拒绝，不是网络故障：不重试、不计熔断失败。
+                    if let Some(host) = blocked_by_resolver(&e) {
+                        return Err(Error::BlockedTarget {
+                            service: self.config.service.clone(),
+                            host,
+                        });
+                    }
                     // 网络层错误：按方法幂等性决定是否重试
                     if should_retry_error(&e, idempotent)
                         && let Some(next) = retry_candidate
@@ -1313,6 +1410,20 @@ mod tests {
             "fe80::1",          // link-local
             "::ffff:127.0.0.1", // IPv4-mapped 回环
             "::ffff:10.0.0.1",  // IPv4-mapped 私网
+            // 以下为补齐的网段（此前全部判为公网）
+            "0.1.2.3",            // 0.0.0.0/8「本网络」，Linux 上可达本机
+            "224.0.0.1",          // 组播
+            "240.0.0.1",          // 保留
+            "255.255.255.255",    // 广播
+            "192.0.0.8",          // IETF 协议分配
+            "198.18.0.1",         // 基准测试网段
+            "64:ff9b::7f00:1",    // NAT64 夹带 127.0.0.1
+            "64:ff9b::a9fe:a9fe", // NAT64 夹带 169.254.169.254（云元数据）
+            "2002:7f00:1::",      // 6to4 夹带 127.0.0.1
+            "2002:a00:1::",       // 6to4 夹带 10.0.0.1
+            "ff02::1",            // IPv6 组播
+            "fec0::1",            // site-local
+            "::127.0.0.1",        // IPv4-compatible（已废弃）
         ] {
             assert!(
                 is_internal_ip(ip.parse::<IpAddr>().unwrap()),
@@ -1325,6 +1436,9 @@ mod tests {
             "9.9.9.9",
             "93.184.216.34",
             "2606:4700::1111",
+            // 夹带的是公网 v4 时应当放行，别误伤
+            "64:ff9b::808:808", // NAT64 → 8.8.8.8
+            "2002:808:808::",   // 6to4 → 8.8.8.8
         ] {
             assert!(
                 !is_internal_ip(ip.parse::<IpAddr>().unwrap()),

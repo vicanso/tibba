@@ -14,7 +14,7 @@
 
 use super::{
     CryptoSnafu, Error, JsonSnafu, Model, ModelListParams, Schema, SchemaAllowEdit, SchemaOption,
-    SchemaOptionValue, SchemaType, SchemaView, SqlxSnafu, Status, format_datetime,
+    SchemaOptionValue, SchemaType, SchemaView, SqlxSnafu, Status, ensure_affected, format_datetime,
     new_schema_options,
 };
 use serde::{Deserialize, Serialize};
@@ -68,6 +68,14 @@ pub struct User {
     pub last_login_at: Option<String>,
     /// 邮箱验证通过时间；None 表示未验证
     pub email_verified_at: Option<String>,
+}
+
+impl User {
+    /// 账号是否处于启用状态。禁用账号不得建立任何形式的登录态
+    /// （Session / JWT / API Key / OAuth）。
+    pub fn is_enabled(&self) -> bool {
+        self.status == Status::Enabled as i16
+    }
 }
 
 impl From<UserSchema> for User {
@@ -213,14 +221,14 @@ impl Model for UserModel {
     }
     async fn delete_by_id(&self, pool: &Pool<Postgres>, id: u64) -> Result<()> {
         // 字面量满足 sqlx 0.9 SqlSafeStr；形状与 SOFT_DELETE_SET + ACTIVE_BY_ID_WHERE 一致
-        sqlx::query(
+        let result = sqlx::query(
             r#"UPDATE users SET deleted_at = NOW(), modified = NOW() WHERE id = $1 AND deleted_at IS NULL"#,
         )
         .bind(id as i64)
         .execute(pool)
         .await
         .context(SqlxSnafu)?;
-        Ok(())
+        ensure_affected(&result)
     }
     async fn update_by_id(
         &self,
@@ -229,9 +237,15 @@ impl Model for UserModel {
         data: serde_json::Value,
     ) -> Result<()> {
         let params: UserUpdateParams = serde_json::from_value(data).context(JsonSnafu)?;
-        let _ = sqlx::query(
+        let result = sqlx::query(
             r#"
             UPDATE users SET
+                -- 邮箱一旦变更，旧的「已验证」标志不再成立，必须清空；
+                -- UPDATE 的 SET 表达式看到的都是旧行值，这里的 email 是改之前的
+                email_verified_at = CASE
+                    WHEN $1::varchar IS NOT NULL AND $1::varchar IS DISTINCT FROM email THEN NULL
+                    ELSE email_verified_at
+                END,
                 email = COALESCE($1, email),
                 avatar = COALESCE($2, avatar),
                 roles = COALESCE($3, roles),
@@ -255,7 +269,7 @@ impl Model for UserModel {
         .await
         .context(SqlxSnafu)?;
 
-        Ok(())
+        ensure_affected(&result)
     }
     fn push_filter_conditions(
         &self,
@@ -380,9 +394,16 @@ impl UserModel {
         account: &str,
         params: UserUpdateParams,
     ) -> Result<()> {
-        let _ = sqlx::query(
+        let result = sqlx::query(
             r#"
             UPDATE users SET
+                -- 见 update_by_id：邮箱变更即清空验证标志。此前不清，于是「先验证
+                -- 自己的邮箱、再把资料邮箱改成别人的」就得到一个「已验证」的他人邮箱，
+                -- 而 OAuth 自动合并正是按已验证邮箱认领本地账号的
+                email_verified_at = CASE
+                    WHEN $1::varchar IS NOT NULL AND $1::varchar IS DISTINCT FROM email THEN NULL
+                    ELSE email_verified_at
+                END,
                 email = COALESCE($1, email),
                 avatar = COALESCE($2, avatar),
                 nickname = COALESCE($3, nickname),
@@ -399,17 +420,32 @@ impl UserModel {
         .execute(pool)
         .await
         .context(SqlxSnafu)?;
-        Ok(())
+        ensure_affected(&result)
     }
 
-    /// 按邮箱查询用户（不含已软删除）。
-    /// 用于 OAuth 自动合并：第三方提供已验证邮箱时按邮箱寻找本地账号。
-    /// **注意**：本地 `users.email` 没有 UNIQUE 约束，理论上可能多条匹配——
-    /// 返回 `LIMIT 1` 的第一条（按 id 升序，最早注册者优先）。
-    pub async fn get_by_email(&self, pool: &Pool<Postgres>, email: &str) -> Result<Option<User>> {
+    /// 按**已验证**邮箱查询用户（不含已软删除）。
+    ///
+    /// 用于 OAuth 自动合并：第三方提供已验证邮箱时，按邮箱认领本地账号。
+    ///
+    /// # 为什么必须要求本地邮箱也已验证
+    /// 本地邮箱可以经 `/users/profile` 随意填写。此前（`get_by_email`）不看验证
+    /// 状态，于是存在经典的**账号预劫持**：攻击者注册本地账号、把资料邮箱填成
+    /// `victim@gmail.com`；受害者日后首次「用 Google 登录」，Google 给出的已验证
+    /// 邮箱命中攻击者的账号，受害者的 Google 身份被挂到这个**攻击者持有密码**的
+    /// 账号上——此后受害者存进去的一切，攻击者都看得到。
+    ///
+    /// 要求 `email_verified_at IS NOT NULL` 后，只有真正证明过邮箱归属的本地账号
+    /// 才会被认领；未验证的同名邮箱落到「新建账号」分支，互不干扰。
+    ///
+    /// 本地 `users.email` 没有 UNIQUE 约束，多条命中时取最早注册者。
+    pub async fn get_by_verified_email(
+        &self,
+        pool: &Pool<Postgres>,
+        email: &str,
+    ) -> Result<Option<User>> {
         let row: Option<UserSchema> = sqlx::query_as(
             r#"SELECT * FROM users
-               WHERE email = $1 AND deleted_at IS NULL
+               WHERE email = $1 AND email_verified_at IS NOT NULL AND deleted_at IS NULL
                ORDER BY id ASC
                LIMIT 1"#,
         )
@@ -432,18 +468,53 @@ impl UserModel {
         Ok(())
     }
 
-    /// 邮箱验证通过：写入 `email_verified_at = NOW()`。
-    /// 用户已被软删除时不更新（仍返回 Ok 以保持 idempotency 语义）。
-    pub async fn mark_email_verified(&self, pool: &Pool<Postgres>, user_id: i64) -> Result<()> {
-        sqlx::query(
+    /// 邮箱验证通过：仅当用户**当前邮箱仍是发出验证码时的那个**才写入
+    /// `email_verified_at = NOW()`。返回是否实际标记成功。
+    ///
+    /// # 为什么要带 `email`
+    /// 验证码发往邮箱 A，但确认时只凭 user_id 标记，就存在一个竞态：给自己的
+    /// 邮箱 A 申请验证 → 把资料邮箱改成 B（受害者的）→ 用 A 收到的验证码确认，
+    /// 结果 B 被标成「已验证」。把邮箱作为条件写进 `WHERE`，验证的就一定是
+    /// 收到验证码的那个地址；邮箱在此期间被改过则返回 `false`。
+    pub async fn mark_email_verified(
+        &self,
+        pool: &Pool<Postgres>,
+        user_id: i64,
+        email: &str,
+    ) -> Result<bool> {
+        let result = sqlx::query(
             r#"UPDATE users SET email_verified_at = NOW(), modified = NOW()
-               WHERE id = $1 AND deleted_at IS NULL"#,
+               WHERE id = $1 AND email = $2 AND deleted_at IS NULL"#,
         )
         .bind(user_id)
+        .bind(email)
         .execute(pool)
         .await
         .context(SqlxSnafu)?;
-        Ok(())
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// 按账号追加角色（幂等）：已持有该角色、账号不存在或已删除时不做任何修改。
+    ///
+    /// 返回是否真正写入。用于启动时按配置引导超级管理员——取代此前「id == 1 的
+    /// 首个注册用户自动成为超管」：那条规则让任何人都能在新部署上抢先注册拿到 su。
+    pub async fn grant_role_by_account(
+        &self,
+        pool: &Pool<Postgres>,
+        account: &str,
+        role: &str,
+    ) -> Result<bool> {
+        let result = sqlx::query(
+            r#"UPDATE users SET roles = roles || jsonb_build_array($2::text), modified = NOW()
+               WHERE account = $1 AND deleted_at IS NULL
+                 AND NOT roles @> jsonb_build_array($2::text)"#,
+        )
+        .bind(account)
+        .bind(role)
+        .execute(pool)
+        .await
+        .context(SqlxSnafu)?;
+        Ok(result.rows_affected() > 0)
     }
 
     /// 重置密码：用 Argon2id 哈希后覆盖 password 列。调用方传入客户端已 sha256 处理的

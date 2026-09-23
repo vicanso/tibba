@@ -157,7 +157,12 @@ pub struct RedisConfig {
     // Redis 节点列表
     #[validate(length(min = 1))]
     pub nodes: Vec<String>,
-    // 连接池大小
+    // 连接池大小，至少为 1。
+    //
+    // deadpool 不拒绝 `max_size = 0`：那样建出来的池里永远没有连接，每次取连接
+    // 都会等满 `wait_timeout` 再失败——`pool_size=0` 等于让整站的 Redis 操作
+    // 全部在 3 秒后超时。在启动期就拒绝它。
+    #[validate(range(min = 1))]
     pub pool_size: u32,
     // 建立连接的超时时间
     pub connection_timeout: Duration,
@@ -496,6 +501,15 @@ mod tests {
         assert_eq!(redis_config.password.as_deref(), Some("p@ss"));
         let debug = format!("{redis_config:?}");
         assert!(!debug.contains("p@ss"), "Debug 输出泄漏了口令: {debug}");
+    }
+
+    /// `pool_size=0` 必须在启动期被拒绝，而不是让每次取连接都超时。
+    #[test]
+    fn zero_pool_size_is_rejected() {
+        let config = config_with_uri("redis://127.0.0.1:6379?pool_size=0");
+        let err = new_redis_config(&config).expect_err("pool_size=0 应当被拒绝");
+        assert!(matches!(err, Error::Validate { .. }), "{err}");
+        assert!(new_redis_config(&config_with_uri("redis://127.0.0.1:6379?pool_size=1")).is_ok());
     }
 
     /// IPv4 路径不能被 IPv6 支持改坏。

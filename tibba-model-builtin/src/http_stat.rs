@@ -201,13 +201,19 @@ impl HttpStatModel {
 
         Ok(row.0 as u64)
     }
+    /// 按创建时间区间（闭区间，UTC）查询探测结果。
+    ///
+    /// 参数是 `PrimitiveDateTime` 而非字符串：此前绑定的是 `&str`，sqlx 会以
+    /// `TEXT` 类型发送参数，而 Postgres 没有 `timestamp >= text` 运算符（text 到
+    /// timestamp 只有显式转换），于是这条查询**每次都报错**——依赖它的探测告警
+    /// 实际上从未工作过。
     pub async fn list_by_created(
         &self,
         pool: &Pool<Postgres>,
-        created_range: (&str, &str),
+        created_range: (PrimitiveDateTime, PrimitiveDateTime),
     ) -> Result<Vec<HttpStat>> {
         let detectors = sqlx::query_as::<_, HttpStatSchema>(
-            r#"SELECT * FROM http_stats WHERE created >= $1 AND created <= $2"#,
+            r#"SELECT * FROM http_stats WHERE created >= $1 AND created <= $2 ORDER BY created ASC"#,
         )
         .bind(created_range.0)
         .bind(created_range.1)

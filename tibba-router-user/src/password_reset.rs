@@ -32,6 +32,7 @@ use tibba_error::Error as BaseError;
 use tibba_middleware::{ClientIp, RequestId};
 use tibba_model::{Model, UserModel};
 use tibba_model_builtin::{AuditLogModel, AuditLogParams};
+use tibba_session::Session;
 use tibba_util::{JsonParams, uuid, x_user_account, x_user_password, x_uuid};
 use tracing::warn;
 use utoipa::ToSchema;
@@ -166,6 +167,7 @@ pub(crate) async fn confirm_reset(
     request_id: RequestId,
     ClientIp(ip): ClientIp,
     headers: HeaderMap,
+    session: Session,
     JsonParams(params): JsonParams<ConfirmParams>,
 ) -> Result<StatusCode> {
     let key = format!("{REDIS_PREFIX}{}", params.token);
@@ -175,6 +177,9 @@ pub(crate) async fn confirm_reset(
     UserModel::new()
         .update_password(state.pool, user_id, &params.password)
         .await?;
+    // 重置密码意味着旧凭证可能已泄露：让此前签发的所有会话一并失效。
+    // 放在删 token 之前——撤销失败时 token 仍有效，用户可以重试。
+    session.revoke_user(user_id).await?;
 
     // 异步删 token——失败不阻断主流程（token 自身 1h 内会过期）
     if let Err(e) = state.cache.del(&key).await {

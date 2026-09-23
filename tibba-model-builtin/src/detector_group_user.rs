@@ -20,8 +20,8 @@ use sqlx::{Pool, Postgres, QueryBuilder};
 use std::collections::HashMap;
 use tibba_model::{
     Error, JsonSnafu, Model, ModelListParams, Schema, SchemaAllowCreate, SchemaAllowEdit,
-    SchemaOption, SchemaOptionValue, SchemaType, SchemaView, SqlxSnafu, format_datetime,
-    parse_primitive_datetime,
+    SchemaOption, SchemaOptionValue, SchemaType, SchemaView, SqlxSnafu, ensure_affected,
+    format_datetime, parse_primitive_datetime,
 };
 use time::PrimitiveDateTime;
 
@@ -283,7 +283,7 @@ impl Model for DetectorGroupUserModel {
     async fn delete_by_id(&self, pool: &Pool<Postgres>, id: u64) -> Result<()> {
         // 与其他 Model 保持一致，加 `deleted_at IS NULL` 守卫：
         // 重复删除不再覆盖原始 deleted_at，保留审计痕迹
-        sqlx::query(
+        let result = sqlx::query(
             r#"UPDATE detector_group_users SET deleted_at = NOW(), modified = NOW() WHERE id = $1 AND deleted_at IS NULL"#,
         )
         .bind(id as i64)
@@ -291,7 +291,7 @@ impl Model for DetectorGroupUserModel {
         .await
         .context(SqlxSnafu)?;
 
-        Ok(())
+        ensure_affected(&result)
     }
 
     async fn update_by_id(
@@ -303,7 +303,7 @@ impl Model for DetectorGroupUserModel {
         let params: DetectorGroupUserUpdateParams =
             serde_json::from_value(params).context(JsonSnafu)?;
 
-        let _ = sqlx::query(
+        let result = sqlx::query(
             r#"UPDATE detector_group_users SET role = COALESCE($1, role), status = COALESCE($2, status), effective_start_time = COALESCE($3, effective_start_time), effective_end_time = COALESCE($4, effective_end_time), invited_by = COALESCE($5, invited_by), remark = COALESCE($6, remark), modified = NOW() WHERE id = $7 AND deleted_at IS NULL"#,
         )
         .bind(params.role)
@@ -317,7 +317,7 @@ impl Model for DetectorGroupUserModel {
         .await
         .context(SqlxSnafu)?;
 
-        Ok(())
+        ensure_affected(&result)
     }
 
     async fn count(&self, pool: &Pool<Postgres>, params: &ModelListParams) -> Result<i64> {

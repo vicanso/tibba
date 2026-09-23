@@ -49,6 +49,9 @@ struct ErrorData {
 // 仅用于将 Error 序列化为扁平 JSON 对象的内部视图。
 #[derive(Serialize)]
 struct ErrorSerialize<'a> {
+    /// 未设置分类时不输出，与 [`ErrorData`] 各可选字段的处理一致——
+    /// `"category":""` 与缺省对前端没有区别，只是噪音。
+    #[serde(skip_serializing_if = "str::is_empty")]
     category: &'a str,
     message: &'a str,
     #[serde(flatten)]
@@ -296,6 +299,33 @@ fn truncate_upstream_body(body: &[u8]) -> String {
     format!("{}…", &trimmed[..end])
 }
 
+/// 把 `Error` 上记录的状态码规整成**错误类**响应状态码。
+///
+/// `StatusCode::from_u16` 接受 100..=999 的任何值，于是 `with_status(200)` 的
+/// Error 会以 `200 OK` 发出、带着一个错误 body——客户端按状态码判断成功，
+/// 错误被静默吞掉；`with_status(600)` 这类越界值也会原样上线。错误响应只能
+/// 是 4xx / 5xx，其余一律（含未设置的 0）回退为 500。
+fn response_status(status: u16) -> StatusCode {
+    match StatusCode::from_u16(status) {
+        Ok(code) if code.is_client_error() || code.is_server_error() => code,
+        _ => StatusCode::INTERNAL_SERVER_ERROR,
+    }
+}
+
+/// 脱敏后对外的通用文案：取状态码的标准短语（小写），与状态码保持一致。
+///
+/// 此前固定回 `"internal server error"`，于是一个 `403 + with_redact(true)`
+/// 的错误会回 `403 {"message":"internal server error"}`——状态码说「禁止」，
+/// 文案说「服务器内部错误」，前端无从处理。这正是本文件在 `with_redact` 注释
+/// 里批评过的那种自相矛盾，只是换了个入口又出现了一次。
+fn redacted_message(status: StatusCode) -> String {
+    match status.canonical_reason() {
+        Some(reason) => reason.to_ascii_lowercase(),
+        None if status.is_client_error() => "client error".to_string(),
+        None => "internal server error".to_string(),
+    }
+}
+
 /// 依据状态码与显式设置，判定响应体是否需要隐去 `message` / `extra`。
 ///
 /// 默认只看状态码：5xx 的 message 多半是 sqlx / 底层库的原始错误文本，不能外泄；
@@ -310,7 +340,7 @@ fn should_redact(status: StatusCode, explicit: Option<bool>) -> bool {
 /// 将 `Error` 转换为带 JSON 响应体和 `no-cache` 头的 HTTP 响应。
 impl IntoResponse for Error {
     fn into_response(self) -> Response {
-        let status = StatusCode::from_u16(self.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+        let status = response_status(self.status);
         // 需脱敏时：响应体隐去可能含内部细节的原始 message 与 extra，只回通用文案；
         // 完整 message 仍随 self 存入 extensions 供服务端日志读取，不外泄给客户端。
         // category / sub_category / code 属分类信息，保留供前端处理。
@@ -327,11 +357,12 @@ impl IntoResponse for Error {
                 // 服务端控制位，不参与序列化，取值无关紧要
                 redact: None,
             };
+            let message = redacted_message(status);
             (
                 status,
                 Json(ErrorSerialize {
                     category: &self.category,
-                    message: "internal server error",
+                    message: &message,
                     data: &redacted,
                 }),
             )
@@ -341,9 +372,11 @@ impl IntoResponse for Error {
         };
         // 把 Error 放入 extensions，方便日志/统计中间件读取上下文
         res.extensions_mut().insert(self);
-        // 错误响应禁止缓存
+        // 错误响应禁止缓存。用 no-store 而非 no-cache：后者只要求「用前先验证」，
+        // 仍允许浏览器 / 代理把响应**存下来**；错误体里常有账号、资源 ID 之类的
+        // 上下文，不该落进任何缓存。
         res.headers_mut()
-            .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+            .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
         res
     }
 }
@@ -352,6 +385,16 @@ impl IntoResponse for Error {
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+
+    /// 未设分类时不输出空的 `category`，且仍能反序列化回来。
+    #[test]
+    fn empty_category_is_omitted_and_round_trips() {
+        let json = serde_json::to_string(&Error::new("m")).expect("序列化");
+        assert_eq!(json, r#"{"message":"m"}"#);
+        let back: Error = serde_json::from_str(&json).expect("反序列化");
+        assert_eq!(back.category(), "");
+        assert_eq!(back.message(), "m");
+    }
 
     /// 取出响应体 JSON，供断言脱敏与否。
     async fn body_json(res: Response) -> serde_json::Value {
@@ -433,7 +476,8 @@ mod tests {
             .with_redact(true)
             .into_response();
         assert_eq!(res.status(), StatusCode::FORBIDDEN);
-        assert_eq!(body_json(res).await["message"], "internal server error");
+        // 脱敏文案与状态码一致，而不是「403 + internal server error」
+        assert_eq!(body_json(res).await["message"], "forbidden");
 
         // 5xx 但确认文案安全，照常回给客户端
         let res = Error::new("upstream is warming up, retry later")
@@ -458,12 +502,52 @@ mod tests {
     }
 
     #[test]
-    fn no_cache_header_is_always_set() {
+    fn no_store_header_is_always_set() {
         let res = Error::new("x").with_status(400).into_response();
         assert_eq!(
             res.headers().get(header::CACHE_CONTROL).unwrap(),
-            "no-cache"
+            "no-store"
         );
+    }
+
+    /// **回归守卫**：非错误类状态码不得原样发出。
+    ///
+    /// `StatusCode::from_u16` 接受 100..=999，此前 `with_status(200)` 的 Error
+    /// 会回 `200 OK` + 错误 body，客户端按状态码判为成功，错误被静默吞掉。
+    #[test]
+    fn non_error_status_falls_back_to_500() {
+        for bogus in [0, 99, 100, 200, 204, 302, 399, 600, 999] {
+            let res = Error::new("x").with_status(bogus).into_response();
+            assert_eq!(
+                res.status(),
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "status={bogus} 应回退为 500"
+            );
+        }
+        // 合法的 4xx / 5xx 原样保留
+        for ok in [400, 404, 418, 429, 499, 500, 502, 503, 599] {
+            let res = Error::new("x").with_status(ok).into_response();
+            assert_eq!(res.status().as_u16(), ok);
+        }
+    }
+
+    /// 脱敏文案随状态码走，未登记的状态码按大类兜底。
+    #[test]
+    fn redacted_message_matches_status_class() {
+        assert_eq!(
+            redacted_message(StatusCode::INTERNAL_SERVER_ERROR),
+            "internal server error"
+        );
+        assert_eq!(
+            redacted_message(StatusCode::SERVICE_UNAVAILABLE),
+            "service unavailable"
+        );
+        assert_eq!(redacted_message(StatusCode::FORBIDDEN), "forbidden");
+        // 无标准短语的码：4xx 不能说成「服务器内部错误」
+        let unknown_4xx = StatusCode::from_u16(499).expect("合法状态码");
+        assert_eq!(redacted_message(unknown_4xx), "client error");
+        let unknown_5xx = StatusCode::from_u16(599).expect("合法状态码");
+        assert_eq!(redacted_message(unknown_5xx), "internal server error");
     }
 
     /// `redact` 是服务端控制位，不得出现在回给客户端的 JSON 里。
@@ -484,6 +568,7 @@ mod tests {
         let obj = body.as_object().expect("响应体应是 JSON 对象");
 
         assert_eq!(obj.len(), 2, "只应剩 category / message，实际: {obj:?}");
+        assert_eq!(obj["category"], "params");
         assert!(!obj.contains_key("code"));
         assert!(!obj.contains_key("exception"));
         assert!(!obj.contains_key("extra"));

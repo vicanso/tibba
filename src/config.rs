@@ -65,9 +65,9 @@ fn default_commit_id() -> String {
 pub struct BasicConfig {
     // listen address
     pub listen: String,
-    // processing limit
-    #[validate(range(min = 0, max = 100000))]
-    pub processing_limit: i32,
+    // 最大并发请求数，0 表示不限制（此前 0 会拒绝所有请求）
+    #[validate(range(max = 100000))]
+    pub processing_limit: u32,
     // timeout
     #[serde(with = "humantime_serde")]
     pub timeout: Duration,
@@ -92,6 +92,12 @@ pub struct BasicConfig {
     /// 是否允许跨域携带 Cookie / Authorization（与白名单配合使用）。
     #[serde(default)]
     pub cors_allow_credentials: bool,
+    /// 启动时授予超级管理员角色的账号列表（幂等；账号需已存在）。
+    ///
+    /// 取代此前「首个注册用户自动成为超管」的隐式规则。环境变量：
+    /// `TIBBA_WEB__BASIC__SUPER_ADMINS`。
+    #[serde(default)]
+    pub super_admins: Vec<String>,
 }
 
 static BASIC_CONFIG: OnceLock<BasicConfig> = OnceLock::new();

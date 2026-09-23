@@ -324,9 +324,13 @@ impl Config {
         if let Ok(duration) = humantime::parse_duration(&raw) {
             return Ok(duration);
         }
-        // 回退：纯数字视为秒数；负数视为 0，避免 i64→u64 回绕成天文数字时长
-        if let Ok(seconds) = raw.parse::<i64>() {
-            return Ok(Duration::from_secs(seconds.max(0) as u64));
+        // 回退：纯**非负**整数视为秒数。
+        //
+        // 负数不再悄悄钳成 0：对超时类配置，0 往往意味着「不超时」或「立即过期」，
+        // 两种都和写 `-1` 的人想要的东西毫无关系。解析成 u64 让负数自然落到下面
+        // 的 InvalidDuration，报错里带着键名与原值，比一个静默的 0 好排查得多。
+        if let Ok(seconds) = raw.trim().parse::<u64>() {
+            return Ok(Duration::from_secs(seconds));
         }
 
         Err(Error::InvalidDuration {
@@ -342,7 +346,12 @@ impl Config {
             .get_string(&self.get_key(key))
             .context(ReadSnafu)?;
         let size = parse_size(value).context(ParseSizeSnafu)?;
-        Ok(size as usize)
+        // parse_size 返回 u64；32 位目标上 `as usize` 会静默截断成一个小得多的值
+        // （`8GB` → 0），这里宁可报错
+        usize::try_from(size).map_err(|_| Error::InvalidByteSize {
+            key: self.get_key(key).into_owned(),
+            value: size,
+        })
     }
 
     /// 创建具有指定前缀的子配置视图，用于隔离不同模块的配置命名空间。
@@ -499,14 +508,6 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("svc.nope"), "子配置应报完整键路径: {err}");
-    }
-
-    #[test]
-    fn test_get_duration_negative_clamped() {
-        // 负秒数应被钳为 0，避免 i64→u64 回绕成天文数字
-        let toml = r#"backwards = -10"#;
-        let config = Config::builder().add_toml(toml).build().unwrap();
-        assert_eq!(config.get_duration("backwards").unwrap(), Duration::ZERO);
     }
 
     #[test]
@@ -818,6 +819,20 @@ mod tests {
             .build_with_env(Some(env_map(&[("myapp__secret_file", &path)])))
             .expect("构建配置");
         assert_eq!(config.get_string("secret").unwrap(), "v");
+    }
+
+    /// 负数时长必须报错，而不是静默变成 0（「不超时」或「立即过期」）。
+    #[test]
+    fn negative_duration_is_rejected_not_clamped() {
+        let config = Config::builder()
+            .add_toml("timeout = -1\nok = 30")
+            .build()
+            .expect("构建配置");
+        let err = config
+            .get_duration("timeout")
+            .expect_err("负数时长应当报错");
+        assert!(matches!(err, Error::InvalidDuration { .. }), "{err}");
+        assert_eq!(config.get_duration("ok").unwrap(), Duration::from_secs(30));
     }
 
     #[test]

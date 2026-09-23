@@ -21,8 +21,8 @@ use sqlx::{Pool, Postgres, QueryBuilder};
 use std::collections::HashMap;
 use tibba_model::{
     Error, JsonSnafu, Model, ModelListParams, Schema, SchemaAllowCreate, SchemaAllowEdit,
-    SchemaOption, SchemaOptionValue, SchemaType, SchemaView, SqlxSnafu, format_datetime,
-    new_schema_options,
+    SchemaOption, SchemaOptionValue, SchemaType, SchemaView, SqlxSnafu, ensure_affected,
+    format_datetime, new_schema_options,
 };
 use time::PrimitiveDateTime;
 
@@ -431,7 +431,7 @@ impl Model for HttpDetectorModel {
         Ok(result.map(|schema| schema.into()))
     }
     async fn delete_by_id(&self, pool: &Pool<Postgres>, id: u64) -> Result<()> {
-        sqlx::query(
+        let result = sqlx::query(
             r#"UPDATE http_detectors SET deleted_at = NOW(), modified = NOW() WHERE id = $1 AND deleted_at IS NULL"#,
         )
         .bind(id as i64)
@@ -439,7 +439,7 @@ impl Model for HttpDetectorModel {
         .await
         .context(SqlxSnafu)?;
 
-        Ok(())
+        ensure_affected(&result)
     }
     async fn update_by_id(
         &self,
@@ -449,7 +449,7 @@ impl Model for HttpDetectorModel {
     ) -> Result<()> {
         let params: HttpDetectorUpdateParams = serde_json::from_value(params).context(JsonSnafu)?;
 
-        let _ = sqlx::query(
+        let result = sqlx::query(
             r#"UPDATE http_detectors SET status = COALESCE($1, status), name = COALESCE($2, name), group_id = COALESCE($3, group_id), url = COALESCE($4, url), method = COALESCE($5, method), alpn_protocols = COALESCE($6, alpn_protocols), resolves = COALESCE($7, resolves), headers = COALESCE($8, headers), ip_version = COALESCE($9, ip_version), skip_verify = COALESCE($10, skip_verify), body = COALESCE($11, body), "interval" = COALESCE($12, "interval"), script = COALESCE($13, script), alarm_url = COALESCE($14, alarm_url), random_querystring = COALESCE($15, random_querystring), alarm_on_change = COALESCE($16, alarm_on_change), retries = COALESCE($17, retries), failure_threshold = COALESCE($18, failure_threshold), "verbose" = COALESCE($19, "verbose"), regions = COALESCE($20, regions), remark = COALESCE($21, remark), modified = NOW() WHERE id = $22 AND deleted_at IS NULL"#,
         )
         .bind(params.status)
@@ -478,7 +478,7 @@ impl Model for HttpDetectorModel {
         .await
         .context(SqlxSnafu)?;
 
-        Ok(())
+        ensure_affected(&result)
     }
     async fn count(&self, pool: &Pool<Postgres>, params: &ModelListParams) -> Result<i64> {
         let mut qb = QueryBuilder::new("SELECT COUNT(*) FROM http_detectors");

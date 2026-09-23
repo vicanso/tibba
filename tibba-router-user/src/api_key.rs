@@ -290,6 +290,10 @@ async fn build_session(
         .get_by_id(pool, user_id as u64)
         .await
         .ok()??;
+    // 禁用账号的 API Key 一律按未认证处理（此前禁用用户仍能凭 key 访问）
+    if !user.is_enabled() {
+        return None;
+    }
     let roles = user.roles.clone().unwrap_or_default();
     let groups = user.groups.clone().unwrap_or_default();
     let permissions = RolePermissionModel::new()

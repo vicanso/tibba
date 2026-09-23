@@ -125,7 +125,9 @@ impl Storage {
     pub async fn read_range(&self, path: &str, offset: u64, len: u64) -> Result<Buffer> {
         self.dal
             .read_with(path)
-            .range(offset..offset + len)
+            // 饱和加法：offset / len 源自客户端 Range 头，上游虽已校验，
+            // 这里仍不让一次越界输入在 debug 构建下 panic
+            .range(offset..offset.saturating_add(len))
             .await
             .context(OpenDalSnafu)
     }

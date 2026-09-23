@@ -35,6 +35,10 @@ pub enum Error {
     #[snafu(display("invalid duration at {key}: {value:?}"))]
     InvalidDuration { key: String, value: String },
 
+    /// 字节大小超出本平台 `usize` 能表示的范围（32 位目标上的 `8GB` 等）。
+    #[snafu(display("byte size at {key} does not fit in usize: {value}"))]
+    InvalidByteSize { key: String, value: u64 },
+
     /// `*_FILE` 指向的密钥文件读不出来。
     ///
     /// **必须 fail fast**：读不到密钥就退回 TOML 里的占位值，等于带着一个
@@ -69,6 +73,10 @@ impl From<Error> for BaseError {
             Error::InvalidDuration { key, value } => {
                 BaseError::new(format!("invalid duration at {key}: {value:?}"))
                     .with_sub_category("invalid_duration")
+            }
+            Error::InvalidByteSize { key, value } => {
+                BaseError::new(format!("byte size at {key} does not fit in usize: {value}"))
+                    .with_sub_category("invalid_byte_size")
             }
             // 三者都是启动期的部署配置错误。注意只带 key / path，
             // 绝不把读出来的内容放进错误信息——那正是要保护的密钥

@@ -12,12 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{AxumSnafu, Error, InvalidHeaderNameSnafu, InvalidHeaderValueSnafu, is_development};
-use axum::body::{Body, Bytes};
+use super::{Error, InvalidHeaderNameSnafu, InvalidHeaderValueSnafu, is_development};
 use axum::http::{HeaderMap, HeaderValue, header, header::HeaderName};
 use axum_extra::extract::cookie::{Cookie, CookieJar};
 use cookie::{CookieBuilder, SameSite};
-use http_body_util::BodyExt;
 use nanoid::nanoid;
 use snafu::ResultExt;
 use std::time::Duration;
@@ -76,6 +74,13 @@ where
 ///
 /// # Returns
 /// * `Result<()>` - Success or error if header name/value is invalid
+///
+/// 本函数在**每个响应**上被安全头、trace 头等中间件调用多次。此前它先把
+/// `name` / `value` 各 `to_string()` 一次再交给 [`insert_headers`]——后者本就
+/// 接受 `AsRef<str>`，这两次堆分配纯属多余。
+///
+/// 名称与值在编译期已知的调用方，更好的做法是预先构造好 `HeaderName` /
+/// `HeaderValue`，直接 `headers.entry(name).or_insert(value)`，连解析都省掉。
 pub fn set_header_if_not_exist(
     headers: &mut HeaderMap<HeaderValue>,
     name: &str,
@@ -84,64 +89,50 @@ pub fn set_header_if_not_exist(
     if headers.contains_key(name) {
         return Ok(());
     }
-    let values = [(name.to_string(), value.to_string())];
-    insert_headers(headers, values)
+    insert_headers(headers, [(name, value)])
 }
 
-/// Sets Cache-Control: no-cache header if not already set
+/// 响应尚未设置 `Cache-Control` 时补上 `no-cache`。
 ///
-/// Used to prevent caching of responses when needed
-///
-/// # Arguments
-/// * `headers` - Mutable reference to HeaderMap
+/// 每个响应都会走到这里，故直接用类型化的 `HeaderName` / `HeaderValue` 走
+/// `entry().or_insert()`：不解析字符串、不分配、也不存在失败分支（此前是经由
+/// 字符串版 helper 再 `let _ =` 吞掉一个永远不会发生的错误）。
 pub fn set_no_cache_if_not_exist(headers: &mut HeaderMap<HeaderValue>) {
-    // Because only characters are allowed, setting will not be wrong
-    let _ = set_header_if_not_exist(headers, header::CACHE_CONTROL.as_str(), "no-cache");
+    headers
+        .entry(header::CACHE_CONTROL)
+        .or_insert(HeaderValue::from_static("no-cache"));
 }
 
-/// Retrieves a header value as a String
-///
-/// Returns empty string if header doesn't exist or value is invalid UTF-8
-///
-/// # Arguments
-/// * `headers` - Reference to HeaderMap
-/// * `key` - Header name to retrieve
-///
-/// # Returns
-/// * String containing header value or empty string
+/// 读取请求头的字符串值；不存在或不是合法可见 ASCII 时返回 `None`。
 pub fn get_header_value<'a>(headers: &'a HeaderMap<HeaderValue>, key: &str) -> Option<&'a str> {
     headers.get(key).and_then(|value| value.to_str().ok())
 }
 
-/// Reads and collects an HTTP body into Bytes
-///
-/// Useful for accessing the complete body content
-///
-/// # Arguments
-/// * `body` - HTTP Body to read
-///
-/// # Returns
-/// * `Result<Bytes>` - Collected body bytes or error
-pub async fn read_http_body(body: Body) -> Result<Bytes> {
-    let bytes = body.collect().await.context(AxumSnafu)?.to_bytes();
-    Ok(bytes)
+/// 设备 ID cookie 名。
+const DEVICE_ID_NAME: &str = "device";
+/// 设备 ID 有效期：约 52 周。
+const DEVICE_ID_LIFETIME: Duration = Duration::from_secs(365 * 24 * 60 * 60);
+/// 设备 ID 长度，与 [`generate_device_id_cookie`] 生成的一致。
+const DEVICE_ID_LEN: usize = 16;
+
+/// 是否是本服务签发的设备 ID 形态：定长、nanoid 默认字母表（`A-Za-z0-9_-`）。
+fn is_valid_device_id(value: &str) -> bool {
+    value.len() == DEVICE_ID_LEN
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
 }
 
-// Name of the device ID cookie
-const DEVICE_ID_NAME: &str = "device";
-const DEVICE_ID_LIFETIME: Duration = Duration::from_secs(365 * 24 * 60 * 60); // ~52 weeks
-
-/// Retrieves device ID from cookies
+/// 从 cookie 取设备 ID；不存在或**不是本服务签发的形态**时返回 `None`。
 ///
-/// Returns empty string if device cookie is not present
-///
-/// # Arguments
-/// * `jar` - Reference to CookieJar
-///
-/// # Returns
-/// * String containing device ID or empty string
+/// cookie 完全由客户端控制，而设备 ID 会进入每个请求的上下文与日志。此前
+/// 原样透传，一个 4 KB 的 cookie 值就会被写进每一行日志；含换行等控制字符的
+/// 值（浏览器会拒绝，但 curl 不会）还能伪造日志行。只认我们自己生成的格式，
+/// 其余视为没有设备 ID。
 pub fn get_device_id_from_cookie(jar: &CookieJar) -> Option<&str> {
-    jar.get(DEVICE_ID_NAME).map(|cookie| cookie.value())
+    jar.get(DEVICE_ID_NAME)
+        .map(|cookie| cookie.value())
+        .filter(|value| is_valid_device_id(value))
 }
 
 /// 生成新的设备 ID Cookie。
@@ -158,10 +149,78 @@ pub fn get_device_id_from_cookie(jar: &CookieJar) -> Option<&str> {
 pub fn generate_device_id_cookie() -> CookieBuilder<'static> {
     let expires = cookie::time::OffsetDateTime::now_utc()
         .saturating_add(cookie::time::Duration::try_from(DEVICE_ID_LIFETIME).unwrap_or_default());
-    Cookie::build((DEVICE_ID_NAME, nanoid!(16)))
+    Cookie::build((DEVICE_ID_NAME, nanoid!(DEVICE_ID_LEN)))
         .http_only(true)
         .same_site(SameSite::Lax)
         .secure(!is_development())
         .expires(expires)
         .path("/")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn no_cache_is_added_only_when_absent() {
+        let mut headers = HeaderMap::new();
+        set_no_cache_if_not_exist(&mut headers);
+        assert_eq!(headers[header::CACHE_CONTROL], "no-cache");
+
+        // handler 已设置的值优先，不得覆盖
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("max-age=60"),
+        );
+        set_no_cache_if_not_exist(&mut headers);
+        assert_eq!(headers[header::CACHE_CONTROL], "max-age=60");
+    }
+
+    #[test]
+    fn set_header_if_not_exist_respects_existing_value() {
+        let mut headers = HeaderMap::new();
+        set_header_if_not_exist(&mut headers, "X-Trace-Id", "a").expect("合法头");
+        set_header_if_not_exist(&mut headers, "X-Trace-Id", "b").expect("合法头");
+        assert_eq!(headers["x-trace-id"], "a");
+        // 非法名称返回错误，且不留下半写状态
+        assert!(set_header_if_not_exist(&mut headers, "bad name", "v").is_err());
+        assert_eq!(headers.len(), 1);
+    }
+
+    fn jar_with_device(value: &str) -> CookieJar {
+        CookieJar::new().add(Cookie::new(DEVICE_ID_NAME, value.to_string()))
+    }
+
+    /// 自己签发的设备 ID 必须能取回——校验不能误伤正常路径。
+    #[test]
+    fn generated_device_id_round_trips() {
+        let cookie = generate_device_id_cookie().build();
+        let jar = jar_with_device(cookie.value());
+        assert_eq!(get_device_id_from_cookie(&jar), Some(cookie.value()));
+    }
+
+    /// **回归守卫**：非本服务签发形态的值一律视为没有设备 ID。
+    ///
+    /// 此前原样透传，超长值会被写进每一行日志。
+    #[test]
+    fn foreign_device_ids_are_rejected() {
+        for bad in [
+            "",
+            "short",
+            &"a".repeat(DEVICE_ID_LEN + 1),
+            &"a".repeat(4096),
+            "abcdefgh ijklmno", // 空格
+            "abcdefgh.ijklmno", // 字母表外字符
+            "设备设备设备设",   // 非 ASCII
+        ] {
+            assert_eq!(
+                get_device_id_from_cookie(&jar_with_device(bad)),
+                None,
+                "{bad:?}"
+            );
+        }
+        assert_eq!(get_device_id_from_cookie(&CookieJar::new()), None);
+    }
 }

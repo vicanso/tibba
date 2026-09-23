@@ -21,7 +21,7 @@ use snafu::ResultExt;
 use sqlx::FromRow;
 use sqlx::{Pool, Postgres, QueryBuilder};
 use std::collections::HashMap;
-use tibba_model::Model;
+use tibba_model::{Model, ensure_affected};
 use time::PrimitiveDateTime;
 
 type Result<T> = std::result::Result<T, Error>;
@@ -266,19 +266,19 @@ impl Model for TokenAccountModel {
         }
         qb.push(" WHERE id = ").push_bind(id as i64);
         qb.push(" AND deleted_at IS NULL");
-        qb.build().execute(pool).await.context(SqlxSnafu)?;
-        Ok(())
+        let result = qb.build().execute(pool).await.context(SqlxSnafu)?;
+        ensure_affected(&result)
     }
 
     async fn delete_by_id(&self, pool: &Pool<Postgres>, id: u64) -> Result<()> {
-        sqlx::query(
+        let result = sqlx::query(
             r#"UPDATE token_accounts SET deleted_at = NOW(), modified = NOW() WHERE id = $1 AND deleted_at IS NULL"#,
         )
         .bind(id as i64)
         .execute(pool)
         .await
         .context(SqlxSnafu)?;
-        Ok(())
+        ensure_affected(&result)
     }
 
     async fn count(&self, pool: &Pool<Postgres>, params: &ModelListParams) -> Result<i64> {
