@@ -285,6 +285,23 @@ impl RedisCache {
         Ok(result)
     }
 
+    /// 一次往返批量读取多个键（MGET），结果与 `keys` 顺序一一对应，不存在的键为 `None`。
+    /// `keys` 为空时直接返回空集合，不访问 Redis。
+    pub async fn mget<T: redis::FromRedisValue>(&self, keys: &[String]) -> Result<Vec<Option<T>>> {
+        if keys.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut command = cmd("MGET");
+        for key in keys {
+            command.arg(self.get_key(key).as_ref());
+        }
+        let result = command
+            .query_async(&mut self.conn().await?)
+            .await
+            .context(RedisSnafu { category: "mget" })?;
+        Ok(result)
+    }
+
     /// 原子性地读取并删除指定键（需 Redis ≥6.2.0）。
     pub async fn get_del<T: redis::FromRedisValue>(&self, key: &str) -> Result<T> {
         let result = self

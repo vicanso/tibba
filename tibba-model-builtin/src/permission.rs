@@ -119,7 +119,11 @@ impl PermissionModel {
         Ok(row.0)
     }
 
-    /// 软删除指定权限点，**并在同一事务里撤销所有角色对它的授予**。返回删除的权限点行数。
+    /// 软删除指定权限点，**并在同一事务里撤销所有角色对它的授予**。
+    ///
+    /// 返回被收回该权限的角色列表（去重）。调用方应据此让这些角色的已登录凭证
+    /// 失效（`tibba_session::revoke_role_sessions`，或直接用 `tibba_rbac::RbacAdmin`），
+    /// 否则会话 / JWT 中缓存的权限并集仍包含它。
     ///
     /// 此前只删 `permissions` 表，文档写着「调用方若需要级联应自行处理」。但授权
     /// 判定（`RolePermissionModel::list_permissions_for_roles`）只查映射表，于是
@@ -127,9 +131,13 @@ impl PermissionModel {
     /// 是它从管理界面上消失，持有它的人照用不误。
     ///
     /// 放进事务：避免权限点已删、映射还在的中间态被并发的登录读到。
-    pub async fn soft_delete_by_code(&self, pool: &Pool<Postgres>, code: &str) -> Result<u64> {
+    pub async fn soft_delete_by_code(
+        &self,
+        pool: &Pool<Postgres>,
+        code: &str,
+    ) -> Result<Vec<String>> {
         let mut tx = pool.begin().await.context(SqlxSnafu)?;
-        let result = sqlx::query(
+        sqlx::query(
             r#"UPDATE permissions
                SET deleted_at = NOW(), modified = NOW()
                WHERE code = $1 AND deleted_at IS NULL"#,
@@ -138,16 +146,20 @@ impl PermissionModel {
         .execute(&mut *tx)
         .await
         .context(SqlxSnafu)?;
-        sqlx::query(
+        let rows: Vec<(String,)> = sqlx::query_as(
             r#"UPDATE role_permissions
                SET deleted_at = NOW()
-               WHERE permission_code = $1 AND deleted_at IS NULL"#,
+               WHERE permission_code = $1 AND deleted_at IS NULL
+               RETURNING role"#,
         )
         .bind(code)
-        .execute(&mut *tx)
+        .fetch_all(&mut *tx)
         .await
         .context(SqlxSnafu)?;
         tx.commit().await.context(SqlxSnafu)?;
-        Ok(result.rows_affected())
+        let mut roles: Vec<String> = rows.into_iter().map(|(role,)| role).collect();
+        roles.sort_unstable();
+        roles.dedup();
+        Ok(roles)
     }
 }

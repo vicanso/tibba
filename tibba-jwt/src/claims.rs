@@ -14,7 +14,7 @@
 
 //! JWT claims 结构 + axum 用户身份提取器。
 
-use crate::{LOG_TARGET, try_global_signer};
+use crate::{LOG_TARGET, revocation_cache, try_global_signer};
 use axum::extract::FromRequestParts;
 use axum::http::header::AUTHORIZATION;
 use axum::http::request::Parts;
@@ -55,6 +55,8 @@ pub struct Claims {
 /// - 全局 signer 未初始化（`[jwt]` 未配 secret）→ 503
 /// - header 缺失 / 不是 Bearer 格式 → 401 "missing bearer token"
 /// - JWT 验签 / 过期 / 篡改 → 401 "jwt verify failed: ..."
+/// - 撤销存储未初始化（未调用 `init_revocation_cache`）→ 503
+/// - 签发后用户 / 其角色的凭证已被撤销 → 401 "jwt has been revoked"
 #[derive(Debug, Clone)]
 pub struct JwtUser {
     pub user_id: i64,
@@ -139,6 +141,26 @@ where
         let claims = signer.verify_access(token).inspect_err(|e| {
             debug!(target: LOG_TARGET, error = %e, "jwt verify failed");
         })?;
+
+        // 签名有效只说明「曾经」签发过；还要确认签发之后没有被撤销
+        let cache = revocation_cache().ok_or_else(|| {
+            BaseError::new("jwt revocation store not initialized")
+                .with_category("jwt")
+                .with_sub_category("not_configured")
+                .with_status(503)
+                .with_exception(true)
+        })?;
+        if tibba_cache::is_credential_revoked(cache, claims.sub, &claims.roles, claims.iat)
+            .await
+            .map_err(BaseError::from)?
+        {
+            debug!(target: LOG_TARGET, user_id = claims.sub, "jwt revoked");
+            return Err(BaseError::new("jwt has been revoked")
+                .with_category("jwt")
+                .with_sub_category("revoked")
+                .with_status(401)
+                .with_exception(false));
+        }
         Ok(JwtUser::from(claims))
     }
 }

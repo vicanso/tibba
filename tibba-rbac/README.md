@@ -4,11 +4,11 @@
 
 > **分层**：标准（Standard）— 标准 REST 构件，依赖核心
 
-基于 Session 权限码的 axum 路由层 `require_permission` 适配。
+基于 Session 权限码的 axum 路由层 `require_permission` 适配；`RbacAdmin` 管理角色权限并在收回时撤销受影响角色的登录凭证。
 
 ## 依赖
 
-依赖：tibba-error, tibba-session
+依赖：tibba-cache, tibba-error, tibba-model-builtin, tibba-session
 
 ## 在工作区中的位置
 

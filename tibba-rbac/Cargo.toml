@@ -17,7 +17,10 @@ path = "src/lib.rs"
 
 [dependencies]
 axum = { workspace = true }
+sqlx = { workspace = true }
+tibba-cache = { path = "../tibba-cache", version = "0.2.6" }
 tibba-error = { path = "../tibba-error", version = "0.2.6" }
+tibba-model-builtin = { path = "../tibba-model-builtin", version = "0.2.6" }
 tibba-session = { path = "../tibba-session", version = "0.2.6" }
 
 [dev-dependencies]

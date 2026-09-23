@@ -374,6 +374,15 @@ async fn init_config() -> Result<()> {
     // 若 [jwt] 已配 secret，启动期一次性把全局 signer 初始化好；未配则跳过
     // （延迟到首次访问 JWT 端点时由 try_global_signer 返回 None → 503）
     if jwt_config.is_configured() {
+        // 撤销标记按 Session TTL 保留（见 tibba_session::revoke_user_sessions），
+        // access / refresh token 活得比它久，就会在标记过期后「复活」
+        if let Some(session) = SESSION_CONFIG.get()
+            && (jwt_config.access_ttl > session.ttl || jwt_config.refresh_ttl > session.ttl)
+        {
+            return Err(config_error(
+                "jwt.access_ttl and jwt.refresh_ttl must not exceed session.ttl",
+            ));
+        }
         let signer = tibba_jwt::JwtSigner::from_config(&jwt_config).map_err(config_error)?;
         tibba_jwt::init_global_signer(signer)
             .map_err(|_| config_error("jwt global signer already initialized"))?;

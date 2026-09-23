@@ -45,6 +45,19 @@ use utoipa::ToSchema;
 use validator::Validate;
 
 const REFRESH_REDIS_PREFIX: &str = "jwt_refresh:";
+
+/// refresh token 在 Redis 中的记录。
+///
+/// 以 JSON 数组存储，与旧版 `(user_id, account)` 元组格式兼容：旧记录缺 `iat`
+/// 时取 0，视为「早于任何撤销」——一旦该用户被撤销过即失效（fail-safe）。
+#[derive(Serialize, Deserialize)]
+struct RefreshEntry {
+    user_id: i64,
+    account: String,
+    /// 签发时间（Unix 秒），用于与用户撤销标记比较
+    #[serde(default)]
+    iat: i64,
+}
 const LOG_TARGET: &str = "tibba:jwt_auth";
 
 #[derive(Debug, Snafu)]
@@ -223,7 +236,11 @@ async fn issue_jwt(
         .cache
         .set_struct(
             &format!("{REFRESH_REDIS_PREFIX}{refresh_token}"),
-            &(user.id, user.account.clone()),
+            &RefreshEntry {
+                user_id: user.id,
+                account: user.account.clone(),
+                iat: tibba_util::timestamp(),
+            },
             Some(signer.refresh_ttl()),
         )
         .await?;
@@ -352,8 +369,17 @@ pub(crate) async fn refresh_jwt(
     let signer = tibba_jwt::try_global_signer().context(NotEnabledSnafu)?;
 
     let key = format!("{REFRESH_REDIS_PREFIX}{}", params.refresh_token);
-    let stored: Option<(i64, String)> = state.cache.get_struct(&key).await?;
-    let (user_id, account) = stored.context(InvalidRefreshSnafu)?;
+    let stored: Option<RefreshEntry> = state.cache.get_struct(&key).await?;
+    let RefreshEntry {
+        user_id,
+        account,
+        iat,
+    } = stored.context(InvalidRefreshSnafu)?;
+    // 用户凭证被撤销（禁用 / 重置密码 / 后台改身份）后，旧 refresh 不得再续签。
+    // 只看用户标记：角色的权限变化在这里会按数据库最新值重新计算，无需作废 refresh。
+    if tibba_cache::is_credential_revoked(state.cache, user_id, &[], iat).await? {
+        return Err(Error::InvalidRefresh.into());
+    }
 
     // refresh 命中但本地 user 已软删 → 视为 401
     let user = UserModel::new()
@@ -404,4 +430,20 @@ pub(crate) async fn logout_jwt(
         warn!(target: LOG_TARGET, error = %e, "delete refresh token failed");
     }
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RefreshEntry;
+
+    /// 旧版 `(user_id, account)` 元组记录仍可读出，`iat` 取 0（fail-safe）。
+    #[test]
+    fn legacy_refresh_entry_is_readable() {
+        let entry: RefreshEntry =
+            serde_json::from_str(r#"[7,"tree"]"#).expect("旧格式应能反序列化");
+        assert_eq!(
+            (entry.user_id, entry.account.as_str(), entry.iat),
+            (7, "tree", 0)
+        );
+    }
 }

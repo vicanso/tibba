@@ -6546,6 +6546,7 @@ dependencies = [
  "jsonwebtoken",
  "serde",
  "snafu",
+ "tibba-cache",
  "tibba-error",
  "tibba-util",
  "tracing",
@@ -6681,7 +6682,10 @@ version = "0.2.7"
 dependencies = [
  "axum",
  "http-body-util",
+ "sqlx 0.9.0",
+ "tibba-cache",
  "tibba-error",
+ "tibba-model-builtin",
  "tibba-session",
  "tokio",
  "tower",

@@ -22,7 +22,9 @@ use cookie::{CookieBuilder, SameSite};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
-use tibba_cache::RedisCache;
+use tibba_cache::{
+    RedisCache, is_credential_revoked, revoke_role_credentials, revoke_user_credentials,
+};
 use tibba_runtime::CTX;
 use tibba_util::{from_timestamp, is_development, timestamp, uuid};
 use tracing::debug;
@@ -94,38 +96,42 @@ impl SessionParams {
     }
 }
 
-/// 按用户撤销会话的标记键：`ss_revoke:{user_id}`，值为撤销时刻（Unix 秒）。
-fn revoke_key(user_id: i64) -> String {
-    format!("ss_revoke:{user_id}")
+/// 撤销标记的 TTL：与 Session TTL 一致——过了这个时间，被它针对的旧 Session 本身也已过期。
+///
+/// 同一套标记也被 JWT access token 校验复用（见 `tibba_cache::is_credential_revoked`），
+/// 因此要求 Session TTL 不短于 JWT access TTL（默认 7 天 vs 15 分钟）。
+fn revocation_ttl(params: &SessionParams) -> Duration {
+    Duration::from_secs(params.ttl.max(1) as u64)
 }
 
-/// 使某用户**此前签发**的全部 Session 失效。
+/// 使某用户**此前签发**的全部登录凭证（Session 与 JWT access token）失效。
 ///
 /// Session 里缓存了登录时的 roles / groups / permissions，且 Redis 中没有
 /// 「用户 → Session 列表」的索引。此前后台禁用账号、收回角色或用户重置密码后，
 /// 已登录的会话仍按旧身份继续工作直到 TTL（默认 7 天）到期。
 ///
 /// 这里写入一个撤销时刻，加载 Session 时凡 `iat` 早于该时刻的一律视为未登录，
-/// 用户重新登录即拿到最新的角色与权限。标记的 TTL 与 Session TTL 相同——
-/// 过了这个时间，被它针对的旧 Session 本身也已过期。
+/// 用户重新登录即拿到最新的角色与权限。
 pub async fn revoke_user_sessions(
     cache: &RedisCache,
     params: &SessionParams,
     user_id: i64,
 ) -> Result<()> {
-    cache
-        .set(
-            &revoke_key(user_id),
-            timestamp(),
-            Some(Duration::from_secs(params.ttl.max(1) as u64)),
-        )
-        .await?;
+    revoke_user_credentials(cache, user_id, revocation_ttl(params)).await?;
     Ok(())
 }
 
-/// 会话签发时间是否早于该用户的撤销时刻。
-fn is_revoked(iat: i64, revoked_at: Option<i64>) -> bool {
-    revoked_at.is_some_and(|revoked_at| iat < revoked_at)
+/// 使持有该角色的所有用户此前签发的登录凭证失效。
+///
+/// 用于收回角色的权限（撤销授予、删除权限点）：Session / JWT 中缓存的权限并集
+/// 不会自动更新，受影响的用户需重新登录以拿到收窄后的权限。
+pub async fn revoke_role_sessions(
+    cache: &RedisCache,
+    params: &SessionParams,
+    role: &str,
+) -> Result<()> {
+    revoke_role_credentials(cache, role, revocation_ttl(params)).await?;
+    Ok(())
 }
 
 /// Session 的内部数据，序列化后存入 Redis。
@@ -453,18 +459,17 @@ where
                     iat = data.iat,
                     "load from cache"
                 );
-                // 已被撤销（禁用 / 改角色 / 重置密码之后）的会话按未登录处理
-                if !data.account.is_empty() {
-                    let revoked_at: Option<i64> = se.cache.get(&revoke_key(data.user_id)).await?;
-                    if is_revoked(data.iat, revoked_at) {
-                        debug!(
-                            target: LOG_TARGET,
-                            id = data.id,
-                            user_id = data.user_id,
-                            "session revoked"
-                        );
-                        return Ok(se);
-                    }
+                // 已被撤销（禁用 / 改角色 / 收回角色权限 / 重置密码之后）的会话按未登录处理
+                if !data.account.is_empty()
+                    && is_credential_revoked(se.cache, data.user_id, &data.roles, data.iat).await?
+                {
+                    debug!(
+                        target: LOG_TARGET,
+                        id = data.id,
+                        user_id = data.user_id,
+                        "session revoked"
+                    );
+                    return Ok(se);
                 }
                 se.data = data;
                 // 回写到扩展，同一请求内后续提取无需再查 Redis
@@ -563,21 +568,5 @@ impl std::ops::Deref for AdminSession {
 impl std::ops::DerefMut for AdminSession {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
-    }
-}
-
-#[cfg(test)]
-mod revoke_tests {
-    use super::is_revoked;
-
-    #[test]
-    fn sessions_issued_before_revocation_are_rejected() {
-        // 无撤销标记：放行
-        assert!(!is_revoked(100, None));
-        // 撤销之前签发：拒绝
-        assert!(is_revoked(99, Some(100)));
-        // 撤销之后（含同一秒）重新登录：放行
-        assert!(!is_revoked(100, Some(100)));
-        assert!(!is_revoked(101, Some(100)));
     }
 }

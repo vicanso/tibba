@@ -68,7 +68,7 @@ models = ["mimo-v2.5-pro"]
 secret = ""
 # access token TTL（humantime）；签发的 JWT 过期时间
 access_ttl = "15m"
-# refresh token（opaque UUID，存 Redis）TTL
+# refresh token（opaque UUID，存 Redis）TTL；access / refresh 均不得超过 session.ttl（撤销标记按其保留）
 refresh_ttl = "7d"
 # 写进 access JWT 的 `iss` claim，多服务区分用
 issuer = "tibba"

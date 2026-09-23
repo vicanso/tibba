@@ -269,6 +269,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // before hooks 已就绪 DB/Redis/OpenDAL/AppState → 组装显式 DI 容器
     let ctx = app_ctx::AppCtx::install_from_globals()?;
     bootstrap_super_admins(ctx.pool).await?;
+    // JWT access token 的撤销校验与 Session 共用 Redis 中的撤销标记
+    tibba_jwt::init_revocation_cache(ctx.cache);
     run_scheduler_jobs().await?;
 
     // 注册异步任务 handler 并启动 worker（DB 池已在 run_before_tasks 中初始化）。

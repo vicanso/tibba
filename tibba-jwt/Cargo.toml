@@ -21,6 +21,7 @@ humantime-serde = { workspace = true }
 jsonwebtoken = { workspace = true }
 serde = { workspace = true }
 snafu = { workspace = true }
+tibba-cache = { path = "../tibba-cache", version = "0.2.6" }
 tibba-error = { path = "../tibba-error", version = "0.2.6" }
 tibba-util = { path = "../tibba-util", version = "0.2.6", default-features = false }
 tracing = { workspace = true }

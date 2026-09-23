@@ -32,7 +32,15 @@
 //!
 //! handler 内部如需更灵活的判断，可直接调用 `Session::has_permission` /
 //! `Session::require_permission`，不需要本 crate。
+//!
+//! ## 管理角色权限
+//!
+//! 收回权限请走 [`RbacAdmin`]：它在改完 `role_permissions` 之后让受影响角色的
+//! 已登录凭证失效。直接调 `RolePermissionModel::revoke` 只改数据库，会话 / JWT 中
+//! 缓存的权限并集要到过期才会收窄。
 
+pub use admin::RbacAdmin;
 pub use middleware::require_permission;
 
+mod admin;
 mod middleware;

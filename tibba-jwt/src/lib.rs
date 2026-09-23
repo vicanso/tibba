@@ -55,6 +55,8 @@ pub(crate) const LOG_TARGET: &str = "tibba:jwt";
 
 /// 全局唯一 JwtSigner，由 binary 在启动期初始化。
 static GLOBAL_SIGNER: OnceLock<JwtSigner> = OnceLock::new();
+/// 凭证撤销标记所在的 Redis（见 `tibba_cache::is_credential_revoked`）。
+static REVOCATION_CACHE: OnceLock<&'static tibba_cache::RedisCache> = OnceLock::new();
 
 /// tibba-jwt 模块对外的错误类型。
 #[derive(Debug, Snafu)]
@@ -234,6 +236,21 @@ impl JwtSigner {
 #[allow(clippy::result_large_err)]
 pub fn init_global_signer(signer: JwtSigner) -> Result<(), JwtSigner> {
     GLOBAL_SIGNER.set(signer)
+}
+
+/// 启动期设置撤销标记所在的 Redis。[`JwtUser`] 提取器据此拒绝已被撤销的 access token。
+///
+/// JWT 本身无状态，签发后服务端无法收回。此前禁用账号、收回角色或重置密码后，
+/// 已签发的 access token 在 exp 之前仍按旧身份有效。
+///
+/// 已配置 `[jwt]` 却未调用本函数时，提取器 **fail-closed**（503）——宁可不可用，
+/// 也不静默放过已撤销的凭证。
+pub fn init_revocation_cache(cache: &'static tibba_cache::RedisCache) -> bool {
+    REVOCATION_CACHE.set(cache).is_ok()
+}
+
+pub(crate) fn revocation_cache() -> Option<&'static tibba_cache::RedisCache> {
+    REVOCATION_CACHE.get().copied()
 }
 
 /// 返回全局 signer 引用；未初始化（[jwt] 未配置）时 None。
