@@ -28,7 +28,7 @@ dashmap = { workspace = true }
 serde = { workspace = true, optional = true }
 snafu = { workspace = true, optional = true }
 sysinfo = { workspace = true, optional = true }
-tibba-error = { path = "../tibba-error", version = "0.2.6" }
+tibba-error = { path = "../tibba-error", version = "0.3.0" }
 # time：关闭钩子的超时控制（run_after_tasks）
 # sync：停机信号的 watch 广播（src/shutdown.rs）
 # signal：SIGINT / SIGTERM 处理，容器里发的是 SIGTERM，不能只认 ctrl_c

@@ -45,7 +45,7 @@ sha2 = { workspace = true }
 # 签名比对的常数时间实现，避免手写 XOR 折叠被编译器优化成短路比较
 subtle = { workspace = true }
 snafu = { workspace = true }
-tibba-error = { path = "../tibba-error", version = "0.2.6" }
+tibba-error = { path = "../tibba-error", version = "0.3.0" }
 uuid = { workspace = true }
 url = { workspace = true }
 validator = { workspace = true }

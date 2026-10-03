@@ -156,7 +156,7 @@ members = [
 unwrap_used = "deny"
 
 [workspace.package]
-version = "0.2.7"
+version = "0.3.0"
 edition = "2024"
 # 取依赖图的真实下限，而不是本仓库语法特性的下限：let-chains 只要 1.88，但
 # sysinfo 0.39 要 1.95、sqlx 0.9 要 1.94。声明低于依赖下限等于对下游撒谎——

@@ -23,11 +23,11 @@ mime_guess2 = { workspace = true }
 serde = { workspace = true }
 snafu = { workspace = true }
 sqlx = { workspace = true }
-tibba-error = { path = "../tibba-error", version = "0.2.6" }
-tibba-model-builtin = { path = "../tibba-model-builtin", version = "0.2.6" }
-tibba-opendal = { path = "../tibba-opendal", version = "0.2.6" }
-tibba-session = { path = "../tibba-session", version = "0.2.6" }
-tibba-util = { path = "../tibba-util", version = "0.2.6", default-features = false }
+tibba-error = { path = "../tibba-error", version = "0.3.0" }
+tibba-model-builtin = { path = "../tibba-model-builtin", version = "0.3.0" }
+tibba-opendal = { path = "../tibba-opendal", version = "0.3.0" }
+tibba-session = { path = "../tibba-session", version = "0.3.0" }
+tibba-util = { path = "../tibba-util", version = "0.3.0", default-features = false }
 utoipa = { workspace = true }
 validator = { workspace = true }
 

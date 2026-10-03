@@ -22,7 +22,7 @@ humantime-serde = { workspace = true }
 parse-size = { workspace = true }
 serde = { workspace = true }
 snafu = { workspace = true }
-tibba-error = { path = "../tibba-error", version = "0.2.6" }
+tibba-error = { path = "../tibba-error", version = "0.3.0" }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }

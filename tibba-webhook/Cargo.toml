@@ -21,10 +21,10 @@ serde_json = { workspace = true }
 snafu = { workspace = true }
 sqlx = { workspace = true }
 tracing = { workspace = true }
-tibba-crypto = { path = "../tibba-crypto", version = "0.2.6" }
-tibba-error = { path = "../tibba-error", version = "0.2.6" }
-tibba-job = { path = "../tibba-job", version = "0.2.6" }
-tibba-request = { path = "../tibba-request", version = "0.2.6" }
+tibba-crypto = { path = "../tibba-crypto", version = "0.3.0" }
+tibba-error = { path = "../tibba-error", version = "0.3.0" }
+tibba-job = { path = "../tibba-job", version = "0.3.0" }
+tibba-request = { path = "../tibba-request", version = "0.3.0" }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }

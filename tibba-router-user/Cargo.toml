@@ -23,19 +23,19 @@ serde_json = { workspace = true }
 snafu = { workspace = true }
 sqlx = { workspace = true }
 tracing = { workspace = true }
-tibba-cache = { path = "../tibba-cache", version = "0.2.6" }
+tibba-cache = { path = "../tibba-cache", version = "0.3.0" }
 # 登录密码校验（Argon2）与旧式 sha256 存量的无感升级
-tibba-crypto = { path = "../tibba-crypto", version = "0.2.6" }
-tibba-email = { path = "../tibba-email", version = "0.2.6" }
-tibba-error = { path = "../tibba-error", version = "0.2.6" }
-tibba-jwt = { path = "../tibba-jwt", version = "0.2.6" }
-tibba-middleware = { path = "../tibba-middleware", version = "0.2.6" }
-tibba-model = { path = "../tibba-model", version = "0.2.6" }
-tibba-model-builtin = { path = "../tibba-model-builtin", version = "0.2.6" }
-tibba-oauth = { path = "../tibba-oauth", version = "0.2.6" }
-tibba-session = { path = "../tibba-session", version = "0.2.6" }
-tibba-totp = { path = "../tibba-totp", version = "0.2.6" }
-tibba-util = { path = "../tibba-util", version = "0.2.6", default-features = false, features = ["http"] }
+tibba-crypto = { path = "../tibba-crypto", version = "0.3.0" }
+tibba-email = { path = "../tibba-email", version = "0.3.0" }
+tibba-error = { path = "../tibba-error", version = "0.3.0" }
+tibba-jwt = { path = "../tibba-jwt", version = "0.3.0" }
+tibba-middleware = { path = "../tibba-middleware", version = "0.3.0" }
+tibba-model = { path = "../tibba-model", version = "0.3.0" }
+tibba-model-builtin = { path = "../tibba-model-builtin", version = "0.3.0" }
+tibba-oauth = { path = "../tibba-oauth", version = "0.3.0" }
+tibba-session = { path = "../tibba-session", version = "0.3.0" }
+tibba-totp = { path = "../tibba-totp", version = "0.3.0" }
+tibba-util = { path = "../tibba-util", version = "0.3.0", default-features = false, features = ["http"] }
 utoipa = { workspace = true }
 validator = { workspace = true }
 

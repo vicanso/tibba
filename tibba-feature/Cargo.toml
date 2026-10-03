@@ -16,8 +16,8 @@ path = "src/lib.rs"
 
 [dependencies]
 serde = { workspace = true }
-tibba-cache = { path = "../tibba-cache", version = "0.2.6" }
-tibba-error = { path = "../tibba-error", version = "0.2.6" }
+tibba-cache = { path = "../tibba-cache", version = "0.3.0" }
+tibba-error = { path = "../tibba-error", version = "0.3.0" }
 
 [lints]
 workspace = true

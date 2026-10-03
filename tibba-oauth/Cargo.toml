@@ -20,7 +20,7 @@ reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 snafu = { workspace = true }
-tibba-error = { path = "../tibba-error", version = "0.2.6" }
+tibba-error = { path = "../tibba-error", version = "0.3.0" }
 tracing = { workspace = true }
 urlencoding = { workspace = true }
 
