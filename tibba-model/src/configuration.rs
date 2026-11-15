@@ -16,20 +16,15 @@ use super::Model;
 use super::user::{ROLE_ADMIN, ROLE_SUPER_ADMIN};
 use super::{
     Error, JsonSnafu, ModelListParams, Schema, SchemaAllowCreate, SchemaAllowEdit, SchemaType,
-    SchemaView, SqlxSnafu, Status, StoredJsonSnafu, checked_db_id, ensure_affected,
-    format_datetime, is_data_overridable_response_header, new_schema_options, now_primitive_utc,
+    SchemaView, SqlxSnafu, checked_db_id, ensure_affected, format_datetime, new_schema_options,
     parse_primitive_datetime,
 };
-use http::header::{HeaderMap, HeaderName, HeaderValue};
-use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use snafu::ResultExt;
 use sqlx::FromRow;
 use sqlx::types::Json;
 use sqlx::{Pool, Postgres, QueryBuilder};
 use std::collections::HashMap;
-use std::fmt;
-use std::str::FromStr;
 use time::PrimitiveDateTime;
 
 type Result<T> = std::result::Result<T, Error>;
@@ -97,22 +92,6 @@ pub struct ConfigurationUpdateParams {
     pub status: Option<i16>,
     pub effective_start_time: Option<String>,
     pub effective_end_time: Option<String>,
-}
-
-/// 告警配置；`Debug` 手写实现以遮蔽 Webhook URL 中携带的 token / 密钥参数。
-#[derive(Clone, Deserialize, Default)]
-pub struct AlarmConfig {
-    pub category: String,
-    pub url: String,
-}
-
-impl fmt::Debug for AlarmConfig {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("AlarmConfig")
-            .field("category", &self.category)
-            .field("url", &crate::redact_url(&self.url))
-            .finish()
-    }
 }
 
 fn validate_effective_range(start: PrimitiveDateTime, end: PrimitiveDateTime) -> Result<()> {
@@ -330,106 +309,6 @@ impl Model for ConfigurationModel {
     }
 }
 
-impl ConfigurationModel {
-    pub async fn get_response_headers(
-        &self,
-        pool: &Pool<Postgres>,
-        name: &str,
-    ) -> Result<Option<HeaderMap>> {
-        let now = now_primitive_utc();
-        let configurations = sqlx::query_as::<_, ConfigurationSchema>(
-            r#"SELECT * FROM configurations
-               WHERE category = 'response_headers'
-               AND status = $1
-               AND name = $2
-               AND deleted_at IS NULL
-               AND effective_start_time <= $3
-               AND effective_end_time >= $4"#,
-        )
-        .bind(Status::Enabled as i16)
-        .bind(name)
-        .bind(now)
-        .bind(now)
-        .fetch_all(pool)
-        .await
-        .context(SqlxSnafu)?;
-
-        // 之前无论是否查到记录都返回 Some(empty_map)，让调用方的 let-else None
-        // 分支变成死代码（tibba-router-file/src/lib.rs:177-182）。这里改成
-        // 真的没匹配就返回 None，调用方的「无 headers 配置就早返回」逻辑生效
-        if configurations.is_empty() {
-            return Ok(None);
-        }
-
-        let mut headers = HeaderMap::new();
-        for configuration in configurations {
-            let Some(data) = configuration.data.as_object() else {
-                continue;
-            };
-            for (key, value) in data.iter() {
-                let Some(value_str) = value.as_str() else {
-                    continue;
-                };
-                let Ok(header_value) = HeaderValue::from_str(value_str) else {
-                    continue;
-                };
-                let Ok(header_name) = HeaderName::from_str(key) else {
-                    continue;
-                };
-                // 安全相关头不许由配置改写，见 is_data_overridable_response_header
-                if !is_data_overridable_response_header(&header_name) {
-                    continue;
-                }
-                headers.insert(header_name, header_value);
-            }
-        }
-        Ok(Some(headers))
-    }
-    pub async fn get_config<T>(
-        &self,
-        pool: &Pool<Postgres>,
-        category: &str,
-        name: &str,
-    ) -> Result<Option<T>>
-    where
-        T: DeserializeOwned,
-    {
-        let now = now_primitive_utc();
-        let configuration = sqlx::query_as::<_, ConfigurationSchema>(
-            r#"SELECT * FROM configurations
-               WHERE category = $1
-               AND status = $2
-               AND name = $3
-               AND deleted_at IS NULL
-               AND effective_start_time <= $4
-               AND effective_end_time >= $5
-               ORDER BY modified DESC, id DESC
-               LIMIT 1"#,
-        )
-        .bind(category)
-        .bind(Status::Enabled as i16)
-        .bind(name)
-        .bind(now)
-        .bind(now)
-        // 同名配置可能有多条同时生效（例如新旧两版的生效期重叠）。此前不排序，
-        // fetch_optional 拿到的是「执行计划恰好先返回的那一条」，同一份数据在
-        // 不同实例、不同时刻可能读出不同配置。现在固定取最近修改的一条。
-        .fetch_optional(pool)
-        .await
-        .context(SqlxSnafu)?;
-
-        let Some(configuration) = configuration else {
-            return Ok(None);
-        };
-        // 之前先 `as_object` 再 `Value::Object(map.clone())` 套回再反序列化，
-        // 既多一次 Map clone，又把「数据形状不对」误报成 NotFound。
-        // 直接消费内层 Value 一次反序列化即可——形状错误走 StoredJsonSnafu（500）
-        // 库里存的数据解不开是服务端问题（数据损坏或 schema 改了没迁移），不是 400
-        let data: T = serde_json::from_value(configuration.data.0).context(StoredJsonSnafu)?;
-        Ok(Some(data))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -452,17 +331,6 @@ mod tests {
         };
         let cfg = Configuration::from(schema);
         assert_eq!(cfg.data, serde_json::json!(["a", "b"]));
-    }
-
-    #[test]
-    fn alarm_config_debug_redacts_webhook_credentials() {
-        let alarm = AlarmConfig {
-            category: "wecom".to_string(),
-            url: "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=SECRET123".to_string(),
-        };
-        let dbg = format!("{alarm:?}");
-        assert!(!dbg.contains("SECRET123"), "{dbg}");
-        assert!(dbg.contains("?<redacted>"), "{dbg}");
     }
 
     #[test]

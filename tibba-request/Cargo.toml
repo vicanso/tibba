@@ -26,6 +26,8 @@ default = []
 tls-info = ["dep:x509-parser"]
 # 启用流式响应与 SSE 行级读取器，供大模型等流式上游复用
 stream = ["reqwest/stream", "dep:futures"]
+# 为出站请求注入 W3C traceparent / tracestate（分布式追踪）
+otel = ["dep:opentelemetry", "dep:tracing-opentelemetry"]
 
 [dependencies]
 bytes = { workspace = true }
@@ -45,8 +47,8 @@ tibba-util = { path = "../tibba-util", version = "0.3.0", default-features = fal
 tokio = { workspace = true, features = ["time", "net"] }
 tracing = { workspace = true }
 # 出站请求注入 W3C traceparent，串联下游服务调用链（分布式追踪）
-opentelemetry = { workspace = true }
-tracing-opentelemetry = { workspace = true }
+opentelemetry = { workspace = true, optional = true }
+tracing-opentelemetry = { workspace = true, optional = true }
 url = { workspace = true }
 x509-parser = { workspace = true, optional = true }
 

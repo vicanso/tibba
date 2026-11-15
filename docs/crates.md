@@ -1,108 +1,74 @@
 # tibba crate 分层
 
-将 workspace 内可发布模块分为 **核心（Core）**、**标准（Standard）** 与 **扩展（Extension）**，便于：
+Workspace 内共 **14 个**可发布的 `tibba-*` crate，精简为 **核心（Core, 7）** 与 **标准（Standard, 7）** 两层：
 
-1. 理解依赖边界与脚手架最小集
-2. 分批发布到 crates.io（见 `scripts/publish.sh`）
+1. 明确依赖边界，Core 不反向依赖 Standard；
+2. 无重依赖隐式拖累，可选重能力通过 feature flag 隔离；
+3. 按严格拓扑 DAG 分批发布到 crates.io（见 [publish.sh](../scripts/publish.sh)）。
 
-三层含义：
+版本号与 Rust 版本要求统一见根 [Cargo.toml](../Cargo.toml) 的 `[workspace.package]`，依赖拓扑图见 [modules.md](modules.md)。派生新项目见 [scaffold.md](scaffold.md)。
 
-- **Core** — 最小脚手架底座，几乎所有请求路径都依赖（错误 / 配置 / 缓存 / 出站 HTTP 等）。
-- **Standard** — 标准 REST 构件（数据模型、存储、会话、鉴权栈、路由），比 core 低、比 ext 高，依赖核心。
-- **Extension** — 可选产品能力，依赖核心与标准。
+## 核心 Core（7 crates）
 
-workspace 内全部 `tibba-*` 均可发布，无例外。
-
-版本号统一见根 `Cargo.toml` 的 `[workspace.package]`。
-
-派生新项目见 [scaffold.md](scaffold.md)。
-
-## 核心 Core
-
-最小脚手架底座：错误模型、配置、密钥、缓存、出站 HTTP，以及钩子与调度。
-
-重依赖（sysinfo、tokio-cron-scheduler）以 default-off feature 隔离，
-只用轻量部分的下游不必为其付出编译代价。
+最小服务底座，覆盖错误模型、工具与校验、配置、密码原语、运行态、缓存与出站 HTTP。
 
 | Crate | 职责 | 可选 feature |
 |-------|------|--------------|
-| `tibba-error` | HTTP 错误类型（按需装箱、告警与脱敏解耦、上游重建） | |
-| `tibba-util` | 通用工具 + 校验器（`x_*`）+ 有限解压 / 签名辅助 | `compression`（zstd/lz4）、`http`（cookie/header 辅助），默认全开 |
-| `tibba-config` | 配置加载（支持 `*_FILE` 密钥文件展开） | |
-| `tibba-crypto` | 密码哈希（Argon2id + Pepper）/ 签名密钥轮换 / 字段对称加密（AES-256-GCM） | |
-| `tibba-runtime` | AppState / 请求上下文 / 进程指标 / 启停钩子 / 停机信号 / Cron | `process-info`、`scheduler` |
-| `tibba-cache` | Redis 缓存 / 专用阻塞连接 / 分布式锁 / `GETDEL` / 滑动限流 / 两级缓存 + 失效广播 | |
-| `tibba-request` | 出站 HTTP / SSE 客户端（并发限制、熔断、重试、OTel、SSRF 防护） | `stream`、`tls-info` |
+| `tibba-error` | HTTP 错误类型（分类、状态码、敏感信息脱敏、上游重建） | |
+| `tibba-util` | 通用工具、日期时间、`validator` 校验器（`x_*`）、安全解压与签名辅助 | `compression`、`http`（默认全开） |
+| `tibba-config` | 多层配置加载与校验（支持 `*_FILE` 密钥文件展开） | |
+| `tibba-crypto` | Argon2id 密码哈希（支持全局 pepper）、HMAC 签名与 AES-256-GCM 对称加密 | |
+| `tibba-runtime` | `AppState`、请求上下文、优雅停机信号、进程采样与 cron 调度 | `process-info`、`scheduler` |
+| `tibba-cache` | Redis 连接池与缓存、分布式锁、限流计数、两级本地缓存 + 失效广播 | |
+| `tibba-request` | 出站 HTTP / SSE 客户端（并发限制、熔断、重试、SSRF 防护、OTel 传播） | `stream`、`tls-info`、`otel` |
 
-7 个 core 与「重依赖簇」一一对应，这是有原则的下限：`error`→axum、
-`util`→编码/时间/HTTP 杂项、`config`→config-rs、`crypto`→argon2/hmac/sha2/aes-gcm、
-`runtime`→arc-swap/tokio/dashmap、`cache`→redis/deadpool、`request`→reqwest/http/otel。
-每对 crate 的消费者集合都不相同，任何进一步合并都会让某个 crate 背上用不到的依赖簇。
+## 标准 Standard（7 crates）
 
-## 标准 Standard
+面向 Web/REST 应用的标准业务与横切构件，仅依赖 Core 与下层 Standard crate。
 
-标准 REST 构件：数据模型、对象存储、SQL、会话、鉴权栈与通用路由。依赖核心，比 core 低、比 ext 高。
+| Crate | 职责 | 可选 feature |
+|-------|------|--------------|
+| `tibba-model` | Postgres 连接池（`sql`）、`Model` 抽象、通用分页/排序与基础表模型（`user` / `configuration` / `file` / `permission` / `role_permission` / `audit_log` / `api_key` / `user_oauth_link`） | |
+| `tibba-job` | 基于 Postgres `FOR UPDATE SKIP LOCKED` 的异步任务队列、指数退避重试与死信队列 | |
+| `tibba-opendal` | 对象存储抽象（路径校验与凭证脱敏；默认本地文件系统） | `fs`（默认开）、`s3`、`http` |
+| `tibba-email` | Resend API 邮件发送封装 | |
+| `tibba-auth` | Cookie + Redis 会话、RBAC 权限判定与可选鉴权扩展 | `jwt`、`totp`、`oauth`、`oauth-google`、`oauth-github` |
+| `tibba-middleware` | 统一 HTTP 中间件栈装配、`request_id`、CORS、CSRF、ETag、限流、幂等与 i18n 本地化 | `otel` |
+| `tibba-router` | HTTP 路由聚合（`common`、`user`、`model`、`user_admin`、`rbac`、可选 `file` / `job`）及 OpenAPI 拼接 | `file`、`job`、`jwt`、`totp`、`oauth`、`api-key`、`process-info` |
 
-| Crate | 职责 |
-|-------|------|
-| `tibba-model` | Model 抽象、分页/排序白名单、响应头安全过滤与用户等基础模型 |
-| `tibba-opendal` | 对象存储抽象（分段安全配置与路径规范化校验） |
-| `tibba-sql` | PostgreSQL 连接池（分段安全初始化与 URI 校验） |
-| `tibba-model-builtin` | 内置表模型（文件/OAuth 关联/API Key/RBAC 权限等） |
-| `tibba-session` | Cookie + Redis 会话（登录轮换、服务端销毁与通配符权限判定） |
-| `tibba-email` | 邮件发送（复用 `tibba-request` 对接 Resend API） |
-| `tibba-oauth` | OAuth 客户端（GitHub/Google，复用 `tibba-request`） |
-| `tibba-jwt` | JWT 鉴权（HS256 签发校验与凭证撤销检查） |
-| `tibba-totp` | TOTP 两步验证与恢复码校验（密钥加密复用 `tibba-crypto`） |
-| `tibba-i18n` | 错误消息零侵入本地化 |
-| `tibba-middleware` | HTTP 中间件栈（request_id/CORS/CSRF/限流/ETag/安全头/幂等） |
-| `tibba-rbac` | 路由权限中间件与角色权限变更失效管理 |
-| `tibba-router-common` | 公共路由（探针/验证码/系统信息） |
-| `tibba-router-file` | 文件流式上传/图片处理/下载预签名路由 |
-| `tibba-router-model` | 通用 Schema 驱动 Model CRUD 路由与权限校验 |
-| `tibba-router-user` | 用户/鉴权/OAuth/TOTP/API Key 全栈路由与限流 |
+## 主应用 Feature 映射
 
-## 扩展 Extension
+根包 [Cargo.toml](../Cargo.toml) 默认仅启用 `default = ["file", "job"]`：
 
-可选产品能力：计费、LLM、任务队列、Webhook、特性开关、多租户等。
-
-| Crate | 职责 |
-|-------|------|
-| `tibba-job` | PG 异步任务队列 |
-| `tibba-llm` | LLM 客户端 |
-| `tibba-model-token` | Token 计费模型 |
-| `tibba-notify` | 邮件/企微等统一通知 |
-| `tibba-webhook` | 出站 Webhook |
-| `tibba-feature` | 特性开关 |
-| `tibba-tenant` | 行级多租户原语 |
-
-主应用 `tibba` 的 Cargo features 与扩展对应关系（示意）：
-
-| Feature | 相关扩展 |
-|---------|----------|
-| `demo-token` | `tibba-model-token` |
-| `demo-docker` | 应用内模块 + token |
-| `demo-detector` | 应用内探测 + 部分 model-builtin |
-| `demo-tenant` | `tibba-tenant` |
+| 根 Feature | 启用链路 |
+|------------|----------|
+| `file` | `tibba-opendal` + `tibba-router/file`（`src/router.rs` 挂载 `/files/*`，`AppCtx` 初始化 `Storage`） |
+| `s3` | `file` + `tibba-opendal/s3` |
+| `job` | `tibba-job` + `tibba-router/job`（`src/main.rs` 启动 worker，`src/router.rs` 挂载 `/jobs/*`） |
+| `jwt` | `tibba-auth/jwt` + `tibba-router/jwt` |
+| `totp` | `tibba-auth/totp` + `tibba-router/totp` |
+| `oauth` | `tibba-auth/oauth` + `tibba-router/oauth` |
+| `api-key` | `tibba-router/api-key`（挂接 `api_key_auth` 到 Session 之后） |
+| `otel` | `opentelemetry` + `tibba-middleware/otel` + `tibba-request/otel` |
+| `process-info` | `tibba-runtime/process-info` + `tibba-router/process-info` |
+| `scheduler` | `tibba-runtime/scheduler`（`src/app_ctx.rs` 注册周期健康检查与指标任务） |
+| `embed-admin` | `rust-embed` + `mime_guess2`（内嵌 `admin/dist/` 静态资源） |
+| `full` | 打开以上全部 11 项 |
 
 ## 发布
 
 ```bash
-# 只发核心（按依赖批次 + 等待 crates.io 索引）
+# 仅核心（7 crates，按 DAG 分 3 批）
 ./scripts/publish.sh core
 
-# 只发标准（需核心已在 crates.io）
+# 仅标准（7 crates，按 DAG 分 4 批，需核心已在 crates.io）
 ./scripts/publish.sh standard
 
-# 只发扩展（需核心 + 标准已在 crates.io）
-./scripts/publish.sh ext
-
-# 依次 core → standard → ext（默认）
+# 依次 core → standard（默认）
 ./scripts/publish.sh
-./scripts/publish.sh all
 
 # 指定单个 crate
 ./scripts/publish.sh tibba-error
 ```
 
-依赖关系图：`docs/modules.md`（`make mermaid` 更新）。
+依赖拓扑图见 [modules.md](modules.md)（执行 `make mermaid` 自动刷新）。

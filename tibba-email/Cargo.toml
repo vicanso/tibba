@@ -22,6 +22,7 @@ serde_json = { workspace = true }
 snafu = { workspace = true }
 tibba-error = { path = "../tibba-error", version = "0.3.0" }
 tibba-request = { path = "../tibba-request", version = "0.3.0" }
+tibba-util = { path = "../tibba-util", version = "0.3.0", default-features = false }
 tracing = { workspace = true }
 
 [dev-dependencies]

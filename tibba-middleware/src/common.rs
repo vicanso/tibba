@@ -12,21 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, HeaderValueSnafu, LOG_TARGET};
+use super::LOG_TARGET;
 use axum::extract::Request;
 use axum::extract::State;
 use axum::middleware::Next;
 use axum::response::Response;
 use scopeguard::defer;
-use snafu::ResultExt;
 use std::time::Duration;
-use subtle::ConstantTimeEq;
-use tibba_cache::RedisCache;
 use tibba_runtime::CTX;
 use tokio::time::sleep;
 use tracing::debug;
-
-type Result<T, E = Error> = std::result::Result<T, E>;
 
 /// Parameters for configuring the wait middleware
 /// Controls the waiting behavior after request processing
@@ -91,93 +86,4 @@ pub async fn wait(State(params): State<WaitParams>, req: Request, next: Next) ->
     }
 
     res
-}
-
-const CAPTCHA_REDIS_PREFIX: &str = "captcha:";
-
-fn is_valid_captcha_key(key: &str) -> bool {
-    !key.is_empty()
-        && key.len() <= 64
-        && key
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
-}
-
-fn ct_str_eq(a: &str, b: &str) -> bool {
-    a.len() == b.len() && bool::from(a.as_bytes().ct_eq(b.as_bytes()))
-}
-
-/// Middleware to validate captcha tokens in incoming requests
-///
-/// # Arguments
-/// * `magic_code` - Special code that can bypass normal captcha validation (for testing)
-/// * `cache` - Redis cache instance for storing/retrieving captcha codes
-/// * `req` - The incoming HTTP request
-/// * `next` - The next middleware handler
-///
-/// # Format
-/// The X-Captcha header should contain a colon-separated string with 2 parts:
-/// `key:code` where:
-/// - key: unique key to look up the stored captcha code
-/// - code: the actual captcha code to validate
-pub async fn validate_captcha(
-    State((magic_code, cache)): State<(String, &'static RedisCache)>,
-    req: Request,
-    next: Next,
-) -> Result<Response, tibba_error::Error> {
-    // 构造统一的 captcha 错误，避免多处重复 struct 字面量
-    let make_err = |msg: &str| -> Error {
-        Error::Captcha {
-            message: msg.to_string(),
-        }
-    };
-
-    // 解析 X-Captcha 头
-    let value = req
-        .headers()
-        .get("X-Captcha")
-        .ok_or_else(|| make_err("captcha is required"))?
-        .to_str()
-        .context(HeaderValueSnafu)?;
-
-    let (key, user_code) = value
-        .split_once(':')
-        .ok_or_else(|| make_err("captcha parameter is invalid, expect 'key:code'"))?;
-
-    if !is_valid_captcha_key(key) {
-        return Err(make_err("captcha key is invalid").into());
-    }
-    let cache_key = format!("{CAPTCHA_REDIS_PREFIX}{key}");
-
-    // magic code 用于测试环境绕过实际验证，同时消费对应一次性键防残留
-    if !magic_code.is_empty() && ct_str_eq(user_code, &magic_code) {
-        let _ = cache.del(&cache_key).await;
-        return Ok(next.run(req).await);
-    }
-
-    // 一次性读取并删除存储的验证码
-    let code = cache.get_del::<String>(&cache_key).await?;
-    let Some(code) = code else {
-        return Err(make_err("captcha is expired").into());
-    };
-
-    if !ct_str_eq(&code, user_code) {
-        return Err(make_err("captcha is invalid").into());
-    }
-
-    Ok(next.run(req).await)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn captcha_key_validation_rejects_bad_keys() {
-        assert!(is_valid_captcha_key("550e8400-e29b-41d4-a716-446655440000"));
-        assert!(!is_valid_captcha_key(""));
-        assert!(!is_valid_captcha_key("bad:key"));
-        assert!(!is_valid_captcha_key("bad key"));
-        assert!(!is_valid_captcha_key(&"a".repeat(65)));
-    }
 }

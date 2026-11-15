@@ -13,12 +13,8 @@ ARG GIT_COMMIT_ID
 WORKDIR /tibba
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends cmake ca-certificates nasm curl \
+    && apt-get install -y --no-install-recommends cmake ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-
-RUN curl -fsSL "https://github.com/vicanso/http-stat-rs/releases/latest/download/httpstat-linux-musl-$(uname -m).tar.gz" \
-    | tar -xzf - \
-    && mv httpstat /usr/local/bin/
 
 # 含 admin/dist（来自 webbuilder）与完整源码
 COPY --from=webbuilder /tibba/admin/dist /tibba/admin/dist
@@ -27,7 +23,7 @@ COPY . .
 COPY --from=webbuilder /tibba/admin/dist /tibba/admin/dist
 
 RUN echo "$GIT_COMMIT_ID" | cut -c1-7 > configs/commit_id.txt \
-    && make release \
+    && make release-embed \
     && ls -lh target/release/tibba \
     && strip target/release/tibba || true
 
@@ -40,7 +36,6 @@ RUN apt-get update \
 
 COPY --from=builder /tibba/target/release/tibba /usr/local/bin/tibba
 COPY --from=builder /tibba/entrypoint.sh /entrypoint.sh
-COPY --from=builder /usr/local/bin/httpstat /usr/local/bin/httpstat
 RUN chmod +x /entrypoint.sh /usr/local/bin/tibba
 
 USER tibba

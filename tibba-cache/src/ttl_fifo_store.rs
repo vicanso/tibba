@@ -15,18 +15,14 @@
 //! 带 TTL 的定容内存缓存，容量满时**按写入顺序**淘汰。
 //!
 //! ## 为什么叫 FIFO 而不是 LRU
-//! 本结构以 `lru::LruCache` 为底层容器，但读路径只用 `peek`（不更新访问时序），
-//! 于是「最近最少使用」的次序退化为「最早写入」的次序——淘汰的是最老的条目，
-//! 与读取热度无关。热点 key 若长期不被重写，容量满时同样会被淘汰。
+//! 本结构用 `HashMap` + `VecDeque`（按写入代际序）维护定容队列：读路径仅查哈希表，
+//! 不更新访问时序，因此淘汰的永远是**最早（最后一次）写入**的条目，与读取热度无关。
+//! 热点 key 若长期不被重写，容量满时同样会被淘汰。
 //!
-//! 这是刻意的取舍：`peek` 不改动容器状态，读路径的临界区因此短得多。代价是
-//! 失去 LRU 的热点保护。
-//!
-//! 本类型此前叫 `TtlLruStore`，名字与实际淘汰策略不符，已更名以免调用方按 LRU
-//! 的热度假设做容量规划。若确需 LRU 语义，应改用 `LruCache::get` 并接受它更新
-//! 时序带来的开销，而不是沿用本类型。
+//! 这是刻意的取舍：读路径不改动淘汰队列，临界区极短且零外部依赖。
+//! 若确需 LRU 语义，应专门引入 LRU 策略而非修改本类型。
 
-use lru::LruCache;
+use std::collections::{HashMap, VecDeque};
 use std::num::NonZeroUsize;
 use std::sync::{Mutex, MutexGuard};
 
@@ -34,6 +30,58 @@ use std::sync::{Mutex, MutexGuard};
 pub trait Expired {
     /// 返回 `true` 表示数据已过期，应从缓存中移除。
     fn is_expired(&self) -> bool;
+}
+
+/// 内部定容 FIFO 映射：按最后写入序号维护淘汰队列，读取不改变序号。
+struct FifoMap<T> {
+    cap: usize,
+    next_seq: u64,
+    entries: HashMap<String, (u64, T)>,
+    order: VecDeque<(String, u64)>,
+}
+
+impl<T> FifoMap<T> {
+    fn new(cap: usize) -> Self {
+        Self {
+            cap,
+            next_seq: 0,
+            entries: HashMap::with_capacity(cap),
+            order: VecDeque::with_capacity(cap),
+        }
+    }
+
+    fn set(&mut self, key: String, value: T) {
+        let seq = self.next_seq;
+        self.next_seq = self.next_seq.wrapping_add(1);
+
+        if !self.entries.contains_key(&key) && self.entries.len() >= self.cap {
+            while let Some((old_key, old_seq)) = self.order.pop_front() {
+                if self
+                    .entries
+                    .get(&old_key)
+                    .is_some_and(|(cur_seq, _)| *cur_seq == old_seq)
+                {
+                    self.entries.remove(&old_key);
+                    break;
+                }
+            }
+        }
+
+        self.entries.insert(key.clone(), (seq, value));
+        self.order.push_back((key, seq));
+
+        if self.order.len() > self.cap.saturating_mul(2) {
+            self.order
+                .retain(|(k, s)| self.entries.get(k).is_some_and(|(cur_seq, _)| cur_seq == s));
+        }
+    }
+
+    fn retain_live(&mut self, mut is_expired: impl FnMut(&T) -> bool) {
+        self.entries.retain(|_, (_, v)| !is_expired(v));
+        let entries = &self.entries;
+        self.order
+            .retain(|(k, s)| entries.get(k).is_some_and(|(cur_seq, _)| cur_seq == s));
+    }
 }
 
 /// 线程安全的 TTL + 定容 FIFO 缓存。
@@ -49,7 +97,7 @@ pub trait Expired {
 /// 选 `Mutex` 而非 `std::sync::RwLock`：读路径的临界区只有一次哈希查找加一次
 /// clone，短到读写锁的额外簿记开销盖过并发收益。
 pub struct TtlFifoStore<T> {
-    cache: Mutex<LruCache<String, T>>,
+    cache: Mutex<FifoMap<T>>,
 }
 
 impl<T: Expired + Clone> TtlFifoStore<T> {
@@ -57,13 +105,13 @@ impl<T: Expired + Clone> TtlFifoStore<T> {
     #[must_use]
     pub fn new(size: NonZeroUsize) -> Self {
         Self {
-            cache: Mutex::new(LruCache::new(size)),
+            cache: Mutex::new(FifoMap::new(size.get())),
         }
     }
 
     /// 取锁。中毒时取回内部数据继续用：本结构只是缓存，
     /// 一个 panic 的持锁者最多留下一条半写的条目，不值得让整个进程不可用。
-    fn lock(&self) -> MutexGuard<'_, LruCache<String, T>> {
+    fn lock(&self) -> MutexGuard<'_, FifoMap<T>> {
         self.cache.lock().unwrap_or_else(|e| e.into_inner())
     }
 
@@ -72,50 +120,46 @@ impl<T: Expired + Clone> TtlFifoStore<T> {
     /// 重复写入同一 key 会把它移到队尾（刷新其在淘汰序列中的位置），
     /// 故准确说是按「最后一次写入」排序，而非按首次插入。
     pub fn set(&self, key: &str, value: T) {
-        self.lock().put(key.to_string(), value);
+        self.lock().set(key.to_string(), value);
     }
 
     /// 读取未过期的缓存值，键不存在或已过期时返回 `None`。
     ///
-    /// 走 `peek` 而非 `get`：不更新访问时序。这正是本结构退化为 FIFO 的原因，
-    /// 见模块文档。
-    ///
-    /// 命中过期条目时**顺手删除**它。此前只是「读不到」，条目仍占着容量——
-    /// 一个装满过期条目的 store 会在下次写入时把**活着**的条目淘汰掉，
-    /// 而清理全靠调用方记得定期调 [`Self::purge_expired`]（实际上没人调）。
-    /// 顺带清理让容量语义回到「最多 N 个**有效**条目」这个直觉上。
+    /// 读路径不改变淘汰队列序号；命中过期条目时顺手删除以释放容量。
     #[must_use]
     pub fn get(&self, key: &str) -> Option<T> {
         let mut cache = self.lock();
-        if let Some(value) = cache.peek(key) {
+        if let Some((_, value)) = cache.entries.get(key) {
             if !value.is_expired() {
                 return Some(value.clone());
             }
-            cache.pop(key);
+            cache.entries.remove(key);
         }
         None
     }
 
     /// 删除指定键，键不存在时为空操作。
     pub fn del(&self, key: &str) {
-        self.lock().pop(key);
+        self.lock().entries.remove(key);
     }
 
     /// 清空全部缓存条目（例如 pub/sub 断线重连后丢弃可能陈旧的本地副本）。
     pub fn clear(&self) {
-        self.lock().clear();
+        let mut cache = self.lock();
+        cache.entries.clear();
+        cache.order.clear();
     }
 
     /// 当前保存的条目数（含尚未惰性清理的过期条目）。
     #[must_use]
     pub fn len(&self) -> usize {
-        self.lock().len()
+        self.lock().entries.len()
     }
 
     /// 当前缓存是否为空。
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.lock().is_empty()
+        self.lock().entries.is_empty()
     }
 
     /// 一次性清除所有已过期条目。
@@ -124,16 +168,7 @@ impl<T: Expired + Clone> TtlFifoStore<T> {
     /// 的必要条件；它用于「从此不再被读到的键」——那些条目只能靠容量淘汰
     /// 或这里的批量清理来释放。
     pub fn purge_expired(&self) {
-        let mut cache = self.lock();
-        // LruCache 不支持迭代中删除，需先收集过期键再批量移除
-        let keys: Vec<String> = cache
-            .iter()
-            .filter(|(_, v)| v.is_expired())
-            .map(|(k, _)| k.clone())
-            .collect();
-        for key in keys {
-            cache.pop(&key);
-        }
+        self.lock().retain_live(T::is_expired);
     }
 }
 

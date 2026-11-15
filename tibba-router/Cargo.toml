@@ -1,0 +1,61 @@
+[package]
+name = "tibba-router"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+keywords = ["tibba", "router"]
+description = "HTTP routers for tibba (common, user, model, rbac, file, job)"
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = []
+# 文件管理路由（/files/*），依赖 tibba-opendal 与 mime_guess2
+file = ["dep:mime_guess2", "dep:tibba-opendal"]
+# 任务队列运维路由（/jobs/*），依赖 tibba-job
+job = ["dep:tibba-job"]
+# /commons/application 采集 CPU / 内存 / FD / 磁盘 I/O（依赖 sysinfo）
+process-info = ["tibba-runtime/process-info"]
+# JWT 备选登录/刷新/登出路由
+jwt = ["tibba-auth/jwt"]
+# TOTP 两步验证（/users/totp/* 与 /users/login/mfa 等）
+totp = ["tibba-auth/totp"]
+# GitHub / Google OAuth 登录路由
+oauth = ["tibba-auth/oauth"]
+# API Key / 个人访问令牌（/users/api-keys* 与 api_key_auth 中间件）
+api-key = []
+
+[dependencies]
+axum = { workspace = true }
+axum-extra = { workspace = true }
+hostname = { workspace = true }
+humantime = { workspace = true }
+mime_guess2 = { workspace = true, optional = true }
+nanoid = { workspace = true }
+os_info = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+snafu = { workspace = true }
+sqlx = { workspace = true }
+subtle = { workspace = true }
+tibba-auth = { path = "../tibba-auth" }
+tibba-cache = { path = "../tibba-cache" }
+tibba-crypto = { path = "../tibba-crypto" }
+tibba-email = { path = "../tibba-email" }
+tibba-error = { path = "../tibba-error" }
+tibba-job = { path = "../tibba-job", optional = true }
+tibba-middleware = { path = "../tibba-middleware" }
+tibba-model = { path = "../tibba-model" }
+tibba-opendal = { path = "../tibba-opendal", optional = true }
+tibba-runtime = { path = "../tibba-runtime" }
+tibba-util = { path = "../tibba-util", default-features = false, features = ["http"] }
+time = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+utoipa = { workspace = true }
+validator = { workspace = true }

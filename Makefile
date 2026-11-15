@@ -2,7 +2,7 @@ bump:
 	@test -n "$(v)" || (echo "用法: make bump v=0.2.0" && exit 1)
 	./bump_version.sh $(v)
 
-# 发布到 crates.io：make publish / make publish p=core / make publish p=ext / make publish p=tibba-error
+# 发布到 crates.io：make publish / make publish p=core / make publish p=standard / make publish p=tibba-error
 publish:
 	./scripts/publish.sh $(p)
 
@@ -29,13 +29,17 @@ mermaid:
 release:
 	cargo build --release
 
-# 最小二进制（关掉 docker/detector/tenant 样板）
+# 内嵌 admin/dist SPA 静态资源的发布二进制
+release-embed:
+	cargo build --release --features embed-admin
+
+# 最小二进制（关闭 default features 中的 file / job）
 release-minimal:
 	cargo build --release --no-default-features
 
-# 导出 OpenAPI JSON（供 admin 生成 TS client）
+# 导出全量 OpenAPI JSON（供 admin 生成 TS client）
 openapi:
-	cargo run --bin export-openapi -- admin/openapi.json
+	cargo run --features full --bin export-openapi -- admin/openapi.json
 
 openapi-types: openapi
 	cd admin && ./scripts/gen-api-types.sh openapi.json src/api/schema.d.ts 

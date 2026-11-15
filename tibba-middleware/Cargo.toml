@@ -8,38 +8,43 @@ homepage.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 keywords = ["tibba", "middleware"]
-description = "middleware for tibba"
+description = "HTTP middlewares and error localization for tibba"
 
 
 [lib]
 name = "tibba_middleware"
 path = "src/lib.rs"
 
+[features]
+default = []
+otel = ["dep:opentelemetry", "dep:tracing-opentelemetry"]
+
 [dependencies]
 axum = { workspace = true }
 axum-extra = { workspace = true }
-governor = { workspace = true }
 metrics = { workspace = true }
+# 入站请求创建服务端 span 并提取上游 W3C trace 上下文（可选分布式追踪）
+opentelemetry = { workspace = true, optional = true }
 scopeguard = { workspace = true }
 serde = { workspace = true }
 snafu = { workspace = true }
 subtle = { workspace = true }
+tibba-auth = { path = "../tibba-auth", version = "0.3.0" }
 tibba-cache = { path = "../tibba-cache", version = "0.3.0" }
 tibba-error = { path = "../tibba-error", version = "0.3.0" }
 tibba-runtime = { path = "../tibba-runtime", version = "0.3.0" }
-tibba-session = { path = "../tibba-session", version = "0.3.0" }
 tibba-util = { path = "../tibba-util", version = "0.3.0", default-features = false, features = ["http"] }
 tokio = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
 tracing = { workspace = true }
-# 入站请求创建服务端 span 并提取上游 W3C trace 上下文（分布式追踪）
-opentelemetry = { workspace = true }
-tracing-opentelemetry = { workspace = true }
+tracing-opentelemetry = { workspace = true, optional = true }
 urlencoding = { workspace = true }
 
 [dev-dependencies]
 http-body-util = { workspace = true }
 pretty_assertions = { workspace = true }
-tower = { workspace = true }
+serde_json = { workspace = true }
 
 [lints]
 workspace = true

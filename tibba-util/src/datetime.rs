@@ -12,30 +12,41 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use chrono::{DateTime, Local, Utc, offset};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use time::OffsetDateTime;
+use time::format_description::well_known::Rfc3339;
 
-/// 返回当前本地时间的格式化字符串，例如 `"2025-01-01 12:00:00.000 +08:00"`。
+/// 返回当前 UTC 时间的 RFC3339 字符串，例如 `"2025-01-01T04:00:00Z"`。
 pub fn now() -> String {
-    Local::now().to_string()
+    OffsetDateTime::now_utc()
+        .format(&Rfc3339)
+        .unwrap_or_default()
 }
 
 /// 返回当前 Unix 时间戳（自 UTC 1970-01-01 00:00:00 起的秒数）。
 pub fn timestamp() -> i64 {
-    Utc::now().timestamp()
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
+        .unwrap_or(0)
 }
 
-/// 将 Unix 时间戳转换为本地时区的格式化日期时间字符串；时间戳非法时返回空串。
+/// 将 Unix 时间戳转换为 UTC RFC3339 日期时间字符串；时间戳或纳秒非法时返回空串。
 ///
 /// # 参数
 /// * `secs` - Unix 秒数
-/// * `nsecs` - 纳秒偏移
+/// * `nsecs` - 纳秒偏移（合法范围 `0..1_000_000_000`）
 pub fn from_timestamp(secs: i64, nsecs: u32) -> String {
-    if let Some(value) = DateTime::from_timestamp(secs, nsecs) {
-        value.with_timezone(&offset::Local).to_string()
-    } else {
-        String::new()
+    if nsecs >= 1_000_000_000 {
+        return String::new();
     }
+    let Ok(dt) = OffsetDateTime::from_unix_timestamp(secs) else {
+        return String::new();
+    };
+    let Some(dt) = dt.checked_add(time::Duration::nanoseconds(i64::from(nsecs))) else {
+        return String::new();
+    };
+    dt.format(&Rfc3339).unwrap_or_default()
 }
 
 /// 用于统计耗时的单调秒表。
@@ -124,5 +135,13 @@ mod tests {
         let first = sw.elapsed_us();
         std::thread::sleep(Duration::from_millis(1));
         assert!(sw.elapsed_us() > first);
+    }
+
+    #[test]
+    fn datetime_helpers_format_and_reject_invalid_nsecs() {
+        assert_eq!(from_timestamp(0, 0), "1970-01-01T00:00:00Z");
+        assert_eq!(from_timestamp(0, 1_000_000_000), "");
+        assert!(!now().is_empty());
+        assert!(timestamp() > 0);
     }
 }

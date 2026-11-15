@@ -137,7 +137,7 @@
 | `Error` | `tibba-error/src/lib.rs` | `with_category` / `with_status` / `add_extra` |
 | `ClientBuilder` | `tibba-request/src/request.rs` | `with_base_url` / `with_timeout` / `with_interceptor` |
 | `RedisCache` | `tibba-cache/src/cache.rs` | `with_ttl` / `with_prefix` |
-| `Session` | `tibba-session/src/session.rs` | `with_account` / `with_roles` / `with_groups` |
+| `Session` | `tibba-auth/src/session/mod.rs` | `with_account` / `with_roles` / `with_groups` |
 
 ## tracing 日志规范
 

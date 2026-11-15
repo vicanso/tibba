@@ -14,16 +14,12 @@
 
 //! Prometheus 指标接入。
 //!
-//! 中间件通过 `metrics::counter!` / `gauge!` 宏写入指标，由全局
-//! Prometheus recorder 收集；本模块负责启动期装载 recorder，并提供
-//! `/metrics` 端点把当前快照按 Prometheus text exposition 格式输出。
+//! 启动期显式调用 [`install_recorder`] 装载全局 recorder，`/metrics` 端点由
+//! [`metrics_handler`] 输出当前指标文本快照。
 
-use ctor::ctor;
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
-use std::sync::Arc;
 use std::sync::OnceLock;
 use tibba_error::Error;
-use tibba_runtime::{BoxFuture, Task, register_task};
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -33,9 +29,8 @@ fn map_err(err: impl ToString) -> Error {
     Error::new(err).with_category("metrics")
 }
 
-/// 安装全局 Prometheus recorder，并保存 PrometheusHandle 以便 `/metrics`
-/// 端点渲染快照。重复调用会返回错误。
-fn install_recorder() -> Result<()> {
+/// 安装全局 Prometheus recorder 并保存 handle，须在中间件与后台任务启动前调用。
+pub fn install_recorder() -> Result<()> {
     let handle = PrometheusBuilder::new()
         .install_recorder()
         .map_err(map_err)?;
@@ -45,35 +40,10 @@ fn install_recorder() -> Result<()> {
     Ok(())
 }
 
-/// 取出已安装的 PrometheusHandle；必须在 MetricsTask::before 之后调用。
-fn get_metrics_handle() -> &'static PrometheusHandle {
+/// Axum 处理器：返回当前指标快照（Prometheus text exposition 格式）。
+pub async fn metrics_handler() -> String {
     HANDLE
         .get()
         .unwrap_or_else(|| panic!("prometheus recorder not initialized"))
-}
-
-/// Axum 处理器：返回当前指标快照（Prometheus text exposition 格式）。
-pub async fn metrics_handler() -> String {
-    get_metrics_handle().render()
-}
-
-struct MetricsTask;
-
-impl Task for MetricsTask {
-    fn before(&self) -> BoxFuture<'_, Result<bool>> {
-        Box::pin(async move {
-            install_recorder()?;
-            Ok(true)
-        })
-    }
-    // 与 StateTask 一致取最高优先级，确保中间件首次触发 counter!/gauge! 之前
-    // recorder 已就位（未安装 recorder 时宏会落到 noop，丢失早期请求计数）
-    fn priority(&self) -> u8 {
-        u8::MAX
-    }
-}
-
-#[ctor(unsafe)]
-fn init() {
-    register_task("metrics", Arc::new(MetricsTask));
+        .render()
 }

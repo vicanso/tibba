@@ -47,10 +47,10 @@ use axum::middleware::Next;
 use axum::response::Response;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
+use tibba_auth::Session;
 use tibba_cache::RedisCache;
 use tibba_error::Error as BaseError;
 use tibba_runtime::CTX;
-use tibba_session::Session;
 use tracing::{debug, warn};
 
 type Result<T, E = BaseError> = std::result::Result<T, E>;

@@ -1,33 +1,33 @@
 # tibba
 
-基于 **Axum + PostgreSQL + Redis** 的 Rust REST 服务脚手架 / 全功能应用底座。
+基于 **Axum + PostgreSQL + Redis** 的轻量级 Rust Web 服务脚手架。
 
-提供会话与多种鉴权（Cookie Session / JWT / API Key）、RBAC、限流、CSRF、任务队列、对象存储、OpenAPI、Admin SPA 等横切能力，可按需裁剪后用于新业务。
+Workspace 内聚为 **14 个 `tibba-*` crate**（7 个 Core + 7 个 Standard）；依赖关系图见 [modules.md](docs/modules.md)。可选能力全部通过根 `Cargo.toml` feature flag 按需裁剪。
 
 ## 架构速览
 
+```text
+HTTP 中间件栈（tibba_middleware::apply_middleware_stack）
+  request_id → [otel_trace] → security_headers → cors → compression
+  → [i18n] → timeout → body_limit → entry → stats → processing_limit
+  → session → [api_key_auth] → [validate_csrf] → [http_cache]
+       ↓
+  Router（src/router.rs → tibba-router）
+  /healthz · /readyz · /commons/* · /users/* · /models/* · [/files/*] · [/jobs/*] · /metrics · /csrf/token
+       ↓
+  AppCtx（src/app_ctx.rs::init 显式初始化：state · pool · cache · [storage]）
+       ↓
+  sqlx（PgPool + ./migrations）· RedisCache · OpenDAL · JobQueue
 ```
-HTTP 中间件栈
-  request_id → otel → security headers → CORS → ETag → i18n
-  → entry/stats → session → api_key → csrf → processing_limit
-       ↓
-  Router（users / files / models / jobs / features / tenant / …）
-       ↓
-  AppCtx（pool · cache · storage · AppState）
-       ↓
-  sqlx · Redis · OpenDAL · JobQueue
-```
-
-Workspace 内约 35 个 `tibba-*` crate；依赖关系图见 [docs/modules.md](docs/modules.md)。
 
 ## 快速开始
 
 ### 依赖
 
-- Rust **1.95+**（依赖图下限：sysinfo 0.39）
+- Rust toolchain（`rust-version` 见 [Cargo.toml](Cargo.toml)）
 - PostgreSQL 14+
 - Redis 6+
-- （可选）Node 20+：构建 `admin/` SPA
+- （可选）Node 20+：仅构建 `admin/` SPA（`embed-admin` feature）时需要
 
 ### 1. 数据库
 
@@ -43,7 +43,7 @@ docker exec -it tibba-postgres psql -U postgres -c "CREATE USER vicanso WITH PAS
 docker exec -it tibba-postgres psql -U postgres -c "CREATE DATABASE cybertect OWNER vicanso;"
 ```
 
-> Schema 由运行时 `sqlx::migrate!` 自动应用（见 `migrations/`）。`sql/pg/` 仅为历史参考，见 [sql/README.md](sql/README.md)。
+> Schema 在应用启动时由 `sqlx::migrate!("./migrations")` 自动执行（见 [migrations/](migrations/)）。
 
 ### 2. Redis
 
@@ -53,46 +53,44 @@ docker run -d --name tibba-redis -p 6379:6379 redis:7-alpine
 
 ### 3. 配置
 
-默认读 `configs/default.toml` + `configs/{ENV}.toml`，可用环境变量覆盖，前缀 **`TIBBA_WEB__`**（密钥字段均支持同名 `*_FILE` 后缀从挂载文件读取，如 `TIBBA_WEB__BASIC__SECRET_FILE`）：
+编译期嵌入 `configs/default.toml` + `configs/{ENV}.toml`（见 [configs/](configs/)），可用环境变量覆盖，前缀 **`TIBBA_WEB__`**（密钥字段均支持同名 `*_FILE` 后缀从挂载文件读取，如 `TIBBA_WEB__BASIC__SECRET_FILE`）：
 
 | 变量 | 说明 |
 |------|------|
 | `TIBBA_WEB__BASIC__SECRET` | 生产**必须**覆盖（≥32 字符） |
 | `TIBBA_WEB__BASIC__PASSWORD_PEPPER` | 可选密码哈希服务端 pepper（经 `tibba-crypto` 全局策略生效） |
 | `TIBBA_WEB__BASIC__CORS_ALLOW_ORIGINS` | 生产**必须**配置来源白名单 |
-| `TIBBA_WEB__BASIC__SUPER_ADMINS` | 启动时授予超管的账号列表（先注册再重启生效）；首个注册用户不再自动成为超管 |
-| `TIBBA_WEB__BASIC__LISTEN` | 监听地址（由 `x_listen_addr` 校验），默认 `127.0.0.1:5000` |
-| `TIBBA_WEB__DATABASE__URI` | Postgres 连接串 |
+| `TIBBA_WEB__BASIC__SUPER_ADMINS` | 启动时授予 `su` 超管的账号列表（幂等） |
+| `TIBBA_WEB__BASIC__LISTEN` | 监听地址，默认 `127.0.0.1:5000` |
+| `TIBBA_WEB__DATABASE__URI` | PostgreSQL 连接串 |
 | `TIBBA_WEB__REDIS__URI` | Redis 连接串 |
-| `RUST_LOG` | 日志级别，如 `tibba:app=info,tibba:cache=debug` |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | 可选 OTLP 追踪 |
-| `TIBBA_PANIC_WECOM_KEY` | 可选 panic 企业微信告警 |
+| `TIBBA_THREADS` | Tokio worker 线程数（默认 CPU 核数） |
+| `RUST_LOG` | 日志级别，如 `info,tibba:cache=debug` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | 可选 OTLP 追踪端点（需开启 `otel` feature） |
 
-开发配置见 `configs/dev.toml`。
+开发配置见 [dev.toml](configs/dev.toml)。
 
-### 4. 运行
+### 4. 运行与检查
 
 ```bash
-# 开发（需 bacon 可选）
-# RUST_ENV 未设置时按 production 运行（安全默认）：示例 secret 会被拒绝、
-# 验证码无 1234 旁路、cookie 带 Secure、不挂 Swagger。本地开发需显式声明：
+# 未设置 RUST_ENV 时按 production 运行（拒绝开发占位 secret、要求 CORS 白名单、不挂 OpenAPI UI）
 RUST_ENV=dev cargo run
 
-# 或
-make dev   # bacon run（bacon.toml 已为 run 任务设置 RUST_ENV=dev）
+# 或（bacon.toml 已配置 RUST_ENV=dev）
+make dev
 
-# 检查
+# 质量检查
 make fmt
 make lint
 cargo test --workspace
 ```
 
-服务起来后：
+服务启动后主要端点（默认 `basic.prefix = "/api"`）：
 
-- 健康：`GET /api/ping`（若配置了 `basic.prefix`）
-- 就绪：`GET /api/readyz`（DB / Redis / 存储 / 任务积压）
-- 文档：dev/test 下 `GET /swagger-ui`
-- 指标：`GET /api/metrics`
+- 存活探针：`GET /api/healthz`
+- 就绪探针：`GET /api/readyz`（探测 DB / Redis / 可选 OpenDAL / 可选任务积压）
+- 接口文档：dev/test 下 `GET /swagger-ui`（Scalar API Reference）与 `GET /api-docs/openapi.json`
+- 指标输出：`GET /api/metrics`
 
 ### 5. Admin 前端
 
@@ -100,68 +98,60 @@ cargo test --workspace
 cd admin && npm ci && npm run dev
 ```
 
-从后端导出 OpenAPI 并生成 TS 类型：
+从后端导出全量 OpenAPI 并生成 TypeScript 类型：
 
 ```bash
-make openapi          # → admin/openapi.json
-make openapi-types    # openapi-typescript → admin/src/api/schema.d.ts
+make openapi          # → admin/openapi.json（使用 --features full）
+make openapi-types    # → admin/src/api/schema.d.ts
 ```
 
 ## 派生新项目
 
-本仓库的主应用（`src/`）就是参考实现与模板本身。
+本仓库主应用（`src/`）即参考实现与脚手架模板，使用说明见 [scaffold.md](docs/scaffold.md)：
 
 ```bash
-make init name=my-app dest=~/github                  # 完整
-make init name=my-app dest=~/github flags=--minimal  # 去掉 demo-* 样板业务
+make init name=my-app dest=~/github                  # 复制仓库并改名
+make init name=my-app dest=~/github flags=--minimal  # 将 default features 置空
 ```
 
-复制整个仓库后改名（包名、tracing target、env 前缀、Dockerfile），产物保留 workspace
-与全部 `tibba-*` path 依赖——因此永远与 CI 验证过的代码一致，不存在版本 pin 漂移。
+## Cargo Features 与精简构建
 
-若想要「只依赖已发布 crate 的独立精简项目」，见 **[docs/scaffold.md](docs/scaffold.md)**，
-那份文档同时也是交给 AI 让它照着组装的清单。
+根包默认开启 `default = ["file", "job"]`；其余能力按需打开，全量启用使用 `full`：
 
-## 常用能力入口
-
-| 能力 | 位置 |
-|------|------|
-| 用户 / 登录 / OAuth / TOTP / JWT | `tibba-router-user` |
-| 通用 Model CRUD + 权限码 | `tibba-router-model` |
-| 文件上传 | `tibba-router-file` + OpenDAL |
-| 异步任务队列 | `tibba-job` + `src/job.rs` |
-| 行级多租户 | `tibba-tenant` + `src/tenant.rs` |
-| 中间件开关 | `MiddlewareOptions`（`tibba-middleware`） |
-| 共享依赖 | `AppCtx`（`src/app_ctx.rs`） |
-
-## Crate 分层（核心 / 扩展）
-
-Workspace 内库分为 **核心 Core**（脚手架底座）与 **扩展 Extension**（计费、任务队列、Webhook 等），说明见 [docs/crates.md](docs/crates.md)。各 `tibba-*/README.md` 中有分层标记。
-
-```bash
-./scripts/publish.sh core   # 仅核心
-./scripts/publish.sh ext    # 仅扩展
-./scripts/publish.sh        # core → ext 全部
-```
-
-## Cargo features（可选样板）
-
-默认 `full` 与历史行为一致。构建更瘦的二进制可关掉样板业务：
-
-| Feature | 内容 |
+| Feature | 说明 |
 |---------|------|
-| `demo-docker`（默认 on） | `/docker/analyze`、docker 分析任务 |
-| `demo-detector`（默认 on） | HTTP 探测调度（`http-stat` + `quick-js`） |
-| `demo-tenant`（默认 on） | `/tenant` 多租户演示 |
-| `full` | 上述全部 |
+| `file`（默认开） | 文件上传 / 下载 / 预览与对象存储抽象（本地 fs） |
+| `s3` | S3 兼容对象存储后端（隐含 `file`） |
+| `job`（默认开） | PostgreSQL 异步任务队列与 `/jobs/*` 运维路由 |
+| `jwt` | JWT 登录 / 刷新 / 登出与无状态 access 校验 |
+| `totp` | TOTP 两步验证 |
+| `oauth` | GitHub / Google OAuth2 登录 |
+| `api-key` | API Key（PAT）管理与鉴权中间件 |
+| `otel` | OpenTelemetry 分布式追踪（入站 / 出站 / OTLP 导出） |
+| `process-info` | 进程 CPU / 内存 / FD / 磁盘 I/O 采样 |
+| `scheduler` | 进程内 cron 周期监控任务调度器 |
+| `embed-admin` | 编译期嵌入 `admin/dist/` SPA 静态资源 |
+| `full` | 启用上述全部 11 个可选 feature |
 
 ```bash
-# 最小：仅用户/文件/model/job/features 等核心
-cargo build --release --no-default-features
-# 或 make release-minimal
+# 最小二进制（关闭 file 与 job）
+make release-minimal
 
-# 只要租户演示
-cargo build --no-default-features --features demo-tenant
+# 内嵌 admin SPA 构建
+make release-embed
+
+# 按需组合
+cargo build --release --no-default-features --features "jwt,totp,api-key"
+```
+
+## 分层与发布
+
+Workspace 分为 **Core（7 crates）** 与 **Standard（7 crates）**，详细说明见 [crates.md](docs/crates.md)：
+
+```bash
+./scripts/publish.sh core      # 仅核心层
+./scripts/publish.sh standard  # 仅标准层（需 core 已发布）
+./scripts/publish.sh           # core → standard 依次发布
 ```
 
 ## Docker
@@ -170,7 +160,7 @@ cargo build --no-default-features --features demo-tenant
 docker build --build-arg GIT_COMMIT_ID=$(git rev-parse HEAD) -t tibba .
 ```
 
-多阶段：Node 构建 admin → Rust release → **debian:bookworm-slim** 运行时。
+多阶段构建：Node 构建 `admin/` SPA → Rust (`make release-embed`) → `debian:bookworm-slim` 运行时。
 
 ## License
 

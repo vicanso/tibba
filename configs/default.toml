@@ -30,10 +30,7 @@ ttl = "7d"
 [opendal]
 url = "file://~/Downloads"
 
-[diving]
-url = "http://127.0.0.1:7002"
-
-# 邮件发送配置（被 docker_analysis 通知 / 邮箱验证 / 密码重置等所有发送方共用）
+# 邮件发送配置（邮箱验证 / 密码重置等发送方共用）
 # 整段可缺省——只在真正发邮件时报错，开发期不强制
 [email]
 # 发件人地址，需在 Resend 控制台验证发件域
@@ -59,9 +56,7 @@ client_id = ""
 # redirect_uri 必须在 Google Cloud Console 客户端的「Authorized redirect URIs」列表内
 redirect_uri = "http://localhost:5000/api/users/oauth/google/callback"
 
-[token]
-# token_llm / token_price 的 `model` 字段下拉选项
-models = ["mimo-v2.5-pro"]
+
 
 # JWT 备选鉴权（HS256）。与现有 Session+Cookie 路径正交。
 # secret 留空或整段缺失时，/login/jwt 等端点统一 503，应用照常启动。

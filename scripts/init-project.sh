@@ -20,8 +20,7 @@ usage() {
   <目标目录>   父目录；项目会创建在 <目标目录>/<项目名>，该路径必须不存在
 
 选项:
-  --minimal    把应用的 default features 设为空（去掉 demo-docker / demo-detector /
-               demo-tenant / demo-token 四个样板业务）
+  --minimal    把应用的 default features 设为空（关闭 default 中的 file / job）
   --dry-run    只打印将要执行的替换，不写任何文件
   -h, --help   显示本帮助
 
@@ -31,10 +30,10 @@ usage() {
 
 改名范围（仅作用于副本）:
   Cargo.toml        name / default-run / keywords
-  src/state.rs      AppState 的服务名
+  src/app_ctx.rs    AppState 的服务名
   src/**/*.rs       tracing target 前缀 "tibba:xxx" → "<项目名>:xxx"
   src/config.rs     配置环境变量前缀 TIBBA_WEB__ → <项目名大写>_WEB__
-  src/main.rs       TIBBA_THREADS / TIBBA_PANIC_WECOM_KEY 前缀
+  src/main.rs       TIBBA_THREADS 前缀
   Dockerfile        镜像内路径、二进制名、运行用户
   entrypoint.sh     默认二进制名
   README.md         环境变量前缀示例
@@ -105,18 +104,18 @@ echo "源仓库:   $SRC_DIR"
 echo "目标:     $TARGET"
 echo "项目名:   $NAME"
 echo "env 前缀: ${UPPER}_WEB__（原 TIBBA_WEB__）"
-[ "$MINIMAL" -eq 1 ] && echo "features: default = []（去掉全部 demo-*）"
+[ "$MINIMAL" -eq 1 ] && echo "features: default = []（关闭 file / job）"
 echo
 
 if [ "$DRY_RUN" -eq 1 ]; then
     echo "[dry-run] 将执行的替换："
     echo "  Cargo.toml:     name/default-run/keywords \"tibba\" → \"$NAME\""
-    echo "  src/state.rs:   .with_name(\"tibba\") → .with_name(\"$NAME\")"
+    echo "  src/app_ctx.rs: .with_name(\"tibba\") → .with_name(\"$NAME\")"
     echo "  src/**/*.rs:    \"tibba: → \"$NAME:  （$(grep -rhoE '"tibba:[a-z:_]+"' "$SRC_DIR/src" | wc -l | tr -d ' ') 处 tracing target）"
-    echo "  src/*.rs:       TIBBA_WEB / TIBBA_THREADS / TIBBA_PANIC_WECOM_KEY → ${UPPER}_*"
+    echo "  src/*.rs:       TIBBA_WEB / TIBBA_THREADS → ${UPPER}_*"
     echo "  Dockerfile:     \\btibba\\b → $NAME"
     echo "  entrypoint.sh:  \\btibba\\b → $NAME"
-    [ "$MINIMAL" -eq 1 ] && echo "  Cargo.toml:     default = [\"full\"] → default = []"
+    [ "$MINIMAL" -eq 1 ] && echo "  Cargo.toml:     default = [\"file\", \"job\"] → default = []"
     echo
     echo "[dry-run] 未写入任何文件。"
     exit 0
@@ -151,7 +150,7 @@ echo "改名..."
 perl -i -pe 's/^name = "tibba"$/name = "'"$NAME"'"/; s/^default-run = "tibba"$/default-run = "'"$NAME"'"/; s/^keywords = \["tibba"\]$/keywords = ["'"$NAME"'"]/' Cargo.toml
 
 # AppState 服务名
-perl -i -pe 's/\.with_name\("tibba"\)/.with_name("'"$NAME"'")/' src/state.rs
+perl -i -pe 's/\.with_name\("tibba"\)/.with_name("'"$NAME"'")/' src/app_ctx.rs
 
 # tracing target 前缀。只匹配 "tibba: 这一形式，故不会碰到 tibba-cache 等 crate 名
 find src -name '*.rs' -type f -exec perl -i -pe 's/"tibba:/"'"$NAME"':/g' {} +
@@ -166,18 +165,16 @@ find . \( -name '*.rs' -o -name '*.md' -o -name '*.toml' \) -type f \
 # 运行时环境变量（仅主应用与 README 用到）
 find src -name '*.rs' -type f -exec perl -i -pe '
     s/\bTIBBA_THREADS\b/'"$UPPER"'_THREADS/g;
-    s/\bTIBBA_PANIC_WECOM_KEY\b/'"$UPPER"'_PANIC_WECOM_KEY/g;
 ' {} +
 perl -i -pe '
     s/\bTIBBA_THREADS\b/'"$UPPER"'_THREADS/g;
-    s/\bTIBBA_PANIC_WECOM_KEY\b/'"$UPPER"'_PANIC_WECOM_KEY/g;
 ' README.md
 
 # 镜像内路径 / 二进制名 / 运行用户。\b 词边界确保不改 tibba-* crate 名
 perl -i -pe 's/\btibba\b/'"$NAME"'/g' Dockerfile entrypoint.sh
 
 if [ "$MINIMAL" -eq 1 ]; then
-    perl -i -pe 's/^default = \["full"\]$/default = []/' Cargo.toml
+    perl -i -pe 's/^default = \["file", "job"\]$/default = []/' Cargo.toml
 fi
 
 # 项目自己的 README 标题，避免新项目顶着 tibba 的名字
@@ -191,10 +188,10 @@ cat <<EOF
   cd $TARGET
   git init && git add -A && git commit -m "init from tibba"
 
-  # 数据库（PostgreSQL）
-  psql -d <db> -f sql/pg/init.sql
+  # 数据库（PostgreSQL）：创建库即可，启动时自动应用 migrations/
+  createdb <db>
 
-  # 管理端 SPA
+  # 管理端 SPA（若启用 embed-admin feature 才需要构建）
   cd admin && npm install && npm run build && cd ..
 
   # 配置：至少覆盖密钥与连接串（详见 README.md）

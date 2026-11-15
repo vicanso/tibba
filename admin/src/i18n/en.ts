@@ -9,18 +9,6 @@ const sidebar = {
     modelFeature: "Model",
     file: "File",
     config: "Config",
-    httpStat: "HttpStat",
-    httpDetector: "HttpDetector",
-    webPageDetector: "WebPageDetector",
-    detectorGroup: "DetectorGroup",
-    detectorGroupUser: "DetectorGroupUser",
-    tokenFeature: "Token Billing",
-    tokenAccount: "Accounts",
-    tokenRecharge: "Recharges",
-    tokenUsage: "Usages",
-    tokenKey: "API Keys",
-    tokenPrice: "Pricing",
-    tokenLlm: "LLM Config",
 };
 const login = {
     title: "Login",
@@ -32,7 +20,6 @@ const login = {
     forgotPassword: "Forgot your password?",
     submit: "Login",
     dontHaveAccount: "Don't have an account?",
-    captcha: "Captcha",
     signUp: "Sign up",
 };
 const signUp = {

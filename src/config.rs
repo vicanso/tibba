@@ -13,18 +13,18 @@
 // limitations under the License.
 
 use axum_extra::extract::cookie::Key;
-use ctor::ctor;
-use rust_embed::RustEmbed;
 use serde::Deserialize;
 use std::borrow::Cow;
 use std::fmt;
-use std::sync::Arc;
 use std::sync::OnceLock;
 use std::time::Duration;
+use tibba_auth::SessionParams;
+#[cfg(feature = "jwt")]
+use tibba_auth::jwt::{JwtConfig, JwtSigner, init_global_signer};
+#[cfg(feature = "oauth")]
+use tibba_auth::oauth::OAuthConfig;
 use tibba_config::{Config, humantime_serde};
 use tibba_error::Error;
-use tibba_runtime::{BoxFuture, Task, register_task};
-use tibba_session::SessionParams;
 use tibba_util::{is_development, is_test};
 use tracing::info;
 use validator::{Validate, ValidationError};
@@ -34,30 +34,32 @@ use validator::{Validate, ValidationError};
 const DEV_PLACEHOLDER_SECRET: &str = "tibba-dev-insecure-secret-do-not-use-in-production";
 
 /// 本模块所有日志事件的 tracing target。
-/// 可通过 `RUST_LOG=tibba:config=info`（或 `debug`）进行过滤。
 const LOG_TARGET: &str = "tibba:config";
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 static CONFIGS: OnceLock<Config> = OnceLock::new();
 
+fn embedded_config(name: &str) -> Option<&'static str> {
+    match name {
+        "default.toml" => Some(include_str!("../configs/default.toml")),
+        "dev.toml" => Some(include_str!("../configs/dev.toml")),
+        "production.toml" => Some(include_str!("../configs/production.toml")),
+        "test.toml" => Some(include_str!("../configs/test.toml")),
+        _ => None,
+    }
+}
+
 /// 将配置校验 / 反序列化失败包装为 `tibba_error::Error`（category=config）。
-/// 配置模块错误源多为字符串化校验信息，无独立 external Error 类型可做 snafu source。
 fn config_error(err: impl ToString) -> Error {
     Error::new(err).with_category("config")
 }
 
-#[derive(RustEmbed)]
-#[folder = "configs/"]
-struct Configs;
-
 fn default_commit_id() -> String {
-    if let Some(data) = Configs::get("commit_id.txt") {
-        std::str::from_utf8(&data.data)
-            .unwrap_or_default()
-            .trim()
-            .to_string()
-    } else {
+    let raw = include_str!("../configs/commit_id.txt").trim();
+    if raw.is_empty() {
         "--".to_string()
+    } else {
+        raw.to_string()
     }
 }
 
@@ -65,48 +67,38 @@ fn redact_secret(value: &str) -> &'static str {
     if value.is_empty() { "" } else { "[REDACTED]" }
 }
 
-// BasicConfig struct defines the basic application settings
-// with validation rules for each field
+/// 基础应用配置。
 #[derive(Clone, Default, Validate, Deserialize)]
 pub struct BasicConfig {
-    // listen address
+    /// 监听地址
     #[validate(custom(function = "tibba_util::x_listen_addr"))]
     pub listen: String,
-    // 最大并发请求数，0 表示不限制（此前 0 会拒绝所有请求）
+    /// 最大并发请求数，0 表示不限制
     #[validate(range(max = 100000))]
     pub processing_limit: u32,
-    // timeout
+    /// 请求超时时间
     #[serde(with = "humantime_serde")]
     pub timeout: Duration,
-    // secret：派生 TOTP AES-256-GCM 密钥、签发登录防重放令牌，必须足够长且生产不得用示例值
+    /// 应用密钥（派生 TOTP 密钥、签名登录防重放令牌，生产禁止用示例值）
     #[validate(length(min = 32), custom(function = "validate_basic_secret"))]
     pub secret: String,
     /// 可选密码哈希全局 pepper，配置后会在启动期注入 `tibba_crypto::PasswordPolicy`。
-    /// 生产推荐通过 `TIBBA_WEB__BASIC__PASSWORD_PEPPER` 注入。
     #[serde(default)]
     pub password_pepper: Option<String>,
-    // prefix
+    /// API 路由前缀
     pub prefix: Option<String>,
-    // web 静态文件前缀（与 Vite `base` 一致），用于 SPA 部署在子路径下的场景
+    /// Web 静态文件前缀（与 Vite `base` 一致）
     pub web_prefix: Option<String>,
-    // commit id
+    /// Git commit ID
     #[serde(default = "default_commit_id")]
     pub commit_id: String,
-    /// 部署区域标签（HTTP 探测等样板任务按 region 过滤；核心路径可不读）
-    #[allow(dead_code)]
-    pub region: Option<String>,
-    /// 生产 CORS 来源白名单（如 `https://app.example.com`）。
-    /// 生产环境**必须**非空，否则启动 fail-fast（见 `Cors::assert_production_safe`）。
-    /// 环境变量：`TIBBA_WEB__BASIC__CORS_ALLOW_ORIGINS`（TOML 数组 / 配置层 list）。
+    /// 生产 CORS 来源白名单（生产环境必须非空）
     #[serde(default)]
     pub cors_allow_origins: Vec<String>,
-    /// 是否允许跨域携带 Cookie / Authorization（与白名单配合使用）。
+    /// 是否允许跨域携带凭证
     #[serde(default)]
     pub cors_allow_credentials: bool,
-    /// 启动时授予超级管理员角色的账号列表（幂等；账号需已存在）。
-    ///
-    /// 取代此前「首个注册用户自动成为超管」的隐式规则。环境变量：
-    /// `TIBBA_WEB__BASIC__SUPER_ADMINS`。
+    /// 启动时授予超级管理员角色的账号列表（幂等）
     #[serde(default)]
     pub super_admins: Vec<String>,
 }
@@ -125,7 +117,6 @@ impl fmt::Debug for BasicConfig {
             .field("prefix", &self.prefix)
             .field("web_prefix", &self.web_prefix)
             .field("commit_id", &self.commit_id)
-            .field("region", &self.region)
             .field("cors_allow_origins", &self.cors_allow_origins)
             .field("cors_allow_credentials", &self.cors_allow_credentials)
             .field("super_admins", &self.super_admins)
@@ -149,7 +140,6 @@ impl BasicConfig {
 static BASIC_CONFIG: OnceLock<BasicConfig> = OnceLock::new();
 
 /// 校验 basic.secret：生产环境禁止使用脚手架自带的开发示例值。
-/// dev / test 允许沿用示例值以便开箱即用；长度下限由 `#[validate(length)]` 单独保证。
 fn validate_basic_secret(secret: &str) -> Result<(), ValidationError> {
     if !is_development() && !is_test() && secret == DEV_PLACEHOLDER_SECRET {
         return Err(ValidationError::new(
@@ -159,7 +149,6 @@ fn validate_basic_secret(secret: &str) -> Result<(), ValidationError> {
     Ok(())
 }
 
-/// Create a new basic config, if the config is invalid, it will panic
 fn new_basic_config(config: &Config) -> Result<BasicConfig> {
     let basic_config = config.try_deserialize::<BasicConfig>()?;
     basic_config.validate().map_err(config_error)?;
@@ -182,17 +171,13 @@ fn default_session_renewal() -> u8 {
 
 #[derive(Clone, Default, Validate, Deserialize)]
 pub struct SessionConfig {
-    // session ttl
     #[serde(with = "humantime_serde")]
     #[validate(custom(function = "validate_session_ttl"))]
     pub ttl: Duration,
-    // session secret
     #[validate(length(min = 64))]
     pub secret: String,
-    // session cookie name
     #[validate(length(min = 1, max = 64))]
     pub cookie: String,
-    // session max renewal
     #[serde(default = "default_session_renewal")]
     #[validate(range(min = 1, max = 52))]
     pub max_renewal: u8,
@@ -211,7 +196,6 @@ impl fmt::Debug for SessionConfig {
 
 static SESSION_CONFIG: OnceLock<SessionConfig> = OnceLock::new();
 
-// Creates a new SessionConfig instance from the configuration
 fn new_session_config(config: &Config) -> Result<SessionConfig> {
     let session_config = config.try_deserialize::<SessionConfig>()?;
     session_config.validate().map_err(config_error)?;
@@ -219,7 +203,6 @@ fn new_session_config(config: &Config) -> Result<SessionConfig> {
 }
 
 pub fn get_session_params() -> Result<SessionParams> {
-    // session config is checked in init function
     let session_config = SESSION_CONFIG
         .get()
         .unwrap_or_else(|| panic!("session config not initialized"));
@@ -230,33 +213,6 @@ pub fn get_session_params() -> Result<SessionParams> {
         .with_max_renewal(session_config.max_renewal))
 }
 
-/// Docker 镜像分析（diving）服务配置；仅 `demo-docker` 路径消费。
-#[derive(Debug, Clone, Default, Validate, Deserialize)]
-#[cfg_attr(not(feature = "demo-docker"), allow(dead_code))]
-pub struct DivingConfig {
-    // diving url
-    #[validate(length(min = 1))]
-    pub url: String,
-    // WeCom robot webhook key (optional)
-    pub notify_wecom: Option<String>,
-    // 通知接收邮箱地址 (optional)；具体发件 by `tibba_email::EmailService`，配置见 `[email]`
-    pub notify_email: Option<String>,
-}
-
-static DIVING_CONFIG: OnceLock<DivingConfig> = OnceLock::new();
-
-fn new_diving_config(config: &Config) -> Result<DivingConfig> {
-    let diving_config = config.try_deserialize::<DivingConfig>()?;
-    diving_config.validate().map_err(config_error)?;
-    Ok(diving_config)
-}
-
-// 应用全局邮件配置。原 DivingConfig 的 email_from / resend_api_key 抽到此处统一管理，
-// 邮箱验证 / 密码重置 / 通知告警等所有发送方共用一份 [email] 配置。
-//
-// 该段可在 default.toml 中缺失：此时返回 `EmailConfig::default()`（全空），
-// 应用照常启动；真正调用 `EmailService::send` 时再以 `Error::Invalid` 报错，
-// 避免没用到邮件功能的部署也被强制配置。
 static EMAIL_CONFIG: OnceLock<tibba_email::EmailConfig> = OnceLock::new();
 
 fn new_email_config(app_config: &Config) -> Result<tibba_email::EmailConfig> {
@@ -268,33 +224,31 @@ fn new_email_config(app_config: &Config) -> Result<tibba_email::EmailConfig> {
     Ok(app_config.try_deserialize::<Section>()?.email)
 }
 
-// OAuth 全 provider 聚合配置。同样容忍 `[oauth]` 段缺失（→ Default::default()），
-// 但字段类型错误或非法语法会在启动期暴露；真正用 OAuth 时由各 provider `build_provider`
-// 校验非空，缺失返回 503。
-static OAUTH_CONFIG: OnceLock<tibba_oauth::OAuthConfig> = OnceLock::new();
+#[cfg(feature = "oauth")]
+static OAUTH_CONFIG: OnceLock<OAuthConfig> = OnceLock::new();
 
-fn new_oauth_config(app_config: &Config) -> Result<tibba_oauth::OAuthConfig> {
+#[cfg(feature = "oauth")]
+fn new_oauth_config(app_config: &Config) -> Result<OAuthConfig> {
     #[derive(Default, Deserialize)]
     struct Section {
         #[serde(default)]
-        oauth: tibba_oauth::OAuthConfig,
+        oauth: OAuthConfig,
     }
     Ok(app_config.try_deserialize::<Section>()?.oauth)
 }
 
-// JWT 备选鉴权配置。整段缺失或 secret 为空时应用照常启动，
-// 仅 JWT 端点（/login/jwt 等）和 JwtUser extractor 返回 503。
-static JWT_CONFIG: OnceLock<tibba_jwt::JwtConfig> = OnceLock::new();
+#[cfg(feature = "jwt")]
+static JWT_CONFIG: OnceLock<JwtConfig> = OnceLock::new();
 
-fn new_jwt_config(app_config: &Config) -> Result<tibba_jwt::JwtConfig> {
+#[cfg(feature = "jwt")]
+fn new_jwt_config(app_config: &Config) -> Result<JwtConfig> {
     #[derive(Default, Deserialize)]
     struct Section {
         #[serde(default)]
-        jwt: tibba_jwt::JwtConfig,
+        jwt: JwtConfig,
     }
     let jwt_config = app_config.try_deserialize::<Section>()?.jwt;
-    // 启用 JWT（secret 非空）时强制 ≥32 字符；短 HS256 密钥可离线爆破伪造 token（越权）。
-    // 空 secret 表示未启用，照常放行（相关端点返回 503）。
+    // 启用 JWT（secret 非空）时强制 >=32 字符
     if jwt_config.is_configured() && jwt_config.secret.len() < 32 {
         return Err(Error::new(
             "jwt.secret must be at least 32 chars when configured (set TIBBA_WEB__JWT__SECRET)",
@@ -304,78 +258,17 @@ fn new_jwt_config(app_config: &Config) -> Result<tibba_jwt::JwtConfig> {
     Ok(jwt_config)
 }
 
-// token 配置整套仅在 demo-token 下编译：minimal 构建无 token 账户 / LLM 计价体系
-#[cfg(feature = "demo-token")]
-#[derive(Debug, Clone, Default, Validate, Deserialize)]
-pub struct TokenConfig {
-    /// 可选模型名列表，供 token_llm / token_price 的 `model` 字段下拉展示。
-    #[serde(default)]
-    pub models: Vec<String>,
-}
-
-#[cfg(feature = "demo-token")]
-static TOKEN_CONFIG: OnceLock<TokenConfig> = OnceLock::new();
-
-#[cfg(feature = "demo-token")]
-fn new_token_config(config: &Config) -> Result<TokenConfig> {
-    let token_config = config.try_deserialize::<TokenConfig>()?;
-    token_config.validate().map_err(config_error)?;
-    Ok(token_config)
-}
-
-#[cfg(feature = "demo-token")]
-pub fn must_get_token_config() -> &'static TokenConfig {
-    TOKEN_CONFIG
-        .get()
-        .unwrap_or_else(|| panic!("token config not initialized"))
-}
-
-// 出站 webhook 配置。整段缺失或 secret 为空时应用照常启动，投递不签名。
-#[derive(Clone, Default, Validate, Deserialize)]
-pub struct WebhookConfig {
-    /// 出站 webhook 的 HMAC-SHA256 签名密钥；为空则投递不签名。
-    /// 经环境变量 `TIBBA_WEB__WEBHOOK__SECRET` 注入，切勿写入仓库。
-    #[serde(default)]
-    pub secret: String,
-}
-
-impl fmt::Debug for WebhookConfig {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("WebhookConfig")
-            .field("secret", &redact_secret(&self.secret))
-            .finish()
-    }
-}
-
-static WEBHOOK_CONFIG: OnceLock<WebhookConfig> = OnceLock::new();
-
-fn new_webhook_config(app_config: &Config) -> Result<WebhookConfig> {
-    #[derive(Default, Deserialize)]
-    struct Section {
-        #[serde(default)]
-        webhook: WebhookConfig,
-    }
-    Ok(app_config.try_deserialize::<Section>()?.webhook)
-}
-
-pub fn must_get_webhook_config() -> &'static WebhookConfig {
-    WEBHOOK_CONFIG
-        .get()
-        .unwrap_or_else(|| panic!("webhook config not initialized"))
-}
-fn new_config() -> Result<&'static Config> {
-    // OnceLock::get_or_try_init 尚未稳定；先 get，未初始化再加载 + set
+fn load_config() -> Result<&'static Config> {
     if let Some(config) = CONFIGS.get() {
         return Ok(config);
     }
     // default.toml 打底，{ENV}.toml 覆盖，环境变量 TIBBA_WEB__ 优先级最高
     let mut builder = Config::builder().with_env_prefix("TIBBA_WEB");
     for name in ["default.toml", &format!("{}.toml", tibba_util::get_env())] {
-        let data = Configs::get(name)
-            .ok_or(config_error(format!("{name} not found")))?
-            .data;
+        let data =
+            embedded_config(name).ok_or_else(|| config_error(format!("{name} not found")))?;
         info!(target: LOG_TARGET, "load config from {name}");
-        builder = builder.add_toml(std::string::String::from_utf8_lossy(&data));
+        builder = builder.add_toml(data);
     }
     let config = builder.build()?;
     let _ = CONFIGS.set(config);
@@ -385,7 +278,9 @@ fn new_config() -> Result<&'static Config> {
 }
 
 pub fn must_get_config() -> &'static Config {
-    new_config().unwrap_or_else(|_| panic!("config not initialized"))
+    CONFIGS
+        .get()
+        .unwrap_or_else(|| panic!("config not initialized"))
 }
 
 pub fn must_get_basic_config() -> &'static BasicConfig {
@@ -394,40 +289,35 @@ pub fn must_get_basic_config() -> &'static BasicConfig {
         .unwrap_or_else(|| panic!("basic config not initialized"))
 }
 
-#[cfg_attr(not(feature = "demo-docker"), allow(dead_code))]
-pub fn must_get_diving_config() -> &'static DivingConfig {
-    DIVING_CONFIG
-        .get()
-        .unwrap_or_else(|| panic!("diving config not initialized"))
-}
-
 pub fn must_get_email_config() -> &'static tibba_email::EmailConfig {
     EMAIL_CONFIG
         .get()
         .unwrap_or_else(|| panic!("email config not initialized"))
 }
 
-pub fn must_get_oauth_config() -> &'static tibba_oauth::OAuthConfig {
+#[cfg(feature = "oauth")]
+pub fn must_get_oauth_config() -> &'static OAuthConfig {
     OAUTH_CONFIG
         .get()
         .unwrap_or_else(|| panic!("oauth config not initialized"))
 }
 
-// 暂留 API 供后续 admin / health 端点查询 JWT 启用态；初始化只在 init_config 内部消费 JwtConfig
+#[cfg(feature = "jwt")]
 #[allow(dead_code)]
-pub fn must_get_jwt_config() -> &'static tibba_jwt::JwtConfig {
+pub fn must_get_jwt_config() -> &'static JwtConfig {
     JWT_CONFIG
         .get()
         .unwrap_or_else(|| panic!("jwt config not initialized"))
 }
 
-async fn init_config() -> Result<()> {
-    let app_config = new_config()?;
+/// 显式初始化所有应用配置段与全局安全策略；由 `main.rs` 在启动期调用。
+pub fn init_config() -> Result<()> {
+    let app_config = load_config()?;
+
     let basic_config = new_basic_config(&app_config.sub_config("basic"))?;
     BASIC_CONFIG
         .set(basic_config)
         .map_err(|_| config_error("basic config init failed"))?;
-    // 从静态持久化后的 BasicConfig 借用 pepper（满足 PasswordPolicy::with_pepper 的 'static 约束）
     if let Some(pepper) = must_get_basic_config()
         .password_pepper
         .as_deref()
@@ -436,72 +326,46 @@ async fn init_config() -> Result<()> {
         let policy = tibba_crypto::PasswordPolicy::default().with_pepper(pepper.as_bytes());
         tibba_crypto::init_global_password_policy(policy).map_err(config_error)?;
     }
+
     let session_config = new_session_config(&app_config.sub_config("session"))?;
     SESSION_CONFIG
         .set(session_config)
         .map_err(|_| config_error("session config init failed"))?;
-    let diving_config = new_diving_config(&app_config.sub_config("diving"))?;
-    DIVING_CONFIG
-        .set(diving_config)
-        .map_err(|_| config_error("diving config init failed"))?;
+
     let email_config = new_email_config(app_config)?;
     EMAIL_CONFIG
         .set(email_config)
         .map_err(|_| config_error("email config init failed"))?;
-    let oauth_config = new_oauth_config(app_config)?;
-    OAUTH_CONFIG
-        .set(oauth_config)
-        .map_err(|_| config_error("oauth config init failed"))?;
-    let jwt_config = new_jwt_config(app_config)?;
-    // 若 [jwt] 已配 secret，启动期一次性把全局 signer 初始化好；未配则跳过
-    // （延迟到首次访问 JWT 端点时由 try_global_signer 返回 None → 503）
-    if jwt_config.is_configured() {
-        // 撤销标记按 Session TTL 保留（见 tibba_session::revoke_user_sessions），
-        // access / refresh token 活得比它久，就会在标记过期后「复活」
-        if let Some(session) = SESSION_CONFIG.get()
-            && (jwt_config.access_ttl > session.ttl || jwt_config.refresh_ttl > session.ttl)
-        {
-            return Err(config_error(
-                "jwt.access_ttl and jwt.refresh_ttl must not exceed session.ttl",
-            ));
-        }
-        let signer = tibba_jwt::JwtSigner::from_config(&jwt_config).map_err(config_error)?;
-        tibba_jwt::init_global_signer(signer)
-            .map_err(|_| config_error("jwt global signer already initialized"))?;
-    }
-    JWT_CONFIG
-        .set(jwt_config)
-        .map_err(|_| config_error("jwt config init failed"))?;
-    // token 配置仅在 demo-token 下初始化（minimal 构建无 token 账户体系）
-    #[cfg(feature = "demo-token")]
+
+    #[cfg(feature = "oauth")]
     {
-        let token_config = new_token_config(&app_config.sub_config("token"))?;
-        TOKEN_CONFIG
-            .set(token_config)
-            .map_err(|_| config_error("token config init failed"))?;
+        let oauth_config = new_oauth_config(app_config)?;
+        OAUTH_CONFIG
+            .set(oauth_config)
+            .map_err(|_| config_error("oauth config init failed"))?;
     }
-    let webhook_config = new_webhook_config(app_config)?;
-    WEBHOOK_CONFIG
-        .set(webhook_config)
-        .map_err(|_| config_error("webhook config init failed"))?;
+
+    #[cfg(feature = "jwt")]
+    {
+        let jwt_config = new_jwt_config(app_config)?;
+        if jwt_config.is_configured() {
+            if let Some(session) = SESSION_CONFIG.get()
+                && (jwt_config.access_ttl > session.ttl || jwt_config.refresh_ttl > session.ttl)
+            {
+                return Err(config_error(
+                    "jwt.access_ttl and jwt.refresh_ttl must not exceed session.ttl",
+                ));
+            }
+            let signer = JwtSigner::from_config(&jwt_config).map_err(config_error)?;
+            init_global_signer(signer)
+                .map_err(|_| config_error("jwt global signer already initialized"))?;
+        }
+        JWT_CONFIG
+            .set(jwt_config)
+            .map_err(|_| config_error("jwt config init failed"))?;
+    }
+
     Ok(())
-}
-
-struct ConfigTask;
-
-impl Task for ConfigTask {
-    fn before(&self) -> BoxFuture<'_, Result<bool>> {
-        Box::pin(async move {
-            init_config().await?;
-            Ok(true)
-        })
-    }
-}
-
-// add application init before application start
-#[ctor(unsafe)]
-fn init() {
-    register_task("config", Arc::new(ConfigTask));
 }
 
 #[cfg(test)]
@@ -550,34 +414,12 @@ mod tests {
         let session_dbg = format!("{session:?}");
         assert!(!session_dbg.contains("session-secret"), "{session_dbg}");
         assert!(session_dbg.contains("[REDACTED]"), "{session_dbg}");
-
-        let webhook = WebhookConfig {
-            secret: "whsec-secret-value".to_string(),
-        };
-        let webhook_dbg = format!("{webhook:?}");
-        assert!(!webhook_dbg.contains("whsec-secret-value"), "{webhook_dbg}");
-        assert!(webhook_dbg.contains("[REDACTED]"), "{webhook_dbg}");
     }
 
     #[test]
     fn optional_config_sections_default_when_missing_and_fail_fast_on_malformed() {
         let empty = Config::builder().add_toml("").build().expect("empty cfg");
         assert!(new_email_config(&empty).is_ok());
-        assert!(new_oauth_config(&empty).is_ok());
-        assert!(new_jwt_config(&empty).is_ok());
-        assert!(new_webhook_config(&empty).is_ok());
-
-        let bad_jwt = Config::builder()
-            .add_toml("[jwt]\naccess_ttl = \"not-a-duration\"")
-            .build()
-            .expect("cfg");
-        assert!(new_jwt_config(&bad_jwt).is_err());
-
-        let bad_oauth = Config::builder()
-            .add_toml("oauth = \"invalid\"")
-            .build()
-            .expect("cfg");
-        assert!(new_oauth_config(&bad_oauth).is_err());
 
         let bad_email = Config::builder()
             .add_toml("email = 42")
@@ -585,10 +427,24 @@ mod tests {
             .expect("cfg");
         assert!(new_email_config(&bad_email).is_err());
 
-        let bad_webhook = Config::builder()
-            .add_toml("webhook = 42")
-            .build()
-            .expect("cfg");
-        assert!(new_webhook_config(&bad_webhook).is_err());
+        #[cfg(feature = "oauth")]
+        {
+            assert!(new_oauth_config(&empty).is_ok());
+            let bad_oauth = Config::builder()
+                .add_toml("oauth = \"invalid\"")
+                .build()
+                .expect("cfg");
+            assert!(new_oauth_config(&bad_oauth).is_err());
+        }
+
+        #[cfg(feature = "jwt")]
+        {
+            assert!(new_jwt_config(&empty).is_ok());
+            let bad_jwt = Config::builder()
+                .add_toml("[jwt]\naccess_ttl = \"not-a-duration\"")
+                .build()
+                .expect("cfg");
+            assert!(new_jwt_config(&bad_jwt).is_err());
+        }
     }
 }

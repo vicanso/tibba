@@ -59,7 +59,7 @@ fn tibba_error_json_is_flat() {
 
 #[test]
 fn permission_grants_wildcard() {
-    use tibba_session::permission_grants;
+    use tibba_auth::permission_grants;
     let granted = vec!["model:user:*".to_string(), "file:read".to_string()];
     assert!(permission_grants(&granted, "model:user:read"));
     assert!(permission_grants(&granted, "model:user:write"));
@@ -106,10 +106,10 @@ async fn i18n_middleware_localizes_error_and_sets_vary() {
     use axum::response::IntoResponse;
     use axum::routing::get;
     use http_body_util::BodyExt;
-    use tibba_i18n::{Catalog, i18n};
+    use tibba_middleware::i18n::{Catalog, i18n};
     use tower::ServiceExt;
 
-    let _ = tibba_i18n::init(
+    let _ = tibba_middleware::i18n::init(
         Catalog::new("en")
             .add("en", "not_logged_in", "Authentication required.")
             .add("zh", "not_logged_in", "请先登录后再操作。"),

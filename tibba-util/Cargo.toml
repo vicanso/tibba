@@ -29,7 +29,6 @@ http = ["dep:axum-extra", "dep:cookie"]
 # 且 tibba-error 已依赖 axum，甩掉它并不减少任何下游的依赖树
 axum = { workspace = true }
 axum-extra = { workspace = true, optional = true }
-chrono = { workspace = true }
 cookie = { workspace = true, optional = true }
 hex = { workspace = true }
 # HMAC-SHA256 签名（sign_hash / timestamp_hash），与 tibba-crypto 用同一实现
@@ -46,6 +45,7 @@ sha2 = { workspace = true }
 subtle = { workspace = true }
 snafu = { workspace = true }
 tibba-error = { path = "../tibba-error", version = "0.3.0" }
+time = { workspace = true }
 tracing = { workspace = true }
 uuid = { workspace = true }
 url = { workspace = true }

@@ -13,14 +13,12 @@ import { Label } from "@/components/ui/label";
 import { useI18n } from "@/i18n";
 import { Link, useLocation } from "react-router";
 import { HOME, SIGN_UP } from "@/constants/route";
-import { Captcha } from "@/components/captcha";
 import { useState } from "react";
 import useUserState from "@/states/user";
 import { toast } from "sonner";
 import { formatError } from "@/helpers/util";
 import { useShallow } from "zustand/react/shallow";
 import router from "@/routers";
-import { nanoid } from "nanoid";
 
 export function LoginForm({
     className,
@@ -31,12 +29,10 @@ export function LoginForm({
     const defaultAccount = location.state?.account || "";
     const [account, setAccount] = useState(defaultAccount);
     const [password, setPassword] = useState("");
-    const [captcha, setCaptcha] = useState("");
     const [processing, setProcessing] = useState(false);
     const [login] = useUserState(useShallow((state) => [state.login]));
-    const [captchaId, setCaptchaId] = useState(nanoid());
     const canSubmit = () => {
-        return account && password && captcha;
+        return Boolean(account && password);
     };
 
     const handleLogin = async () => {
@@ -45,11 +41,10 @@ export function LoginForm({
         }
         setProcessing(true);
         try {
-            await login(account, password, captcha);
+            await login(account, password);
             router.navigate(HOME);
         } catch (err) {
             toast.error(formatError(err));
-            setCaptchaId(nanoid());
         } finally {
             setProcessing(false);
         }
@@ -109,19 +104,6 @@ export function LoginForm({
                                     )}
                                     onChange={(e) => {
                                         setPassword(e.target.value);
-                                    }}
-                                />
-                            </div>
-                            <div className="grid gap-2">
-                                <div className="flex items-center">
-                                    <Label htmlFor="captcha">
-                                        {i18nLogin("captcha")}
-                                    </Label>
-                                </div>
-                                <Captcha
-                                    key={captchaId}
-                                    onChange={(id, value) => {
-                                        setCaptcha(`${id}:${value}`);
                                     }}
                                 />
                             </div>

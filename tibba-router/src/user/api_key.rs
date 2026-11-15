@@ -1,0 +1,436 @@
+// Copyright 2026 Tree xie.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! API Key / 个人访问令牌（PAT）：管理端点 + 鉴权中间件。
+//!
+//! ## 适用场景
+//! 「机器对机器」调用（CI / 脚本 / 第三方），区别于浏览器 Cookie Session 与短期 JWT。
+//!
+//! ## 管理端点（均需登录态，用户管理自己的 key）
+//! - `POST   /users/api-keys`       创建（**明文令牌仅此一次返回**）
+//! - `GET    /users/api-keys`       列出（不含哈希/明文）
+//! - `DELETE /users/api-keys/{id}`  吊销（软删除，幂等）
+//!
+//! ## 鉴权中间件 [`api_key_auth`]
+//! 全局挂载（在 session 中间件之后）。当请求带 `Authorization: Bearer tibba_...`
+//! 或 `X-API-Key: tibba_...` 时，校验哈希并**注入一个已登录 Session**到请求扩展，
+//! 使下游 `UserSession` / `AdminSession` 提取器对 API Key 请求透明工作。无效令牌
+//! 不注入，按未登录处理。
+
+use axum::Json;
+use axum::extract::{Path, Request, State};
+use axum::http::{HeaderMap, StatusCode, header};
+use axum::middleware::Next;
+use axum::response::{IntoResponse, Response};
+use serde::{Deserialize, Serialize};
+use sqlx::PgPool;
+use std::sync::Arc;
+use std::time::Duration;
+use tibba_auth::{Session, SessionParams, UserSession};
+use tibba_cache::RedisCache;
+use tibba_error::Error as BaseError;
+use tibba_model::{
+    ApiKey, ApiKeyAuth, ApiKeyModel, CreateApiKeyParams, Model, RolePermissionModel, UserModel,
+};
+use tibba_util::{JsonParams, JsonResult, sha256, uuid};
+use tracing::warn;
+use utoipa::ToSchema;
+use validator::Validate;
+
+use super::Result;
+
+/// 本模块日志 target，可用 `RUST_LOG=tibba:router_user=info` 过滤。
+const LOG_TARGET: &str = "tibba:router_user";
+
+/// 令牌固定前缀，便于一眼识别 + 中间件快速短路（非本前缀直接跳过 DB 查询）。
+const TOKEN_PREFIX: &str = "tibba_";
+/// 展示用前缀长度："tibba_" + 8 位 hex。
+const PREFIX_DISPLAY_LEN: usize = 14;
+
+/// 单个 API Key 的固定窗口时长（限流按 key 维度，与 IP 维度限流正交）。
+const API_KEY_RATE_WINDOW: Duration = Duration::from_secs(60);
+/// 单个 API Key 每窗口最大请求数，超出返回 429。M2M 场景的粗粒度兜底。
+const API_KEY_RATE_MAX: i64 = 600;
+
+/// API Key 查询结果的缓存时长。
+///
+/// 鉴权在**每个**请求上都要跑一次，此前每次都打两条 SQL（按 hash 查 key、更新
+/// last_used_at），再加 `build_session` 的查用户，热路径上三次数据库往返。
+///
+/// 30 秒是安全与开销的折中：吊销走 [`revoke_api_key`] 的显式失效，**立即生效**，
+/// 不依赖这个 TTL；TTL 只兜底「绕过接口直接改库」这类场外操作。
+const API_KEY_CACHE_TTL: Duration = Duration::from_secs(30);
+
+/// API Key 查询缓存的键前缀。吊销时按同样规则拼键失效。
+fn api_key_cache_key(key_hash: &str) -> String {
+    format!("apikey:{key_hash}")
+}
+
+/// 校验 API Key 明文格式：`tibba_` 前缀 + 64 位 ASCII 十六进制字符。
+/// 在计算 SHA-256 或查库/Redis 之前过滤掉明显畸形的头值，避免污染负缓存。
+pub(crate) fn is_well_formed_api_key(token: &str) -> bool {
+    token
+        .strip_prefix(TOKEN_PREFIX)
+        .is_some_and(|hex| hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
+/// 生成新令牌，返回 `(明文 token, key_hash, key_prefix)`。
+///
+/// 明文 = `tibba_` + 64 位随机 hex（两段 uuid 取 sha256）；库中只存 `sha256(明文)`。
+fn generate_token() -> (String, String, String) {
+    let secret = sha256(format!("{}{}", uuid(), uuid()).as_bytes());
+    let token = format!("{TOKEN_PREFIX}{secret}");
+    let key_hash = sha256(token.as_bytes());
+    let key_prefix: String = token.chars().take(PREFIX_DISPLAY_LEN).collect();
+    (token, key_hash, key_prefix)
+}
+
+/// 创建 API Key 的请求体。
+#[derive(Debug, Deserialize, Validate, ToSchema)]
+pub(crate) struct CreateApiKeyBody {
+    /// key 标签（区分用途，如 "ci"），最多 100 字符且去空白后非空
+    #[validate(length(min = 1, max = 100))]
+    name: String,
+    /// 过期天数（1-3650）；省略表示永不过期
+    #[validate(range(min = 1, max = 3650))]
+    expires_in_days: Option<i32>,
+}
+
+/// 创建响应：**`token` 为明文，仅此一次返回，请立即保存。**
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct CreateApiKeyResp {
+    /// 记录 id（吊销时使用）
+    id: i64,
+    /// key 标签
+    name: String,
+    /// 展示用前缀（如 `tibba_a1b2c3d4`）
+    key_prefix: String,
+    /// 完整令牌明文，**仅此一次返回**
+    token: String,
+    /// 过期天数（与请求一致；null 表示永不过期）
+    expires_in_days: Option<i32>,
+}
+
+/// 列表项（不含哈希与明文）。
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct ApiKeyItem {
+    id: i64,
+    name: String,
+    key_prefix: String,
+    last_used_at: Option<String>,
+    expires_at: Option<String>,
+    created: String,
+}
+
+impl From<ApiKey> for ApiKeyItem {
+    fn from(k: ApiKey) -> Self {
+        Self {
+            id: k.id,
+            name: k.name,
+            key_prefix: k.key_prefix,
+            last_used_at: k.last_used_at,
+            expires_at: k.expires_at,
+            created: k.created,
+        }
+    }
+}
+
+/// `POST /users/api-keys` —— 创建 API Key，返回一次性明文令牌。
+#[utoipa::path(
+    post,
+    path = "/users/api-keys",
+    tag = "user",
+    request_body = CreateApiKeyBody,
+    responses(
+        (status = 200, description = "创建成功，token 字段为一次性明文令牌", body = CreateApiKeyResp),
+        (status = 401, description = "未登录")
+    )
+)]
+pub(crate) async fn create_api_key(
+    State(pool): State<&'static PgPool>,
+    session: UserSession,
+    JsonParams(body): JsonParams<CreateApiKeyBody>,
+) -> JsonResult<CreateApiKeyResp> {
+    let trimmed_name = body.name.trim();
+    if trimmed_name.is_empty() {
+        return Err(
+            BaseError::new("api key name must not be empty or whitespace")
+                .with_category("router_user")
+                .with_sub_category("validation")
+                .with_status(400)
+                .with_exception(false),
+        );
+    }
+    let (token, key_hash, key_prefix) = generate_token();
+    let id = ApiKeyModel::new()
+        .create(
+            pool,
+            CreateApiKeyParams {
+                user_id: session.get_user_id(),
+                name: trimmed_name,
+                key_prefix: &key_prefix,
+                key_hash: &key_hash,
+                expires_in_days: body.expires_in_days,
+            },
+        )
+        .await?;
+    Ok(Json(CreateApiKeyResp {
+        id,
+        name: trimmed_name.to_string(),
+        key_prefix,
+        token,
+        expires_in_days: body.expires_in_days,
+    }))
+}
+
+/// `GET /users/api-keys` —— 列出当前用户的 API Key（不含哈希/明文）。
+#[utoipa::path(
+    get,
+    path = "/users/api-keys",
+    tag = "user",
+    responses(
+        (status = 200, description = "当前用户的 API Key 列表", body = [ApiKeyItem]),
+        (status = 401, description = "未登录")
+    )
+)]
+pub(crate) async fn list_api_keys(
+    State(pool): State<&'static PgPool>,
+    session: UserSession,
+) -> JsonResult<Vec<ApiKeyItem>> {
+    let keys = ApiKeyModel::new()
+        .list_by_user(pool, session.get_user_id())
+        .await?;
+    Ok(Json(keys.into_iter().map(ApiKeyItem::from).collect()))
+}
+
+/// `DELETE /users/api-keys/{id}` —— 吊销自己的某个 key（幂等：不存在也返回 204）。
+#[utoipa::path(
+    delete,
+    path = "/users/api-keys/{id}",
+    tag = "user",
+    params(("id" = i64, Path, description = "API Key 记录 id")),
+    responses(
+        (status = 204, description = "已吊销（幂等）"),
+        (status = 401, description = "未登录")
+    )
+)]
+pub(crate) async fn revoke_api_key(
+    State((pool, cache)): State<(&'static PgPool, &'static RedisCache)>,
+    session: UserSession,
+    Path(id): Path<i64>,
+) -> Result<StatusCode> {
+    // revoke 已带 user_id 归属校验：删别人的 key 影响 0 行，对外同样返回 204（不泄露存在性）
+    let revoked = ApiKeyModel::new()
+        .revoke(pool, session.get_user_id(), id)
+        .await?;
+
+    // 鉴权侧按 key_hash 缓存查询结果，这里必须显式失效——否则被吊销的 key
+    // 还能继续用满一个 TTL。吊销是安全操作，「最终一致」在这里不够。
+    if let Some(key_hash) = revoked {
+        cache.del(&api_key_cache_key(&key_hash)).await?;
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// 从请求头提取令牌：优先 `Authorization: Bearer <token>`，回退 `X-API-Key: <token>`。
+fn extract_token(headers: &HeaderMap) -> Option<String> {
+    if let Some(v) = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        && let Some(rest) = v.strip_prefix("Bearer ")
+    {
+        return Some(rest.trim().to_string());
+    }
+    headers
+        .get("x-api-key")
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.trim().to_string())
+}
+
+/// 按 `key_hash` 查 API Key，结果缓存 [`API_KEY_CACHE_TTL`]。
+///
+/// # 为什么连「查不到」也缓存
+/// 返回类型是 `Option<ApiKeyAuth>`，`None` 同样进缓存。无效令牌是这个端点最常见
+/// 的流量形态（扫描器、过期客户端、配错的集成），不做负缓存的话它们每一次请求
+/// 都会落到数据库上——一个不需要任何凭据就能触发的放大器。
+///
+/// # last_used_at 的精度
+/// 刷新只在**回源时**发生，因此 `last_used_at` 的粒度变成了缓存 TTL（30s）。
+/// 这个字段的用途是「这把 key 最近还在用吗」，30 秒的粒度完全够；换来的是把
+/// 每请求一次的 UPDATE 降到每 30 秒一次。刷新失败只记日志，不影响鉴权。
+async fn lookup_api_key(
+    pool: &'static PgPool,
+    cache: &'static RedisCache,
+    key_hash: &str,
+) -> Result<Option<ApiKeyAuth>> {
+    cache
+        .get_or_set(
+            &api_key_cache_key(key_hash),
+            Some(API_KEY_CACHE_TTL),
+            || async {
+                let auth = ApiKeyModel::new()
+                    .find_active_by_hash(pool, key_hash)
+                    .await?;
+                if let Some(auth) = &auth
+                    && let Err(e) = ApiKeyModel::new().touch_last_used(pool, auth.id).await
+                {
+                    warn!(target: LOG_TARGET, error = %e, "touch api key last_used failed");
+                }
+                Ok(auth)
+            },
+        )
+        .await
+}
+
+/// 根据 user_id 装配一个「已登录」Session（account + roles + groups + permissions）。
+///
+/// `with_account` 会把 iat 置为非 0，故下游 Session 提取器会直接采用本实例而不再读
+/// Cookie，从而让 API Key 请求复用既有 `UserSession` / `AdminSession` 鉴权路径。
+async fn build_session(
+    pool: &'static PgPool,
+    cache: &'static RedisCache,
+    params: Arc<SessionParams>,
+    user_id: i64,
+) -> Option<Session> {
+    let user = UserModel::new()
+        .get_by_id(pool, user_id as u64)
+        .await
+        .ok()??;
+    // 禁用账号的 API Key 一律按未认证处理（此前禁用用户仍能凭 key 访问）
+    if !user.is_enabled() {
+        return None;
+    }
+    let roles = user.roles.clone().unwrap_or_default();
+    let groups = user.groups.clone().unwrap_or_default();
+    let permissions = match RolePermissionModel::new()
+        .list_permissions_for_roles(pool, &roles)
+        .await
+    {
+        Ok(perms) => perms,
+        Err(e) => {
+            warn!(target: LOG_TARGET, user_id, error = %BaseError::from(e), "list api key permissions failed");
+            return None;
+        }
+    };
+    let session = Session::new(cache, params)
+        .with_account(&user.account, user.id)
+        .with_groups(groups)
+        .with_roles(roles)
+        .with_permissions(permissions);
+    Some(session)
+}
+
+/// 对单个 API Key 做固定窗口限流（key 维度，非 IP）。返回 `Some(429 响应)` 表示已
+/// 超限、调用方应短路返回；`None` 表示放行。
+///
+/// Redis 异常时**放行**（fail-open）：[`api_key_auth`] 的契约是「静默、尽量不失败」，
+/// 限流只是尽力而为的保护，不应因缓存抖动让所有 API Key 调用瘫痪；异常记 warn。
+/// 这与 IP 维度的 `redis_ip_rate_limit`（守护登录等敏感端点、fail-closed）取舍不同。
+async fn api_key_rate_limited(cache: &RedisCache, key_id: i64) -> Option<Response> {
+    let redis_key = format!("apikey_rate:{key_id}");
+    // incr 原子自增并在首次设窗口 TTL（见 RedisCache::incr）
+    match cache.incr(&redis_key, 1, Some(API_KEY_RATE_WINDOW)).await {
+        Ok(count) if count > API_KEY_RATE_MAX => {
+            warn!(target: LOG_TARGET, key_id, count, "api key rate limit exceeded");
+            Some(
+                BaseError::new("api key rate limit exceeded")
+                    .with_category("router_user")
+                    .with_sub_category("rate_limited")
+                    .with_status(429)
+                    .into_response(),
+            )
+        }
+        Ok(_) => None,
+        Err(e) => {
+            warn!(target: LOG_TARGET, error = %e, "api key rate limit check failed, allow");
+            None
+        }
+    }
+}
+
+/// 全局鉴权中间件：识别 API Key 并注入已登录 Session。
+///
+/// 无令牌 / 非本前缀 / 无效令牌都静默放行（按未登录处理），真正的 401 由下游
+/// `UserSession` 提取器在受保护路由上给出。**唯一的短路**：有效 key 超过每-key
+/// 固定窗口配额（[`API_KEY_RATE_MAX`]/[`API_KEY_RATE_WINDOW`]）时直接返回 429；
+/// 限流用 Redis 计数、跨实例一致，Redis 异常仍放行（见 [`api_key_rate_limited`]）。
+/// 须挂在 session 中间件「之后」（更内层），以便用有效 key 的 Session 覆盖空 Session。
+///
+/// # 热路径开销
+/// key 查询结果缓存 [`API_KEY_CACHE_TTL`]（见 [`lookup_api_key`]），有效与无效
+/// 令牌都缓存。此前每个请求要打三次数据库（按 hash 查 key、更新 last_used_at、
+/// 查用户装配 Session），现在前两次降到每 30 秒一次。
+///
+/// `build_session` 的查用户**尚未**缓存：角色 / 权限变更需要立即生效，缓存它
+/// 会让降权出现窗口期，这个取舍与 key 本身不同（key 吊销有显式失效兜底）。
+pub async fn api_key_auth(
+    State((pool, cache, params)): State<(&'static PgPool, &'static RedisCache, Arc<SessionParams>)>,
+    mut req: Request,
+    next: Next,
+) -> Response {
+    if let Some(token) = extract_token(req.headers())
+        && is_well_formed_api_key(&token)
+    {
+        let key_hash = sha256(token.as_bytes());
+        match lookup_api_key(pool, cache, &key_hash).await {
+            Ok(Some(auth)) => {
+                // 有效 key 先过每-key 限流：超配额直接 429，防止单 key 打爆后端
+                if let Some(resp) = api_key_rate_limited(cache, auth.id).await {
+                    return resp;
+                }
+                if let Some(session) = build_session(pool, cache, params, auth.user_id).await {
+                    req.extensions_mut().insert(session);
+                }
+            }
+            // 无效令牌：不注入，按未登录处理
+            Ok(None) => {}
+            Err(e) => warn!(target: LOG_TARGET, error = %e, "api key lookup failed"),
+        }
+    }
+    next.run(req).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn generated_token_passes_format_check() {
+        let (token, key_hash, key_prefix) = generate_token();
+        assert!(is_well_formed_api_key(&token));
+        assert_eq!(token.len(), TOKEN_PREFIX.len() + 64);
+        assert_eq!(key_prefix.len(), PREFIX_DISPLAY_LEN);
+        assert_eq!(key_hash.len(), 64);
+        assert!(token.starts_with(&key_prefix));
+    }
+
+    #[test]
+    fn well_formed_api_key_rejects_malformed_inputs() {
+        assert!(!is_well_formed_api_key(""));
+        assert!(!is_well_formed_api_key("tibba_"));
+        assert!(!is_well_formed_api_key("tibba_short"));
+        // 非法十六进制字符（'g'）
+        let bad_char = format!("tibba_{}", "g".repeat(64));
+        assert!(!is_well_formed_api_key(&bad_char));
+        // 长度超 64
+        let too_long = format!("tibba_{}", "a".repeat(65));
+        assert!(!is_well_formed_api_key(&too_long));
+        // 缺前缀
+        let no_prefix = "a".repeat(64);
+        assert!(!is_well_formed_api_key(&no_prefix));
+        // 大写十六进制也应合法
+        let upper_hex = format!("tibba_{}", "A".repeat(64));
+        assert!(is_well_formed_api_key(&upper_hex));
+    }
+}

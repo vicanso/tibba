@@ -12,14 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#[cfg(any(feature = "fs", feature = "s3", feature = "http"))]
 use opendal::Operator;
+#[cfg(any(feature = "fs", feature = "s3", feature = "http"))]
 use opendal::layers::MimeGuessLayer;
 use serde::Deserialize;
 use snafu::{ResultExt, Snafu};
 use std::fmt;
+#[cfg(feature = "fs")]
 use std::path::PathBuf;
 use tibba_config::Config;
 use tibba_error::Error as BaseError;
+#[cfg(feature = "s3")]
 use tibba_util::parse_uri;
 use validator::Validate;
 
@@ -27,20 +31,9 @@ mod storage;
 
 pub use storage::*;
 
-/// Postgres 存储 URL 前缀（两种写法都认）。对象存进 `objects` 表。
-const POSTGRES_PREFIXES: [&str; 2] = ["postgres://", "postgresql://"];
 /// 本地文件系统存储 URL 前缀。
+#[cfg(feature = "fs")]
 const FS_PREFIX: &str = "file://";
-/// 仅供 `tibba-sql` 消费的连接池参数名，传入 OpenDAL `Postgresql` 后端前需剥离。
-const TIBBA_POOL_PARAMS: &[&str] = &[
-    "max_connections",
-    "min_connections",
-    "connect_timeout",
-    "idle_timeout",
-    "max_lifetime",
-    "test_before_acquire",
-    "acquire_timeout",
-];
 
 /// OpenDAL 存储配置，`url` 决定后端类型，`schema` 可显式指定协议（如 "http"）。
 #[derive(Clone, Validate, Deserialize, Default)]
@@ -115,6 +108,7 @@ pub enum Error {
         #[snafu(source(from(tibba_config::Error, Box::new)))]
         source: Box<tibba_config::Error>,
     },
+    #[cfg(feature = "s3")]
     #[snafu(display("parse uri error: {source}"))]
     ParseUri {
         #[snafu(source(from(tibba_util::Error, Box::new)))]
@@ -143,6 +137,7 @@ impl From<Error> for BaseError {
                 .with_sub_category("config")
                 .with_status(500)
                 .with_exception(true),
+            #[cfg(feature = "s3")]
             Error::ParseUri { source } => BaseError::new(*source)
                 .with_sub_category("parse_uri")
                 .with_status(500)
@@ -213,6 +208,7 @@ fn opendal_error(source: opendal::Error) -> BaseError {
 }
 
 /// S3 连接参数，从 URL 查询字符串中解析。
+#[cfg(feature = "s3")]
 #[derive(Deserialize, PartialEq)]
 struct S3Params {
     bucket: String,
@@ -221,6 +217,7 @@ struct S3Params {
     secret_access_key: Option<String>,
 }
 
+#[cfg(feature = "s3")]
 impl fmt::Debug for S3Params {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("S3Params")
@@ -236,6 +233,7 @@ impl fmt::Debug for S3Params {
 }
 
 /// 从 `s3://` / `http(s)://` URI 构造 S3 endpoint：若 scheme 为 `s3` 则转换为 `https`。
+#[cfg(feature = "s3")]
 fn s3_endpoint_from_uri(schema: &str, host: &str) -> String {
     if schema.eq_ignore_ascii_case("s3") {
         format!("https://{host}")
@@ -244,39 +242,10 @@ fn s3_endpoint_from_uri(schema: &str, host: &str) -> String {
     }
 }
 
-/// 剥离 `tibba-sql` 自定义连接池参数，保留 Postgres 原生参数供 OpenDAL `PgConnectOptions` 使用。
-fn strip_tibba_pool_params(url: &str) -> String {
-    let (main, frag) = match url.split_once('#') {
-        Some((m, f)) => (m, Some(f)),
-        None => (url, None),
-    };
-    let (base, query) = match main.split_once('?') {
-        Some((b, q)) => (b, q),
-        None => return url.to_string(),
-    };
-    let kept: Vec<&str> = query
-        .split('&')
-        .filter(|pair| !pair.is_empty())
-        .filter(|pair| {
-            let key = pair.split_once('=').map_or(*pair, |(k, _)| k);
-            !TIBBA_POOL_PARAMS.contains(&key)
-        })
-        .collect();
-    let mut out = if kept.is_empty() {
-        base.to_string()
-    } else {
-        format!("{base}?{}", kept.join("&"))
-    };
-    if let Some(f) = frag {
-        out.push('#');
-        out.push_str(f);
-    }
-    out
-}
-
 /// 将 OpenDAL builder 组装成统一的 `Storage`：
 /// 1) 套 `MimeGuessLayer` 让对象自动带 Content-Type
 /// 2) 错误统一走 `OpenDalSnafu`
+#[cfg(any(feature = "fs", feature = "s3", feature = "http"))]
 fn finalize_dal<B>(builder: B) -> Result<Storage>
 where
     B: opendal::Builder,
@@ -289,6 +258,7 @@ where
 }
 
 /// 从 S3 兼容 URL 创建 S3 存储后端。
+#[cfg(feature = "s3")]
 fn new_s3_dal(url: &str) -> Result<Storage> {
     let parsed = parse_uri::<S3Params>(url).context(ParseUriSnafu)?;
     if parsed.hosts.len() != 1 {
@@ -315,19 +285,7 @@ fn new_s3_dal(url: &str) -> Result<Storage> {
     finalize_dal(builder)
 }
 
-/// 从 Postgres 连接字符串创建数据库存储后端，对象存进 `objects` 表
-/// （`"key"` / `value BYTEA`，见 baseline 迁移）。
-fn new_postgres_dal(url: &str) -> Result<Storage> {
-    let cleaned = strip_tibba_pool_params(url);
-    finalize_dal(
-        opendal::services::Postgresql::default()
-            .connection_string(&cleaned)
-            .table("objects")
-            .key_field("key")
-            .value_field("value"),
-    )
-}
-
+#[cfg(feature = "fs")]
 fn home_dir() -> Option<PathBuf> {
     std::env::var_os("HOME")
         .filter(|v| !v.is_empty())
@@ -336,6 +294,7 @@ fn home_dir() -> Option<PathBuf> {
 }
 
 /// 将路径字符串规范化为绝对路径，支持 `~/` 家目录前缀展开。
+#[cfg(feature = "fs")]
 #[inline]
 fn resolve_path(path_str: &str) -> String {
     if path_str.is_empty() {
@@ -358,6 +317,7 @@ fn resolve_path(path_str: &str) -> String {
 }
 
 /// 从 `file://` URL 创建本地文件系统存储后端，根路径需至少 2 个字符。
+#[cfg(feature = "fs")]
 fn new_fs_dal(url: &str) -> Result<Storage> {
     let root = url.strip_prefix(FS_PREFIX).unwrap_or_default();
     if root.len() < 2 {
@@ -369,15 +329,15 @@ fn new_fs_dal(url: &str) -> Result<Storage> {
 }
 
 /// 从 HTTP URL 创建只读 HTTP 存储后端。
+#[cfg(feature = "http")]
 fn new_http_dal(url: &str) -> Result<Storage> {
     finalize_dal(opendal::services::Http::default().endpoint(url))
 }
 
 /// 根据配置 URL 自动选择存储后端并创建 Storage 实例。
-/// - `postgres://` / `postgresql://` → Postgres 后端（`objects` 表）
-/// - `file://`  → 本地文件系统后端
-/// - `schema = "http"` → HTTP 只读后端
-/// - 其余 → S3 兼容后端
+/// - `file://` → 本地文件系统后端（需启用 `fs` feature，默认启用）
+/// - `schema = "http"` → HTTP 只读后端（需启用 `http` feature）
+/// - 其余 → S3 兼容后端（需启用 `s3` feature）
 pub fn new_opendal_storage(config: &Config) -> Result<Storage> {
     let opendal_config = new_opendal_config(config)?;
     let url = opendal_config.url.as_str();
@@ -386,11 +346,40 @@ pub fn new_opendal_storage(config: &Config) -> Result<Storage> {
 
 /// 根据 URL 和 schema 自动选择存储后端并创建 Storage 实例。
 pub fn new_opendal_storage_from_url(url: &str, schema: Option<&str>) -> Result<Storage> {
-    match url {
-        url if POSTGRES_PREFIXES.iter().any(|p| url.starts_with(p)) => new_postgres_dal(url),
-        url if url.starts_with(FS_PREFIX) => new_fs_dal(url),
-        url if schema == Some("http") => new_http_dal(url),
-        _ => new_s3_dal(url),
+    if url.starts_with("file://") {
+        #[cfg(feature = "fs")]
+        {
+            new_fs_dal(url)
+        }
+        #[cfg(not(feature = "fs"))]
+        {
+            Err(Error::Invalid {
+                message: "local filesystem storage requires `tibba-opendal/fs` feature".to_string(),
+            })
+        }
+    } else if schema == Some("http") {
+        #[cfg(feature = "http")]
+        {
+            new_http_dal(url)
+        }
+        #[cfg(not(feature = "http"))]
+        {
+            Err(Error::Invalid {
+                message: "http storage requires `tibba-opendal/http` feature".to_string(),
+            })
+        }
+    } else {
+        #[cfg(feature = "s3")]
+        {
+            new_s3_dal(url)
+        }
+        #[cfg(not(feature = "s3"))]
+        {
+            let _ = url;
+            Err(Error::Invalid {
+                message: "s3 storage requires `tibba-opendal/s3` feature".to_string(),
+            })
+        }
     }
 }
 
@@ -510,16 +499,7 @@ mod tests {
     }
 
     #[test]
-    fn s3_and_presign_debug_redact_secrets() {
-        let s3 = S3Params {
-            bucket: "b".to_string(),
-            region: Some("us-east-1".to_string()),
-            access_key_id: Some("AKIA123456".to_string()),
-            secret_access_key: Some("SUPERSECRET".to_string()),
-        };
-        let dbg = format!("{s3:?}");
-        assert!(!dbg.contains("AKIA123456") && !dbg.contains("SUPERSECRET"));
-
+    fn presign_debug_redacts_secrets() {
         let presign = PresignResult {
             method: "PUT".to_string(),
             url: "https://s3.example.com/a.png?X-Amz-Signature=secret999".to_string(),
@@ -533,8 +513,17 @@ mod tests {
         assert!(p_dbg.contains("image/png"));
     }
 
+    #[cfg(feature = "s3")]
     #[test]
-    fn s3_endpoint_and_pg_pool_param_stripping_work() {
+    fn s3_debug_and_endpoint_conversion_work() {
+        let s3 = S3Params {
+            bucket: "b".to_string(),
+            region: Some("us-east-1".to_string()),
+            access_key_id: Some("AKIA123456".to_string()),
+            secret_access_key: Some("SUPERSECRET".to_string()),
+        };
+        let dbg = format!("{s3:?}");
+        assert!(!dbg.contains("AKIA123456") && !dbg.contains("SUPERSECRET"));
         assert_eq!(
             s3_endpoint_from_uri("s3", "s3.us-east-1.amazonaws.com"),
             "https://s3.us-east-1.amazonaws.com"
@@ -543,15 +532,13 @@ mod tests {
             s3_endpoint_from_uri("http", "127.0.0.1:9000"),
             "http://127.0.0.1:9000"
         );
-        assert_eq!(
-            strip_tibba_pool_params(
-                "postgres://u:p@db:5432/tibba?sslmode=require&max_connections=10&idle_timeout=30s#f"
-            ),
-            "postgres://u:p@db:5432/tibba?sslmode=require#f"
-        );
-        assert_eq!(
-            strip_tibba_pool_params("postgres://u:p@db:5432/tibba?max_connections=10"),
-            "postgres://u:p@db:5432/tibba"
-        );
+    }
+
+    #[cfg(not(feature = "s3"))]
+    #[test]
+    fn s3_url_returns_feature_error_when_s3_disabled() {
+        let err = new_opendal_storage_from_url("s3://s3.example.com?bucket=b", None)
+            .expect_err("s3 未启用应报错");
+        assert!(matches!(err, Error::Invalid { .. }), "{err}");
     }
 }

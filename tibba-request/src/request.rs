@@ -32,6 +32,7 @@ use std::time::{Duration, Instant};
 use tibba_error::Error as BaseError;
 use tibba_util::{Stopwatch, timestamp};
 use tracing::{info, warn};
+#[cfg(feature = "otel")]
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 use url::Host;
 
@@ -42,8 +43,10 @@ pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 /// 把 OpenTelemetry 上下文写入 `HeaderMap` 的适配器，供全局 propagator 注入
 /// W3C `traceparent` / `tracestate` 等追踪头。键 / 值非法时静默跳过（best-effort）。
+#[cfg(feature = "otel")]
 struct HeaderInjector<'a>(&'a mut HeaderMap);
 
+#[cfg(feature = "otel")]
 impl opentelemetry::propagation::Injector for HeaderInjector<'_> {
     fn set(&mut self, key: &str, value: String) {
         if let Ok(name) = HeaderName::from_bytes(key.as_bytes())
@@ -1438,14 +1441,17 @@ impl Client {
             req = req.bearer_auth(token);
         }
         // 注入当前 span 的 W3C trace 上下文（traceparent），让下游服务延续同一条调用链。
-        // 无活跃 span 或未启用 OTel 时上下文为空，propagator 不写入任何头，零额外开销。
-        let cx = tracing::Span::current().context();
-        let mut trace_headers = HeaderMap::new();
-        opentelemetry::global::get_text_map_propagator(|propagator| {
-            propagator.inject_context(&cx, &mut HeaderInjector(&mut trace_headers));
-        });
-        if !trace_headers.is_empty() {
-            req = req.headers(trace_headers);
+        // 仅在启用 `otel` feature 且存在活跃 span/propagator 时写入；关闭时零开销。
+        #[cfg(feature = "otel")]
+        {
+            let cx = tracing::Span::current().context();
+            let mut trace_headers = HeaderMap::new();
+            opentelemetry::global::get_text_map_propagator(|propagator| {
+                propagator.inject_context(&cx, &mut HeaderInjector(&mut trace_headers));
+            });
+            if !trace_headers.is_empty() {
+                req = req.headers(trace_headers);
+            }
         }
         // 依次调用各拦截器的 request 钩子（如注入鉴权头）
         if let Some(interceptors) = &self.config.interceptors {

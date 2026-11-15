@@ -12,18 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use axum::body::Bytes;
-use axum::http::{StatusCode, Uri, header};
+use axum::http::{StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
-use mime_guess2::from_path;
-use rust_embed::RustEmbed;
 
-#[derive(RustEmbed)]
+#[cfg(feature = "embed-admin")]
+#[derive(rust_embed::RustEmbed)]
 #[folder = "admin/dist/"]
 struct WebAssets;
 
+#[cfg(feature = "embed-admin")]
 fn file_response(path: &str, data: std::borrow::Cow<'static, [u8]>) -> Response {
-    let mime = from_path(path).first_or_octet_stream();
+    use axum::body::Bytes;
+    use axum::http::header;
+
+    let mime = mime_guess2::from_path(path).first_or_octet_stream();
     // assets/ 子目录的文件名含 vite 内容哈希，可长期缓存
     let cache_control = if path.starts_with("assets/") {
         "public, max-age=31536000, immutable"
@@ -40,28 +42,33 @@ fn file_response(path: &str, data: std::borrow::Cow<'static, [u8]>) -> Response 
         .into_response()
 }
 
-/// 静态文件服务，兼容 SPA 前端路由：
-/// - `prefix` 非空时，先从请求路径中剥离该前缀（与 Vite `base` 对齐）
-/// - 精确匹配到 embed 文件时直接返回
-/// - assets/ 目录下带哈希的文件设置长缓存
-/// - 其余路径（前端路由）回退到 index.html
+/// 静态文件服务：启用 `embed-admin` 时服务内嵌 `admin/dist/` 资源并做 SPA fallback；
+/// 未启用时直接返回 404（供纯 API 或前端独立部署场景）。
 pub(crate) async fn serve_web(prefix: &str, uri: Uri) -> Response {
-    let raw = uri.path();
-    let path = if prefix.is_empty() {
-        raw
-    } else {
-        raw.strip_prefix(prefix).unwrap_or(raw)
-    };
-    let path = path.trim_start_matches('/');
-    let path = if path.is_empty() { "index.html" } else { path };
+    #[cfg(feature = "embed-admin")]
+    {
+        let raw = uri.path();
+        let path = if prefix.is_empty() {
+            raw
+        } else {
+            raw.strip_prefix(prefix).unwrap_or(raw)
+        };
+        let path = path.trim_start_matches('/');
+        let path = if path.is_empty() { "index.html" } else { path };
 
-    if let Some(content) = WebAssets::get(path) {
-        return file_response(path, content.data);
+        if let Some(content) = WebAssets::get(path) {
+            return file_response(path, content.data);
+        }
+
+        // SPA 回退：未匹配的路径交给前端路由处理
+        match WebAssets::get("index.html") {
+            Some(content) => file_response("index.html", content.data),
+            None => StatusCode::NOT_FOUND.into_response(),
+        }
     }
-
-    // SPA 回退：未匹配的路径交给前端路由处理
-    match WebAssets::get("index.html") {
-        Some(content) => file_response("index.html", content.data),
-        None => StatusCode::NOT_FOUND.into_response(),
+    #[cfg(not(feature = "embed-admin"))]
+    {
+        let _ = (prefix, uri);
+        StatusCode::NOT_FOUND.into_response()
     }
 }

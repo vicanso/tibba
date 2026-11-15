@@ -8,17 +8,6 @@ import {
     FileIcon,
     HomeIcon,
     CogIcon,
-    RadarIcon,
-    ChevronsLeftRightEllipsisIcon,
-    ApertureIcon,
-    GroupIcon,
-    UserIcon,
-    WalletIcon,
-    BanknoteIcon,
-    KeyIcon,
-    ReceiptIcon,
-    TagIcon,
-    BotIcon,
 } from "lucide-react";
 import { HOME, LOGIN_HISTORY, MODEL } from "@/constants/route";
 
@@ -92,48 +81,6 @@ const adminMainNav: NavGroup[] = [
             },
         ],
     },
-    {
-        title: "tokenFeature",
-        url: "#",
-        items: [
-            {
-                title: "tokenAccount",
-                url: `${MODEL}/token_account`,
-                roles: ["su", "admin"],
-                icon: WalletIcon,
-            },
-            {
-                title: "tokenRecharge",
-                url: `${MODEL}/token_recharge`,
-                roles: ["su", "admin"],
-                icon: BanknoteIcon,
-            },
-            {
-                title: "tokenUsage",
-                url: `${MODEL}/token_usage`,
-                roles: ["su", "admin"],
-                icon: ReceiptIcon,
-            },
-            {
-                title: "tokenKey",
-                url: `${MODEL}/token_key`,
-                roles: ["su", "admin"],
-                icon: KeyIcon,
-            },
-            {
-                title: "tokenPrice",
-                url: `${MODEL}/token_price`,
-                roles: ["su"],
-                icon: TagIcon,
-            },
-            {
-                title: "tokenLlm",
-                url: `${MODEL}/token_llm`,
-                roles: ["su"],
-                icon: BotIcon,
-            },
-        ],
-    },
 ];
 
 const webMainNav: NavGroup[] = [
@@ -156,31 +103,6 @@ const webMainNav: NavGroup[] = [
                 title: "file",
                 url: `${MODEL}/file`,
                 icon: FileIcon,
-            },
-            {
-                title: "httpDetector",
-                url: `${MODEL}/http_detector`,
-                icon: ChevronsLeftRightEllipsisIcon,
-            },
-            {
-                title: "httpStat",
-                url: `${MODEL}/http_stat`,
-                icon: RadarIcon,
-            },
-            {
-                title: "webPageDetector",
-                url: `${MODEL}/web_page_detector`,
-                icon: ApertureIcon,
-            },
-            {
-                title: "detectorGroup",
-                url: `${MODEL}/detector_group`,
-                icon: GroupIcon,
-            },
-            {
-                title: "detectorGroupUser",
-                url: `${MODEL}/detector_group_user`,
-                icon: UserIcon,
             },
         ],
     },
@@ -233,11 +155,7 @@ interface UserState {
     resetMainNav: () => void;
     fetch: () => Promise<UserSession>;
     signUp: (account: string, password: string) => Promise<void>;
-    login: (
-        account: string,
-        password: string,
-        captcha: string,
-    ) => Promise<UserSession>;
+    login: (account: string, password: string) => Promise<UserSession>;
     logout: () => Promise<void>;
     refresh: () => Promise<void>;
     updateProfile: (profile: {
@@ -292,7 +210,7 @@ const useUserState = create<UserState>((set) => ({
             password: sha256(password).toString(),
         });
     },
-    login: async (account: string, password: string, captcha: string) => {
+    login: async (account: string, password: string) => {
         const { data } = await request.get<{
             ts: number;
             hash: string;
@@ -300,21 +218,13 @@ const useUserState = create<UserState>((set) => ({
         }>(USER_LOGIN_TOKEN);
         // 仅对明文口令做一层 sha256（定长化 / 不发送明文）；服务端再套 Argon2 校验。
         // ts/hash/token 仍随请求发送，用于服务端登录令牌的防重放校验。
-        const { data: user } = await request.post<UserSession>(
-            USER_LOGIN,
-            {
-                ts: data.ts,
-                hash: data.hash,
-                token: data.token,
-                account,
-                password: sha256(password).toString(),
-            },
-            {
-                headers: {
-                    "X-Captcha": captcha,
-                },
-            },
-        );
+        const { data: user } = await request.post<UserSession>(USER_LOGIN, {
+            ts: data.ts,
+            hash: data.hash,
+            token: data.token,
+            account,
+            password: sha256(password).toString(),
+        });
         set({
             initialized: true,
             data: user,

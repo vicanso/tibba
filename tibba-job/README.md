@@ -2,13 +2,13 @@
 
 **异步任务队列**
 
-> **分层**：扩展（Extension）— 可选能力，依赖核心后再发布
+> **分层**：标准（Standard）— 标准 REST 构件，依赖核心
 
 基于 PostgreSQL `SKIP LOCKED` 的可靠任务队列：重试、死信、reaper、事务性入队。
 
 ## 依赖
 
-依赖：tibba-error
+依赖：`tibba-error`、`sqlx`、`tokio`
 
 ## 在工作区中的位置
 

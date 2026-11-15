@@ -12,13 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! 应用级 i18n 目录：登记常见错误 key 的中英文译文，启动期注册到 [`tibba_i18n`]。
-//!
-//! key 取错误的 `code` / `sub_category` / `category`（见 `tibba_i18n` 中间件）。这里登记的
-//! 都是既有错误已带的 `sub_category` / `category`，因此无需改动任何错误构造处即可本地化。
-//! 业务新增可本地化错误时，给错误设 `with_sub_category`/`with_code` 并在此登记对应译文即可。
+//! 应用级 i18n 目录：登记常见错误 key 的中英文译文，启动期注册到 `tibba_middleware::i18n`。
 
-use tibba_i18n::Catalog;
+use tibba_middleware::i18n::Catalog;
 
 /// 默认（回退）语言。`Accept-Language` 协商不到受支持语言时返回英文。
 const FALLBACK: &str = "en";
@@ -46,10 +42,10 @@ pub fn init() {
         .add("zh", "csrf_header_missing", "缺少 CSRF 请求头。")
         .add("en", "csrf_mismatch", "CSRF token mismatch.")
         .add("zh", "csrf_mismatch", "CSRF 令牌不匹配，疑似伪造请求。")
-        // 请求超时（main::handle_error，category = "timeout"）
+        // 请求超时（tibba_middleware::handle_middleware_error）
         .add("en", "timeout", "Request took too long.")
         .add("zh", "timeout", "请求处理超时，请稍后重试。")
-        // 认证与权限（tibba-session）
+        // 认证与权限（tibba-auth）
         .add(
             "en",
             "not_logged_in",
@@ -64,7 +60,7 @@ pub fn init() {
             "You do not have permission to perform this action.",
         )
         .add("zh", "permission_denied", "当前账号缺少执行该操作的权限。")
-        // 幂等、验证码与参数校验（tibba-middleware / tibba-model / tibba-router-*）
+        // 幂等与参数校验（tibba-middleware / tibba-model / tibba-router）
         .add(
             "en",
             "idempotency_invalid_key",
@@ -85,11 +81,9 @@ pub fn init() {
             "idempotency_conflict",
             "相同幂等键的请求正在处理中，请勿重复提交。",
         )
-        .add("en", "captcha", "Invalid or expired verification code.")
-        .add("zh", "captcha", "图形验证码错误或已过期。")
         .add("en", "validation", "Invalid request parameters.")
         .add("zh", "validation", "请求参数校验未通过。")
-        // 登录与账号安全状态（tibba-router-user）
+        // 登录与账号安全状态（tibba-router）
         .add("en", "bad_credentials", "Incorrect account or password.")
         .add("zh", "bad_credentials", "账号或密码错误。")
         .add(
@@ -100,6 +94,5 @@ pub fn init() {
         .add("zh", "too_many_attempts", "尝试次数过多，请稍后再试。")
         .add("en", "account_disabled", "This account has been disabled.")
         .add("zh", "account_disabled", "该账号已被禁用。");
-    // 已注册（如热重载重复调用）则忽略，不覆盖
-    let _ = tibba_i18n::init(catalog);
+    let _ = tibba_middleware::i18n::init(catalog);
 }

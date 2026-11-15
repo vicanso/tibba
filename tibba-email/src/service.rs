@@ -162,28 +162,13 @@ impl EmailService {
         self.send(to, subject, Some(text), Some(html)).await
     }
 
-    fn validate_send_args(
+    fn validate_message_args(
         &self,
         to: &str,
         subject: &str,
         text: Option<&str>,
         html: Option<&str>,
     ) -> std::result::Result<(), Error> {
-        if self.api_key.trim().is_empty() {
-            return Err(Error::NotConfigured {
-                message: "email api_key not configured (set [email] api_key)".to_string(),
-            });
-        }
-        if self.from.trim().is_empty() {
-            return Err(Error::NotConfigured {
-                message: "email from not configured (set [email] from)".to_string(),
-            });
-        }
-        if !is_plausible_email_field(&self.from) {
-            return Err(Error::Invalid {
-                message: "invalid email from address".to_string(),
-            });
-        }
         if !is_plausible_email_field(to) {
             return Err(Error::Invalid {
                 message: "invalid recipient email address".to_string(),
@@ -215,14 +200,51 @@ impl EmailService {
         Ok(())
     }
 
-    async fn send(
+    async fn send_with_mode(
         &self,
         to: &str,
         subject: &str,
         text: Option<&str>,
         html: Option<&str>,
+        dev_log_fallback: bool,
     ) -> Result<()> {
-        self.validate_send_args(to, subject, text, html)?;
+        self.validate_message_args(to, subject, text, html)?;
+
+        if self.api_key.trim().is_empty() {
+            if dev_log_fallback {
+                let body = text
+                    .filter(|s| !s.is_empty())
+                    .or_else(|| html.filter(|s| !s.is_empty()))
+                    .unwrap_or_default();
+                let preview = truncate_utf8_prefix(body.as_bytes(), MAX_ERROR_BODY_BYTES);
+                info!(
+                    target: LOG_TARGET,
+                    to = to.trim(),
+                    subject,
+                    body_len = body.len(),
+                    body_preview = %preview,
+                    "dev/test email log fallback (not sent)"
+                );
+                return Ok(());
+            }
+            return Err(Error::NotConfigured {
+                message: "email api_key not configured (set [email] api_key)".to_string(),
+            }
+            .into());
+        }
+
+        if self.from.trim().is_empty() {
+            return Err(Error::NotConfigured {
+                message: "email from not configured (set [email] from)".to_string(),
+            }
+            .into());
+        }
+        if !is_plausible_email_field(&self.from) {
+            return Err(Error::Invalid {
+                message: "invalid email from address".to_string(),
+            }
+            .into());
+        }
 
         let payload = ResendEmailPayload {
             from: self.from.trim(),
@@ -268,6 +290,18 @@ impl EmailService {
         info!(target: LOG_TARGET, to, subject, "email sent");
         Ok(())
     }
+
+    async fn send(
+        &self,
+        to: &str,
+        subject: &str,
+        text: Option<&str>,
+        html: Option<&str>,
+    ) -> Result<()> {
+        let dev_log_fallback = tibba_util::is_development() || tibba_util::is_test();
+        self.send_with_mode(to, subject, text, html, dev_log_fallback)
+            .await
+    }
 }
 
 #[cfg(test)]
@@ -286,22 +320,42 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unconfigured_returns_503_without_exception() {
+    async fn unconfigured_returns_503_in_production_without_exception() {
         let svc = EmailService::new("", "noreply@example.com");
         let err = svc
-            .send_text("u@example.com", "hi", "body")
+            .send_with_mode("u@example.com", "hi", Some("body"), None, false)
             .await
-            .expect_err("empty api_key should fail");
+            .expect_err("empty api_key should fail in production mode");
         assert_eq!(err.status(), 503);
         assert_eq!(err.sub_category(), Some("not_configured"));
         assert!(!err.is_exception());
 
         let svc = EmailService::new("re_123", "");
         let err = svc
-            .send_text("u@example.com", "hi", "body")
+            .send_with_mode("u@example.com", "hi", Some("body"), None, false)
             .await
             .expect_err("empty from should fail");
         assert_eq!(err.status(), 503);
+    }
+
+    #[tokio::test]
+    async fn dev_or_test_mode_logs_and_succeeds_without_api_key() {
+        let svc = EmailService::new("", "");
+        svc.send_with_mode(
+            "u@example.com",
+            "验证邮箱",
+            Some("code: 123456"),
+            None,
+            true,
+        )
+        .await
+        .expect("开发/测试环境缺少 api_key 应日志降级成功");
+
+        let err = svc
+            .send_with_mode("not-an-email", "hi", Some("body"), None, true)
+            .await
+            .expect_err("参数校验在降级前仍应生效");
+        assert_eq!(err.status(), 400);
     }
 
     #[tokio::test]

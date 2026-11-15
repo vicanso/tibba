@@ -9,18 +9,6 @@ const sidebar = {
     modelFeature: "模型",
     file: "文件",
     config: "配置",
-    httpStat: "Http统计",
-    httpDetector: "Http检测器",
-    webPageDetector: "网页检测器",
-    detectorGroup: "用户分组",
-    detectorGroupUser: "用户分组用户",
-    tokenFeature: "Token 计费",
-    tokenAccount: "账户余额",
-    tokenRecharge: "充值记录",
-    tokenUsage: "消耗记录",
-    tokenKey: "API 密钥",
-    tokenPrice: "定价配置",
-    tokenLlm: "LLM 配置",
 };
 const login = {
     title: "登录",
@@ -32,7 +20,6 @@ const login = {
     forgotPassword: "忘记密码？",
     submit: "登录",
     dontHaveAccount: "还没有账户？",
-    captcha: "验证码",
     signUp: "注册",
 };
 const signUp = {

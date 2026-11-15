@@ -14,6 +14,12 @@ description = "opendal for tibba"
 name = "tibba_opendal"
 path = "src/lib.rs"
 
+[features]
+default = ["fs"]
+fs = ["opendal/services-fs"]
+s3 = ["opendal/services-s3"]
+http = ["opendal/services-http"]
+
 [dependencies]
 opendal = { workspace = true }
 snafu = { workspace = true }

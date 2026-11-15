@@ -1,0 +1,72 @@
+[package]
+name = "tibba-auth"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+keywords = ["tibba", "auth", "session", "rbac"]
+description = "authentication and authorization for tibba (session, rbac, jwt, totp, oauth)"
+
+[lib]
+name = "tibba_auth"
+path = "src/lib.rs"
+
+[features]
+default = []
+jwt = ["dep:humantime-serde", "dep:jsonwebtoken"]
+totp = [
+    "dep:base64",
+    "dep:hmac",
+    "dep:rand",
+    "dep:sha1",
+    "dep:sha2",
+    "dep:subtle",
+    "dep:tibba-crypto",
+    "dep:zeroize",
+]
+oauth = ["dep:http", "dep:serde_json", "dep:tibba-request", "dep:urlencoding"]
+
+[dependencies]
+axum = { workspace = true }
+axum-extra = { workspace = true }
+base64 = { workspace = true, optional = true }
+cookie = { workspace = true }
+hmac = { workspace = true, optional = true }
+http = { workspace = true, optional = true }
+humantime-serde = { workspace = true, optional = true }
+jsonwebtoken = { workspace = true, optional = true }
+rand = { workspace = true, optional = true }
+scopeguard = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true, optional = true }
+sha1 = { workspace = true, optional = true }
+sha2 = { workspace = true, optional = true }
+snafu = { workspace = true }
+subtle = { workspace = true, optional = true }
+tibba-cache = { path = "../tibba-cache", version = "0.3.0" }
+tibba-crypto = { path = "../tibba-crypto", version = "0.3.0", optional = true }
+tibba-error = { path = "../tibba-error", version = "0.3.0" }
+tibba-request = { path = "../tibba-request", version = "0.3.0", optional = true }
+tibba-runtime = { path = "../tibba-runtime", version = "0.3.0" }
+tibba-util = { path = "../tibba-util", version = "0.3.0", default-features = false }
+time = { workspace = true }
+tracing = { workspace = true }
+urlencoding = { workspace = true, optional = true }
+zeroize = { workspace = true, optional = true }
+
+[dev-dependencies]
+http = { workspace = true }
+http-body-util = { workspace = true }
+pretty_assertions = { workspace = true }
+tibba-config = { path = "../tibba-config", version = "0.3.0" }
+tokio = { workspace = true }
+tower = { workspace = true }
+
+[package.metadata.cargo-machete]
+ignored = ["humantime-serde"]
+
+[lints]
+workspace = true

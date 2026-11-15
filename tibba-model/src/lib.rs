@@ -17,26 +17,6 @@ use tibba_error::Error as BaseError;
 use time::macros::format_description;
 use time::{OffsetDateTime, PrimitiveDateTime};
 
-/// 遮蔽 URL 中的 userinfo、查询串与 fragment，避免日志打印 webhook token 等凭据。
-pub fn redact_url(url: &str) -> String {
-    let no_frag = url.split('#').next().unwrap_or_default();
-    let has_query = no_frag.contains('?');
-    let base = no_frag.split('?').next().unwrap_or_default();
-    let suffix = if has_query { "?<redacted>" } else { "" };
-    let Some((scheme, rest)) = base.split_once("://") else {
-        return format!("{base}{suffix}");
-    };
-    let (auth, path) = match rest.split_once('/') {
-        Some((a, p)) => (a, Some(p)),
-        None => (rest, None),
-    };
-    let host = auth.rsplit_once('@').map_or(auth, |(_, h)| h);
-    match path {
-        Some(p) => format!("{scheme}://{host}/{p}{suffix}"),
-        None => format!("{scheme}://{host}{suffix}"),
-    }
-}
-
 /// 将数据库的 UTC `PrimitiveDateTime` 格式化为 RFC3339 UTC 字符串（精确到秒）。
 pub fn format_datetime(datetime: PrimitiveDateTime) -> String {
     let dt = datetime.replace_nanosecond(0).unwrap_or(datetime);
@@ -286,15 +266,29 @@ fn sqlx_error(source: sqlx::Error) -> BaseError {
         .with_exception(true)
 }
 
+mod api_key;
+mod audit_log;
 mod configuration;
+mod file;
 mod model;
+mod permission;
+mod role_permission;
 mod schema;
+pub mod sql;
 mod user;
+mod user_oauth_link;
 
+pub use api_key::*;
+pub use audit_log::*;
 pub use configuration::*;
+pub use file::*;
 pub use model::*;
+pub use permission::*;
+pub use role_permission::*;
 pub use schema::*;
+pub use sql::ping_db;
 pub use user::*;
+pub use user_oauth_link::*;
 
 #[cfg(test)]
 mod tests {

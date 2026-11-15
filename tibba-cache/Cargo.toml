@@ -26,7 +26,6 @@ dashmap = { workspace = true }
 # 消费 pub/sub 消息流（跨节点失效）
 futures = { workspace = true }
 humantime-serde = { workspace = true }
-lru = { workspace = true }
 # cluster-async（含 cluster + aio）：集群池与 dedicated_conn 走 ClusterClient
 redis = { workspace = true, features = ["cluster-async"] }
 serde = { workspace = true }

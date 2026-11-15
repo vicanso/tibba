@@ -16,6 +16,7 @@
 |---------|------|------|
 | `stream` | 关 | 启用 `reqwest/stream` + `futures`，导出 `Client::execute_stream`（并发守卫持有至流结束）与 UTF-8 安全的 SSE 行级读取器 `SseReader` / `SsePoll`（默认单行上限 `DEFAULT_MAX_SSE_LINE_BYTES` = 16 MiB） |
 | `tls-info` | 关 | 启用 `x509-parser`，采集对端 TLS 证书有效期到 `HttpStats` |
+| `otel` | 关 | 启用 `opentelemetry` + `tracing-opentelemetry`，出站请求自动注入 W3C `traceparent` / `tracestate` |
 
 ## 依赖
 

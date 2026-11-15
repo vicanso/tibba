@@ -41,10 +41,7 @@ fn main() {
     let mut doc = ApiDoc::openapi();
     doc.servers = Some(vec![ServerBuilder::new().url(prefix).build()]);
     // 与 src/openapi.rs::build_openapi 保持同一 merge 列表
-    doc.merge(tibba_router_common::openapi());
-    doc.merge(tibba_router_file::openapi());
-    doc.merge(tibba_router_model::openapi());
-    doc.merge(tibba_router_user::openapi());
+    doc.merge(tibba_router::openapi());
 
     let json = serde_json::to_string_pretty(&doc).expect("serialize openapi");
     std::fs::write(&path, json).unwrap_or_else(|e| panic!("write {path}: {e}"));

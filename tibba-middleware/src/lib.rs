@@ -24,17 +24,9 @@ pub(crate) const LOG_TARGET: &str = "tibba:middleware";
 
 #[derive(Debug, Snafu)]
 pub enum Error {
-    /// 验证码校验失败（缺失、过期或不匹配）。
-    #[snafu(display("{message}"))]
-    Captcha { message: String },
     /// 并发请求或频次超限，对应 HTTP 429。
     #[snafu(display("too many requests, limit: {limit}, current: {current}"))]
     TooManyRequests { limit: i64, current: i64 },
-    /// 请求头转字符串失败（非 ASCII / 控制字符）。
-    #[snafu(display("{source}"))]
-    HeaderValue {
-        source: axum::http::header::ToStrError,
-    },
     /// CSRF cookie 缺失（首次访问 / 客户端未先取 token）。HTTP 403。
     #[snafu(display("csrf cookie missing"))]
     CsrfCookieMissing,
@@ -61,20 +53,12 @@ pub enum Error {
 impl From<Error> for BaseError {
     fn from(val: Error) -> Self {
         let err = match val {
-            Error::Captcha { message } => BaseError::new(message)
-                .with_sub_category("captcha")
-                .with_status(400)
-                .with_exception(false),
             Error::TooManyRequests { limit, current } => BaseError::new(format!(
                 "too many requests, limit: {limit}, current: {current}"
             ))
             .with_sub_category("too_many_requests")
             .with_status(429)
             .with_exception(false),
-            Error::HeaderValue { source } => BaseError::new(source)
-                .with_sub_category("header_value")
-                .with_status(400)
-                .with_exception(false),
             // 三种 CSRF 失败统一 403，sub_category 区分具体原因方便排障
             Error::CsrfCookieMissing => BaseError::new("csrf cookie missing")
                 .with_sub_category("csrf_cookie_missing")
@@ -196,6 +180,7 @@ mod cors;
 mod csrf;
 mod entry;
 mod http_cache;
+pub mod i18n;
 mod idempotency;
 mod limit;
 mod rate_limit;
@@ -203,6 +188,7 @@ mod request_id;
 mod security_headers;
 mod stack;
 mod stats;
+#[cfg(feature = "otel")]
 mod trace;
 mod tracker;
 
@@ -218,6 +204,7 @@ pub use request_id::*;
 pub use security_headers::*;
 pub use stack::*;
 pub use stats::*;
+#[cfg(feature = "otel")]
 pub use trace::*;
 pub use tracker::*;
 
@@ -266,13 +253,6 @@ mod tests {
 
     #[test]
     fn error_status_and_exception_mapping() {
-        let captcha = BaseError::from(Error::Captcha {
-            message: "bad captcha".to_string(),
-        });
-        assert_eq!(captcha.category(), "middleware");
-        assert_eq!(captcha.status(), 400);
-        assert!(!captcha.is_exception());
-
         let too_many = BaseError::from(Error::TooManyRequests {
             limit: 5,
             current: 6,

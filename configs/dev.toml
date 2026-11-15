@@ -8,6 +8,3 @@ secret = "y0nEeTWOF0Ud8XNoTfYacGC6MrKgxIUnJV1kv0PBh83IeKmyHtuJ5uqGa7hcfBSu"
 
 [database]
 uri = "postgres://vicanso:A123456@127.0.0.1:5432/cybertect"
-
-
-# url = "postgres://vicanso:A123456@127.0.0.1:5432/cybertect"  # 对象存进 objects 表
