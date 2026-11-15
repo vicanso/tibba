@@ -27,10 +27,36 @@ export function isErrorCode(err: Error | HTTPError | unknown, code: string) {
     return false;
 }
 
+export function isAdminRole(roles?: string[]): boolean {
+    return Boolean(roles?.some((r) => r === "su" || r === "admin"));
+}
+
+export function hasPermission(
+    permissions: string[] | undefined,
+    required: string,
+): boolean {
+    if (!permissions || permissions.length === 0) {
+        return false;
+    }
+    return permissions.some((perm) => {
+        if (perm === "*" || perm === required) {
+            return true;
+        }
+        if (perm.endsWith(":*")) {
+            const prefix = perm.slice(0, -1);
+            return required.startsWith(prefix);
+        }
+        return false;
+    });
+}
+
 export function formatError(err: Error | HTTPError | unknown): string {
-    let message = "";
+    let message: string;
     if (err instanceof HTTPError) {
         message = err.message;
+        if (Array.isArray(err.extra) && err.extra.length > 0) {
+            message += ` (${err.extra.join("; ")})`;
+        }
         if (err.category) {
             message += ` [${err.category.toUpperCase()}]`;
         }
@@ -51,7 +77,7 @@ export function formatError(err: Error | HTTPError | unknown): string {
     } else if (err instanceof Error) {
         message = err.message;
     } else {
-        message = (err as Error).message;
+        message = String((err as Error)?.message || err || "Unknown error");
     }
     return message;
 }

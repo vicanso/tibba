@@ -7,7 +7,8 @@ import useModelState, {
     Schema,
 } from "@/states/model";
 import { toast } from "sonner";
-import { formatDate, formatError } from "@/helpers/util";
+import { formatDate, formatError, hasPermission } from "@/helpers/util";
+import { FILE_DOWNLOAD, FILE_PREVIEW } from "@/constants/url";
 import {
     Table,
     TableBody,
@@ -31,6 +32,7 @@ import {
     FilePenLineIcon,
     TrashIcon,
     CodeXmlIcon,
+    DownloadIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { isObjectLike, toArray, toString, upperFirst } from "lodash-es";
@@ -250,6 +252,16 @@ function formatTableCell(
     return { element, className };
 }
 
+const RASTER_IMAGE_TYPES = new Set([
+    "image/png",
+    "image/jpeg",
+    "image/gif",
+    "image/webp",
+    "image/avif",
+    "image/bmp",
+    "image/tiff",
+]);
+
 function formatFieldName(name: string) {
     return name.split("_").map(upperFirst).join(" ");
 }
@@ -260,9 +272,8 @@ export default function Model() {
     const [targetId, setTargetId] = useState<number | null>(null);
     const [openDeleteDialog, setOpenDeleteDialog] = useState(false);
     const modelName = useParams().name || "";
-    let modelViewOptions = getModelViewOptions(modelName);
     const [hiddenColumns, setHiddenColumns] = useState<string[]>(
-        modelViewOptions.hiddenColumns,
+        () => getModelViewOptions(modelName).hiddenColumns,
     );
     const [keyword, setKeyword] = useState("");
     const [userInfo] = useUserState(useShallow((state) => [state.data]));
@@ -295,9 +306,10 @@ export default function Model() {
         const page = params.get("page");
         const limit = params.get("limit");
         const sort = params.get("sort") || "-modified";
+        const currentViewOptions = getModelViewOptions(modelName);
         return {
             page: page ? parseInt(page) : 1,
-            limit: limit ? parseInt(limit) : modelViewOptions.limit,
+            limit: limit ? parseInt(limit) : currentViewOptions.limit,
             sort,
         };
     };
@@ -325,8 +337,11 @@ export default function Model() {
         setSearchParams(params);
     };
     const updateLimit = (limit: number) => {
-        modelViewOptions.limit = limit;
-        setModelViewOptions(modelName, modelViewOptions);
+        const currentViewOptions = getModelViewOptions(modelName);
+        setModelViewOptions(modelName, {
+            ...currentViewOptions,
+            limit,
+        });
 
         const params = new URLSearchParams(searchParams);
         params.delete("page");
@@ -334,18 +349,17 @@ export default function Model() {
         setSearchParams(params);
     };
     const updateHiddenColumns = (column: string, checked: boolean) => {
-        const hiddenColumns = modelViewOptions.hiddenColumns;
-        const index = hiddenColumns.indexOf(column);
-        if (!checked) {
-            if (index === -1) {
-                hiddenColumns.push(column);
-            }
-        } else {
-            hiddenColumns.splice(index, 1);
-        }
-        modelViewOptions.hiddenColumns = hiddenColumns;
-        setModelViewOptions(modelName, modelViewOptions);
-        setHiddenColumns(hiddenColumns);
+        const currentViewOptions = getModelViewOptions(modelName);
+        const nextHidden = checked
+            ? currentViewOptions.hiddenColumns.filter((col) => col !== column)
+            : currentViewOptions.hiddenColumns.includes(column)
+              ? [...currentViewOptions.hiddenColumns]
+              : [...currentViewOptions.hiddenColumns, column];
+        setModelViewOptions(modelName, {
+            ...currentViewOptions,
+            hiddenColumns: nextHidden,
+        });
+        setHiddenColumns(nextHidden);
     };
     const updateSort = (sortField: string) => {
         const { sort } = getQueryOptions(searchParams);
@@ -411,6 +425,9 @@ export default function Model() {
         if (groups.some((group) => userInfo.groups?.includes(group))) {
             return true;
         }
+        if (hasPermission(userInfo.permissions, `model:${modelName}:write`)) {
+            return true;
+        }
 
         return false;
     };
@@ -433,6 +450,9 @@ export default function Model() {
         if (groups.some((group) => userInfo.groups?.includes(group))) {
             return true;
         }
+        if (hasPermission(userInfo.permissions, `model:${modelName}:write`)) {
+            return true;
+        }
 
         return false;
     };
@@ -440,30 +460,31 @@ export default function Model() {
     useAsync(async () => {
         try {
             const { page, limit, sort } = getQueryOptions(searchParams);
-            const listParams = {
-                page,
-                limit,
-                keyword,
-                filters,
-                order_by: sort,
-            };
+            let nextKeyword = keyword;
+            let nextFilters = filters;
             if (modelName && modelName !== model) {
                 resetFilterConditions();
-                listParams.keyword = "";
-                listParams.filters = {};
+                nextKeyword = "";
+                nextFilters = {};
                 modelReset();
-                const schemaView = await fetchSchema(modelName);
-                schemaView.conditions.forEach((condition) => {
+                const currentSchemaView = await fetchSchema(modelName);
+                currentSchemaView.conditions.forEach((condition) => {
                     if (condition.defaultValue) {
-                        listParams.filters[condition.name] =
+                        nextFilters[condition.name] =
                             condition.defaultValue.toString();
                     }
                 });
-                setFilters(listParams.filters);
-                modelViewOptions = getModelViewOptions(modelName);
-                setHiddenColumns(modelViewOptions.hiddenColumns);
+                setFilters(nextFilters);
+                const currentViewOptions = getModelViewOptions(modelName);
+                setHiddenColumns(currentViewOptions.hiddenColumns);
             }
-            await modelList(listParams);
+            await modelList({
+                page,
+                limit,
+                keyword: nextKeyword,
+                filters: nextFilters,
+                order_by: sort,
+            });
         } catch (error) {
             toast(formatError(error));
         }
@@ -520,7 +541,7 @@ export default function Model() {
         );
     });
 
-    const actionClass = "w-24";
+    const actionClass = modelName === "file" ? "w-32" : "w-24";
 
     if (showNoColumn) {
         headers.unshift(
@@ -592,10 +613,15 @@ export default function Model() {
                     <EyeIcon />
                 </Button>
             );
+            let downloadBtn: React.ReactNode = null;
             if (modelName === "file" && item.content_type) {
-                const isImage = (item.content_type as string).startsWith(
-                    "image/",
-                );
+                const baseContentType = toString(item.content_type)
+                    .split(";")[0]
+                    .trim()
+                    .toLowerCase();
+                const isImage = RASTER_IMAGE_TYPES.has(baseContentType);
+                const filename = toString(item.filename);
+                const encodedFilename = encodeURIComponent(filename);
                 viewBtn = (
                     <Popover>
                         <PopoverTrigger asChild>
@@ -606,16 +632,32 @@ export default function Model() {
                         <PopoverContent className="w-[360px]" align="end">
                             {isImage ? (
                                 <SmartImage
-                                    src={`/api/files/preview?name=${item.filename}`}
+                                    src={`${FILE_PREVIEW}?name=${encodedFilename}`}
                                     width={Number(item.image_width)}
                                     height={Number(item.image_height)}
                                 />
                             ) : (
-                                <div>Preview Not Supported</div>
+                                <div className="text-sm text-muted-foreground">
+                                    {i18nModel("previewUnsupported")}
+                                </div>
                             )}
                         </PopoverContent>
                     </Popover>
                 );
+                if (filename) {
+                    downloadBtn = (
+                        <Button variant="ghost" size="icon" asChild>
+                            <a
+                                href={`${FILE_DOWNLOAD}?name=${encodedFilename}`}
+                                target="_blank"
+                                rel="noreferrer"
+                                title={i18nModel("download")}
+                            >
+                                <DownloadIcon />
+                            </a>
+                        </Button>
+                    );
+                }
             }
             const editBtn = (
                 <DropdownMenu>
@@ -656,8 +698,11 @@ export default function Model() {
                     key="actions-cell"
                     className={cn("h-14", actionClass)}
                 >
-                    {viewBtn}
-                    {allowEdit() && editBtn}
+                    <div className="flex items-center">
+                        {viewBtn}
+                        {downloadBtn}
+                        {allowEdit() && editBtn}
+                    </div>
                 </TableCell>,
             );
 
@@ -800,8 +845,11 @@ export default function Model() {
                     key={name}
                     placeholder={`${i18nModel("input")} ${label || name}`}
                     onChange={(e) => {
-                        filters[name] = e.target.value.trim();
-                        setFilters(filters);
+                        const val = e.target.value.trim();
+                        setFilters((prev) => ({
+                            ...prev,
+                            [name]: val,
+                        }));
                     }}
                 />
             );
@@ -812,11 +860,15 @@ export default function Model() {
                     <DatePickerWithRange
                         defaultDateRange={condition.defaultValue as string[]}
                         onValueChange={(value) => {
-                            if (value.length != 0) {
-                                filters[name] = value.join(",");
-                            } else {
-                                delete filters[name];
-                            }
+                            setFilters((prev) => {
+                                const next = { ...prev };
+                                if (value.length !== 0) {
+                                    next[name] = value.join(",");
+                                } else {
+                                    delete next[name];
+                                }
+                                return next;
+                            });
                         }}
                     />
                 </div>
@@ -836,12 +888,15 @@ export default function Model() {
             <Select
                 key={name}
                 onValueChange={(value) => {
-                    if (value === "none") {
-                        delete filters[name];
-                    } else {
-                        filters[name] = value;
-                    }
-                    setFilters(filters);
+                    setFilters((prev) => {
+                        const next = { ...prev };
+                        if (value === "none") {
+                            delete next[name];
+                        } else {
+                            next[name] = value;
+                        }
+                        return next;
+                    });
                 }}
             >
                 <SelectTrigger className="w-[200px]">
@@ -969,8 +1024,8 @@ export default function Model() {
                                 schemaView.schemas.forEach((schema) => {
                                     if (schema.name === "group") {
                                         groups =
-                                            schema.options?.map(
-                                                (item) => String(item.value),
+                                            schema.options?.map((item) =>
+                                                String(item.value),
                                             ) || [];
                                     }
                                 });

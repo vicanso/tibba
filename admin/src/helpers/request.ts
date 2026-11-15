@@ -1,11 +1,25 @@
-import axios, { AxiosRequestConfig, AxiosResponse } from "axios";
+import axios, {
+    AxiosRequestConfig,
+    AxiosResponse,
+    InternalAxiosRequestConfig,
+} from "axios";
 import HTTPError from "@/helpers/http-error";
+import i18n from "@/i18n";
 
 const requestedAt = "X-Requested-At";
 const csrfCookieName = "csrf_token";
 const csrfHeaderName = "X-CSRF-Token";
 // 安全方法不改状态，无需 CSRF token
 const csrfSafeMethods = ["get", "head", "options"];
+const csrfSubCategories = new Set([
+    "csrf_cookie_missing",
+    "csrf_header_missing",
+    "csrf_mismatch",
+]);
+
+interface RetryableRequestConfig extends InternalAxiosRequestConfig {
+    _csrfRetried?: boolean;
+}
 
 const request = axios.create({
     // 默认超时为10秒
@@ -20,15 +34,26 @@ function readCsrfCookie(): string {
     return m ? decodeURIComponent(m[1]) : "";
 }
 
-// 确保已持有 CSRF token：cookie 缺失时先向后端拉取一次（该 GET 会种下 cookie）
-async function ensureCsrfToken(): Promise<string> {
-    const existing = readCsrfCookie();
-    if (existing) {
-        return existing;
+let csrfPromise: Promise<string> | null = null;
+
+// 确保已持有 CSRF token：cookie 缺失或强制刷新时向后端拉取一次（单飞去重）
+async function ensureCsrfToken(forceRefresh = false): Promise<string> {
+    if (!forceRefresh) {
+        const existing = readCsrfCookie();
+        if (existing) {
+            return existing;
+        }
     }
-    // 直接用底层 axios（绕过本拦截器的 /api 前缀逻辑），GET 幂等且不需 CSRF
-    const { data } = await axios.get<{ token: string }>("/api/csrf/token");
-    return data?.token || readCsrfCookie();
+    if (!csrfPromise) {
+        // 直接用底层 axios（绕过本拦截器的 /api 前缀逻辑），GET 幂等且不需 CSRF
+        csrfPromise = axios
+            .get<{ token: string }>("/api/csrf/token")
+            .then(({ data }) => data?.token || readCsrfCookie())
+            .finally(() => {
+                csrfPromise = null;
+            });
+    }
+    return csrfPromise;
 }
 
 request.interceptors.request.use(
@@ -42,9 +67,12 @@ request.interceptors.request.use(
                 }
             });
         }
-        config.url = `/api${config.url}`;
+        if (config.url && !config.url.startsWith("/api/")) {
+            config.url = `/api${config.url}`;
+        }
         if (config.headers) {
             config.headers[requestedAt] = `${Date.now()}`;
+            config.headers["Accept-Language"] = i18n.language || "zh";
             // 状态变更请求附带 CSRF token，与后端 validate_csrf 的 double-submit 校验对齐
             const method = (config.method || "get").toLowerCase();
             if (!csrfSafeMethods.includes(method)) {
@@ -103,8 +131,25 @@ request.interceptors.response.use(
         }
         return res;
     },
-    (err) => {
+    async (err) => {
         const { response } = err;
+        const config = err.config as RetryableRequestConfig | undefined;
+        const subCategory = response?.data?.sub_category as string | undefined;
+        if (
+            response?.status === 403 &&
+            subCategory &&
+            csrfSubCategories.has(subCategory) &&
+            config &&
+            !config._csrfRetried
+        ) {
+            config._csrfRetried = true;
+            const freshToken = await ensureCsrfToken(true);
+            if (config.headers) {
+                config.headers[csrfHeaderName] = freshToken;
+            }
+            return request(config);
+        }
+
         const he = new HTTPError(0, "请求出错");
         if (timeoutErrorCodes.includes(err.code)) {
             he.exception = true;
@@ -117,6 +162,7 @@ request.interceptors.response.use(
                 he.message = response.data.message;
                 he.code = response.data.code;
                 he.category = response.data.category;
+                he.subCategory = response.data.sub_category;
             } else {
                 he.exception = true;
                 he.category = "exception";

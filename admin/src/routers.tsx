@@ -1,20 +1,22 @@
 import { createHashRouter } from "react-router";
 import Root from "@/pages/Root";
 import Home from "@/pages/Home";
-import LoginHistory from "@/pages/LoginHistory";
 import Login from "@/pages/Login";
 import SignUp from "@/pages/SignUp";
+import ResetPassword from "@/pages/ResetPassword";
 import Profile from "@/pages/Profile";
 import Model from "@/pages/Model";
 import ModelEditor from "@/pages/ModelEditor";
 import FileUploader from "@/pages/FileUploader";
+import Jobs from "@/pages/Jobs";
 
 import {
-    LOGIN_HISTORY,
     HOME,
     LOGIN,
     SIGN_UP,
+    RESET_PASSWORD,
     PROFILE,
+    JOBS,
     MODEL,
     MODEL_EDITOR,
     FILE_UPLOADER,
@@ -30,10 +32,6 @@ const router = createHashRouter([
                 element: <Home />,
             },
             {
-                path: LOGIN_HISTORY,
-                element: <LoginHistory />,
-            },
-            {
                 path: LOGIN,
                 element: <Login />,
             },
@@ -42,8 +40,16 @@ const router = createHashRouter([
                 element: <SignUp />,
             },
             {
+                path: RESET_PASSWORD,
+                element: <ResetPassword />,
+            },
+            {
                 path: PROFILE,
                 element: <Profile />,
+            },
+            {
+                path: JOBS,
+                element: <Jobs />,
             },
             {
                 path: `${MODEL}/:name`,

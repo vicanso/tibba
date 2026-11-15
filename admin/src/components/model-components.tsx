@@ -13,7 +13,7 @@ export function StatusBadge({
     status: string;
     i18nModel: (value: string) => string;
 }) {
-    let element = <></>;
+    let element: React.JSX.Element;
     if (toString(status) === "1") {
         element = (
             <Badge variant="default" className="bg-blue-500 text-white h-6">
@@ -38,7 +38,7 @@ export function ResultBadge({
     result: string;
     className?: string;
 }) {
-    let element = <></>;
+    let element: React.JSX.Element;
     if (result === "1") {
         element = (
             <Badge variant="destructive" className={cn("h-6", className)}>

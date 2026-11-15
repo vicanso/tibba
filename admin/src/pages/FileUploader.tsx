@@ -28,14 +28,20 @@ import { toast } from "sonner";
 import request from "@/helpers/request";
 import { formatError } from "@/helpers/util";
 
+const DEFAULT_GROUPS = ["tibba", "web", "private"];
+const MAX_UPLOAD_FILES = 20;
+const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
+
 export default function FileUploader() {
     const i18n = useI18n("component");
     const [searchParams] = useSearchParams();
+    const rawGroups = searchParams.get("groups");
+    const groups = rawGroups
+        ? rawGroups.split(",").filter(Boolean)
+        : DEFAULT_GROUPS;
     const [files, setFiles] = React.useState<File[]>([]);
-    const [group, setGroup] = React.useState<string>("");
+    const [group, setGroup] = React.useState<string>(() => groups[0] || "");
     const [processing, setProcessing] = React.useState<boolean>(false);
-
-    const groups = searchParams.get("groups")?.split(",") || [];
 
     const onFileReject = React.useCallback((file: File, message: string) => {
         toast(message, {
@@ -65,7 +71,10 @@ export default function FileUploader() {
         <div className="grid grid-cols-2 gap-4">
             <div className="col-span-1">
                 <Label className="mb-2">{i18n("group")}</Label>
-                <Select onValueChange={(value) => setGroup(value)}>
+                <Select
+                    value={group}
+                    onValueChange={(value) => setGroup(value)}
+                >
                     <SelectTrigger className="w-full">
                         <SelectValue placeholder={i18n("selectGroup")} />
                     </SelectTrigger>
@@ -96,8 +105,8 @@ export default function FileUploader() {
             <div className="col-span-2">
                 <Label className="mb-2">{i18n("files")}</Label>
                 <FileUpload
-                    maxFiles={10}
-                    maxSize={5 * 1024 * 1024}
+                    maxFiles={MAX_UPLOAD_FILES}
+                    maxSize={MAX_UPLOAD_BYTES}
                     className="w-full"
                     value={files}
                     onValueChange={setFiles}

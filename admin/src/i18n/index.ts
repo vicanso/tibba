@@ -1,4 +1,5 @@
 import i18n from "i18next";
+import { useCallback } from "react";
 import { initReactI18next, useTranslation } from "react-i18next";
 import LanguageDetector from "i18next-browser-languagedetector";
 
@@ -7,12 +8,15 @@ import en from "@/i18n/en";
 
 export function useI18n(namespace?: string) {
     const { t } = useTranslation();
-    if (namespace) {
-        return (key: string) => {
-            return t(`${namespace}.${key}`);
-        };
-    }
-    return (key: string) => t(key);
+    return useCallback(
+        (key: string) => {
+            if (namespace) {
+                return t(`${namespace}.${key}`);
+            }
+            return t(key);
+        },
+        [t, namespace],
+    );
 }
 
 i18n.use(LanguageDetector)

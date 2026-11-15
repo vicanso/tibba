@@ -294,11 +294,10 @@ function useFileUploadContext(name: keyof typeof FILE_UPLOAD_ERRORS) {
     return context;
 }
 
-interface FileUploadRootProps
-    extends Omit<
-        React.ComponentPropsWithoutRef<"div">,
-        "defaultValue" | "onChange"
-    > {
+interface FileUploadRootProps extends Omit<
+    React.ComponentPropsWithoutRef<"div">,
+    "defaultValue" | "onChange"
+> {
     value?: File[];
     defaultValue?: File[];
     onValueChange?: (files: File[]) => void;
@@ -660,8 +659,7 @@ const FileUploadRoot = React.forwardRef<HTMLDivElement, FileUploadRootProps>(
 );
 FileUploadRoot.displayName = ROOT_NAME;
 
-interface FileUploadDropzoneProps
-    extends React.ComponentPropsWithoutRef<"div"> {
+interface FileUploadDropzoneProps extends React.ComponentPropsWithoutRef<"div"> {
     asChild?: boolean;
 }
 
@@ -803,8 +801,7 @@ const FileUploadDropzone = React.forwardRef<
 });
 FileUploadDropzone.displayName = DROPZONE_NAME;
 
-interface FileUploadTriggerProps
-    extends React.ComponentPropsWithoutRef<"button"> {
+interface FileUploadTriggerProps extends React.ComponentPropsWithoutRef<"button"> {
     asChild?: boolean;
 }
 
@@ -1052,8 +1049,7 @@ function getFileIcon(file: File) {
     return <FileIcon />;
 }
 
-interface FileUploadItemPreviewProps
-    extends React.ComponentPropsWithoutRef<"div"> {
+interface FileUploadItemPreviewProps extends React.ComponentPropsWithoutRef<"div"> {
     render?: (file: File) => React.ReactNode;
     asChild?: boolean;
 }
@@ -1115,8 +1111,7 @@ const FileUploadItemPreview = React.forwardRef<
 });
 FileUploadItemPreview.displayName = ITEM_PREVIEW_NAME;
 
-interface FileUploadItemMetadataProps
-    extends React.ComponentPropsWithoutRef<"div"> {
+interface FileUploadItemMetadataProps extends React.ComponentPropsWithoutRef<"div"> {
     asChild?: boolean;
 }
 
@@ -1170,8 +1165,7 @@ const FileUploadItemMetadata = React.forwardRef<
 });
 FileUploadItemMetadata.displayName = ITEM_METADATA_NAME;
 
-interface FileUploadItemProgressProps
-    extends React.ComponentPropsWithoutRef<"div"> {
+interface FileUploadItemProgressProps extends React.ComponentPropsWithoutRef<"div"> {
     asChild?: boolean;
     circular?: boolean;
     size?: number;
@@ -1270,8 +1264,7 @@ const FileUploadItemProgress = React.forwardRef<
 });
 FileUploadItemProgress.displayName = ITEM_PROGRESS_NAME;
 
-interface FileUploadItemDeleteProps
-    extends React.ComponentPropsWithoutRef<"button"> {
+interface FileUploadItemDeleteProps extends React.ComponentPropsWithoutRef<"button"> {
     asChild?: boolean;
 }
 
@@ -1317,8 +1310,7 @@ const FileUploadItemDelete = React.forwardRef<
 });
 FileUploadItemDelete.displayName = ITEM_DELETE_NAME;
 
-interface FileUploadClearProps
-    extends React.ComponentPropsWithoutRef<"button"> {
+interface FileUploadClearProps extends React.ComponentPropsWithoutRef<"button"> {
     forceMount?: boolean;
     asChild?: boolean;
 }

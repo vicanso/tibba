@@ -121,7 +121,7 @@ export function DateTimePicker({
                                 mode="single"
                                 selected={date}
                                 onSelect={handleDateChange}
-                                initialFocus
+                                autoFocus
                                 footer={
                                     <div className="flex items-center gap-2">
                                         <Button

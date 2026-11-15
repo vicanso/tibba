@@ -25,10 +25,6 @@ interface BasicState {
 
 const defaultApps: App[] = [
     {
-        name: "tibbaWeb",
-        label: "Tibba Web",
-    },
-    {
         name: "tibbaAdmin",
         label: "Tibba Admin",
     },
@@ -36,7 +32,7 @@ const defaultApps: App[] = [
 
 function getDefaultApp() {
     const app = getSelectedApp();
-    if (app) {
+    if (app && defaultApps.some((item) => item.name === app)) {
         return app;
     }
     return defaultApps[0].name;

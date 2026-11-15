@@ -39,16 +39,33 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 
     useEffect(() => {
         if (user.account) {
-            updateMainNav(selectedApp, user.roles || []);
+            updateMainNav(
+                selectedApp,
+                user.roles || [],
+                user.permissions || [],
+            );
         } else {
             resetMainNav();
         }
-    }, [selectedApp, updateMainNav, user.account, user.roles, resetMainNav]);
+    }, [
+        selectedApp,
+        updateMainNav,
+        user.account,
+        user.roles,
+        user.permissions,
+        resetMainNav,
+    ]);
 
     const sidebarI18n = useI18n("sidebar");
     const isActive = (url: string) => {
         const current = url.split("?")[0];
-        return current === location.pathname;
+        if (current === "/") {
+            return location.pathname === "/";
+        }
+        return (
+            location.pathname === current ||
+            location.pathname.startsWith(`${current}/`)
+        );
     };
     return (
         <Sidebar collapsible="icon" {...props}>

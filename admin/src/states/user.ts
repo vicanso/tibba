@@ -4,174 +4,240 @@ import sha256 from "crypto-js/sha256";
 import {
     UsersIcon,
     LucideIcon,
-    LogInIcon,
     FileIcon,
     HomeIcon,
     CogIcon,
+    UploadIcon,
+    ActivityIcon,
 } from "lucide-react";
-import { HOME, LOGIN_HISTORY, MODEL } from "@/constants/route";
+import { FILE_UPLOADER, HOME, JOBS, MODEL } from "@/constants/route";
+import { hasPermission, isAdminRole } from "@/helpers/util";
 
 import {
     USER_LOGIN,
+    USER_LOGIN_MFA,
     USER_LOGIN_TOKEN,
     USER_LOGOUT,
     USER_ME,
     USER_REGISTER,
     USER_PROFILE,
     USER_REFRESH,
-    USER_LIST,
+    USER_EMAIL_VERIFY_REQUEST,
+    USER_EMAIL_VERIFY_CONFIRM,
+    USER_PASSWORD_RESET_REQUEST,
+    USER_PASSWORD_RESET_CONFIRM,
+    USER_TOTP_STATUS,
+    USER_TOTP_ENROLL,
+    USER_TOTP_ACTIVATE,
+    USER_TOTP_DISABLE,
+    USER_API_KEYS,
 } from "@/constants/url";
 
-interface UserSession {
+export interface UserSession {
     account: string;
     expired_at: string;
     issued_at: string;
     time: string;
     can_renew: boolean;
+    nickname?: string;
+    phone?: string;
     email?: string;
     avatar?: string;
-    roles?: string[];
-    groups?: string[];
+    roles: string[];
+    groups: string[];
+    permissions: string[];
+}
+
+export type LoginResult =
+    | { mfaRequired: true; mfaToken: string }
+    | { mfaRequired: false; user: UserSession };
+
+export interface TotpStatus {
+    enrolled: boolean;
+    enabled: boolean;
+}
+
+export interface TotpEnrollResp {
+    secret: string;
+    otpauth_uri: string;
+}
+
+export interface ApiKeyItem {
+    id: number;
+    name: string;
+    key_prefix: string;
+    last_used_at?: string | null;
+    expires_at?: string | null;
+    created: string;
+}
+
+export interface CreateApiKeyResp {
+    id: number;
+    name: string;
+    key_prefix: string;
+    token: string;
+    expires_in_days?: number | null;
 }
 
 // 导航菜单项接口
-interface NavItem {
+export interface NavItem {
     title: string;
     url: string;
     disabled?: boolean;
-    icon: LucideIcon; // 使用 LucideIcon 类型
-    roles?: string[];
+    icon: LucideIcon;
 }
 
 // 导航组接口
-interface NavGroup {
+export interface NavGroup {
     title: string;
     url: string;
     items: NavItem[];
 }
 
-const adminMainNav: NavGroup[] = [
-    {
-        title: "userFeature",
-        url: "#",
-        items: [
-            {
-                title: "loginHistory",
-                url: LOGIN_HISTORY,
-                roles: ["su", "admin"],
-                icon: LogInIcon,
-            },
-        ],
-    },
-    {
-        title: "modelFeature",
-        url: "#",
-        items: [
-            {
-                title: "user",
-                url: `${MODEL}/user`,
-                roles: ["su", "admin"],
-                icon: UsersIcon,
-            },
-            {
-                title: "config",
-                url: `${MODEL}/configuration`,
-                roles: ["su", "admin"],
-                icon: CogIcon,
-            },
-        ],
-    },
-];
+function getMainNav(roles: string[], permissions: string[]): NavGroup[] {
+    const admin = isAdminRole(roles);
+    const groups: NavGroup[] = [
+        {
+            title: "workspace",
+            url: "#",
+            items: [
+                {
+                    title: "home",
+                    url: HOME,
+                    icon: HomeIcon,
+                },
+                {
+                    title: "fileUploader",
+                    url: FILE_UPLOADER,
+                    icon: UploadIcon,
+                },
+            ],
+        },
+    ];
 
-const webMainNav: NavGroup[] = [
-    {
-        title: "userFeature",
-        url: "#",
-        items: [
-            {
-                title: "home",
-                url: HOME,
-                icon: HomeIcon,
-            },
-        ],
-    },
-    {
-        title: "modelFeature",
-        url: "#",
-        items: [
-            {
-                title: "file",
-                url: `${MODEL}/file`,
-                icon: FileIcon,
-            },
-        ],
-    },
-];
-
-function getMainNav(app: string, roles: string[]) {
-    let mainNav = webMainNav;
-    switch (app) {
-        case "tibbaAdmin":
-            mainNav = adminMainNav;
-            break;
-        case "tibbaWeb":
-            mainNav = webMainNav;
-            break;
-    }
-    const result: NavGroup[] = [];
-    mainNav.forEach((nav) => {
-        const items = nav.items.filter((item) => {
-            if (item.roles) {
-                return item.roles.some((role) => roles.includes(role));
-            }
-            return true;
+    const modelItems: NavItem[] = [];
+    if (
+        admin ||
+        hasPermission(permissions, "model:user:read") ||
+        hasPermission(permissions, "model:user:write")
+    ) {
+        modelItems.push({
+            title: "user",
+            url: `${MODEL}/user`,
+            icon: UsersIcon,
         });
-        if (items.length > 0) {
-            nav.items = items;
-            result.push(nav);
-        }
-    });
-    return result;
+    }
+    if (
+        admin ||
+        hasPermission(permissions, "model:configuration:read") ||
+        hasPermission(permissions, "model:configuration:write")
+    ) {
+        modelItems.push({
+            title: "config",
+            url: `${MODEL}/configuration`,
+            icon: CogIcon,
+        });
+    }
+    if (admin) {
+        modelItems.push({
+            title: "file",
+            url: `${MODEL}/file`,
+            icon: FileIcon,
+        });
+    }
+    if (modelItems.length > 0) {
+        groups.push({
+            title: "modelFeature",
+            url: "#",
+            items: modelItems,
+        });
+    }
+
+    if (admin) {
+        groups.push({
+            title: "systemFeature",
+            url: "#",
+            items: [
+                {
+                    title: "jobs",
+                    url: JOBS,
+                    icon: ActivityIcon,
+                },
+            ],
+        });
+    }
+
+    return groups;
 }
 
-interface User {
-    id: number;
-    account: string;
-    avatar: string | null;
-    created: string;
-    email: string | null;
-    groups: string[] | null;
-    modified: string;
-    remark: string | null;
-    roles: string[] | null;
-    status: number;
+interface RawUserMeResp {
+    account?: string;
+    expired_at?: string;
+    issued_at?: string;
+    time?: string;
+    can_renew?: boolean;
+    nickname?: string | null;
+    phone?: string | null;
+    email?: string | null;
+    avatar?: string | null;
+    roles?: string[] | null;
+    groups?: string[] | null;
+    permissions?: string[] | null;
+}
+
+function normalizeUserSession(raw?: RawUserMeResp | null): UserSession {
+    return {
+        account: raw?.account || "",
+        expired_at: raw?.expired_at || "",
+        issued_at: raw?.issued_at || "",
+        time: raw?.time || "",
+        can_renew: Boolean(raw?.can_renew),
+        nickname: raw?.nickname || undefined,
+        phone: raw?.phone || undefined,
+        email: raw?.email || undefined,
+        avatar: raw?.avatar || undefined,
+        roles: raw?.roles ?? [],
+        groups: raw?.groups ?? [],
+        permissions: raw?.permissions ?? [],
+    };
 }
 
 interface UserState {
     data: UserSession;
     initialized: boolean;
     mainNav: NavGroup[];
-    updateMainNav: (app: string, roles: string[]) => Promise<void>;
+    updateMainNav: (
+        _app: string,
+        roles: string[],
+        permissions?: string[],
+    ) => Promise<void>;
     resetMainNav: () => void;
     fetch: () => Promise<UserSession>;
     signUp: (account: string, password: string) => Promise<void>;
-    login: (account: string, password: string) => Promise<UserSession>;
+    login: (account: string, password: string) => Promise<LoginResult>;
+    loginMfa: (mfaToken: string, code: string) => Promise<UserSession>;
     logout: () => Promise<void>;
     refresh: () => Promise<void>;
     updateProfile: (profile: {
+        nickname?: string;
+        phone?: string;
         email?: string;
         avatar?: string;
-        roles?: string[];
-        groups?: string[];
     }) => Promise<void>;
-    list: (params: {
-        page: number;
-        limit: number;
-        keyword?: string;
-    }) => Promise<{
-        count: number;
-        users: User[];
-    }>;
+    requestPasswordReset: (account: string) => Promise<void>;
+    confirmPasswordReset: (token: string, rawPassword: string) => Promise<void>;
+    requestEmailVerify: () => Promise<void>;
+    confirmEmailVerify: (token: string) => Promise<void>;
+    getTotpStatus: () => Promise<TotpStatus>;
+    enrollTotp: () => Promise<TotpEnrollResp>;
+    activateTotp: (code: string) => Promise<{ recovery_codes: string[] }>;
+    disableTotp: (code: string) => Promise<void>;
+    listApiKeys: () => Promise<ApiKeyItem[]>;
+    createApiKey: (
+        name: string,
+        expiresInDays?: number,
+    ) => Promise<CreateApiKeyResp>;
+    revokeApiKey: (id: number) => Promise<void>;
 }
 
 const defaultUser: UserSession = {
@@ -180,23 +246,31 @@ const defaultUser: UserSession = {
     issued_at: "",
     time: "",
     can_renew: false,
+    roles: [],
+    groups: [],
+    permissions: [],
 };
 
-const useUserState = create<UserState>((set) => ({
+const useUserState = create<UserState>((set, get) => ({
     data: defaultUser,
     initialized: false,
     mainNav: [],
     fetch: async () => {
-        const { data: user } = await request.get<UserSession>(USER_ME);
+        const { data } = await request.get<RawUserMeResp>(USER_ME);
+        const user = normalizeUserSession(data);
         set({
             initialized: true,
             data: user,
         });
         return user;
     },
-    updateMainNav: async (app: string, roles: string[]) => {
+    updateMainNav: async (
+        _app: string,
+        roles: string[],
+        permissions: string[] = [],
+    ) => {
         set({
-            mainNav: getMainNav(app, roles),
+            mainNav: getMainNav(roles, permissions),
         });
     },
     resetMainNav: () => {
@@ -218,13 +292,37 @@ const useUserState = create<UserState>((set) => ({
         }>(USER_LOGIN_TOKEN);
         // 仅对明文口令做一层 sha256（定长化 / 不发送明文）；服务端再套 Argon2 校验。
         // ts/hash/token 仍随请求发送，用于服务端登录令牌的防重放校验。
-        const { data: user } = await request.post<UserSession>(USER_LOGIN, {
+        const { data: resp } = await request.post<
+            RawUserMeResp | { mfa_required: true; mfa_token: string }
+        >(USER_LOGIN, {
             ts: data.ts,
             hash: data.hash,
             token: data.token,
             account,
             password: sha256(password).toString(),
         });
+        if ("mfa_required" in resp && resp.mfa_required) {
+            return {
+                mfaRequired: true,
+                mfaToken: resp.mfa_token,
+            };
+        }
+        const user = normalizeUserSession(resp as RawUserMeResp);
+        set({
+            initialized: true,
+            data: user,
+        });
+        return {
+            mfaRequired: false,
+            user,
+        };
+    },
+    loginMfa: async (mfaToken: string, code: string) => {
+        const { data } = await request.post<RawUserMeResp>(USER_LOGIN_MFA, {
+            mfa_token: mfaToken,
+            code: code.trim(),
+        });
+        const user = normalizeUserSession(data);
         set({
             initialized: true,
             data: user,
@@ -240,24 +338,67 @@ const useUserState = create<UserState>((set) => ({
         });
     },
     updateProfile: async (profile: {
+        nickname?: string;
+        phone?: string;
         email?: string;
         avatar?: string;
-        roles?: string[];
-        groups?: string[];
     }) => {
         await request.patch(USER_PROFILE, profile);
+        await get().fetch();
     },
     refresh: async () => {
         await request.patch(USER_REFRESH);
     },
-    list: async (params: { page: number; limit: number; keyword?: string }) => {
-        const { data } = await request.get<{
-            count: number;
-            users: User[];
-        }>(USER_LIST, {
-            params,
+    requestPasswordReset: async (account: string) => {
+        await request.post(USER_PASSWORD_RESET_REQUEST, { account });
+    },
+    confirmPasswordReset: async (token: string, rawPassword: string) => {
+        await request.post(USER_PASSWORD_RESET_CONFIRM, {
+            token: token.trim(),
+            password: sha256(rawPassword).toString(),
         });
+    },
+    requestEmailVerify: async () => {
+        await request.post(USER_EMAIL_VERIFY_REQUEST);
+    },
+    confirmEmailVerify: async (token: string) => {
+        await request.post(USER_EMAIL_VERIFY_CONFIRM, { token: token.trim() });
+    },
+    getTotpStatus: async () => {
+        const { data } = await request.get<TotpStatus>(USER_TOTP_STATUS);
         return data;
+    },
+    enrollTotp: async () => {
+        const { data } = await request.post<TotpEnrollResp>(USER_TOTP_ENROLL);
+        return data;
+    },
+    activateTotp: async (code: string) => {
+        const { data } = await request.post<{ recovery_codes: string[] }>(
+            USER_TOTP_ACTIVATE,
+            { code: code.trim() },
+        );
+        return data;
+    },
+    disableTotp: async (code: string) => {
+        await request.post(USER_TOTP_DISABLE, { code: code.trim() });
+    },
+    listApiKeys: async () => {
+        const { data } = await request.get<ApiKeyItem[]>(USER_API_KEYS);
+        return data;
+    },
+    createApiKey: async (name: string, expiresInDays?: number) => {
+        const body: { name: string; expires_in_days?: number } = { name };
+        if (expiresInDays && expiresInDays > 0) {
+            body.expires_in_days = expiresInDays;
+        }
+        const { data } = await request.post<CreateApiKeyResp>(
+            USER_API_KEYS,
+            body,
+        );
+        return data;
+    },
+    revokeApiKey: async (id: number) => {
+        await request.delete(`${USER_API_KEYS}/${id}`);
     },
 }));
 

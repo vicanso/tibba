@@ -7,9 +7,11 @@ class HTTPError extends Error {
     message: string;
     // 出错分类
     category?: string;
+    // 出错子分类
+    subCategory?: string;
     // 出错代码，如果某个出错需要单独处理，可定义唯一的出错码
     code?: string;
-    extra?: Record<string, unknown>;
+    extra?: string[] | Record<string, unknown>;
     constructor(status: number, message: string) {
         super(message);
         this.status = status;

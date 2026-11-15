@@ -319,10 +319,7 @@ const useModelState = create<ModelState>((set, get) => ({
         );
         return data;
     },
-    search: async (params: {
-        model: string;
-        keyword: string;
-    }) => {
+    search: async (params: { model: string; keyword: string }) => {
         const { data } = await request.get<{ options: Option[] }>(
             MODEL_SEARCH,
             {

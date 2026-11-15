@@ -1,8 +1,6 @@
 "use client";
 import { cn } from "@/lib/utils";
 import {
-    BellIcon,
-    CreditCardIcon,
     LogOutIcon,
     MoreVerticalIcon,
     UserCircleIcon,
@@ -99,13 +97,16 @@ export function AppUser() {
 
     const iconClassName = "mr-2 h-4 w-4";
 
+    const displayName = userInfo.nickname || userInfo.account;
+    const displaySub = userInfo.email || userInfo.roles.join(", ");
+
     const renderUser = (className: string) => {
         return (
             <>
                 <Avatar className={cn("h-8 w-8 rounded-lg", className)}>
-                    <AvatarImage src={userInfo.avatar} alt={userInfo.account} />
+                    <AvatarImage src={userInfo.avatar} alt={displayName} />
                     <AvatarFallback className="rounded-lg">
-                        {userInfo.account.slice(0, 2).toUpperCase()}
+                        {displayName.slice(0, 2).toUpperCase()}
                     </AvatarFallback>
                 </Avatar>
                 <div className="grid flex-1 text-left text-sm leading-tight">
@@ -113,11 +114,11 @@ export function AppUser() {
                         {processing ? (
                             <Loader2Icon className="size-4 animate-spin" />
                         ) : (
-                            userInfo.account
+                            displayName
                         )}
                     </span>
                     <span className="truncate text-xs text-muted-foreground">
-                        {userInfo.email}
+                        {displaySub}
                     </span>
                 </div>
             </>
@@ -201,7 +202,7 @@ export function AppUser() {
     };
 
     const { isMobile } = useSidebar();
-    let container = <></>;
+    let container: React.ReactNode;
     if (!initialized) {
         container = (
             <div className="flex items-center justify-center">
@@ -255,14 +256,6 @@ export function AppUser() {
                                 <UserCircleIcon />
                                 {appUserI18n("profile")}
                             </Link>
-                        </DropdownMenuItem>
-                        <DropdownMenuItem disabled>
-                            <CreditCardIcon />
-                            Billing
-                        </DropdownMenuItem>
-                        <DropdownMenuItem disabled>
-                            <BellIcon />
-                            Notifications
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
                         {renderTheme()}

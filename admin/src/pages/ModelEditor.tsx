@@ -54,23 +54,22 @@ const SearchSelect = React.forwardRef<
         value: string;
         disabled?: boolean;
         searchModel: string;
-        onSearch: (model: string, keyword: string) => Promise<{ options: SearchOption[] }>;
+        onSearch: (
+            model: string,
+            keyword: string,
+        ) => Promise<{ options: SearchOption[] }>;
         onChange: (value: string) => void;
         onBlur?: () => void;
     }
->(function SearchSelect({ value, disabled, searchModel, onSearch, onChange, onBlur }, ref) {
+>(function SearchSelect(
+    { value, disabled, searchModel, onSearch, onChange, onBlur },
+    ref,
+) {
     const [inputValue, setInputValue] = React.useState("");
+    const [selectedLabel, setSelectedLabel] = React.useState("");
     const [options, setOptions] = React.useState<SearchOption[]>([]);
     const [showList, setShowList] = React.useState(false);
     const timerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-    const selectedLabel = React.useRef("");
-
-    React.useEffect(() => {
-        if (!value) {
-            selectedLabel.current = "";
-            setInputValue("");
-        }
-    }, [value]);
 
     function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
         const keyword = e.target.value;
@@ -84,7 +83,7 @@ const SearchSelect = React.forwardRef<
     }
 
     function handleSelect(option: SearchOption) {
-        selectedLabel.current = option.label;
+        setSelectedLabel(option.label);
         setInputValue(option.label);
         setOptions([]);
         setShowList(false);
@@ -93,7 +92,7 @@ const SearchSelect = React.forwardRef<
 
     function handleBlur() {
         setShowList(false);
-        setInputValue(selectedLabel.current);
+        setInputValue(value ? selectedLabel : "");
         onBlur?.();
     }
 
@@ -101,7 +100,7 @@ const SearchSelect = React.forwardRef<
         <div className="relative">
             <Input
                 ref={ref}
-                value={inputValue}
+                value={!value && !showList ? "" : inputValue}
                 disabled={disabled}
                 onChange={handleChange}
                 onBlur={handleBlur}
@@ -142,17 +141,23 @@ export default function ModelEditor() {
     const [initialized, setInitialized] = useState(false);
     const [processing, setProcessing] = useState(false);
     const [detail, setDetail] = useState<Record<string, unknown>>({});
-    const [schemaView, fetchSchema, modelDetail, modelUpdate, modelCreate, modelSearch] =
-        useModelState(
-            useShallow((state) => [
-                state.schemaView,
-                state.fetchSchema,
-                state.detail,
-                state.update,
-                state.create,
-                state.search,
-            ]),
-        );
+    const [
+        schemaView,
+        fetchSchema,
+        modelDetail,
+        modelUpdate,
+        modelCreate,
+        modelSearch,
+    ] = useModelState(
+        useShallow((state) => [
+            state.schemaView,
+            state.fetchSchema,
+            state.detail,
+            state.update,
+            state.create,
+            state.search,
+        ]),
+    );
     const modelId = Number(id);
     let editType = EditType.View;
     if (searchParams.get("type") === "edit") {
@@ -356,7 +361,10 @@ export default function ModelEditor() {
     }
 
     const labelMap = Object.fromEntries(
-        schemaView.schemas.map((s) => [s.name, s.label || formatFieldName(s.name)]),
+        schemaView.schemas.map((s) => [
+            s.name,
+            s.label || formatFieldName(s.name),
+        ]),
     );
 
     const renderFormField = (
@@ -539,8 +547,12 @@ export default function ModelEditor() {
                                                 </SelectLabel>
                                                 {options.map((option) => (
                                                     <SelectItem
-                                                        key={String(option.value)}
-                                                        value={String(option.value)}
+                                                        key={String(
+                                                            option.value,
+                                                        )}
+                                                        value={String(
+                                                            option.value,
+                                                        )}
                                                     >
                                                         {option.label}
                                                     </SelectItem>
@@ -557,7 +569,7 @@ export default function ModelEditor() {
                                         {...field}
                                         value={
                                             field.value === null ||
-                                                field.value === undefined
+                                            field.value === undefined
                                                 ? ""
                                                 : field.value
                                         }
@@ -683,8 +695,12 @@ export default function ModelEditor() {
                                                 </SelectLabel>
                                                 {options.map((option) => (
                                                     <SelectItem
-                                                        key={String(option.value)}
-                                                        value={String(option.value)}
+                                                        key={String(
+                                                            option.value,
+                                                        )}
+                                                        value={String(
+                                                            option.value,
+                                                        )}
                                                     >
                                                         {option.label}
                                                     </SelectItem>
