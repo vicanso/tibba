@@ -20,7 +20,8 @@ use sqlx::{Pool, Postgres, QueryBuilder};
 use std::collections::HashMap;
 use tibba_model::{
     Error, Model, ModelListParams, ResultValue, Schema, SchemaAllowCreate, SchemaAllowEdit,
-    SchemaOption, SchemaOptionValue, SchemaType, SchemaView, SqlxSnafu, format_datetime,
+    SchemaOption, SchemaOptionValue, SchemaType, SchemaView, SqlxSnafu, checked_db_id,
+    format_datetime,
 };
 use time::PrimitiveDateTime;
 
@@ -40,7 +41,7 @@ struct HttpStatSchema {
     content_transfer: i32,
     total: i32,
     addr: String,
-    status_code: i32,
+    status_code: i16,
     tls: String,
     alpn: String,
     subject: String,
@@ -50,7 +51,7 @@ struct HttpStatSchema {
     cert_cipher: String,
     cert_domains: String,
     body_size: i32,
-    error: String,
+    error: Option<String>,
     result: i16,
     remark: String,
     region: String,
@@ -105,7 +106,7 @@ impl From<HttpStatSchema> for HttpStat {
             content_transfer: schema.content_transfer,
             total: schema.total,
             addr: schema.addr,
-            status_code: schema.status_code,
+            status_code: i32::from(schema.status_code),
             tls: schema.tls,
             alpn: schema.alpn,
             subject: schema.subject,
@@ -116,11 +117,12 @@ impl From<HttpStatSchema> for HttpStat {
             cert_domains: schema
                 .cert_domains
                 .split(',')
-                .map(|s| s.to_string())
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
                 .collect(),
             body_size: schema.body_size,
             region: schema.region,
-            error: schema.error,
+            error: schema.error.unwrap_or_default(),
             result: schema.result,
             remark: schema.remark,
             created: format_datetime(schema.created),
@@ -213,7 +215,7 @@ impl HttpStatModel {
         created_range: (PrimitiveDateTime, PrimitiveDateTime),
     ) -> Result<Vec<HttpStat>> {
         let detectors = sqlx::query_as::<_, HttpStatSchema>(
-            r#"SELECT * FROM http_stats WHERE created >= $1 AND created <= $2 ORDER BY created ASC"#,
+            r#"SELECT * FROM http_stats WHERE deleted_at IS NULL AND created >= $1 AND created <= $2 ORDER BY created ASC LIMIT 10000"#,
         )
         .bind(created_range.0)
         .bind(created_range.1)
@@ -242,7 +244,7 @@ impl Model for HttpStatModel {
                     value: SchemaOptionValue::String(detector.id.to_string()),
                 });
             }
-            detector_options.sort_by_key(|option| option.label.clone());
+            detector_options.sort_unstable_by(|a, b| a.label.cmp(&b.label));
         }
         SchemaView {
             schemas: vec![
@@ -485,11 +487,59 @@ impl Model for HttpStatModel {
         Ok(count)
     }
     async fn get_by_id(&self, pool: &Pool<Postgres>, id: u64) -> Result<Option<Self::Output>> {
-        let stat = sqlx::query_as::<_, HttpStatSchema>(r#"SELECT * FROM http_stats WHERE id = $1"#)
-            .bind(id as i64)
-            .fetch_optional(pool)
-            .await
-            .context(SqlxSnafu)?;
+        let id = checked_db_id(id)?;
+        let stat = sqlx::query_as::<_, HttpStatSchema>(
+            r#"SELECT * FROM http_stats WHERE id = $1 AND deleted_at IS NULL"#,
+        )
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+        .context(SqlxSnafu)?;
         Ok(stat.map(|schema| schema.into()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use time::macros::datetime;
+
+    #[test]
+    fn http_stat_schema_handles_nullable_error_smallint_and_empty_domains() {
+        let dt = datetime!(2026-06-05 00:00:00);
+        let schema = HttpStatSchema {
+            id: 1,
+            target_id: 2,
+            target_name: "api".to_string(),
+            url: "https://example.com".to_string(),
+            dns_lookup: 1,
+            quic_connect: -1,
+            tcp_connect: 2,
+            tls_handshake: 3,
+            server_processing: 4,
+            content_transfer: 5,
+            total: 15,
+            addr: "1.2.3.4:443".to_string(),
+            status_code: 200,
+            tls: "TLS1.3".to_string(),
+            alpn: "h2".to_string(),
+            subject: String::new(),
+            issuer: String::new(),
+            cert_not_before: String::new(),
+            cert_not_after: String::new(),
+            cert_cipher: String::new(),
+            cert_domains: String::new(),
+            body_size: 128,
+            error: None,
+            result: 0,
+            remark: String::new(),
+            region: "any".to_string(),
+            created: dt,
+            modified: dt,
+        };
+        let stat = HttpStat::from(schema);
+        assert_eq!(stat.status_code, 200);
+        assert!(stat.error.is_empty());
+        assert!(stat.cert_domains.is_empty());
     }
 }

@@ -12,7 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{RecordNotFoundSnafu, authorize_model_access, get_registered_model};
+use crate::{
+    ERROR_CATEGORY, ModelCaller, RecordNotFoundSnafu, authorize_model_access, get_registered_model,
+};
 use axum::Json;
 use axum::Router;
 use axum::extract::State;
@@ -24,12 +26,39 @@ use snafu::OptionExt;
 use sqlx::PgPool;
 use tibba_error::Error;
 use tibba_model::{ModelListParams, SchemaOption, SchemaView};
+use tibba_model_builtin::{AuditLogModel, AuditLogParams};
 use tibba_session::UserSession;
 use tibba_util::{JsonParams, JsonResult, QueryParams, x_schema_name};
 use utoipa::{IntoParams, OpenApi, ToSchema};
 use validator::Validate;
 
 type Result<T> = std::result::Result<T, Error>;
+
+fn validation_error(message: &str) -> Error {
+    Error::new(message)
+        .with_category(ERROR_CATEGORY)
+        .with_sub_category("validation")
+        .with_status(400)
+        .with_exception(false)
+}
+
+async fn log_model_mutation(
+    pool: &PgPool,
+    caller: &ModelCaller,
+    action: &str,
+    model: &str,
+    target_id: u64,
+) {
+    let _ = AuditLogModel::new()
+        .log(
+            pool,
+            AuditLogParams::new(action)
+                .with_user(caller.user_id)
+                .with_target(model, target_id.to_string())
+                .with_detail(json!({ "account": caller.account })),
+        )
+        .await;
+}
 
 #[derive(Debug, Deserialize, Clone, Validate, IntoParams)]
 #[into_params(parameter_in = Query)]
@@ -49,10 +78,10 @@ struct GetSchemaParams {
 async fn get_schema(
     State(pool): State<&'static PgPool>,
     QueryParams(params): QueryParams<GetSchemaParams>,
-    _session: UserSession,
+    session: UserSession,
 ) -> JsonResult<SchemaView> {
-    // schema 仅需登录：前端表单渲染；数据读写另有 list/detail 鉴权
     let entry = get_registered_model(&params.name)?;
+    authorize_model_access(&session, &entry.permissions, false)?;
     Ok(Json(entry.model.schema_view(pool).await))
 }
 
@@ -60,16 +89,22 @@ async fn get_schema(
 #[into_params(parameter_in = Query)]
 struct ListParams {
     /// 模型名
+    #[validate(custom(function = "x_schema_name"))]
     model: String,
     /// 页码（从 1 起）
+    #[validate(range(min = 1, max = 100_000))]
     page: u64,
     /// 每页条数
+    #[validate(range(min = 1, max = 500))]
     limit: u64,
     /// 排序字段，前缀 `-` 表示降序
+    #[validate(length(max = 64))]
     order_by: Option<String>,
     /// 关键字模糊搜索
+    #[validate(length(max = 128))]
     keyword: Option<String>,
     /// 过滤条件（JSON 编码字符串）
+    #[validate(length(max = 4096))]
     filters: Option<String>,
     /// 是否同时返回总数
     count: bool,
@@ -108,8 +143,10 @@ async fn list_model(
 #[into_params(parameter_in = Query)]
 struct GetModelParams {
     /// 模型名
+    #[validate(custom(function = "x_schema_name"))]
     model: String,
     /// 记录主键
+    #[validate(range(min = 1))]
     id: u64,
 }
 
@@ -145,8 +182,10 @@ async fn get_detail(
 #[into_params(parameter_in = Query)]
 struct DeleteModelParams {
     /// 模型名
+    #[validate(custom(function = "x_schema_name"))]
     model: String,
     /// 待删除记录主键
+    #[validate(range(min = 1))]
     id: u64,
 }
 
@@ -164,15 +203,19 @@ async fn delete_model(
 ) -> Result<StatusCode> {
     let entry = get_registered_model(&params.model)?;
     authorize_model_access(&session, &entry.permissions, true)?;
-    entry.model.delete_by_id(pool, params.id).await?;
+    let caller = ModelCaller::from_session(&session);
+    entry.model.delete_by_id(pool, params.id, &caller).await?;
+    log_model_mutation(pool, &caller, "model.delete", &params.model, params.id).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
 #[derive(Deserialize, Validate, Debug, ToSchema)]
 struct UpdateModelParams {
     /// 模型名
+    #[validate(custom(function = "x_schema_name"))]
     model: String,
     /// 待更新记录主键
+    #[validate(range(min = 1))]
     id: u64,
     /// 部分字段更新载荷（按模型 schema 校验）
     #[schema(value_type = Object)]
@@ -191,18 +234,24 @@ async fn update_model(
     session: UserSession,
     JsonParams(params): JsonParams<UpdateModelParams>,
 ) -> Result<StatusCode> {
+    if !params.data.is_object() {
+        return Err(validation_error("data must be a JSON object"));
+    }
     let entry = get_registered_model(&params.model)?;
     authorize_model_access(&session, &entry.permissions, true)?;
+    let caller = ModelCaller::from_session(&session);
     entry
         .model
-        .update_by_id(pool, params.id, params.data)
+        .update_by_id(pool, params.id, params.data, &caller)
         .await?;
+    log_model_mutation(pool, &caller, "model.update", &params.model, params.id).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
 #[derive(Deserialize, Validate, ToSchema)]
 struct CreateModelParams {
     /// 模型名
+    #[validate(custom(function = "x_schema_name"))]
     model: String,
     /// 新记录字段载荷（按模型 schema 校验）
     #[schema(value_type = Object)]
@@ -221,12 +270,14 @@ async fn create_model(
     session: UserSession,
     JsonParams(params): JsonParams<CreateModelParams>,
 ) -> JsonResult<Value> {
+    if !params.data.is_object() {
+        return Err(validation_error("data must be a JSON object"));
+    }
     let entry = get_registered_model(&params.model)?;
     authorize_model_access(&session, &entry.permissions, true)?;
-    let id = entry
-        .model
-        .insert(pool, params.data, session.get_user_id())
-        .await?;
+    let caller = ModelCaller::from_session(&session);
+    let id = entry.model.insert(pool, params.data, &caller).await?;
+    log_model_mutation(pool, &caller, "model.create", &params.model, id).await;
     Ok(Json(json!({ "id": id })))
 }
 
@@ -234,8 +285,10 @@ async fn create_model(
 #[into_params(parameter_in = Query)]
 struct SearchParams {
     /// 模型名
+    #[validate(custom(function = "x_schema_name"))]
     model: String,
     /// 关键字（按模型可搜索字段匹配）
+    #[validate(length(max = 128))]
     keyword: Option<String>,
 }
 
@@ -254,10 +307,10 @@ struct SearchOptionsResp {
 async fn search_model(
     State(pool): State<&'static PgPool>,
     QueryParams(params): QueryParams<SearchParams>,
-    _session: UserSession,
+    session: UserSession,
 ) -> JsonResult<SearchOptionsResp> {
-    // 下拉搜索与 schema 相同：仅需登录（选项本身无敏感写权限）
     let entry = get_registered_model(&params.model)?;
+    authorize_model_access(&session, &entry.permissions, false)?;
     let options = entry.model.search_options(pool, params.keyword).await?;
     Ok(Json(SearchOptionsResp { options }))
 }

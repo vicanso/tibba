@@ -4,11 +4,11 @@
 
 > **分层**：标准（Standard）— 标准 REST 构件，依赖核心
 
-通用 Model trait、分页/排序白名单、schema 视图与用户等基础模型。
+通用 Model trait、分页/排序白名单、Schema 视图、响应头 XSS/Set-Cookie 安全过滤、`checked_db_id` 越界检查与用户等基础模型。
 
 ## 依赖
 
-依赖：tibba-error, tibba-crypto
+依赖：`tibba-error`、`tibba-crypto`
 
 ## 在工作区中的位置
 

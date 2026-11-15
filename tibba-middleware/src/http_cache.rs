@@ -41,7 +41,9 @@
 
 use axum::body::Body;
 use axum::extract::{Request, State};
-use axum::http::header::{CACHE_CONTROL, CONTENT_LENGTH, ETAG, IF_NONE_MATCH};
+use axum::http::header::{
+    AUTHORIZATION, CACHE_CONTROL, CONTENT_LENGTH, COOKIE, ETAG, IF_NONE_MATCH, SET_COOKIE, VARY,
+};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
@@ -92,11 +94,49 @@ impl HttpCache {
         self
     }
 
-    /// 把 `Cache-Control` 补进响应（已存在不覆盖；空配置跳过）。
-    fn apply_cache_control(&self, headers: &mut HeaderMap) {
-        if !self.cache_control.is_empty() {
-            let _ = set_header_if_not_exist(headers, CACHE_CONTROL.as_str(), &self.cache_control);
+    /// 把 `Cache-Control` 补进响应；若请求带有认证上下文（Cookie / Authorization），
+    /// 禁止输出 `public`，降级为 `private, no-cache`。
+    fn apply_cache_headers(&self, headers: &mut HeaderMap, authenticated: bool) {
+        if authenticated {
+            let existing_is_public = headers
+                .get(CACHE_CONTROL)
+                .and_then(|v| v.to_str().ok())
+                .is_some_and(|s| s.to_ascii_lowercase().contains("public"));
+            if !headers.contains_key(CACHE_CONTROL) || existing_is_public {
+                headers.insert(CACHE_CONTROL, HeaderValue::from_static("private, no-cache"));
+            }
+            append_vary_token(headers, "Accept-Encoding");
+            append_vary_token(headers, "Authorization");
+            append_vary_token(headers, "Cookie");
+        } else {
+            if !self.cache_control.is_empty() {
+                let _ =
+                    set_header_if_not_exist(headers, CACHE_CONTROL.as_str(), &self.cache_control);
+            }
+            append_vary_token(headers, "Accept-Encoding");
         }
+    }
+}
+
+/// 将 `token` 并入 `Vary` 响应头（大小写不敏感去重，不覆盖已有 `Accept-Language` 等字段）。
+fn append_vary_token(headers: &mut HeaderMap, token: &str) {
+    if let Some(existing) = headers.get(VARY).and_then(|v| v.to_str().ok()) {
+        let already = existing
+            .split(',')
+            .any(|part| part.trim() == "*" || part.trim().eq_ignore_ascii_case(token));
+        if already {
+            return;
+        }
+        let merged = if existing.trim().is_empty() {
+            token.to_string()
+        } else {
+            format!("{existing}, {token}")
+        };
+        if let Ok(val) = HeaderValue::from_str(&merged) {
+            headers.insert(VARY, val);
+        }
+    } else if let Ok(val) = HeaderValue::from_str(token) {
+        headers.insert(VARY, val);
     }
 }
 
@@ -106,6 +146,8 @@ pub async fn http_cache(State(config): State<HttpCache>, req: Request, next: Nex
     if req.method() != Method::GET {
         return next.run(req).await;
     }
+    let authenticated =
+        req.headers().contains_key(AUTHORIZATION) || req.headers().contains_key(COOKIE);
     // 先取出请求侧的 If-None-Match，再消费 req
     let if_none_match = req
         .headers()
@@ -115,8 +157,17 @@ pub async fn http_cache(State(config): State<HttpCache>, req: Request, next: Nex
 
     let res = next.run(req).await;
 
-    // 仅处理 2xx；非 2xx 或 handler 自带 ETag → 直通
-    if !res.status().is_success() || res.headers().contains_key(ETAG) {
+    // 仅处理 2xx；非 2xx、handler 自带 ETag、带 Set-Cookie 或声明 no-store → 直通
+    let is_no_store = res
+        .headers()
+        .get(CACHE_CONTROL)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|s| s.to_ascii_lowercase().contains("no-store"));
+    if !res.status().is_success()
+        || res.headers().contains_key(ETAG)
+        || res.headers().contains_key(SET_COOKIE)
+        || is_no_store
+    {
         return res;
     }
 
@@ -139,8 +190,9 @@ pub async fn http_cache(State(config): State<HttpCache>, req: Request, next: Nex
     };
 
     let etag = compute_etag(&bytes);
+    config.apply_cache_headers(&mut parts.headers, authenticated);
 
-    // 命中 If-None-Match → 304（空 body，仅回 ETag + Cache-Control）
+    // 命中 If-None-Match → 304（空 body，保留 ETag + Cache-Control + Vary）
     if if_none_match
         .as_deref()
         .is_some_and(|inm| etag_matches(inm, &etag))
@@ -150,15 +202,19 @@ pub async fn http_cache(State(config): State<HttpCache>, req: Request, next: Nex
         if let Ok(value) = HeaderValue::from_str(&etag) {
             res.headers_mut().insert(ETAG, value);
         }
-        config.apply_cache_control(res.headers_mut());
+        if let Some(cc) = parts.headers.get(CACHE_CONTROL) {
+            res.headers_mut().insert(CACHE_CONTROL, cc.clone());
+        }
+        if let Some(vary) = parts.headers.get(VARY) {
+            res.headers_mut().insert(VARY, vary.clone());
+        }
         return res;
     }
 
-    // 未命中 → 原响应 + ETag + Cache-Control
+    // 未命中 → 原响应 + ETag + Cache-Control + Vary
     if let Ok(value) = HeaderValue::from_str(&etag) {
         parts.headers.insert(ETAG, value);
     }
-    config.apply_cache_control(&mut parts.headers);
     Response::from_parts(parts, Body::from(bytes))
 }
 
@@ -169,20 +225,29 @@ fn compute_etag(bytes: &[u8]) -> String {
     format!("W/\"{:x}-{:x}\"", bytes.len(), hasher.finish())
 }
 
+/// 零分配去掉弱校验前缀 `W/`。
+fn strip_weak_prefix(s: &str) -> &str {
+    let s = s.trim();
+    s.strip_prefix("W/").unwrap_or(s).trim()
+}
+
 /// `If-None-Match` 是否匹配给定 ETag。支持逗号分隔的多值与 `*`；
-/// 比对时去掉弱校验前缀 `W/`（RFC 规定条件 GET 用弱比较）。
+/// 零分配比对，去掉弱校验前缀 `W/`（RFC 9110 条件 GET 用弱比较）。
 fn etag_matches(if_none_match: &str, etag: &str) -> bool {
-    let normalize = |s: &str| s.trim().trim_start_matches("W/").trim().to_string();
-    let target = normalize(etag);
+    let target = strip_weak_prefix(etag);
     if_none_match.split(',').any(|entry| {
         let entry = entry.trim();
-        entry == "*" || normalize(entry) == target
+        entry == "*" || strip_weak_prefix(entry) == target
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::Router;
+    use axum::middleware::from_fn_with_state;
+    use axum::routing::get;
+    use tower::ServiceExt;
 
     /// 同内容 ETag 稳定，不同内容 ETag 不同。
     #[test]
@@ -211,5 +276,121 @@ mod tests {
         assert!(etag_matches("*", &etag));
         // 未命中
         assert!(!etag_matches("\"nope\"", &etag));
+    }
+
+    #[tokio::test]
+    async fn set_cookie_response_is_never_tagged_with_etag() {
+        let app = Router::new()
+            .route(
+                "/cookie",
+                get(|| async {
+                    let mut resp = Response::new(Body::from("ok"));
+                    resp.headers_mut()
+                        .insert(CONTENT_LENGTH, HeaderValue::from_static("2"));
+                    resp.headers_mut()
+                        .insert(SET_COOKIE, HeaderValue::from_static("sid=1"));
+                    resp
+                }),
+            )
+            .layer(from_fn_with_state(
+                HttpCache::new().with_cache_control("public, max-age=60"),
+                http_cache,
+            ));
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/cookie")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert!(!resp.headers().contains_key(ETAG));
+        assert!(!resp.headers().contains_key(CACHE_CONTROL));
+    }
+
+    #[tokio::test]
+    async fn authenticated_request_downgrades_public_and_preserves_304_headers() {
+        let app = Router::new()
+            .route(
+                "/me",
+                get(|| async {
+                    let mut resp = Response::new(Body::from("hello"));
+                    resp.headers_mut()
+                        .insert(CONTENT_LENGTH, HeaderValue::from_static("5"));
+                    resp.headers_mut()
+                        .insert(VARY, HeaderValue::from_static("Accept-Language"));
+                    resp
+                }),
+            )
+            .layer(from_fn_with_state(
+                HttpCache::new().with_cache_control("public, max-age=60"),
+                http_cache,
+            ));
+
+        let first = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/me")
+                    .header(AUTHORIZATION, "Bearer secret")
+                    .body(Body::empty())
+                    .expect("req1"),
+            )
+            .await
+            .expect("resp1");
+        assert_eq!(
+            first
+                .headers()
+                .get(CACHE_CONTROL)
+                .and_then(|v| v.to_str().ok()),
+            Some("private, no-cache")
+        );
+        let vary = first
+            .headers()
+            .get(VARY)
+            .and_then(|v| v.to_str().ok())
+            .expect("Vary present");
+        assert!(vary.contains("Accept-Language"), "{vary}");
+        assert!(vary.contains("Authorization"), "{vary}");
+        assert!(vary.contains("Cookie"), "{vary}");
+        let etag = first
+            .headers()
+            .get(ETAG)
+            .and_then(|v| v.to_str().ok())
+            .expect("ETag present")
+            .to_string();
+
+        let second = app
+            .oneshot(
+                Request::builder()
+                    .uri("/me")
+                    .header(AUTHORIZATION, "Bearer secret")
+                    .header(IF_NONE_MATCH, etag.as_str())
+                    .body(Body::empty())
+                    .expect("req2"),
+            )
+            .await
+            .expect("resp2");
+        assert_eq!(second.status(), StatusCode::NOT_MODIFIED);
+        assert_eq!(
+            second.headers().get(ETAG).and_then(|v| v.to_str().ok()),
+            Some(etag.as_str())
+        );
+        assert_eq!(
+            second
+                .headers()
+                .get(CACHE_CONTROL)
+                .and_then(|v| v.to_str().ok()),
+            Some("private, no-cache")
+        );
+        let vary_304 = second
+            .headers()
+            .get(VARY)
+            .and_then(|v| v.to_str().ok())
+            .expect("304 Vary present");
+        assert!(vary_304.contains("Accept-Language"), "{vary_304}");
+        assert!(vary_304.contains("Authorization"), "{vary_304}");
     }
 }

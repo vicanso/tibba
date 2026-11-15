@@ -4,11 +4,11 @@
 
 > **分层**：标准（Standard）— 标准 REST 构件，依赖核心
 
-HS256 access token + Redis opaque refresh，与 Cookie Session 正交。
+HS256 access token 签发/校验器（`jsonwebtoken` + `aws_lc_rs`）与凭证撤销检查，配合 `tibba-router-user` 的 Redis opaque refresh 轮换实现无状态短期鉴权。
 
 ## 依赖
 
-依赖：tibba-error, tibba-util
+依赖：`tibba-cache`、`tibba-error`、`tibba-util`
 
 ## 在工作区中的位置
 

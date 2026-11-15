@@ -4,11 +4,11 @@
 
 > **分层**：标准（Standard）— 标准 REST 构件，依赖核心
 
-健康检查、验证码、就绪探针、系统信息等公共 API 路由。
+健康检查（`/healthz`、`/readyz`）、图形验证码、系统信息及 Redis IP 限流挂载等公共 API 路由。
 
 ## 依赖
 
-依赖：tibba-cache, tibba-error, tibba-runtime（`process-info`）, tibba-session, tibba-util
+依赖：`tibba-cache`、`tibba-error`、`tibba-middleware`、`tibba-runtime`（`process-info`）、`tibba-session`、`tibba-util`
 
 ## 在工作区中的位置
 

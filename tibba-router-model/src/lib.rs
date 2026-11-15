@@ -17,10 +17,39 @@ use serde_json::Value;
 use snafu::{OptionExt, ResultExt, Snafu};
 use sqlx::PgPool;
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::{Arc, LazyLock, RwLock};
 use tibba_error::Error as BaseError;
 use tibba_model::{Model, ModelListParams, SchemaOption, SchemaView};
-use tibba_runtime::BoxFuture;
+use tibba_session::{Role, Session};
+
+/// 堆分配的 `Send` Future 类型别名，供动态模型 trait 对象复用（避免引入 `tibba-runtime`）。
+pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+
+/// 模型写操作的调用方身份信息，用于权限判定、字段注入与操作审计。
+#[derive(Debug, Clone)]
+pub struct ModelCaller {
+    pub user_id: i64,
+    pub account: String,
+    pub roles: Vec<String>,
+}
+
+impl ModelCaller {
+    pub fn from_session(session: &Session) -> Self {
+        Self {
+            user_id: session.get_user_id(),
+            account: session.get_account().to_string(),
+            roles: session.get_roles().to_vec(),
+        }
+    }
+
+    pub fn is_super_admin(&self) -> bool {
+        self.roles
+            .iter()
+            .any(|r| Role::from(r.as_str()) == Role::SuperAdmin)
+    }
+}
 
 /// 模块对外暴露的 Result 仍以 `tibba_error::Error` 为错误类型，本地 `Error` 仅作 snafu 上下文。
 type Result<T, E = BaseError> = std::result::Result<T, E>;
@@ -87,19 +116,25 @@ pub trait DynModel: Send + Sync {
         pool: &'static PgPool,
         id: u64,
     ) -> BoxFuture<'a, Result<Option<Value>>>;
-    fn delete_by_id<'a>(&'a self, pool: &'static PgPool, id: u64) -> BoxFuture<'a, Result<()>>;
+    fn delete_by_id<'a>(
+        &'a self,
+        pool: &'static PgPool,
+        id: u64,
+        caller: &'a ModelCaller,
+    ) -> BoxFuture<'a, Result<()>>;
     fn update_by_id<'a>(
         &'a self,
         pool: &'static PgPool,
         id: u64,
         data: Value,
+        caller: &'a ModelCaller,
     ) -> BoxFuture<'a, Result<()>>;
-    /// 创建记录。`caller_id` 为当前操作用户 ID，实现方负责注入所需字段（如 `created_by`）。
+    /// 创建记录。`caller` 为当前操作用户上下文，实现方负责注入所需字段（如 `created_by`）并校验越权。
     fn insert<'a>(
         &'a self,
         pool: &'static PgPool,
         data: Value,
-        caller_id: i64,
+        caller: &'a ModelCaller,
     ) -> BoxFuture<'a, Result<u64>>;
     fn search_options<'a>(
         &'a self,
@@ -149,7 +184,12 @@ where
         })
     }
 
-    fn delete_by_id<'a>(&'a self, pool: &'static PgPool, id: u64) -> BoxFuture<'a, Result<()>> {
+    fn delete_by_id<'a>(
+        &'a self,
+        pool: &'static PgPool,
+        id: u64,
+        _caller: &'a ModelCaller,
+    ) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             self.0.delete_by_id(pool, id).await?;
             Ok(())
@@ -161,6 +201,7 @@ where
         pool: &'static PgPool,
         id: u64,
         data: Value,
+        _caller: &'a ModelCaller,
     ) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             self.0.update_by_id(pool, id, data).await?;
@@ -172,11 +213,11 @@ where
         &'a self,
         pool: &'static PgPool,
         mut data: Value,
-        caller_id: i64,
+        caller: &'a ModelCaller,
     ) -> BoxFuture<'a, Result<u64>> {
         Box::pin(async move {
             if let Some(obj) = data.as_object_mut() {
-                obj.insert("created_by".to_string(), caller_id.into());
+                obj.insert("created_by".to_string(), caller.user_id.into());
             }
             Ok(self.0.insert(pool, data).await?)
         })
@@ -280,7 +321,7 @@ pub(crate) fn get_registered_model(name: &str) -> Result<RegisteredModel> {
 /// - 权限码已配置：持有该码 **或** Admin 角色
 /// - 未配置：仅 Admin 角色（与历史 `AdminSession` 一致）
 pub(crate) fn authorize_model_access(
-    session: &tibba_session::Session,
+    session: &Session,
     permissions: &ModelPermissions,
     write: bool,
 ) -> Result<()> {
@@ -299,3 +340,41 @@ pub(crate) fn authorize_model_access(
 
 mod router;
 pub use router::*;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn model_caller_detects_super_admin() {
+        let caller = ModelCaller {
+            user_id: 1,
+            account: "alice".to_string(),
+            roles: vec!["admin".to_string()],
+        };
+        assert!(!caller.is_super_admin());
+
+        let su = ModelCaller {
+            user_id: 2,
+            account: "root".to_string(),
+            roles: vec!["su".to_string()],
+        };
+        assert!(su.is_super_admin());
+    }
+
+    #[test]
+    fn error_mapping_status_codes() {
+        let missing_model = BaseError::from(Error::ModelNotSupported {
+            name: "nope".to_string(),
+        });
+        assert_eq!(missing_model.status(), 404);
+        assert!(!missing_model.is_exception());
+
+        let missing_rec = BaseError::from(Error::RecordNotFound {
+            model: "user".to_string(),
+            id: 99,
+        });
+        assert_eq!(missing_rec.status(), 404);
+        assert!(!missing_rec.is_exception());
+    }
+}

@@ -21,7 +21,7 @@
 //!
 //! Google 要求 scope 含 `openid email profile` 才能在 userinfo 拿到上述字段。
 
-use crate::{ApiSnafu, Error, HttpSnafu, JsonSnafu, LOG_TARGET};
+use crate::{ApiSnafu, Error, HttpSnafu, JsonSnafu, LOG_TARGET, format_error_body};
 use http::Method;
 use http::header::{ACCEPT, HeaderValue};
 use serde::Deserialize;
@@ -111,6 +111,13 @@ impl GoogleProvider {
         let http = http_client()?;
         let access_token = self.exchange_code(&http, code).await?;
         let raw = self.fetch_userinfo(&http, &access_token).await?;
+        if raw.sub.trim().is_empty() {
+            return Err(Error::Api {
+                provider: "google".to_string(),
+                status: 200,
+                message: "provider returned empty sub".to_string(),
+            });
+        }
 
         let primary_verified_email = if raw.email_verified {
             raw.email.clone()
@@ -157,17 +164,23 @@ impl GoogleProvider {
             .await
             .context(HttpSnafu)?;
         if !resp.is_success() {
+            let msg = format_error_body(&resp.body);
+            if matches!(resp.status, 400 | 401 | 403 | 422) {
+                return Err(Error::Rejected {
+                    provider: "google".to_string(),
+                    message: msg,
+                });
+            }
             return Err(Error::Api {
                 provider: "google".to_string(),
                 status: resp.status,
-                message: String::from_utf8_lossy(&resp.body).into_owned(),
+                message: msg,
             });
         }
         let parsed: TokenResp = serde_json::from_slice(&resp.body).context(JsonSnafu)?;
         if let Some(err) = parsed.error {
-            return Err(Error::Api {
+            return Err(Error::Rejected {
                 provider: "google".to_string(),
-                status: resp.status,
                 message: parsed.error_description.unwrap_or(err),
             });
         }
@@ -195,7 +208,7 @@ impl GoogleProvider {
             return Err(Error::Api {
                 provider: "google".to_string(),
                 status: resp.status,
-                message: String::from_utf8_lossy(&resp.body).into_owned(),
+                message: format_error_body(&resp.body),
             });
         }
         serde_json::from_slice::<RawUserInfo>(&resp.body).context(JsonSnafu)

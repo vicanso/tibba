@@ -33,7 +33,7 @@ use serde::{Deserialize, Serialize};
 use snafu::{OptionExt, Snafu};
 use sqlx::PgPool;
 use tibba_cache::RedisCache;
-use tibba_crypto::{PasswordCheck, verify_password};
+use tibba_crypto::PasswordCheck;
 use tibba_error::Error as BaseError;
 use tibba_jwt::JwtSigner;
 use tibba_middleware::{ClientIp, RequestId};
@@ -143,43 +143,51 @@ pub(crate) async fn login_jwt(
 ) -> Result<Response, BaseError> {
     let signer = tibba_jwt::try_global_signer().context(NotEnabledSnafu)?;
 
-    // 1. 防重放令牌校验（与表单 /login 一致）
-    params.validate_token(&state.secret)?;
+    // 1. 消费一次性防重放令牌（与表单 /login 一致）
+    params
+        .consume_login_token(&state.secret, state.cache)
+        .await?;
 
-    // 2. 账号 + 密码（Argon2 校验，兼容旧 sha256 存量并无感升级）
+    // 2. 账号 + 密码（Constant-time + spawn_blocking Argon2 校验，兼容旧 sha256 存量并无感升级）
     let account = params.account.clone();
     let ip_str = ip.to_string();
 
     // 暴力破解闸门：与表单 /login 同策略，防攻击者改走 JWT 路径绕过锁定
     crate::login_guard::ensure_not_locked(state.cache, &account, &ip_str).await?;
 
-    let Some(user) = UserModel::new()
+    let user = UserModel::new()
         .get_by_account(state.pool, &account)
-        .await?
-    else {
+        .await?;
+    let check = crate::verify_user_password_constant_time(
+        user.as_ref().map(|u| u.password.as_str()),
+        &params.password,
+    )
+    .await?;
+
+    let Some(user) = user else {
         crate::login_guard::record_failure(state.cache, &account, &ip_str).await;
         return Err(crate::Error::BadCredentials.into());
     };
     // 密码验证：客户端传入 sha256(明文)，服务端与库中 Argon2 哈希比对（与表单 /login 一致）
-    match verify_password(&user.password, params.password.as_bytes())? {
+    match check {
         PasswordCheck::Mismatch => {
             crate::login_guard::record_failure(state.cache, &account, &ip_str).await;
             return Err(crate::Error::BadCredentials.into());
         }
         // 旧式明文 sha256 存量：借本次登录升级为 Argon2；升级失败仅记日志，不阻断登录
         PasswordCheck::MatchedNeedsRehash => {
-            if let Err(err) = UserModel::new()
-                .update_password(state.pool, user.id, &params.password)
-                .await
+            if let Err(err) =
+                crate::update_password_blocking(state.pool, user.id, &params.password).await
             {
-                warn!(target: LOG_TARGET, account, error = %BaseError::from(err), "password rehash to argon2 failed");
+                warn!(target: LOG_TARGET, account, error = %err, "password rehash to argon2 failed");
             }
         }
         PasswordCheck::Matched => {}
     }
 
-    // 凭证正确：清账号失败计数
+    // 凭证正确：清账号失败计数；禁用账号必须在发 2FA 挑战前拦截
     crate::login_guard::clear_failures(state.cache, &account).await;
+    crate::ensure_enabled(&user)?;
 
     // 3. 2FA 闸门：已启用则不签 token，签发挑战令牌（与 Session 路径前缀隔离）
     let totp_state = UserModel::new().get_totp_state(state.pool, user.id).await?;
@@ -218,12 +226,11 @@ async fn issue_jwt(
     action: &'static str,
 ) -> Result<JwtLoginResp, BaseError> {
     crate::ensure_enabled(&user)?;
-    // 角色 → 权限并集（与 session login 一致）
+    // 角色 → 权限并集（与 session login 一致）；查询失败直接返回错误
     let roles = user.roles.clone().unwrap_or_default();
     let permissions = RolePermissionModel::new()
         .list_permissions_for_roles(state.pool, &roles)
-        .await
-        .unwrap_or_default();
+        .await?;
 
     // 签 access JWT
     let access_token = signer
@@ -346,19 +353,20 @@ pub(crate) struct RefreshParams {
 #[derive(Serialize, ToSchema)]
 pub(crate) struct RefreshResp {
     pub access_token: String,
+    /// 轮换后的新 opaque refresh token（原令牌已消费作废）
+    pub refresh_token: String,
     pub token_type: &'static str,
     pub expires_in: u64,
 }
 
-/// `POST /refresh/jwt` —— 用 refresh 重签 access。refresh 不旋转（简单实现），
-/// 想要 rotation 的安全态可后续扩展。
+/// `POST /refresh/jwt` —— 原子消费旧 refresh、轮换签发新 refresh，并按最新账号/角色/权限签新 access。
 #[utoipa::path(
     post,
     path = "/users/refresh/jwt",
     tag = "user",
     request_body = RefreshParams,
     responses(
-        (status = 200, description = "重签 access 成功", body = RefreshResp),
+        (status = 200, description = "重签 access 并轮换 refresh 成功", body = RefreshResp),
         (status = 401, description = "refresh token 无效或已过期")
     )
 )]
@@ -369,10 +377,11 @@ pub(crate) async fn refresh_jwt(
     let signer = tibba_jwt::try_global_signer().context(NotEnabledSnafu)?;
 
     let key = format!("{REFRESH_REDIS_PREFIX}{}", params.refresh_token);
-    let stored: Option<RefreshEntry> = state.cache.get_struct(&key).await?;
+    // 原子读取并删除旧 refresh，防止并发重放同一 refresh token
+    let stored: Option<RefreshEntry> = state.cache.get_del_struct(&key).await?;
     let RefreshEntry {
         user_id,
-        account,
+        account: _,
         iat,
     } = stored.context(InvalidRefreshSnafu)?;
     // 用户凭证被撤销（禁用 / 重置密码 / 后台改身份）后，旧 refresh 不得再续签。
@@ -382,8 +391,9 @@ pub(crate) async fn refresh_jwt(
     }
 
     // refresh 命中但本地 user 已软删 → 视为 401
+    let uid = u64::try_from(user_id).map_err(|_| BaseError::from(Error::UserGone))?;
     let user = UserModel::new()
-        .get_by_id(state.pool, user_id as u64)
+        .get_by_id(state.pool, uid)
         .await?
         .context(UserGoneSnafu)?;
     // 禁用账号不得再续签 access
@@ -392,15 +402,29 @@ pub(crate) async fn refresh_jwt(
     let roles = user.roles.clone().unwrap_or_default();
     let permissions = RolePermissionModel::new()
         .list_permissions_for_roles(state.pool, &roles)
-        .await
-        .unwrap_or_default();
+        .await?;
 
     let access_token = signer
-        .sign_access(user_id, &account, roles, permissions)
+        .sign_access(user.id, &user.account, roles, permissions)
         .map_err(BaseError::from)?;
+
+    let new_refresh_token = uuid();
+    state
+        .cache
+        .set_struct(
+            &format!("{REFRESH_REDIS_PREFIX}{new_refresh_token}"),
+            &RefreshEntry {
+                user_id: user.id,
+                account: user.account,
+                iat: tibba_util::timestamp(),
+            },
+            Some(signer.refresh_ttl()),
+        )
+        .await?;
 
     Ok(Json(RefreshResp {
         access_token,
+        refresh_token: new_refresh_token,
         token_type: "Bearer",
         expires_in: signer.access_ttl().as_secs(),
     }))

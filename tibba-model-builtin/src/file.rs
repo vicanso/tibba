@@ -23,7 +23,8 @@ use std::str::FromStr;
 use tibba_model::{
     Error, JsonSnafu, Model, ModelListParams, ROLE_ADMIN, ROLE_SUPER_ADMIN, Schema,
     SchemaAllowCreate, SchemaAllowEdit, SchemaOption, SchemaOptionValue, SchemaType, SchemaView,
-    SqlxSnafu, ensure_affected, format_datetime, is_data_overridable_response_header,
+    SqlxSnafu, checked_db_id, ensure_affected, format_datetime,
+    is_data_overridable_response_header,
 };
 use time::PrimitiveDateTime;
 
@@ -67,8 +68,14 @@ impl From<FileSchema> for File {
             file_size: file.file_size,
             content_type: file.content_type,
             group: file.group,
-            image_width: file.image_width.map(|w| w as u32),
-            image_height: file.image_height.map(|h| h as u32),
+            image_width: file
+                .image_width
+                .and_then(|w| u32::try_from(w).ok())
+                .filter(|&w| w > 0),
+            image_height: file
+                .image_height
+                .and_then(|h| u32::try_from(h).ok())
+                .filter(|&h| h > 0),
             metadata: file.metadata.map(|m| m.0),
             uploader: file.uploader,
             created: format_datetime(file.created),
@@ -292,10 +299,11 @@ impl Model for FileModel {
     }
 
     async fn get_by_id(&self, pool: &Pool<Postgres>, id: u64) -> Result<Option<Self::Output>> {
+        let id = checked_db_id(id)?;
         let result = sqlx::query_as::<_, FileSchema>(
             r#"SELECT * FROM files WHERE id = $1 AND deleted_at IS NULL"#,
         )
-        .bind(id as i64)
+        .bind(id)
         .fetch_optional(pool)
         .await
         .context(SqlxSnafu)?;
@@ -304,10 +312,11 @@ impl Model for FileModel {
     }
 
     async fn delete_by_id(&self, pool: &Pool<Postgres>, id: u64) -> Result<()> {
+        let id = checked_db_id(id)?;
         let result = sqlx::query(
             r#"UPDATE files SET deleted_at = NOW(), modified = NOW() WHERE id = $1 AND deleted_at IS NULL"#
         )
-            .bind(id as i64)
+            .bind(id)
             .execute(pool)
             .await
             .context(SqlxSnafu)?;
@@ -320,13 +329,14 @@ impl Model for FileModel {
         id: u64,
         data: serde_json::Value,
     ) -> Result<()> {
+        let id = checked_db_id(id)?;
         let params: FileUpdateParams = serde_json::from_value(data).context(JsonSnafu)?;
         let result = sqlx::query(
             r#"UPDATE files SET metadata = COALESCE($1, metadata), "group" = COALESCE($2, "group"), modified = NOW() WHERE id = $3 AND deleted_at IS NULL"#,
         )
             .bind(params.metadata)
             .bind(params.group)
-            .bind(id as i64)
+            .bind(id)
             .execute(pool)
             .await
             .context(SqlxSnafu)?;
@@ -358,5 +368,38 @@ impl Model for FileModel {
             .await
             .context(SqlxSnafu)?;
         Ok(files.into_iter().map(|f| f.into()).collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use time::macros::datetime;
+
+    #[test]
+    fn negative_or_zero_image_dimensions_become_none() {
+        let dt = datetime!(2026-06-05 00:00:00);
+        let schema = FileSchema {
+            id: 1,
+            filename: "a.bin".to_string(),
+            file_size: 12,
+            content_type: "application/octet-stream".to_string(),
+            group: "tibba".to_string(),
+            image_width: Some(-1),
+            image_height: Some(0),
+            metadata: Some(Json(serde_json::json!({
+                "content-type": "text/html",
+                "cache-control": "public, max-age=60"
+            }))),
+            uploader: "alice".to_string(),
+            created: dt,
+            modified: dt,
+        };
+        let file = File::from(schema);
+        assert_eq!(file.image_width, None);
+        assert_eq!(file.image_height, None);
+        let headers = file.get_metadata().expect("metadata headers");
+        assert!(headers.get("content-type").is_none());
+        assert!(headers.get("cache-control").is_some());
     }
 }

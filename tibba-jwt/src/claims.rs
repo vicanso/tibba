@@ -81,11 +81,12 @@ impl JwtUser {
             if g == "*" || g == required {
                 return true;
             }
-            if let Some(prefix) = g.strip_suffix(":*") {
-                let needle = format!("{prefix}:");
-                if required.starts_with(&needle) && required.len() > needle.len() {
-                    return true;
-                }
+            if let Some(prefix) = g.strip_suffix(":*")
+                && let Some(rest) = required.strip_prefix(prefix)
+                && rest.starts_with(':')
+                && rest.len() > 1
+            {
+                return true;
             }
         }
         false

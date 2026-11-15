@@ -45,22 +45,22 @@ workspace 内全部 `tibba-*` 均可发布，无例外。
 
 | Crate | 职责 |
 |-------|------|
-| `tibba-model` | Model 抽象与基础模型 |
-| `tibba-opendal` | 对象存储 |
-| `tibba-sql` | Postgres 连接池 |
-| `tibba-model-builtin` | 内置表模型（文件/用户关联等） |
-| `tibba-session` | Cookie + Redis 会话 |
-| `tibba-email` | 邮件发送 |
-| `tibba-oauth` | OAuth 客户端 |
-| `tibba-jwt` | JWT 鉴权 |
-| `tibba-totp` | TOTP 两步验证（密钥加密复用 `tibba-crypto`） |
-| `tibba-i18n` | 错误消息本地化 |
-| `tibba-middleware` | HTTP 中间件栈 |
-| `tibba-rbac` | 权限中间件 |
-| `tibba-router-common` | 公共路由 |
-| `tibba-router-file` | 文件路由 |
-| `tibba-router-model` | 通用 Model CRUD 路由 |
-| `tibba-router-user` | 用户/鉴权路由 |
+| `tibba-model` | Model 抽象、分页/排序白名单、响应头安全过滤与用户等基础模型 |
+| `tibba-opendal` | 对象存储抽象（分段安全配置与路径规范化校验） |
+| `tibba-sql` | PostgreSQL 连接池（分段安全初始化与 URI 校验） |
+| `tibba-model-builtin` | 内置表模型（文件/OAuth 关联/API Key/RBAC 权限等） |
+| `tibba-session` | Cookie + Redis 会话（登录轮换、服务端销毁与通配符权限判定） |
+| `tibba-email` | 邮件发送（复用 `tibba-request` 对接 Resend API） |
+| `tibba-oauth` | OAuth 客户端（GitHub/Google，复用 `tibba-request`） |
+| `tibba-jwt` | JWT 鉴权（HS256 签发校验与凭证撤销检查） |
+| `tibba-totp` | TOTP 两步验证与恢复码校验（密钥加密复用 `tibba-crypto`） |
+| `tibba-i18n` | 错误消息零侵入本地化 |
+| `tibba-middleware` | HTTP 中间件栈（request_id/CORS/CSRF/限流/ETag/安全头/幂等） |
+| `tibba-rbac` | 路由权限中间件与角色权限变更失效管理 |
+| `tibba-router-common` | 公共路由（探针/验证码/系统信息） |
+| `tibba-router-file` | 文件流式上传/图片处理/下载预签名路由 |
+| `tibba-router-model` | 通用 Schema 驱动 Model CRUD 路由与权限校验 |
+| `tibba-router-user` | 用户/鉴权/OAuth/TOTP/API Key 全栈路由与限流 |
 
 ## 扩展 Extension
 

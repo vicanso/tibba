@@ -62,9 +62,12 @@ static REVOCATION_CACHE: OnceLock<&'static tibba_cache::RedisCache> = OnceLock::
 /// tibba-jwt 模块对外的错误类型。
 #[derive(Debug, Snafu)]
 pub enum Error {
-    /// 配置 secret 为空 / TTL 非法等，`from_config` / 签名前置校验
+    /// 配置 secret 为空，`from_config` 前置校验
     #[snafu(display("jwt secret not configured"))]
     NotConfigured,
+    /// 配置非法（密钥过短、issuer 为空、TTL 非法或时间戳溢出）
+    #[snafu(display("invalid jwt config: {message}"))]
+    InvalidConfig { message: String },
     /// JWT 编码（签名）失败
     #[snafu(display("jwt sign failed: {source}"))]
     Sign {
@@ -86,12 +89,18 @@ impl From<Error> for BaseError {
                 .with_sub_category("not_configured")
                 .with_status(503)
                 .with_exception(true),
+            Error::InvalidConfig { message } => {
+                BaseError::new(format!("invalid jwt config: {message}"))
+                    .with_sub_category("invalid_config")
+                    .with_status(500)
+                    .with_exception(true)
+            }
             Error::Sign { source } => BaseError::new(source)
                 .with_sub_category("sign")
                 .with_status(500)
                 .with_exception(true),
-            // 验签失败统一映射 401——可能是过期 / 签名错 / 篡改
-            Error::Verify { source } => BaseError::new(source)
+            // 验签失败统一映射 401，对外返回脱敏静态消息，避免泄露算法/结构等内部细节
+            Error::Verify { .. } => BaseError::new("invalid or expired token")
                 .with_sub_category("verify")
                 .with_status(401)
                 .with_exception(false),
@@ -167,10 +176,13 @@ impl JwtConfig {
     }
 }
 
+/// HS256 共享密钥最小长度（字节）：低于 32 字节（256 位）在标准 HMAC-SHA256 下安全性不足。
+pub const MIN_JWT_SECRET_LEN: usize = 32;
+
 /// 签发 / 验证 HS256 access token 的句柄。无状态、可安全 `'static` clone。
 ///
 /// 内部持有 `EncodingKey` / `DecodingKey`（jsonwebtoken crate 预处理后的 secret），
-/// 以及 TTL / issuer 元信息。
+/// 以及 TTL / issuer 元信息。手写不透明 `Debug` 避免泄漏密钥状态。
 pub struct JwtSigner {
     encoding_key: jsonwebtoken::EncodingKey,
     decoding_key: jsonwebtoken::DecodingKey,
@@ -180,11 +192,49 @@ pub struct JwtSigner {
     issuer: String,
 }
 
+impl fmt::Debug for JwtSigner {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("JwtSigner")
+            .field("issuer", &self.issuer)
+            .field("access_ttl", &self.access_ttl)
+            .field("refresh_ttl", &self.refresh_ttl)
+            .finish_non_exhaustive()
+    }
+}
+
 impl JwtSigner {
-    /// 用 `JwtConfig` 构造一个 `JwtSigner`。secret 为空时返回 `NotConfigured`。
+    /// 用 `JwtConfig` 构造一个 `JwtSigner`。
+    ///
+    /// - `secret` 为空 → `NotConfigured`；
+    /// - `secret.len() < 32` / `issuer` 为空 / `access_ttl == 0` / `refresh_ttl <= access_ttl` → `InvalidConfig`。
     pub fn from_config(cfg: &JwtConfig) -> Result<Self, Error> {
         if !cfg.is_configured() {
             return Err(Error::NotConfigured);
+        }
+        if cfg.secret.len() < MIN_JWT_SECRET_LEN {
+            return Err(Error::InvalidConfig {
+                message: format!("secret must be at least {MIN_JWT_SECRET_LEN} bytes"),
+            });
+        }
+        if cfg.issuer.trim().is_empty() {
+            return Err(Error::InvalidConfig {
+                message: "issuer must not be empty".to_string(),
+            });
+        }
+        if cfg.access_ttl.as_secs() == 0 {
+            return Err(Error::InvalidConfig {
+                message: "access_ttl must be positive".to_string(),
+            });
+        }
+        if i64::try_from(cfg.access_ttl.as_secs()).is_err() {
+            return Err(Error::InvalidConfig {
+                message: "access_ttl exceeds maximum range".to_string(),
+            });
+        }
+        if cfg.refresh_ttl <= cfg.access_ttl {
+            return Err(Error::InvalidConfig {
+                message: "refresh_ttl must be greater than access_ttl".to_string(),
+            });
         }
         let secret_bytes = cfg.secret.as_bytes();
         let mut validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::HS256);
@@ -220,7 +270,15 @@ impl JwtSigner {
         permissions: Vec<String>,
     ) -> Result<String, Error> {
         let now = tibba_util::timestamp();
-        let exp = now + self.access_ttl.as_secs() as i64;
+        let ttl_secs =
+            i64::try_from(self.access_ttl.as_secs()).map_err(|_| Error::InvalidConfig {
+                message: "access_ttl exceeds i64".to_string(),
+            })?;
+        let exp = now
+            .checked_add(ttl_secs)
+            .ok_or_else(|| Error::InvalidConfig {
+                message: "token expiration timestamp overflow".to_string(),
+            })?;
         let claims = Claims {
             sub: user_id,
             account: account.to_string(),
@@ -305,5 +363,109 @@ mod tests {
             issuer: "tibba".to_string(),
         };
         assert!(format!("{empty:?}").contains("secret: \"\""));
+    }
+
+    fn valid_cfg() -> JwtConfig {
+        JwtConfig {
+            secret: "0123456789abcdef0123456789abcdef".to_string(),
+            access_ttl: Duration::from_secs(60),
+            refresh_ttl: Duration::from_secs(3600),
+            issuer: "tibba".to_string(),
+        }
+    }
+
+    #[test]
+    fn from_config_validates_secret_issuer_and_ttls() {
+        let mut cfg = valid_cfg();
+        cfg.secret = String::new();
+        assert!(matches!(
+            JwtSigner::from_config(&cfg),
+            Err(Error::NotConfigured)
+        ));
+
+        let mut cfg = valid_cfg();
+        cfg.secret = "short".to_string();
+        assert!(matches!(
+            JwtSigner::from_config(&cfg),
+            Err(Error::InvalidConfig { .. })
+        ));
+
+        let mut cfg = valid_cfg();
+        cfg.issuer = "   ".to_string();
+        assert!(matches!(
+            JwtSigner::from_config(&cfg),
+            Err(Error::InvalidConfig { .. })
+        ));
+
+        let mut cfg = valid_cfg();
+        cfg.access_ttl = Duration::ZERO;
+        assert!(matches!(
+            JwtSigner::from_config(&cfg),
+            Err(Error::InvalidConfig { .. })
+        ));
+
+        let mut cfg = valid_cfg();
+        cfg.refresh_ttl = cfg.access_ttl;
+        assert!(matches!(
+            JwtSigner::from_config(&cfg),
+            Err(Error::InvalidConfig { .. })
+        ));
+    }
+
+    #[test]
+    fn sign_verify_wrong_secret_and_expired_token() {
+        let cfg = valid_cfg();
+        let signer = JwtSigner::from_config(&cfg).expect("valid signer");
+        assert!(!format!("{signer:?}").contains(&cfg.secret));
+
+        let token = signer
+            .sign_access(
+                42,
+                "alice",
+                vec!["admin".to_string()],
+                vec!["model:*".to_string(), "file:read".to_string()],
+            )
+            .expect("sign");
+        let claims = signer.verify_access(&token).expect("verify");
+        assert_eq!(claims.sub, 42);
+        assert_eq!(claims.account, "alice");
+
+        let jwt_user = JwtUser::from(claims);
+        assert!(jwt_user.has_permission("model:read"));
+        assert!(jwt_user.has_permission("file:read"));
+        assert!(!jwt_user.has_permission("file:write"));
+        assert!(!jwt_user.has_permission("model:"));
+        assert!(!jwt_user.has_permission(""));
+
+        let mut other_cfg = valid_cfg();
+        other_cfg.secret = "fedcba9876543210fedcba9876543210".to_string();
+        let other = JwtSigner::from_config(&other_cfg).expect("other signer");
+        let err = other
+            .verify_access(&token)
+            .expect_err("wrong secret must fail");
+        let base = BaseError::from(err);
+        assert_eq!(base.status(), 401);
+        assert!(!base.is_exception());
+        assert_eq!(base.message(), "invalid or expired token");
+
+        // 过期超过 leeway（60s）的 token 应被拒绝
+        let past = tibba_util::timestamp() - 300;
+        let expired_claims = Claims {
+            sub: 42,
+            iss: cfg.issuer.clone(),
+            iat: past - 60,
+            exp: past,
+            jti: "expired-jti".to_string(),
+            account: "alice".to_string(),
+            roles: vec![],
+            permissions: vec![],
+        };
+        let expired_tok = jsonwebtoken::encode(
+            &jsonwebtoken::Header::new(jsonwebtoken::Algorithm::HS256),
+            &expired_claims,
+            &jsonwebtoken::EncodingKey::from_secret(cfg.secret.as_bytes()),
+        )
+        .expect("encode expired");
+        assert!(signer.verify_access(&expired_tok).is_err());
     }
 }

@@ -15,9 +15,7 @@ name = "tibba_opendal"
 path = "src/lib.rs"
 
 [dependencies]
-dirs = { workspace = true }
 opendal = { workspace = true }
-path-absolutize = { workspace = true }
 snafu = { workspace = true }
 serde = { workspace = true }
 tibba-config = { path = "../tibba-config", version = "0.3.0" }

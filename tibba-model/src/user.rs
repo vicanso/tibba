@@ -14,8 +14,8 @@
 
 use super::{
     CryptoSnafu, Error, JsonSnafu, Model, ModelListParams, Schema, SchemaAllowEdit, SchemaOption,
-    SchemaOptionValue, SchemaType, SchemaView, SqlxSnafu, Status, ensure_affected, format_datetime,
-    new_schema_options,
+    SchemaOptionValue, SchemaType, SchemaView, SqlxSnafu, Status, checked_db_id, ensure_affected,
+    format_datetime, new_schema_options,
 };
 use serde::{Deserialize, Serialize};
 use snafu::ResultExt;
@@ -23,6 +23,7 @@ use sqlx::FromRow;
 use sqlx::types::Json;
 use sqlx::{Pool, Postgres, QueryBuilder};
 use std::collections::HashMap;
+use std::fmt;
 use time::PrimitiveDateTime;
 type Result<T> = std::result::Result<T, Error>;
 
@@ -56,7 +57,7 @@ pub struct User {
     pub created: String,
     pub modified: String,
     pub account: String,
-    #[serde(skip_serializing)]
+    #[serde(skip_serializing, skip_deserializing, default)]
     pub password: String,
     pub nickname: Option<String>,
     pub phone: Option<String>,
@@ -68,6 +69,22 @@ pub struct User {
     pub last_login_at: Option<String>,
     /// 邮箱验证通过时间；None 表示未验证
     pub email_verified_at: Option<String>,
+}
+
+impl fmt::Debug for User {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("User")
+            .field("id", &self.id)
+            .field("status", &self.status)
+            .field("account", &self.account)
+            .field("password", &"<redacted>")
+            .field("nickname", &self.nickname)
+            .field("roles", &self.roles)
+            .field("groups", &self.groups)
+            .field("created", &self.created)
+            .field("modified", &self.modified)
+            .finish()
+    }
 }
 
 impl User {
@@ -111,11 +128,94 @@ pub struct UserUpdateParams {
     pub status: Option<i16>,
 }
 
+fn is_valid_role_or_group_item(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() <= 64
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b':' | b'*'))
+}
+
+fn is_valid_email_str(s: &str) -> bool {
+    if s.len() > 254
+        || s.bytes()
+            .any(|b| b.is_ascii_whitespace() || b.is_ascii_control())
+    {
+        return false;
+    }
+    let Some((local, domain)) = s.split_once('@') else {
+        return false;
+    };
+    !local.is_empty()
+        && !domain.is_empty()
+        && !domain.contains('@')
+        && domain.contains('.')
+        && !domain.starts_with('.')
+        && !domain.ends_with('.')
+}
+
+impl UserUpdateParams {
+    /// 校验用户更新参数，防止后台或资料接口传入超长字符串、非法角色标识或畸形邮箱。
+    pub fn validate_params(&self) -> Result<()> {
+        if let Some(nickname) = &self.nickname
+            && nickname.chars().count() > 100
+        {
+            return Err(Error::Validation {
+                message: "nickname length must not exceed 100".to_string(),
+            });
+        }
+        if let Some(phone) = &self.phone
+            && phone.chars().count() > 64
+        {
+            return Err(Error::Validation {
+                message: "phone length must not exceed 64".to_string(),
+            });
+        }
+        if let Some(avatar) = &self.avatar
+            && (avatar.chars().count() > 512 || avatar.chars().any(char::is_control))
+        {
+            return Err(Error::Validation {
+                message: "invalid avatar url".to_string(),
+            });
+        }
+        if let Some(email) = &self.email
+            && !email.is_empty()
+            && !is_valid_email_str(email)
+        {
+            return Err(Error::Validation {
+                message: "invalid email address".to_string(),
+            });
+        }
+        if let Some(status) = self.status
+            && status != Status::Disabled as i16
+            && status != Status::Enabled as i16
+        {
+            return Err(Error::Validation {
+                message: format!("invalid user status: {status}"),
+            });
+        }
+        if let Some(roles) = &self.roles
+            && (roles.len() > 32 || !roles.iter().all(|r| is_valid_role_or_group_item(r)))
+        {
+            return Err(Error::Validation {
+                message: "invalid roles list".to_string(),
+            });
+        }
+        if let Some(groups) = &self.groups
+            && (groups.len() > 32 || !groups.iter().all(|g| is_valid_role_or_group_item(g)))
+        {
+            return Err(Error::Validation {
+                message: "invalid groups list".to_string(),
+            });
+        }
+        Ok(())
+    }
+}
+
 /// TOTP 两步验证的最小鉴权态。
 ///
 /// 刻意与对外序列化的 [`User`] 隔离——密钥与恢复码哈希绝不进入 `User`，
-/// 避免经 `/me`、admin model 视图等任何 JSON 出口泄漏。
-#[derive(Debug, Clone, Default)]
+/// 避免经 `/me`、admin model 视图等任何 JSON 出口泄漏。手写 `Debug` 不暴露密文与哈希内容。
+#[derive(Clone, Default)]
 pub struct TotpState {
     /// 加密后的密钥 base64；`None` 表示未注册 2FA。
     pub secret_cipher: Option<String>,
@@ -123,6 +223,23 @@ pub struct TotpState {
     pub enabled: bool,
     /// 一次性恢复码哈希列表（未启用或无剩余时为空）。
     pub recovery_hashes: Vec<String>,
+}
+
+impl fmt::Debug for TotpState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TotpState")
+            .field("has_secret", &self.secret_cipher.is_some())
+            .field("enabled", &self.enabled)
+            .field("recovery_hashes_count", &self.recovery_hashes.len())
+            .finish()
+    }
+}
+
+/// `search_options` 轻量查询投影，避免 `SELECT *` 拉取 `password` 与资料列。
+#[derive(FromRow)]
+struct UserOptionRow {
+    id: i64,
+    account: String,
 }
 
 /// 仅用于读取 users 表 TOTP 三列的 FromRow 目标。
@@ -209,10 +326,11 @@ impl Model for UserModel {
         }
     }
     async fn get_by_id(&self, pool: &Pool<Postgres>, id: u64) -> Result<Option<Self::Output>> {
+        let id = checked_db_id(id)?;
         let result = sqlx::query_as::<_, UserSchema>(
             r#"SELECT * FROM users WHERE id = $1 AND deleted_at IS NULL"#,
         )
-        .bind(id as i64)
+        .bind(id)
         .fetch_optional(pool)
         .await
         .context(SqlxSnafu)?;
@@ -220,11 +338,12 @@ impl Model for UserModel {
         Ok(result.map(|user| user.into()))
     }
     async fn delete_by_id(&self, pool: &Pool<Postgres>, id: u64) -> Result<()> {
+        let id = checked_db_id(id)?;
         // 字面量满足 sqlx 0.9 SqlSafeStr；形状与 SOFT_DELETE_SET + ACTIVE_BY_ID_WHERE 一致
         let result = sqlx::query(
             r#"UPDATE users SET deleted_at = NOW(), modified = NOW() WHERE id = $1 AND deleted_at IS NULL"#,
         )
-        .bind(id as i64)
+        .bind(id)
         .execute(pool)
         .await
         .context(SqlxSnafu)?;
@@ -236,7 +355,9 @@ impl Model for UserModel {
         id: u64,
         data: serde_json::Value,
     ) -> Result<()> {
+        let id = checked_db_id(id)?;
         let params: UserUpdateParams = serde_json::from_value(data).context(JsonSnafu)?;
+        params.validate_params()?;
         let result = sqlx::query(
             r#"
             UPDATE users SET
@@ -264,7 +385,7 @@ impl Model for UserModel {
         .bind(params.status)
         .bind(params.nickname.as_deref())
         .bind(params.phone.as_deref())
-        .bind(id as i64)
+        .bind(id)
         .execute(pool)
         .await
         .context(SqlxSnafu)?;
@@ -330,8 +451,15 @@ impl Model for UserModel {
             page: 1,
             ..Default::default()
         };
-        let users = self.list(pool, &params).await?;
-        Ok(users
+        let mut qb = QueryBuilder::new("SELECT id, account FROM users");
+        self.push_conditions(&mut qb, &params)?;
+        params.push_pagination(&mut qb, &["id", "account"]);
+        let rows = qb
+            .build_query_as::<UserOptionRow>()
+            .fetch_all(pool)
+            .await
+            .context(SqlxSnafu)?;
+        Ok(rows
             .into_iter()
             .map(|u| SchemaOption {
                 label: u.account,
@@ -394,6 +522,7 @@ impl UserModel {
         account: &str,
         params: UserUpdateParams,
     ) -> Result<()> {
+        params.validate_params()?;
         let result = sqlx::query(
             r#"
             UPDATE users SET
@@ -527,7 +656,7 @@ impl UserModel {
     ) -> Result<()> {
         let password_hash =
             tibba_crypto::hash_password(password.as_bytes()).context(CryptoSnafu)?;
-        sqlx::query(
+        let result = sqlx::query(
             r#"UPDATE users SET password = $1, modified = NOW()
                WHERE id = $2 AND deleted_at IS NULL"#,
         )
@@ -536,7 +665,7 @@ impl UserModel {
         .execute(pool)
         .await
         .context(SqlxSnafu)?;
-        Ok(())
+        ensure_affected(&result)
     }
 
     /// 读取用户的 TOTP 鉴权态（密钥密文 / 是否启用 / 恢复码哈希）。
@@ -568,7 +697,7 @@ impl UserModel {
         user_id: i64,
         secret_cipher: &str,
     ) -> Result<()> {
-        sqlx::query(
+        let result = sqlx::query(
             r#"UPDATE users
                SET totp_secret = $1, totp_enabled_at = NULL, totp_recovery_codes = NULL, modified = NOW()
                WHERE id = $2 AND deleted_at IS NULL"#,
@@ -578,7 +707,7 @@ impl UserModel {
         .execute(pool)
         .await
         .context(SqlxSnafu)?;
-        Ok(())
+        ensure_affected(&result)
     }
 
     /// 激活 2FA：置 `enabled_at = NOW()` 并写入恢复码哈希。
@@ -589,7 +718,7 @@ impl UserModel {
         user_id: i64,
         recovery_hashes: &[String],
     ) -> Result<()> {
-        sqlx::query(
+        let result = sqlx::query(
             r#"UPDATE users
                SET totp_enabled_at = NOW(), totp_recovery_codes = $1, modified = NOW()
                WHERE id = $2 AND deleted_at IS NULL AND totp_secret IS NOT NULL"#,
@@ -599,12 +728,12 @@ impl UserModel {
         .execute(pool)
         .await
         .context(SqlxSnafu)?;
-        Ok(())
+        ensure_affected(&result)
     }
 
     /// 关闭 2FA：清空密钥 / 激活时间 / 恢复码三列。
     pub async fn disable_totp(&self, pool: &Pool<Postgres>, user_id: i64) -> Result<()> {
-        sqlx::query(
+        let result = sqlx::query(
             r#"UPDATE users
                SET totp_secret = NULL, totp_enabled_at = NULL, totp_recovery_codes = NULL, modified = NOW()
                WHERE id = $1 AND deleted_at IS NULL"#,
@@ -613,7 +742,7 @@ impl UserModel {
         .execute(pool)
         .await
         .context(SqlxSnafu)?;
-        Ok(())
+        ensure_affected(&result)
     }
 
     /// 原子消费一个恢复码哈希：存在则从数组移除并返回 `true`，否则 `false`。
@@ -637,5 +766,96 @@ impl UserModel {
         .await
         .context(SqlxSnafu)?;
         Ok(row.is_some())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn user_and_totp_state_debug_redact_secrets() {
+        let user = User {
+            id: 1,
+            status: 1,
+            created: String::new(),
+            modified: String::new(),
+            account: "alice".to_string(),
+            password: "$argon2id$very_secret_hash".to_string(),
+            nickname: None,
+            phone: None,
+            roles: Some(vec!["admin".to_string()]),
+            groups: None,
+            remark: None,
+            email: None,
+            avatar: None,
+            last_login_at: None,
+            email_verified_at: None,
+        };
+        let u_dbg = format!("{user:?}");
+        assert!(!u_dbg.contains("very_secret_hash"), "{u_dbg}");
+        assert!(u_dbg.contains("<redacted>"), "{u_dbg}");
+
+        let totp = TotpState {
+            secret_cipher: Some("cipher_secret_xyz".to_string()),
+            enabled: true,
+            recovery_hashes: vec!["hash1".to_string(), "hash2".to_string()],
+        };
+        let t_dbg = format!("{totp:?}");
+        assert!(!t_dbg.contains("cipher_secret_xyz"), "{t_dbg}");
+        assert!(!t_dbg.contains("hash1"), "{t_dbg}");
+        assert!(t_dbg.contains("recovery_hashes_count: 2"), "{t_dbg}");
+    }
+
+    #[test]
+    fn user_deserialize_ignores_injected_password() {
+        let json = serde_json::json!({
+            "id": 7,
+            "status": 1,
+            "created": "",
+            "modified": "",
+            "account": "bob",
+            "password": "attacker_injected_hash"
+        });
+        let user: User = serde_json::from_value(json).expect("deserialize");
+        assert!(user.password.is_empty());
+    }
+
+    #[test]
+    fn user_update_params_validation() {
+        let ok = UserUpdateParams {
+            email: Some("a@b.com".to_string()),
+            roles: Some(vec!["admin".to_string()]),
+            status: Some(1),
+            ..Default::default()
+        };
+        assert!(ok.validate_params().is_ok());
+
+        let bad_email = UserUpdateParams {
+            email: Some("not-an-email".to_string()),
+            ..Default::default()
+        };
+        assert!(matches!(
+            bad_email.validate_params(),
+            Err(Error::Validation { .. })
+        ));
+
+        let bad_role = UserUpdateParams {
+            roles: Some(vec!["bad role!".to_string()]),
+            ..Default::default()
+        };
+        assert!(matches!(
+            bad_role.validate_params(),
+            Err(Error::Validation { .. })
+        ));
+
+        let bad_status = UserUpdateParams {
+            status: Some(9),
+            ..Default::default()
+        };
+        assert!(matches!(
+            bad_status.validate_params(),
+            Err(Error::Validation { .. })
+        ));
     }
 }

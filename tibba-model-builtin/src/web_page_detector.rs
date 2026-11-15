@@ -20,7 +20,8 @@ use sqlx::types::Json;
 use sqlx::{Pool, Postgres, QueryBuilder};
 use tibba_model::{
     Error, JsonSnafu, Model, ModelListParams, Schema, SchemaAllowCreate, SchemaAllowEdit,
-    SchemaType, SchemaView, SqlxSnafu, format_datetime, new_schema_options,
+    SchemaType, SchemaView, SqlxSnafu, checked_db_id, ensure_affected, format_datetime,
+    new_schema_options,
 };
 use time::PrimitiveDateTime;
 
@@ -39,7 +40,7 @@ struct WebPageDetectorSchema {
     accept_language: String,
     platform: String,
     wait_for_element: String,
-    device_scale_factor: f64,
+    device_scale_factor: f32,
     timeout: i32,
     capture_screenshot: bool,
     capture_element: String,
@@ -88,7 +89,7 @@ impl From<WebPageDetectorSchema> for WebPageDetector {
             accept_language: schema.accept_language,
             platform: schema.platform,
             wait_for_element: schema.wait_for_element,
-            device_scale_factor: schema.device_scale_factor,
+            device_scale_factor: f64::from(schema.device_scale_factor),
             timeout: schema.timeout,
             capture_screenshot: schema.capture_screenshot,
             capture_element: schema.capture_element,
@@ -119,6 +120,26 @@ pub struct WebPageDetectorInsertParams {
     pub regions: Vec<String>,
     pub remark: String,
     pub created_by: u64,
+}
+
+#[derive(Deserialize, Serialize, Clone, Debug, Default)]
+pub struct WebPageDetectorUpdateParams {
+    pub status: Option<i16>,
+    pub name: Option<String>,
+    pub interval: Option<u16>,
+    pub url: Option<String>,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub user_agent: Option<String>,
+    pub accept_language: Option<String>,
+    pub platform: Option<String>,
+    pub wait_for_element: Option<String>,
+    pub device_scale_factor: Option<f64>,
+    pub timeout: Option<u32>,
+    pub capture_screenshot: Option<bool>,
+    pub capture_element: Option<String>,
+    pub regions: Option<Vec<String>>,
+    pub remark: Option<String>,
 }
 
 pub struct WebPageDetectorModel {}
@@ -240,18 +261,74 @@ impl Model for WebPageDetectorModel {
         .bind(params.accept_language.unwrap_or_default())
         .bind(params.platform.unwrap_or_default())
         .bind(params.wait_for_element.unwrap_or_default())
-        .bind(params.device_scale_factor.unwrap_or_default())
+        .bind(params.device_scale_factor.unwrap_or_default() as f32)
         .bind(params.timeout.unwrap_or_default() as i32)
         .bind(params.capture_screenshot.unwrap_or_default())
         .bind(params.capture_element.unwrap_or_default())
         .bind(params.remark)
         .bind(Json(params.regions))
-        .bind(params.created_by as i64)
+        .bind(checked_db_id(params.created_by)?)
         .fetch_one(pool)
         .await
         .context(SqlxSnafu)?;
 
         Ok(row.0 as u64)
+    }
+    async fn get_by_id(&self, pool: &Pool<Postgres>, id: u64) -> Result<Option<Self::Output>> {
+        let id = checked_db_id(id)?;
+        let result = sqlx::query_as::<_, WebPageDetectorSchema>(
+            r#"SELECT * FROM web_page_detectors WHERE id = $1 AND deleted_at IS NULL"#,
+        )
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+        .context(SqlxSnafu)?;
+        Ok(result.map(Into::into))
+    }
+    async fn delete_by_id(&self, pool: &Pool<Postgres>, id: u64) -> Result<()> {
+        let id = checked_db_id(id)?;
+        let result = sqlx::query(
+            r#"UPDATE web_page_detectors SET deleted_at = NOW(), modified = NOW() WHERE id = $1 AND deleted_at IS NULL"#,
+        )
+        .bind(id)
+        .execute(pool)
+        .await
+        .context(SqlxSnafu)?;
+        ensure_affected(&result)
+    }
+    async fn update_by_id(
+        &self,
+        pool: &Pool<Postgres>,
+        id: u64,
+        params: serde_json::Value,
+    ) -> Result<()> {
+        let id = checked_db_id(id)?;
+        let params: WebPageDetectorUpdateParams =
+            serde_json::from_value(params).context(JsonSnafu)?;
+        let result = sqlx::query(
+            r#"UPDATE web_page_detectors SET status = COALESCE($1, status), name = COALESCE($2, name), "interval" = COALESCE($3, "interval"), url = COALESCE($4, url), width = COALESCE($5, width), height = COALESCE($6, height), user_agent = COALESCE($7, user_agent), accept_language = COALESCE($8, accept_language), platform = COALESCE($9, platform), wait_for_element = COALESCE($10, wait_for_element), device_scale_factor = COALESCE($11, device_scale_factor), timeout = COALESCE($12, timeout), capture_screenshot = COALESCE($13, capture_screenshot), capture_element = COALESCE($14, capture_element), regions = COALESCE($15, regions), remark = COALESCE($16, remark), modified = NOW() WHERE id = $17 AND deleted_at IS NULL"#,
+        )
+        .bind(params.status)
+        .bind(params.name)
+        .bind(params.interval.map(|v| v as i16))
+        .bind(params.url)
+        .bind(params.width.map(|v| v as i32))
+        .bind(params.height.map(|v| v as i32))
+        .bind(params.user_agent)
+        .bind(params.accept_language)
+        .bind(params.platform)
+        .bind(params.wait_for_element)
+        .bind(params.device_scale_factor.map(|v| v as f32))
+        .bind(params.timeout.map(|v| v as i32))
+        .bind(params.capture_screenshot)
+        .bind(params.capture_element)
+        .bind(params.regions.map(Json))
+        .bind(params.remark)
+        .bind(id)
+        .execute(pool)
+        .await
+        .context(SqlxSnafu)?;
+        ensure_affected(&result)
     }
     async fn count(&self, pool: &Pool<Postgres>, params: &ModelListParams) -> Result<i64> {
         let mut qb = QueryBuilder::new("SELECT COUNT(*) FROM web_page_detectors");
@@ -296,12 +373,47 @@ impl WebPageDetectorModel {
         // 转义，遇控制字符 / unicode 会产出非法 JSON 被 Postgres 拒绝
         .bind(sqlx::types::Json(vec![region.as_str()]))
         .bind(sqlx::types::Json(vec![REGION_ANY]))
-        .bind(limit as i64)
-        .bind(offset as i64)
+        .bind(limit.clamp(1, 500) as i64)
+        .bind(offset.min(i64::MAX as u64) as i64)
         .fetch_all(pool)
         .await
         .context(SqlxSnafu)?;
 
         Ok(detectors.into_iter().map(|schema| schema.into()).collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use time::macros::datetime;
+
+    #[test]
+    fn web_page_detector_schema_converts_f32_scale_factor() {
+        let dt = datetime!(2026-06-05 00:00:00);
+        let schema = WebPageDetectorSchema {
+            id: 1,
+            status: 1,
+            name: "home".to_string(),
+            interval: 5,
+            url: "https://example.com".to_string(),
+            width: 1280,
+            height: 720,
+            user_agent: String::new(),
+            accept_language: String::new(),
+            platform: String::new(),
+            wait_for_element: String::new(),
+            device_scale_factor: 1.5_f32,
+            timeout: 3000,
+            capture_screenshot: false,
+            capture_element: String::new(),
+            remark: String::new(),
+            regions: Json(vec![]),
+            created_by: 1,
+            created: dt,
+            modified: dt,
+        };
+        let detector = WebPageDetector::from(schema);
+        assert!((detector.device_scale_factor - 1.5).abs() < 1e-6);
     }
 }

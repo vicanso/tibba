@@ -15,9 +15,11 @@
 use axum::Json;
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
+use axum::extract::FromRequestParts;
 use axum::extract::Multipart;
 use axum::extract::State;
 use axum::http::header;
+use axum::http::request::Parts;
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
@@ -26,14 +28,16 @@ use serde::{Deserialize, Serialize};
 use snafu::{OptionExt, ResultExt, Snafu};
 use sqlx::PgPool;
 use std::collections::HashMap;
+use std::io::Cursor;
 use std::path::Path;
 use std::time::Duration;
 use tibba_error::Error as BaseError;
-use tibba_model_builtin::{ConfigurationModel, FileInsertParams, FileModel, Model};
+use tibba_model_builtin::{ConfigurationModel, File, FileInsertParams, FileModel, Model};
 use tibba_opendal::{PresignResult, Storage};
-use tibba_session::UserSession;
+use tibba_session::{Session, UserSession};
 use tibba_util::{
-    JsonResult, QueryParams, uuid, x_file_group, x_file_name, x_image_format, x_image_quality,
+    JsonParams, JsonResult, QueryParams, uuid, x_file_group, x_file_name, x_image_format,
+    x_image_quality,
 };
 use utoipa::{IntoParams, OpenApi, ToSchema};
 use validator::Validate;
@@ -46,6 +50,11 @@ const ERROR_CATEGORY: &str = "file_router";
 /// 单次上传单个文件的内容上限（50 MiB）。流式分支累计超过即中止写入并返回 413；
 /// 图片分支按此上限收集，避免超大「图片」撑爆内存。部署如需更大可调整此常量。
 const MAX_UPLOAD_BYTES: usize = 50 * 1024 * 1024;
+
+/// 栅格图片宽高与缩放目标上限（像素），防止解压炸弹 / 恶意超大缩放耗尽内存。
+const MAX_IMAGE_DIMENSION: u32 = 4096;
+/// 允许的文件扩展名最大长度。
+const MAX_EXTENSION_LEN: usize = 16;
 
 /// 单次请求最多处理的文件字段数，防海量小字段的 multipart 请求耗尽资源。
 const MAX_UPLOAD_FILES: usize = 20;
@@ -60,19 +69,23 @@ enum Error {
     #[snafu(display("file not found: {name}"))]
     FileNotFound { name: String },
 
-    /// multipart 表单字段读取失败
+    /// multipart 表单字段读取失败（HTTP 400）
     #[snafu(display("multipart read fail: {source}"))]
     Multipart {
         source: axum::extract::multipart::MultipartError,
     },
 
-    /// 图片格式探测 / 解码失败（来自 `image` crate）
+    /// 图片格式探测 / 解码失败（来自 `image` crate，HTTP 400）
     #[snafu(display("image decode fail: {source}"))]
     Image {
         // `image::ImageError` 体积较大，统一装箱避免 enum 膨胀
         #[snafu(source(from(image::ImageError, Box::new)))]
         source: Box<image::ImageError>,
     },
+
+    /// 图片尺寸超限或格式无效（HTTP 400）
+    #[snafu(display("{message}"))]
+    ImageDimensions { message: String },
 
     /// 图片优化任务失败（来自 `imageoptimize` crate）
     #[snafu(display("optimize fail: {source}"))]
@@ -82,9 +95,21 @@ enum Error {
         source: Box<ImageProcessingError>,
     },
 
-    /// 预签名上传的文件名缺少扩展名，无法据此生成存储键（HTTP 400）
-    #[snafu(display("invalid filename (missing extension): {name}"))]
+    /// 预签名或上传的文件名/扩展名不合法（HTTP 400）
+    #[snafu(display("invalid filename: {name}"))]
     InvalidFilename { name: String },
+
+    /// 预签名确认键不合法（HTTP 400）
+    #[snafu(display("invalid presign key: {key}"))]
+    InvalidPresignKey { key: String },
+
+    /// 文件记录已存在（HTTP 409）
+    #[snafu(display("file already exists: {name}"))]
+    FileAlreadyExists { name: String },
+
+    /// 无权访问私有分组文件（HTTP 403）
+    #[snafu(display("forbidden to access private file"))]
+    Forbidden,
 
     /// 上传内容超过单文件上限（HTTP 413）
     #[snafu(display("upload too large (max {max} bytes)"))]
@@ -101,15 +126,50 @@ impl From<Error> for BaseError {
                 .with_sub_category("not_found")
                 .with_status(404)
                 .with_exception(false),
-            Error::Multipart { source } => BaseError::new(source).with_sub_category("multipart"),
-            Error::Image { source } => BaseError::new(source).with_sub_category("image"),
-            Error::Optimize { source } => BaseError::new(source).with_sub_category("optimize"),
-            Error::InvalidFilename { name } => {
-                BaseError::new(format!("invalid filename (missing extension): {name}"))
-                    .with_sub_category("invalid_filename")
+            Error::Multipart { source } => BaseError::new(source)
+                .with_sub_category("multipart")
+                .with_status(400)
+                .with_exception(false),
+            Error::Image { source } => BaseError::new(source)
+                .with_sub_category("image")
+                .with_status(400)
+                .with_exception(false),
+            Error::ImageDimensions { message } => BaseError::new(message)
+                .with_sub_category("image_dimensions")
+                .with_status(400)
+                .with_exception(false),
+            Error::Optimize { source } => {
+                let is_client_err = matches!(
+                    *source,
+                    ImageProcessingError::ParamsInvalid { .. } | ImageProcessingError::Image { .. }
+                );
+                let base = BaseError::new(source).with_sub_category("optimize");
+                if is_client_err {
+                    base.with_status(400).with_exception(false)
+                } else {
+                    base.with_exception(true)
+                }
+            }
+            Error::InvalidFilename { name } => BaseError::new(format!("invalid filename: {name}"))
+                .with_sub_category("invalid_filename")
+                .with_status(400)
+                .with_exception(false),
+            Error::InvalidPresignKey { key } => {
+                BaseError::new(format!("invalid presign key: {key}"))
+                    .with_sub_category("invalid_presign_key")
                     .with_status(400)
                     .with_exception(false)
             }
+            Error::FileAlreadyExists { name } => {
+                BaseError::new(format!("file already exists: {name}"))
+                    .with_sub_category("already_exists")
+                    .with_status(409)
+                    .with_exception(false)
+            }
+            Error::Forbidden => BaseError::new("forbidden to access private file")
+                .with_sub_category("forbidden")
+                .with_status(403)
+                .with_exception(false),
             Error::PayloadTooLarge { max } => {
                 BaseError::new(format!("upload too large (max {max} bytes)"))
                     .with_sub_category("payload_too_large")
@@ -125,6 +185,96 @@ impl From<Error> for BaseError {
         };
         err.with_category(ERROR_CATEGORY)
     }
+}
+
+/// 可选 Session 提取器：未挂载 Session 中间件或未带凭证时回退为 `None`。
+struct OptionalSession(Option<Session>);
+
+impl<S> FromRequestParts<S> for OptionalSession
+where
+    S: Send + Sync,
+{
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &S,
+    ) -> std::result::Result<Self, Self::Rejection> {
+        Ok(Self(Session::from_request_parts(parts, state).await.ok()))
+    }
+}
+
+/// 校验并归一化文件扩展名（仅允许 1..=16 位 ASCII 字母或数字，返回小写）。
+fn normalize_extension(file_name: &str) -> Result<String> {
+    let ext = Path::new(file_name)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or_default()
+        .trim();
+    if ext.is_empty()
+        || ext.len() > MAX_EXTENSION_LEN
+        || !ext.bytes().all(|b| b.is_ascii_alphanumeric())
+    {
+        return Err(Error::InvalidFilename {
+            name: file_name.to_string(),
+        }
+        .into());
+    }
+    Ok(ext.to_ascii_lowercase())
+}
+
+/// 判断是否为纯安全栅格图片（显式排除 `image/svg+xml`）。
+fn is_raster_image(content_type: &str) -> bool {
+    let essence = content_type
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    matches!(
+        essence.as_str(),
+        "image/png"
+            | "image/jpeg"
+            | "image/gif"
+            | "image/webp"
+            | "image/avif"
+            | "image/bmp"
+            | "image/tiff"
+    )
+}
+
+/// 仅解码图片头校验格式与宽高，阻止解压炸弹（`1..=4096`）。
+fn inspect_raster_dimensions(data: &[u8]) -> Result<(image::ImageFormat, u32, u32)> {
+    let reader = image::ImageReader::new(Cursor::new(data))
+        .with_guessed_format()
+        .map_err(|e| Error::ImageDimensions {
+            message: format!("sniff image format fail: {e}"),
+        })?;
+    let format = reader.format().ok_or_else(|| Error::ImageDimensions {
+        message: "unknown or unsupported raster image format".to_string(),
+    })?;
+    let (w, h) = reader.into_dimensions().context(ImageSnafu)?;
+    if w == 0 || h == 0 || w > MAX_IMAGE_DIMENSION || h > MAX_IMAGE_DIMENSION {
+        return Err(Error::ImageDimensions {
+            message: format!("image dimensions {w}x{h} exceed 1..={MAX_IMAGE_DIMENSION}"),
+        }
+        .into());
+    }
+    Ok((format, w, h))
+}
+
+/// 私有分组鉴权：仅上传者本人或管理员可访问 `private` 分组文件。
+fn authorize_file_access(file: &File, session: Option<&Session>) -> Result<()> {
+    if file.group != "private" {
+        return Ok(());
+    }
+    let Some(session) = session.filter(|s| s.is_login()) else {
+        return Err(tibba_session::Error::UserNotLogin.into());
+    };
+    if session.get_account() == file.uploader || session.is_admin() {
+        return Ok(());
+    }
+    Err(Error::Forbidden.into())
 }
 
 #[derive(Debug, Deserialize, Clone, Validate, IntoParams)]
@@ -158,16 +308,10 @@ async fn create_file(
     while let Some(mut field) = multipart.next_field().await.context(MultipartSnafu)? {
         let name = field.name().unwrap_or_default().to_string();
         let file_name = field.file_name().unwrap_or_default().to_string();
-        if name.is_empty() && file_name.is_empty() {
+        if name.is_empty() || file_name.is_empty() {
             continue;
         }
-        let ext = Path::new(&file_name)
-            .extension()
-            .unwrap_or_default()
-            .to_string_lossy();
-        if ext.is_empty() {
-            continue;
-        }
+        let ext = normalize_extension(&file_name)?;
         file_count += 1;
         if file_count > MAX_UPLOAD_FILES {
             return Err(Error::TooManyFiles {
@@ -177,7 +321,7 @@ async fn create_file(
         }
         let file = format!("{}.{}", uuid(), ext);
 
-        // 先按文件名猜测类型：图片需整图缓冲以解码宽高，其余大文件走流式直写
+        // 先按文件名猜测类型：仅对栅格图片缓冲并用 header 解码宽高（排除 SVG），其余大文件走流式直写
         let guessed = mime_guess2::from_path(&file_name).first_or_octet_stream();
         let mut params = FileInsertParams {
             group: create_file_params.group.clone(),
@@ -187,9 +331,8 @@ async fn create_file(
             ..Default::default()
         };
 
-        if guessed.type_() == "image" {
-            // 图片：需解码取宽高，且预览/优化链路本就要整图，故缓冲读取。按上限收集，
-            // 超限即 413，避免超大「图片」撑爆内存（图片体积本应有界）
+        if is_raster_image(guessed.essence_str()) {
+            // 栅格图片：按上限收集并用 ImageReader::into_dimensions 只读文件头防解压炸弹
             let mut data = Vec::new();
             while let Some(chunk) = field.chunk().await.context(MultipartSnafu)? {
                 let projected = data.len() + chunk.len();
@@ -208,18 +351,25 @@ async fn create_file(
                 }
                 data.extend_from_slice(&chunk);
             }
-            let format = image::guess_format(&data).context(ImageSnafu)?;
+            let (format, width, height) = inspect_raster_dimensions(&data)?;
             params.content_type = format.to_mime_type().to_string();
-            let image = image::load_from_memory_with_format(&data, format).context(ImageSnafu)?;
-            params.width = Some(image.width() as i32);
-            params.height = Some(image.height() as i32);
+            params.width = Some(width as i32);
+            params.height = Some(height as i32);
             params.file_size = data.len() as i64;
             storage.write_with(&file, data, vec![]).await?;
         } else {
-            // 非图片（视频 / 归档等大文件）：边收边写，内存占用恒定，避免整文件入内存 OOM
+            // 非栅格图片（SVG / 视频 / 归档等）：边收边写，内存占用恒定，避免整文件 OOM
             let mut writer = storage.writer(&file).await?;
             let mut size: i64 = 0;
-            while let Some(chunk) = field.chunk().await.context(MultipartSnafu)? {
+            loop {
+                let chunk = match field.chunk().await {
+                    Ok(Some(c)) => c,
+                    Ok(None) => break,
+                    Err(e) => {
+                        let _ = writer.abort().await;
+                        return Err(Error::Multipart { source: e }.into());
+                    }
+                };
                 size += chunk.len() as i64;
                 // 单字段或请求累计超上限：中止写入（清理半截对象）并返回 413，不再继续收流
                 if size > MAX_UPLOAD_BYTES as i64 {
@@ -242,43 +392,29 @@ async fn create_file(
                     return Err(e.into());
                 }
             }
-            writer.close().await?;
+            if let Err(e) = writer.close().await {
+                let _ = storage.delete(&file).await;
+                return Err(e.into());
+            }
             params.file_size = size;
         }
 
-        // 累加本字段实际字节，供后续字段的请求级总量判断
-        total_bytes += params.file_size;
-        FileModel::new().insert_file(pool, params).await?;
+        // 累加本字段实际字节；若写库失败则删除存储中的孤儿对象后再返回错误
+        let field_size = params.file_size;
+        if let Err(err) = FileModel::new().insert_file(pool, params).await {
+            let _ = storage.delete(&file).await;
+            return Err(err.into());
+        }
+        total_bytes += field_size;
 
         files.insert(name, file);
     }
     Ok(Json(files))
 }
 
-/// 决定响应的 `Content-Disposition`：仅图片允许 `inline` 渲染，其余一律 `attachment`。
-///
-/// 上传时 content_type 来自客户端文件名猜测，攻击者可上传声明为 `text/html` 的文件；
-/// 若 inline 服务于同源，浏览器会直接渲染 → 存储型 XSS。强制 attachment 让顶层导航下载
-/// 而非渲染；`<img>`/`<video>` 等嵌入式加载不受 attachment 影响，仍正常工作。
+/// 决定响应的 `Content-Disposition`：仅安全栅格图片允许 `inline` 渲染，其余（含 SVG）一律 `attachment`。
 fn content_disposition_for(content_type: &str) -> &'static str {
-    // 只有**栅格**图片允许 inline。此前是 `starts_with("image/")`，把
-    // `image/svg+xml` 也放了进去——SVG 是能内嵌 <script> 的 XML 文档，上传一个
-    // evil.svg 再直接打开下载链接，脚本就在应用同源执行（存储型 XSS）。
-    let essence = content_type
-        .split(';')
-        .next()
-        .unwrap_or_default()
-        .trim()
-        .to_ascii_lowercase();
-    const INLINE_SAFE: &[&str] = &[
-        "image/png",
-        "image/jpeg",
-        "image/gif",
-        "image/webp",
-        "image/avif",
-        "image/bmp",
-    ];
-    if INLINE_SAFE.contains(&essence.as_str()) {
+    if is_raster_image(content_type) {
         "inline"
     } else {
         "attachment"
@@ -326,9 +462,11 @@ struct GetFileParams {
     quality: Option<u8>,
     /// 是否对图片做优化/压缩，缺省 true
     optimize: Option<bool>,
-    /// 缩放目标宽度（像素）
+    /// 缩放目标宽度（像素，1..=4096）
+    #[validate(range(min = 1, max = 4096))]
     width: Option<u32>,
-    /// 缩放目标高度（像素）
+    /// 缩放目标高度（像素，1..=4096）
+    #[validate(range(min = 1, max = 4096))]
     height: Option<u32>,
 }
 
@@ -339,11 +477,13 @@ struct GetFileParams {
     params(GetFileParams),
     responses(
         (status = 200, description = "文件内容（图片可按参数优化/缩放），二进制流"),
+        (status = 403, description = "无权访问私有分组文件"),
         (status = 404, description = "文件不存在")
     )
 )]
 async fn get_file(
     State((storage, pool)): State<(&'static Storage, &'static PgPool)>,
+    session: OptionalSession,
     QueryParams(params): QueryParams<GetFileParams>,
 ) -> Result<impl IntoResponse> {
     let file = FileModel::new()
@@ -352,21 +492,25 @@ async fn get_file(
         .context(FileNotFoundSnafu {
             name: params.name.clone(),
         })?;
+    authorize_file_access(&file, session.0.as_ref())?;
     let mut data = storage.read(&params.name).await?;
     let mut content_type = file.content_type.clone();
     // mime 形如 `image/png`，取斜杠后一段作为扩展名；无斜杠时返回原串
-    let ext = content_type.split('/').next_back().unwrap_or_default();
-    let format = params.format.clone().unwrap_or_else(|| ext.to_string());
+    let ext = content_type
+        .split('/')
+        .next_back()
+        .unwrap_or_default()
+        .to_string();
+    let format = params.format.clone().unwrap_or_else(|| ext.clone());
     let mut headers = header::HeaderMap::with_capacity(8);
-    if params.optimize.unwrap_or(true) && content_type.starts_with("image") {
-        let image = ProcessImage::new(data.to_vec(), ext).context(OptimizeSnafu)?;
+    if params.optimize.unwrap_or(true) && is_raster_image(&content_type) {
+        let raw = data.to_vec();
+        let _ = inspect_raster_dimensions(&raw)?;
         let mut tasks = vec![];
         if params.width.is_some() || params.height.is_some() {
-            tasks.push(vec![
-                "resize".to_string(),
-                params.width.unwrap_or(0).to_string(),
-                params.height.unwrap_or(0).to_string(),
-            ]);
+            let w = params.width.unwrap_or(0).min(MAX_IMAGE_DIMENSION);
+            let h = params.height.unwrap_or(0).min(MAX_IMAGE_DIMENSION);
+            tasks.push(vec!["resize".to_string(), w.to_string(), h.to_string()]);
         }
         tasks.push(vec![
             "optim".to_string(),
@@ -376,26 +520,33 @@ async fn get_file(
         ]);
         tasks.push(vec!["diff".to_string()]);
 
-        let image = run_with_image(image, tasks).await.context(OptimizeSnafu)?;
+        let handle = tokio::runtime::Handle::current();
+        let (optimized, diff_str) = tokio::task::spawn_blocking(move || {
+            let image = ProcessImage::new(raw, &ext).context(OptimizeSnafu)?;
+            let image = handle
+                .block_on(run_with_image(image, tasks))
+                .context(OptimizeSnafu)?;
+            let diff_str = format!("{:.2}", image.diff);
+            let buf = image.get_buffer().context(OptimizeSnafu)?.into_owned();
+            Ok::<(Vec<u8>, String), BaseError>((buf, diff_str))
+        })
+        .await
+        .map_err(|e| {
+            BaseError::new(format!("image optimize join fail: {e}"))
+                .with_category(ERROR_CATEGORY)
+                .with_exception(true)
+        })??;
 
-        if let Ok(diff) = HeaderValue::from_str(&format!("{:.2}", image.diff)) {
+        if let Ok(diff) = HeaderValue::from_str(&diff_str) {
             headers.insert("X-Diff", diff);
         }
 
-        data = image
-            .get_buffer()
-            .context(OptimizeSnafu)?
-            .into_owned()
-            .into();
+        data = optimized.into();
         if let Some(mime_type) = mime_guess2::from_ext(format.as_str()).first() {
             content_type = mime_type.to_string();
         }
     }
 
-    let size = data.len();
-    if size > 0 {
-        headers.insert(header::CONTENT_LENGTH, HeaderValue::from(size));
-    }
     if let Some(metadata) = file.get_metadata() {
         headers.extend(metadata);
     }
@@ -405,6 +556,8 @@ async fn get_file(
     {
         headers.extend(response_headers);
     }
+    // 使用优化变换后的真实字节数写回 Content-Length，覆盖任何过期/数据驱动头
+    headers.insert(header::CONTENT_LENGTH, HeaderValue::from(data.len()));
     // 最后写：数据驱动的头不得覆盖内容解释相关的头（防存储型 XSS）
     apply_file_security_headers(&mut headers, &content_type);
     Ok((headers, data.to_bytes()))
@@ -496,6 +649,7 @@ struct DownloadFileParams {
 )]
 async fn download_file(
     State((storage, pool)): State<(&'static Storage, &'static PgPool)>,
+    session: OptionalSession,
     headers: HeaderMap,
     QueryParams(params): QueryParams<DownloadFileParams>,
 ) -> Result<impl IntoResponse> {
@@ -506,6 +660,7 @@ async fn download_file(
         .context(FileNotFoundSnafu {
             name: params.name.clone(),
         })?;
+    authorize_file_access(&file, session.0.as_ref())?;
     let total = storage.stat(&params.name).await?.content_length();
 
     let mut resp_headers = header::HeaderMap::with_capacity(8);
@@ -617,19 +772,130 @@ async fn presign_upload(
     _session: UserSession,
     QueryParams(params): QueryParams<PresignUploadParams>,
 ) -> JsonResult<PresignResp> {
-    let ext = Path::new(&params.filename)
-        .extension()
-        .unwrap_or_default()
-        .to_string_lossy();
-    if ext.is_empty() {
-        return Err(Error::InvalidFilename {
-            name: params.filename.clone(),
-        }
-        .into());
-    }
+    let ext = normalize_extension(&params.filename)?;
     let key = format!("{}.{}", uuid(), ext);
     let result = storage.presign_write(&key, PRESIGN_EXPIRE).await?;
     Ok(Json(presign_resp(key, result)))
+}
+
+/// 校验预签名确认键必须符合 `{uuid}.{ext}` 形状（避免任意已有对象被冒领）。
+fn is_presigned_uuid_key(key: &str) -> bool {
+    let Some((stem, ext)) = key.split_once('.') else {
+        return false;
+    };
+    let is_uuid = stem.len() == 36
+        && stem.bytes().enumerate().all(|(i, b)| {
+            if matches!(i, 8 | 13 | 18 | 23) {
+                b == b'-'
+            } else {
+                b.is_ascii_hexdigit()
+            }
+        });
+    is_uuid
+        && !ext.is_empty()
+        && ext.len() <= MAX_EXTENSION_LEN
+        && ext.bytes().all(|b| b.is_ascii_alphanumeric())
+}
+
+#[derive(Debug, Deserialize, Clone, Validate, ToSchema)]
+struct PresignConfirmParams {
+    /// 文件所属分组（与上传时声明一致）
+    #[validate(custom(function = "x_file_group"))]
+    group: String,
+    /// `GET /files/presign/upload` 返回的对象键（`{uuid}.{ext}`）
+    #[validate(custom(function = "x_file_name"))]
+    key: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+struct PresignConfirmResp {
+    /// 文件表记录 ID
+    id: u64,
+    /// 已登记对象键
+    key: String,
+    /// 通过 storage.stat 读取到的真实字节大小
+    file_size: i64,
+    /// 文件 MIME 类型
+    content_type: String,
+}
+
+/// `POST /files/presign/confirm` —— 确认直传完成并将对象元数据登记入库。
+#[utoipa::path(
+    post,
+    path = "/files/presign/confirm",
+    tag = "file",
+    request_body = PresignConfirmParams,
+    responses(
+        (status = 200, description = "登记成功", body = PresignConfirmResp),
+        (status = 400, description = "对象键不合法"),
+        (status = 401, description = "未登录"),
+        (status = 404, description = "对象尚未上传到存储"),
+        (status = 409, description = "对象已登记")
+    )
+)]
+async fn presign_confirm(
+    State((storage, pool)): State<(&'static Storage, &'static PgPool)>,
+    session: UserSession,
+    JsonParams(params): JsonParams<PresignConfirmParams>,
+) -> JsonResult<PresignConfirmResp> {
+    if !is_presigned_uuid_key(&params.key) {
+        return Err(Error::InvalidPresignKey {
+            key: params.key.clone(),
+        }
+        .into());
+    }
+    let ext = normalize_extension(&params.key)?;
+    if FileModel::new()
+        .get_by_name(pool, &params.key)
+        .await?
+        .is_some()
+    {
+        return Err(Error::FileAlreadyExists {
+            name: params.key.clone(),
+        }
+        .into());
+    }
+
+    let meta = storage.stat(&params.key).await?;
+    let file_size_u64 = meta.content_length();
+    if file_size_u64 > MAX_UPLOAD_BYTES as u64 {
+        return Err(Error::PayloadTooLarge {
+            max: MAX_UPLOAD_BYTES,
+        }
+        .into());
+    }
+    let file_size = i64::try_from(file_size_u64).unwrap_or(MAX_UPLOAD_BYTES as i64);
+    let content_type = meta
+        .content_type()
+        .filter(|ct| !ct.trim().is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| {
+            mime_guess2::from_ext(&ext)
+                .first_or_octet_stream()
+                .essence_str()
+                .to_string()
+        });
+
+    let id = FileModel::new()
+        .insert_file(
+            pool,
+            FileInsertParams {
+                group: params.group,
+                filename: params.key.clone(),
+                file_size,
+                content_type: content_type.clone(),
+                uploader: session.get_account().to_string(),
+                ..Default::default()
+            },
+        )
+        .await?;
+
+    Ok(Json(PresignConfirmResp {
+        id,
+        key: params.key,
+        file_size,
+        content_type,
+    }))
 }
 
 #[derive(Debug, Deserialize, Clone, Validate, IntoParams)]
@@ -652,21 +918,23 @@ struct PresignDownloadParams {
     responses(
         (status = 200, description = "返回预签名下载请求（key/method/url/headers/expires_in）", body = PresignResp),
         (status = 401, description = "未登录"),
+        (status = 403, description = "无权访问私有分组文件"),
         (status = 404, description = "对象不存在")
     )
 )]
 async fn presign_download(
     State((storage, pool)): State<(&'static Storage, &'static PgPool)>,
-    _session: UserSession,
+    session: UserSession,
     QueryParams(params): QueryParams<PresignDownloadParams>,
 ) -> JsonResult<PresignResp> {
     // 仅对已登记对象签名：未登记直接 404，避免被用来探测存储桶
-    FileModel::new()
+    let file = FileModel::new()
         .get_by_name(pool, &params.name)
         .await?
         .context(FileNotFoundSnafu {
             name: params.name.clone(),
         })?;
+    authorize_file_access(&file, Some(&*session))?;
     let result = storage.presign_read(&params.name, PRESIGN_EXPIRE).await?;
     Ok(Json(presign_resp(params.name, result)))
 }
@@ -699,6 +967,10 @@ pub fn new_file_router(params: FileRouterParams) -> Router {
             get(presign_upload).with_state((params.storage, params.pool)),
         )
         .route(
+            "/presign/confirm",
+            post(presign_confirm).with_state((params.storage, params.pool)),
+        )
+        .route(
             "/presign/download",
             get(presign_download).with_state((params.storage, params.pool)),
         )
@@ -707,8 +979,8 @@ pub fn new_file_router(params: FileRouterParams) -> Router {
 /// 本路由模块的 OpenAPI 文档片段（路径相对 `/files` 已在注解里写全）。
 #[derive(OpenApi)]
 #[openapi(
-    paths(create_file, get_file, download_file, presign_upload, presign_download),
-    components(schemas(PresignResp)),
+    paths(create_file, get_file, download_file, presign_upload, presign_confirm, presign_download),
+    components(schemas(PresignResp, PresignConfirmParams, PresignConfirmResp)),
     tags((name = "file", description = "文件上传与预览"))
 )]
 struct FileApiDoc;
@@ -829,5 +1101,40 @@ mod tests {
             parse_byte_range("bytes=-0", 1000),
             RangeSpec::Unsatisfiable
         ));
+    }
+
+    #[test]
+    fn extension_validation_and_presign_key_format() {
+        assert_eq!(
+            super::normalize_extension("Photo.PNG").expect("valid ext"),
+            "png"
+        );
+        assert!(super::normalize_extension("noext").is_err());
+        assert!(super::normalize_extension("bad.p$h").is_err());
+        assert!(super::normalize_extension(&format!("a.{}", "x".repeat(17))).is_err());
+
+        assert!(super::is_presigned_uuid_key(
+            "01936b8c-1234-7000-8000-000000000001.webp"
+        ));
+        assert!(!super::is_presigned_uuid_key("arbitrary.webp"));
+        assert!(!super::is_presigned_uuid_key(
+            "dir/01936b8c-1234-7000-8000-000000000001.webp"
+        ));
+    }
+
+    #[test]
+    fn error_mapping_and_raster_detection() {
+        let img_err = super::BaseError::from(super::Error::ImageDimensions {
+            message: "too wide".to_string(),
+        });
+        assert_eq!(img_err.status(), 400);
+        assert!(!img_err.is_exception());
+
+        let forbidden = super::BaseError::from(super::Error::Forbidden);
+        assert_eq!(forbidden.status(), 403);
+
+        assert!(super::is_raster_image("image/png"));
+        assert!(!super::is_raster_image("image/svg+xml"));
+        assert!(!super::is_raster_image("application/pdf"));
     }
 }

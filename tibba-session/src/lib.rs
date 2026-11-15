@@ -59,13 +59,13 @@ impl From<Error> for BaseError {
 
             // 未登录，返回 401
             Error::UserNotLogin => BaseError::new("user not login")
-                .with_sub_category("user")
+                .with_sub_category("not_logged_in")
                 .with_status(401)
                 .with_exception(false),
 
             // 无管理员权限，返回 403
             Error::UserNotAdmin => BaseError::new("user not admin")
-                .with_sub_category("user")
+                .with_sub_category("not_admin")
                 .with_status(403)
                 .with_exception(false),
 
@@ -104,10 +104,11 @@ fn one_grants(granted: &str, required: &str) -> bool {
     if granted == required {
         return true;
     }
-    // "resource:*" 通配前缀：required 必须以 "resource:" 起头才命中
-    if let Some(prefix) = granted.strip_suffix(":*") {
-        let needle = format!("{prefix}:");
-        return required.starts_with(&needle) && required.len() > needle.len();
+    // "resource:*" 通配前缀：required 必须以 "resource:" 起头才命中（零堆分配）
+    if let Some(prefix) = granted.strip_suffix(":*")
+        && let Some(rest) = required.strip_prefix(prefix)
+    {
+        return rest.starts_with(':') && rest.len() > 1;
     }
     false
 }

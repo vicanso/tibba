@@ -4,11 +4,11 @@
 
 > **分层**：标准（Standard）— 标准 REST 构件，依赖核心
 
-基于 OpenDAL 的统一存储抽象（本地/S3/HTTP 等），供文件上传下载。
+基于 OpenDAL 的统一存储抽象（本地/S3/HTTP 等），支持分段安全配置、路径规范化校验与文件流读写，供文件上传下载使用。
 
 ## 依赖
 
-依赖：tibba-config, tibba-error, tibba-util
+依赖：`tibba-config`、`tibba-error`、`tibba-util`
 
 ## 在工作区中的位置
 

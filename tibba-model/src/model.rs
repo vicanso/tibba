@@ -193,19 +193,27 @@ pub trait Model: Send + Sync {
         }
 
         if let Some(filters) = params.parse_filters()? {
-            if let Some(modified) = filters.get("modified")
-                && let Some((start, end)) = modified.split_once(',')
-            {
-                // 与其它时间过滤统一走 parse_primitive_datetime（RFC3339 先归一到 UTC），
-                // 绑定 time::PrimitiveDateTime，不再依赖 sqlx 的 chrono feature；
-                // 解析失败沿用旧行为：忽略该边界而非报错
-                if let Ok(dt) = parse_primitive_datetime(start) {
-                    qb.push(" AND modified >= ");
-                    qb.push_bind(dt);
-                }
-                if let Ok(dt) = parse_primitive_datetime(end) {
-                    qb.push(" AND modified <= ");
-                    qb.push_bind(dt);
+            if let Some(modified) = filters.get("modified") {
+                let modified = modified.trim();
+                if !modified.is_empty() {
+                    let (start, end) =
+                        modified
+                            .split_once(',')
+                            .ok_or_else(|| Error::InvalidDatetime {
+                                value: modified.to_string(),
+                            })?;
+                    let start = start.trim();
+                    if !start.is_empty() {
+                        let dt = parse_primitive_datetime(start)?;
+                        qb.push(" AND modified >= ");
+                        qb.push_bind(dt);
+                    }
+                    let end = end.trim();
+                    if !end.is_empty() {
+                        let dt = parse_primitive_datetime(end)?;
+                        qb.push(" AND modified <= ");
+                        qb.push_bind(dt);
+                    }
                 }
             }
             self.push_filter_conditions(qb, &filters)?;
@@ -399,5 +407,34 @@ mod tests {
         assert!(SOFT_DELETE_SET.contains("deleted_at"));
         assert!(ACTIVE_BY_ID_WHERE.contains("deleted_at IS NULL"));
         assert_eq!(ACTIVE_WHERE, " WHERE deleted_at IS NULL");
+    }
+
+    #[test]
+    fn push_conditions_rejects_invalid_modified_range() {
+        struct Dummy;
+        impl Model for Dummy {
+            type Output = serde_json::Value;
+            fn new() -> Self {
+                Self
+            }
+            async fn schema_view(&self, _pool: &Pool<Postgres>) -> SchemaView {
+                SchemaView::default()
+            }
+        }
+        let params = ModelListParams {
+            filters: Some(r#"{"modified":"not-a-date,2026-06-05T00:00:00Z"}"#.to_string()),
+            ..Default::default()
+        };
+        let mut qb = QueryBuilder::<Postgres>::new("SELECT 1 FROM t");
+        let err = Dummy.push_conditions(&mut qb, &params).unwrap_err();
+        assert!(matches!(err, Error::InvalidDatetime { .. }));
+
+        let no_comma = ModelListParams {
+            filters: Some(r#"{"modified":"2026-06-05T00:00:00Z"}"#.to_string()),
+            ..Default::default()
+        };
+        let mut qb2 = QueryBuilder::<Postgres>::new("SELECT 1 FROM t");
+        let err2 = Dummy.push_conditions(&mut qb2, &no_comma).unwrap_err();
+        assert!(matches!(err2, Error::InvalidDatetime { .. }));
     }
 }

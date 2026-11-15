@@ -20,6 +20,7 @@ use axum::response::Response;
 use scopeguard::defer;
 use snafu::ResultExt;
 use std::time::Duration;
+use subtle::ConstantTimeEq;
 use tibba_cache::RedisCache;
 use tibba_runtime::CTX;
 use tokio::time::sleep;
@@ -80,8 +81,8 @@ pub async fn wait(State(params): State<WaitParams>, req: Request, next: Next) ->
         return res;
     }
 
-    // Calculate remaining time to wait
-    let elapsed = CTX.get().elapsed();
+    // Calculate remaining time to wait；若外层未初始化 CTX 则回退为 0 耗时
+    let elapsed = CTX.try_with(|ctx| ctx.elapsed()).unwrap_or_default();
     let remaining_wait = params.wait.saturating_sub(elapsed);
 
     // Only wait if the remaining time is significant (>= 10ms)
@@ -90,6 +91,20 @@ pub async fn wait(State(params): State<WaitParams>, req: Request, next: Next) ->
     }
 
     res
+}
+
+const CAPTCHA_REDIS_PREFIX: &str = "captcha:";
+
+fn is_valid_captcha_key(key: &str) -> bool {
+    !key.is_empty()
+        && key.len() <= 64
+        && key
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
+fn ct_str_eq(a: &str, b: &str) -> bool {
+    a.len() == b.len() && bool::from(a.as_bytes().ct_eq(b.as_bytes()))
 }
 
 /// Middleware to validate captcha tokens in incoming requests
@@ -101,7 +116,7 @@ pub async fn wait(State(params): State<WaitParams>, req: Request, next: Next) ->
 /// * `next` - The next middleware handler
 ///
 /// # Format
-/// The X-Captcha header should contain a colon-separated string with 3 parts:
+/// The X-Captcha header should contain a colon-separated string with 2 parts:
 /// `key:code` where:
 /// - key: unique key to look up the stored captcha code
 /// - code: the actual captcha code to validate
@@ -110,7 +125,7 @@ pub async fn validate_captcha(
     req: Request,
     next: Next,
 ) -> Result<Response, tibba_error::Error> {
-    // 构造统一的 captcha 错误，避免 4 处重复同样的 struct 字面量
+    // 构造统一的 captcha 错误，避免多处重复 struct 字面量
     let make_err = |msg: &str| -> Error {
         Error::Captcha {
             message: msg.to_string(),
@@ -129,20 +144,40 @@ pub async fn validate_captcha(
         .split_once(':')
         .ok_or_else(|| make_err("captcha parameter is invalid, expect 'key:code'"))?;
 
-    // magic code 用于测试环境绕过实际验证
-    if !magic_code.is_empty() && user_code == magic_code {
+    if !is_valid_captcha_key(key) {
+        return Err(make_err("captcha key is invalid").into());
+    }
+    let cache_key = format!("{CAPTCHA_REDIS_PREFIX}{key}");
+
+    // magic code 用于测试环境绕过实际验证，同时消费对应一次性键防残留
+    if !magic_code.is_empty() && ct_str_eq(user_code, &magic_code) {
+        let _ = cache.del(&cache_key).await;
         return Ok(next.run(req).await);
     }
 
     // 一次性读取并删除存储的验证码
-    let code = cache.get_del::<String>(key).await?;
+    let code = cache.get_del::<String>(&cache_key).await?;
     let Some(code) = code else {
         return Err(make_err("captcha is expired").into());
     };
 
-    if code != user_code {
+    if !ct_str_eq(&code, user_code) {
         return Err(make_err("captcha is invalid").into());
     }
 
     Ok(next.run(req).await)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn captcha_key_validation_rejects_bad_keys() {
+        assert!(is_valid_captcha_key("550e8400-e29b-41d4-a716-446655440000"));
+        assert!(!is_valid_captcha_key(""));
+        assert!(!is_valid_captcha_key("bad:key"));
+        assert!(!is_valid_captcha_key("bad key"));
+        assert!(!is_valid_captcha_key(&"a".repeat(65)));
+    }
 }

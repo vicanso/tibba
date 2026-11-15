@@ -20,6 +20,7 @@ use axum::response::Response;
 use metrics::counter;
 use scopeguard::defer;
 use std::borrow::Cow;
+use std::sync::Arc;
 use tibba_error::Error;
 use tibba_runtime::{AppState, CTX};
 use tibba_util::get_header_value;
@@ -89,7 +90,12 @@ pub async fn stats(
     // Process the request
     let res = next.run(req).await;
     let status = res.status().as_u16();
-    let ctx = CTX.get();
+    let ctx = CTX.try_with(Arc::clone).ok();
+    let device_id = ctx.as_deref().map_or("", |c| c.device_id.as_str());
+    let trace_id = ctx.as_deref().map_or("", |c| c.trace_id.as_str());
+    let account = ctx.as_deref().map(|c| c.get_account());
+    let account_str = account.as_deref().map_or("", String::as_str);
+    let elapsed = ctx.as_deref().map_or(0, |c| c.elapsed_ms());
 
     // 累计请求数，按桶记录以保持标签低基数
     counter!(METRIC_HTTP_REQUESTS_TOTAL, "status" => status_bucket(status)).increment(1);
@@ -107,19 +113,19 @@ pub async fn stats(
     // Log comprehensive request/response information
     info!(
         target: LOG_TARGET,
-        device_id = ctx.device_id,           // Device identification
-        trace_id = ctx.trace_id,             // Request trace ID
-        account = %ctx.get_account(),         // Account ID
-        ip = %ip,                 // Client IP
-        processing = state.get_processing(), // Current processing count
-        x_forwarded_for,                      // Forwarded IP chain
-        referrer,                             // Request referrer
-        user_agent,                           // Client user agent
-        method = %method,                     // HTTP method
-        uri = uri.as_ref(),                   // Request URI
-        status,                               // Response status code
-        elapsed = ctx.elapsed_ms(),           // Request processing time (ms)
-        error = message,                      // Error message if any
+        device_id,                               // Device identification
+        trace_id,                                // Request trace ID
+        account = account_str,                   // Account ID
+        ip = %ip,                                // Client IP
+        processing = state.get_processing(),     // Current processing count
+        x_forwarded_for,                         // Forwarded IP chain
+        referrer,                                // Request referrer
+        user_agent,                              // Client user agent
+        method = %method,                        // HTTP method
+        uri = uri.as_ref(),                      // Request URI
+        status,                                  // Response status code
+        elapsed,                                 // Request processing time (ms)
+        error = message,                         // Error message if any
     );
 
     Ok(res)

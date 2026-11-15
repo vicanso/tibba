@@ -95,66 +95,149 @@ impl Catalog {
     }
 }
 
-/// 用 `{name}` 占位符把 `args` 插入模板。无占位符时原样返回。
+/// 最大解析的 `Accept-Language` 语言项数量，防恶意超长头造成无界分配/排序。
+const MAX_LANGUAGE_RANGES: usize = 16;
+
+/// 用 `{name}` 占位符单遍扫描把 `args` 插入模板，避免多次 `replace` 重扫与替换值二次展开。
 fn interpolate(template: &str, args: &[(&str, &str)]) -> String {
-    if args.is_empty() {
+    if args.is_empty() || !template.contains('{') {
         return template.to_string();
     }
-    let mut out = template.to_string();
-    for (name, value) in args {
-        out = out.replace(&format!("{{{name}}}"), value);
+    let mut out = String::with_capacity(template.len());
+    let mut rest = template;
+    while let Some(open) = rest.find('{') {
+        out.push_str(&rest[..open]);
+        let after_open = &rest[open + 1..];
+        if let Some(close) = after_open.find('}') {
+            let key = &after_open[..close];
+            if let Some((_, val)) = args.iter().find(|(k, _)| *k == key) {
+                out.push_str(val);
+            } else {
+                out.push('{');
+                out.push_str(key);
+                out.push('}');
+            }
+            rest = &after_open[close + 1..];
+        } else {
+            out.push('{');
+            rest = after_open;
+        }
     }
+    out.push_str(rest);
     out
 }
 
-/// 解析 `Accept-Language`（含 q 值），返回首个受支持的 locale；无则 `fallback`。
+/// 按 RFC 9110 §12.4.2 解析 qvalue（`0`..`1` 最多三位小数），转换为毫分比整数 `0..=1000`。
+fn parse_qvalue(raw: &str) -> Option<u16> {
+    let raw = raw.trim();
+    let mut parts = raw.split('.');
+    let int_part = parts.next()?;
+    let frac_part = parts.next();
+    if parts.next().is_some() {
+        return None;
+    }
+    match int_part {
+        "1" => {
+            if let Some(frac) = frac_part
+                && (frac.is_empty() || frac.len() > 3 || !frac.bytes().all(|b| b == b'0'))
+            {
+                return None;
+            }
+            Some(1000)
+        }
+        "0" => match frac_part {
+            None => Some(0),
+            Some(frac)
+                if !frac.is_empty()
+                    && frac.len() <= 3
+                    && frac.bytes().all(|b| b.is_ascii_digit()) =>
+            {
+                let mut val = 0u16;
+                let bytes = frac.as_bytes();
+                for i in 0..3 {
+                    let digit = if i < bytes.len() {
+                        u16::from(bytes[i] - b'0')
+                    } else {
+                        0
+                    };
+                    val = val * 10 + digit;
+                }
+                Some(val)
+            }
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// 按 RFC 9110 解析 `Accept-Language`，返回首个受支持的 locale；无则 `fallback`。
 ///
-/// 解析规则：按 q 值降序遍历语言标签；标签本身受支持则直接采用，否则尝试主语言回退
-/// （`zh-CN` 不支持时退到 `zh`）。`*` 通配符跳过。所有比较在小写下进行。
+/// 规则：
+/// - 最多解析前 16 个语言项；
+/// - 大小写无关解析 `q=`/`Q=` 权重并转 `0..=1000` 毫分比稳定降序排列（避免浮点排序异常）；
+/// - `q=0` 显式拒绝该标签（不参与匹配，也不被通配/前缀回退命中）；
+/// - 多段语言标签按 `rsplit_once('-')` 逐级回退（如 `zh-hant-hk` → `zh-hant` → `zh`）。
 fn negotiate_locale(
     accept_language: &str,
     fallback: &str,
     supported: impl Fn(&str) -> bool,
 ) -> String {
-    let mut tags: Vec<(String, f32)> = accept_language
-        .split(',')
-        .filter_map(|part| {
-            let part = part.trim();
-            if part.is_empty() {
-                return None;
+    let mut rejected: Vec<String> = Vec::new();
+    let mut tags: Vec<(String, u16)> = Vec::new();
+
+    for part in accept_language.split(',').take(MAX_LANGUAGE_RANGES) {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        let mut it = part.split(';');
+        let Some(raw_tag) = it.next() else {
+            continue;
+        };
+        let tag = raw_tag.trim().to_ascii_lowercase();
+        if tag.is_empty() {
+            continue;
+        }
+        let mut q: Option<u16> = Some(1000);
+        for param in it {
+            let param = param.trim();
+            if let Some((k, v)) = param.split_once('=')
+                && k.trim().eq_ignore_ascii_case("q")
+            {
+                q = parse_qvalue(v);
+                break;
             }
-            let mut it = part.split(';');
-            let tag = it.next()?.trim().to_lowercase();
-            if tag.is_empty() {
-                return None;
-            }
-            // q 值缺省 1.0；非法 q 当作 1.0
-            let q = it
-                .find_map(|p| {
-                    p.trim()
-                        .strip_prefix("q=")
-                        .and_then(|q| q.parse::<f32>().ok())
-                })
-                .unwrap_or(1.0);
-            Some((tag, q))
-        })
-        .collect();
-    // 稳定排序保证同 q 时维持原顺序（即客户端偏好顺序）
-    tags.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        }
+        let Some(q) = q else {
+            continue;
+        };
+        if q == 0 {
+            rejected.push(tag);
+        } else {
+            tags.push((tag, q));
+        }
+    }
+
+    // 稳定降序：同 q 维持客户端声明顺序
+    tags.sort_by_key(|a| std::cmp::Reverse(a.1));
 
     for (tag, _) in &tags {
         if tag == "*" {
             continue;
         }
-        if supported(tag) {
-            return tag.clone();
+        let mut cur = tag.as_str();
+        loop {
+            if !rejected.iter().any(|r| r == cur) && supported(cur) {
+                return cur.to_string();
+            }
+            match cur.rsplit_once('-') {
+                Some((parent, _)) => cur = parent,
+                None => break,
+            }
         }
-        // 主语言回退：zh-cn -> zh
-        if let Some((primary, _)) = tag.split_once('-')
-            && supported(primary)
-        {
-            return primary.to_string();
-        }
+    }
+    if rejected.iter().any(|r| r == fallback) {
+        return fallback.to_string();
     }
     fallback.to_string()
 }
@@ -184,20 +267,39 @@ pub async fn i18n(req: Request, next: Next) -> Response {
     let Some(catalog) = catalog() else {
         return next.run(req).await;
     };
-    let accept = req
-        .headers()
-        .get(header::ACCEPT_LANGUAGE)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or_default()
-        .to_string();
+    let accept_hdr = req.headers().get(header::ACCEPT_LANGUAGE).cloned();
     let res = next.run(req).await;
-    localize_response(catalog, &accept, res)
+    // 先检查响应扩展：非错误响应直接透传，避免热路径解析 Accept-Language 与分配字符串
+    if res.extensions().get::<BaseError>().is_none() {
+        return res;
+    }
+    let accept = accept_hdr
+        .as_ref()
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default();
+    localize_response(catalog, accept, res)
+}
+
+fn append_vary_accept_language(headers: &mut axum::http::HeaderMap) {
+    if let Some(existing) = headers.get(header::VARY)
+        && let Ok(val) = existing.to_str()
+    {
+        let already = val
+            .split(',')
+            .any(|v| v.trim().eq_ignore_ascii_case("accept-language") || v.trim() == "*");
+        if already {
+            return;
+        }
+        if let Ok(joined) = HeaderValue::from_str(&format!("{val}, Accept-Language")) {
+            headers.insert(header::VARY, joined);
+            return;
+        }
+    }
+    headers.insert(header::VARY, HeaderValue::from_static("Accept-Language"));
 }
 
 /// 使用协商后的语言目录本地化错误响应体。
 fn localize_response(catalog: &Catalog, accept: &str, mut res: Response) -> Response {
-    let locale = catalog.negotiate(accept);
-
     // 仅本应用错误响应带 Error 扩展；非错误响应直接透传
     let Some(error) = res.extensions().get::<BaseError>().cloned() else {
         return res;
@@ -206,17 +308,30 @@ fn localize_response(catalog: &Catalog, accept: &str, mut res: Response) -> Resp
     if error.should_redact() && error.code().is_none() {
         return res;
     }
-    // key 优先级：显式 code > sub_category > category
-    let key = error
-        .code()
-        .or_else(|| error.sub_category())
-        .unwrap_or_else(|| error.category());
-    if key.is_empty() {
-        return res;
-    }
-    let Some(translated) = catalog.translate(&locale, key, &[]) else {
+    let locale = catalog.negotiate(accept);
+    // 查找优先级：code > "{category}.{sub_category}" > sub_category > category
+    let translated = if let Some(code) = error.code() {
+        catalog.translate(&locale, code, &[])
+    } else if let Some(sub) = error.sub_category() {
+        if !error.category().is_empty() {
+            let scoped = format!("{}.{sub}", error.category());
+            catalog
+                .translate(&locale, &scoped, &[])
+                .or_else(|| catalog.translate(&locale, sub, &[]))
+                .or_else(|| catalog.translate(&locale, error.category(), &[]))
+        } else {
+            catalog.translate(&locale, sub, &[])
+        }
+    } else if !error.category().is_empty() {
+        catalog.translate(&locale, error.category(), &[])
+    } else {
+        None
+    };
+
+    let Some(translated) = translated else {
         return res;
     };
+    append_vary_accept_language(res.headers_mut());
     // 译文与原文一致且非脱敏改写则无需重序列化
     if !error.should_redact() && translated == error.message() {
         return res;
@@ -337,5 +452,73 @@ mod tests {
         let body = ready_body_json(res);
         assert_eq!(body["message"], "internal server error");
         assert!(body.get("exception").is_none());
+    }
+
+    #[test]
+    fn rfc9110_accept_language_qvalue_and_multi_segment_fallback() {
+        let catalog = Catalog::new("en")
+            .add("zh-hant", "k", "繁體")
+            .add("zh", "k", "简体")
+            .add("en", "k", "English");
+        // 大写 Q=0 显式拒绝 zh-hant，回退到 zh；zh-hant-hk 多级 rsplit_once 回退
+        assert_eq!(catalog.negotiate("zh-Hant-HK;Q=0.9, en;q=0.5"), "zh-hant");
+        assert_eq!(catalog.negotiate("zh-hant;Q=0, zh;q=0.5, en;q=0.8"), "en");
+        // 拒绝项不得通过前缀回退命中
+        assert_eq!(catalog.negotiate("zh;q=0, zh-cn;q=0.9, en;q=0.4"), "en");
+        // 超过 16 项截断，不触发无界解析
+        let many = (0..30)
+            .map(|i| format!("x{i};q=0.1"))
+            .chain(std::iter::once("zh;q=1".to_string()))
+            .collect::<Vec<_>>()
+            .join(", ");
+        assert_eq!(catalog.negotiate(&many), "en");
+    }
+
+    #[test]
+    fn single_pass_interpolate_and_scoped_error_lookup_with_vary() {
+        use axum::response::IntoResponse;
+
+        assert_eq!(
+            interpolate(
+                "{a} + {b} + {a} + {missing} + {unclosed",
+                &[("a", "{b}"), ("b", "2")]
+            ),
+            "{b} + 2 + {b} + {missing} + {unclosed"
+        );
+
+        let catalog = Catalog::new("en")
+            .add("en", "session.not_logged_in", "Please sign in.")
+            .add("zh", "session.not_logged_in", "请先登录。")
+            .add("zh", "session", "会话错误。")
+            .add("zh", "fallback_sub", "按 sub_category 命中。");
+
+        let err = BaseError::new("user not login")
+            .with_category("session")
+            .with_sub_category("not_logged_in")
+            .with_status(401);
+        let mut res = err.into_response();
+        res.headers_mut()
+            .insert(header::VARY, HeaderValue::from_static("Origin"));
+        let res = localize_response(&catalog, "zh-CN", res);
+        let vary = res
+            .headers()
+            .get(header::VARY)
+            .and_then(|v| v.to_str().ok())
+            .unwrap();
+        assert!(
+            vary.contains("Origin") && vary.contains("Accept-Language"),
+            "{vary}"
+        );
+        let body = ready_body_json(res);
+        assert_eq!(body["message"], "请先登录。");
+
+        // 无 sub_category 精确 scoped 项时，先试 bare sub_category，再回退 category
+        let err_cat = BaseError::new("other")
+            .with_category("session")
+            .with_sub_category("unknown_sub")
+            .with_status(400);
+        let res_cat = localize_response(&catalog, "zh", err_cat.into_response());
+        let body_cat = ready_body_json(res_cat);
+        assert_eq!(body_cat["message"], "会话错误。");
     }
 }

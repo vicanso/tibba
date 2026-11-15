@@ -18,10 +18,14 @@ path = "src/lib.rs"
 [dependencies]
 axum = { workspace = true }
 axum-extra = { workspace = true }
+nanoid = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 snafu = { workspace = true }
 sqlx = { workspace = true }
+subtle = { workspace = true }
+time = { workspace = true }
+tokio = { workspace = true }
 tracing = { workspace = true }
 tibba-cache = { path = "../tibba-cache", version = "0.3.0" }
 # 登录密码校验（Argon2）与旧式 sha256 存量的无感升级

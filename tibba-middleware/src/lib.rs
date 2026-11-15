@@ -50,20 +50,31 @@ pub enum Error {
     /// 响应 body 超过 idempotency 缓存上限，无法安全缓存。HTTP 503。
     #[snafu(display("idempotency body too large (limit {limit_bytes} bytes)"))]
     IdempotencyBodyTooLarge { limit_bytes: usize },
+    /// `Idempotency-Key` 格式无效或超长。HTTP 400。
+    #[snafu(display("invalid idempotency key"))]
+    IdempotencyInvalidKey,
+    /// 同作用域同 `Idempotency-Key` 请求仍在执行中。HTTP 409。
+    #[snafu(display("idempotent request already in progress"))]
+    IdempotencyConflict,
 }
 
 impl From<Error> for BaseError {
     fn from(val: Error) -> Self {
         let err = match val {
-            Error::Captcha { message } => BaseError::new(message).with_sub_category("captcha"),
+            Error::Captcha { message } => BaseError::new(message)
+                .with_sub_category("captcha")
+                .with_status(400)
+                .with_exception(false),
             Error::TooManyRequests { limit, current } => BaseError::new(format!(
                 "too many requests, limit: {limit}, current: {current}"
             ))
             .with_sub_category("too_many_requests")
-            .with_status(429),
-            Error::HeaderValue { source } => {
-                BaseError::new(source).with_sub_category("header_value")
-            }
+            .with_status(429)
+            .with_exception(false),
+            Error::HeaderValue { source } => BaseError::new(source)
+                .with_sub_category("header_value")
+                .with_status(400)
+                .with_exception(false),
             // 三种 CSRF 失败统一 403，sub_category 区分具体原因方便排障
             Error::CsrfCookieMissing => BaseError::new("csrf cookie missing")
                 .with_sub_category("csrf_cookie_missing")
@@ -89,9 +100,26 @@ impl From<Error> for BaseError {
             .with_sub_category("idempotency_body_too_large")
             .with_status(503)
             .with_exception(true),
+            Error::IdempotencyInvalidKey => BaseError::new("invalid idempotency key")
+                .with_sub_category("idempotency_invalid_key")
+                .with_status(400)
+                .with_exception(false),
+            Error::IdempotencyConflict => BaseError::new("idempotent request already in progress")
+                .with_sub_category("idempotency_conflict")
+                .with_status(409)
+                .with_exception(false),
         };
         err.with_category("middleware")
     }
+}
+
+/// 稳定的 64 位 FNV-1a 哈希，用于缩短并隔离幂等/限流 Redis 键中的不可信输入。
+pub(crate) fn fnv1a_64(bytes: &[u8]) -> u64 {
+    const OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
+    const PRIME: u64 = 0x0100_0000_01b3;
+    bytes.iter().fold(OFFSET_BASIS, |hash, &byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(PRIME)
+    })
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -149,8 +177,10 @@ where
 ///
 /// IPv6 的 ULA（fc00::/7）与 link-local（fe80::/10）用前缀手判，兼容 MSRV 1.83
 /// （`Ipv6Addr::is_unique_local` 等在更高版本才稳定）。
+/// 先做 `ip.to_canonical()`，避免双栈监听下 IPv4-mapped IPv6（如 `::ffff:10.0.0.1`）
+/// 落入公网 IPv6 分支而误判不可信（或绕过代理识别）。
 fn is_trusted_proxy(ip: IpAddr) -> bool {
-    match ip {
+    match ip.to_canonical() {
         IpAddr::V4(v4) => v4.is_loopback() || v4.is_private() || v4.is_link_local(),
         IpAddr::V6(v6) => {
             let first = v6.segments()[0];
@@ -193,12 +223,12 @@ pub use tracker::*;
 
 #[cfg(test)]
 mod tests {
-    use super::is_trusted_proxy;
+    use super::{BaseError, Error, is_trusted_proxy};
     use std::net::IpAddr;
 
     #[test]
     fn trusted_proxy_recognizes_private_and_loopback() {
-        // 可信：回环 / 私网 / 链路本地
+        // 可信：回环 / 私网 / 链路本地（含双栈 IPv4-mapped IPv6）
         for ip in [
             "127.0.0.1",
             "::1",
@@ -208,18 +238,55 @@ mod tests {
             "169.254.1.1",
             "fd00::1", // ULA
             "fe80::1", // link-local
+            "::ffff:127.0.0.1",
+            "::ffff:10.0.0.1",
+            "::ffff:172.16.0.1",
+            "::ffff:192.168.1.1",
         ] {
-            let parsed: IpAddr = ip.parse().unwrap();
+            let parsed: IpAddr = ip.parse().expect("valid trusted ip");
             assert!(is_trusted_proxy(parsed), "{ip} 应视为可信对端");
         }
     }
 
     #[test]
     fn public_peer_is_not_trusted() {
-        // 公网对端：不采信转发头
-        for ip in ["1.1.1.1", "8.8.8.8", "203.0.113.7", "2606:4700::1111"] {
-            let parsed: IpAddr = ip.parse().unwrap();
+        // 公网对端：不采信转发头（含公网 IPv4-mapped IPv6）
+        for ip in [
+            "1.1.1.1",
+            "8.8.8.8",
+            "203.0.113.7",
+            "2606:4700::1111",
+            "::ffff:1.1.1.1",
+            "::ffff:8.8.8.8",
+        ] {
+            let parsed: IpAddr = ip.parse().expect("valid public ip");
             assert!(!is_trusted_proxy(parsed), "{ip} 不应视为可信对端");
         }
+    }
+
+    #[test]
+    fn error_status_and_exception_mapping() {
+        let captcha = BaseError::from(Error::Captcha {
+            message: "bad captcha".to_string(),
+        });
+        assert_eq!(captcha.category(), "middleware");
+        assert_eq!(captcha.status(), 400);
+        assert!(!captcha.is_exception());
+
+        let too_many = BaseError::from(Error::TooManyRequests {
+            limit: 5,
+            current: 6,
+        });
+        assert_eq!(too_many.status(), 429);
+        assert!(!too_many.is_exception());
+
+        let conflict = BaseError::from(Error::IdempotencyConflict);
+        assert_eq!(conflict.status(), 409);
+        assert_eq!(conflict.sub_category(), Some("idempotency_conflict"));
+        assert!(!conflict.is_exception());
+
+        let invalid_key = BaseError::from(Error::IdempotencyInvalidKey);
+        assert_eq!(invalid_key.status(), 400);
+        assert!(!invalid_key.is_exception());
     }
 }

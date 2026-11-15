@@ -4,11 +4,11 @@
 
 > **分层**：标准（Standard）— 标准 REST 构件，依赖核心
 
-签名 Cookie + Redis Session，UserSession/AdminSession 提取器与权限判定。
+签名 Cookie + Redis Session 会话管理：支持登录会话 ID 轮换、服务端销毁并下发清除 Cookie、`UserSession`/`AdminSession`/`SessionResponse` 提取器、`CTX` 账号同步及细粒度通配符权限判定。
 
 ## 依赖
 
-依赖：tibba-cache, tibba-error, tibba-runtime, tibba-util
+依赖：`tibba-cache`、`tibba-error`、`tibba-runtime`、`tibba-util`（测试依赖：`tibba-config`）
 
 ## 在工作区中的位置
 

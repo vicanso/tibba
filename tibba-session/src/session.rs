@@ -17,7 +17,7 @@ use axum::Json;
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
 use axum::response::{IntoResponse, Response};
-use axum_extra::extract::cookie::{Key, SignedCookieJar};
+use axum_extra::extract::cookie::{CookieJar, Key, SignedCookieJar};
 use cookie::{CookieBuilder, SameSite};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -164,6 +164,10 @@ pub struct Session {
     cache: &'static RedisCache,
     params: Arc<SessionParams>,
     data: SessionData,
+    /// `with_account` 轮换 ID 前的原会话 ID，供 `save` / `destroy` 清理旧 Redis 键。
+    prev_id: Option<String>,
+    /// 本次请求中会话被重置/销毁，需要在响应下发清除 Cookie（Max-Age=0）。
+    cleared: bool,
 }
 
 impl Session {
@@ -173,6 +177,8 @@ impl Session {
             cache,
             params,
             data: SessionData::default(),
+            prev_id: None,
+            cleared: false,
         }
     }
 
@@ -204,16 +210,19 @@ impl Session {
         self.data.renewal_count < self.params.max_renewal
     }
 
-    /// 设置账号和用户 ID，账号变更时自动生成新的 Session ID，支持链式调用。
+    /// 设置账号和用户 ID。每次登录/绑定账号始终轮换为新 Session ID（防会话固定攻击），
+    /// 并保留旧 ID 供 `save()` / `destroy()` 删除 Redis 中遗留键。
     #[must_use]
     pub fn with_account(mut self, account: impl Into<String>, user_id: i64) -> Self {
         let account = account.into();
-        if self.data.id.is_empty() || self.data.account != account {
-            self.data.id = uuid();
+        if !self.data.id.is_empty() && self.prev_id.is_none() {
+            self.prev_id = Some(self.data.id.clone());
         }
+        self.data.id = uuid();
         self.data.account = account;
         self.data.user_id = user_id;
         self.data.iat = timestamp();
+        self.cleared = false;
         self
     }
 
@@ -242,6 +251,11 @@ impl Session {
     /// 返回该用户本次 Session 内的权限码列表（只读视图）。
     pub fn get_permissions(&self) -> &[String] {
         &self.data.permissions
+    }
+
+    /// 返回该用户本次 Session 内的角色列表（只读视图）。
+    pub fn get_roles(&self) -> &[String] {
+        &self.data.roles
     }
 
     /// 判断当前 Session 是否拥有 `required` 权限码。
@@ -291,9 +305,9 @@ impl Session {
         }
     }
 
-    /// 续期：累加续期计数并更新签发时间戳。
+    /// 续期：饱和累加续期计数并更新签发时间戳。
     pub fn refresh(&mut self) {
-        self.data.renewal_count += 1;
+        self.data.renewal_count = self.data.renewal_count.saturating_add(1);
         self.data.iat = timestamp();
     }
 
@@ -309,12 +323,16 @@ impl Session {
 
     /// 返回 Session 过期时间的格式化字符串。
     pub fn get_expired_at(&self) -> String {
-        from_timestamp(self.data.iat + self.params.ttl, 0)
+        from_timestamp(self.data.iat.saturating_add(self.params.ttl), 0)
     }
 
     /// 返回 `true` 表示 Session 将在 1 小时内过期。
     pub fn is_will_expired(&self) -> bool {
-        self.data.iat + self.params.ttl - timestamp() < 3600
+        self.data
+            .iat
+            .saturating_add(self.params.ttl)
+            .saturating_sub(timestamp())
+            < 3600
     }
 
     /// 返回 Session 签发时间的格式化字符串。
@@ -324,54 +342,77 @@ impl Session {
 
     /// 返回 `true` 表示 Session 已超过 TTL 过期。
     pub fn is_expired(&self) -> bool {
-        self.data.iat + self.params.ttl < timestamp()
+        self.data.iat <= 0 || self.data.iat.saturating_add(self.params.ttl) <= timestamp()
     }
 
-    /// 重置 Session（登出），清空所有数据。
+    /// 重置 Session（登出），清空所有数据并标记清除客户端 Cookie。
     /// 只清 `id` / `account` 会留下 `user_id` / `roles` / `groups` /
     /// `renewal_count` / `iat` 等残留字段，后续读取会拿到上一登录态的脏数据。
     pub fn reset(&mut self) {
         self.data = SessionData::default();
+        self.cleared = true;
     }
 
-    /// 将当前 Session 数据持久化到 Redis，TTL 与配置一致。
-    pub async fn save(&self) -> Result<()> {
+    /// 彻底销毁 Session：删除 Redis 中当前与轮换前的会话键，重置本地状态并清除 Cookie。
+    pub async fn destroy(&mut self) -> Result<()> {
+        if !self.data.id.is_empty() {
+            self.cache.del(&Self::get_key(&self.data.id)).await?;
+        }
+        if let Some(prev) = self.prev_id.take()
+            && prev != self.data.id
+        {
+            let _ = self.cache.del(&Self::get_key(&prev)).await;
+        }
+        self.reset();
+        Ok(())
+    }
+
+    /// 将当前 Session 数据持久化到 Redis，TTL 与配置一致；若发生过 ID 轮换则顺手删除旧键。
+    pub async fn save(&mut self) -> Result<()> {
         if self.data.id.is_empty() {
             return Err(Error::SessionIdEmpty.into());
         }
+        let ttl_secs = u64::try_from(self.params.ttl.max(1)).unwrap_or(1);
         self.cache
             .set_struct(
                 &Self::get_key(&self.data.id),
                 &self.data,
-                Some(Duration::from_secs(self.params.ttl as u64)),
+                Some(Duration::from_secs(ttl_secs)),
             )
             .await?;
+        if let Some(prev) = self.prev_id.take()
+            && prev != self.data.id
+        {
+            let _ = self.cache.del(&Self::get_key(&prev)).await;
+        }
         Ok(())
     }
 }
 
-/// 将 Session 转换为携带签名 Cookie 的 `SignedCookieJar`。
-/// Session ID 为空时将 Cookie max-age 设为 0（即删除 Cookie）。
-impl TryFrom<&Session> for SignedCookieJar {
-    type Error = tibba_error::Error;
-
-    fn try_from(se: &Session) -> Result<Self, Self::Error> {
-        let mut c = CookieBuilder::new(se.params.cookie.clone(), se.data.id.clone())
+/// 将 Session 与响应体组装为携带 Cookie 的完整响应。
+/// Session 已销毁或 ID 为空时使用无签名清除 Cookie（`Max-Age=0`）。
+fn with_session_cookie<T: IntoResponse>(se: &Session, body: T) -> Response {
+    if se.cleared || se.data.id.is_empty() {
+        let removal = CookieBuilder::new(se.params.cookie.clone(), "")
             .path("/")
             .http_only(true)
-            // SameSite=Lax：跨站请求不携带会话，缓解 CSRF，同时不影响顶层导航保持登录态。
-            // 生产环境强制 Secure，禁止明文 HTTP 传输会话；dev 允许 http 调试。
             .same_site(SameSite::Lax)
             .secure(!is_development())
-            .max_age(time::Duration::seconds(se.params.ttl));
-
-        if se.data.id.is_empty() {
-            // ID 为空表示登出，将 max-age 置 0 以清除客户端 Cookie
-            c = c.max_age(time::Duration::days(0));
-        }
-
-        Ok(SignedCookieJar::new(se.params.key.clone()).add(c))
+            .max_age(time::Duration::ZERO)
+            .build();
+        return (CookieJar::new().add(removal), body).into_response();
     }
+
+    let c = CookieBuilder::new(se.params.cookie.clone(), se.data.id.clone())
+        .path("/")
+        .http_only(true)
+        // SameSite=Lax：跨站请求不携带会话，缓解 CSRF，同时不影响顶层导航保持登录态。
+        // 生产环境强制 Secure，禁止明文 HTTP 传输会话；dev 允许 http 调试。
+        .same_site(SameSite::Lax)
+        .secure(!is_development())
+        .max_age(time::Duration::seconds(se.params.ttl));
+
+    (SignedCookieJar::new(se.params.key.clone()).add(c), body).into_response()
 }
 
 /// Session 登出/刷新接口的响应体。
@@ -384,18 +425,11 @@ struct SessionResp {
 /// 将 Session 序列化为 HTTP 响应：设置签名 Cookie + JSON 账号信息。
 impl IntoResponse for Session {
     fn into_response(self) -> Response {
-        let result: Result<SignedCookieJar, _> = (&self).try_into();
-        match result {
-            Ok(jar) => (
-                jar,
-                Json(SessionResp {
-                    account: self.data.account,
-                    renewal_count: self.data.renewal_count,
-                }),
-            )
-                .into_response(),
-            Err(err) => err.into_response(),
-        }
+        let resp = Json(SessionResp {
+            account: self.data.account.clone(),
+            renewal_count: self.data.renewal_count,
+        });
+        with_session_cookie(&self, resp)
     }
 }
 
@@ -407,11 +441,7 @@ where
     T: IntoResponse,
 {
     fn into_response(self) -> Response {
-        let result: Result<SignedCookieJar, _> = (&self.0).try_into();
-        match result {
-            Ok(jar) => (jar, self.1).into_response(),
-            Err(err) => err.into_response(),
-        }
+        with_session_cookie(&self.0, self.1)
     }
 }
 
@@ -446,7 +476,12 @@ where
             };
             let session_id = c.value();
             if session_id.len() < 36 {
-                return Err(Error::SessionIdInvalid.into());
+                debug!(
+                    target: LOG_TARGET,
+                    len = session_id.len(),
+                    "ignore malformed session cookie length; downgrade to guest"
+                );
+                return Ok(se);
             }
             if let Some(data) = se
                 .cache
@@ -459,6 +494,15 @@ where
                     iat = data.iat,
                     "load from cache"
                 );
+                // 已超过 TTL 过期时按匿名访客降级处理
+                if data.iat <= 0 || data.iat.saturating_add(se.params.ttl) <= timestamp() {
+                    debug!(
+                        target: LOG_TARGET,
+                        id = data.id,
+                        "session expired; downgrade to guest"
+                    );
+                    return Ok(se);
+                }
                 // 已被撤销（禁用 / 改角色 / 收回角色权限 / 重置密码之后）的会话按未登录处理
                 if !data.account.is_empty()
                     && is_credential_revoked(se.cache, data.user_id, &data.roles, data.iat).await?
@@ -475,11 +519,14 @@ where
                 // 回写到扩展，同一请求内后续提取无需再查 Redis
                 parts.extensions.insert(se.clone());
                 if se.is_login() {
-                    CTX.get().set_account(se.get_account());
+                    let _ = CTX.try_with(|ctx| ctx.set_account(se.get_account()));
                 }
 
                 return Ok(se);
             }
+        }
+        if se.is_login() {
+            let _ = CTX.try_with(|ctx| ctx.set_account(se.get_account()));
         }
         Ok(se)
     }
@@ -568,5 +615,118 @@ impl std::ops::Deref for AdminSession {
 impl std::ops::DerefMut for AdminSession {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::{Method, Request, header};
+    use pretty_assertions::assert_eq;
+    use std::sync::OnceLock;
+    use tibba_cache::new_redis_client;
+    use tibba_config::Config;
+    use tibba_error::Error as BaseError;
+
+    fn test_cache() -> &'static RedisCache {
+        static CACHE: OnceLock<RedisCache> = OnceLock::new();
+        CACHE.get_or_init(|| {
+            let cfg = Config::builder()
+                .add_toml("uri = \"redis://127.0.0.1:6379\"")
+                .build()
+                .expect("config");
+            let client = Box::leak(Box::new(new_redis_client(&cfg).expect("redis client")));
+            RedisCache::new(client)
+        })
+    }
+
+    fn test_params() -> Arc<SessionParams> {
+        let key = Key::from(&[0x42u8; 64]);
+        Arc::new(
+            SessionParams::new(key)
+                .with_cookie("tibba_sid")
+                .with_ttl(3600)
+                .with_max_renewal(2),
+        )
+    }
+
+    #[test]
+    fn with_account_rotates_id_and_tracks_prev_id() {
+        let params = test_params();
+        let s1 = Session::new(test_cache(), params).with_account("alice", 1);
+        let id1 = s1.data.id.clone();
+        assert!(!id1.is_empty());
+        assert_eq!(s1.prev_id, None);
+
+        // 同账号再次登录也必须轮换新 Session ID，并记录原 ID 待清理
+        let s2 = s1.with_account("alice", 1);
+        assert_ne!(s2.data.id, id1);
+        assert_eq!(s2.prev_id.as_deref(), Some(id1.as_str()));
+    }
+
+    #[test]
+    fn cleared_or_empty_session_emits_unsigned_max_age_zero_cookie() {
+        let params = test_params();
+        let mut s = Session::new(test_cache(), params).with_account("alice", 1);
+        s.reset();
+        let resp = s.into_response();
+        let set_cookie = resp
+            .headers()
+            .get(header::SET_COOKIE)
+            .and_then(|v| v.to_str().ok())
+            .expect("Set-Cookie present");
+        assert!(set_cookie.starts_with("tibba_sid=;"), "{set_cookie}");
+        assert!(set_cookie.contains("Max-Age=0"), "{set_cookie}");
+    }
+
+    #[test]
+    fn refresh_saturates_and_error_sub_categories_are_stable() {
+        let params = test_params();
+        let mut s = Session::new(test_cache(), params).with_account("alice", 1);
+        s.data.renewal_count = u8::MAX;
+        s.refresh();
+        assert_eq!(s.data.renewal_count, u8::MAX);
+
+        let e1 = BaseError::from(Error::UserNotLogin);
+        assert_eq!(e1.status(), 401);
+        assert_eq!(e1.sub_category(), Some("not_logged_in"));
+
+        let e2 = BaseError::from(Error::UserNotAdmin);
+        assert_eq!(e2.status(), 403);
+        assert_eq!(e2.sub_category(), Some("not_admin"));
+    }
+
+    #[tokio::test]
+    async fn malformed_short_session_cookie_downgrades_to_guest() {
+        let params = test_params();
+        let seed = Session::new(test_cache(), params.clone());
+        // 构造合法签名的短 value（< 36 字符）cookie
+        let jar = SignedCookieJar::new(params.key.clone())
+            .add(CookieBuilder::new("tibba_sid", "too-short").build());
+        let resp_with_cookie = jar.into_response();
+        let signed_cookie_pair = resp_with_cookie
+            .headers()
+            .get(header::SET_COOKIE)
+            .expect("Set-Cookie header")
+            .to_str()
+            .expect("valid header str")
+            .split(';')
+            .next()
+            .expect("cookie key=val")
+            .to_string();
+
+        let mut req = Request::builder()
+            .method(Method::GET)
+            .uri("/test")
+            .header(header::COOKIE, signed_cookie_pair)
+            .body(())
+            .expect("request build");
+        req.extensions_mut().insert(seed);
+        let (mut parts, _) = req.into_parts();
+
+        let extracted = Session::from_request_parts(&mut parts, &())
+            .await
+            .expect("短 session cookie 应降级为匿名访客，不返回 500");
+        assert!(!extracted.is_login());
     }
 }

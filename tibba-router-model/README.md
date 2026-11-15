@@ -4,11 +4,11 @@
 
 > **分层**：标准（Standard）— 标准 REST 构件，依赖核心
 
-schema 驱动的动态 CRUD，支持按模型注册权限码。
+Schema 驱动的动态模型 CRUD 路由、`DynModel` / `ModelAdapter` 注册表及按模型权限码与调用方上下文（`ModelCaller`）的增删改查校验。
 
 ## 依赖
 
-依赖：tibba-error, tibba-model, tibba-runtime, tibba-session, tibba-util
+依赖：`tibba-error`、`tibba-model`、`tibba-model-builtin`、`tibba-session`、`tibba-util`
 
 ## 在工作区中的位置
 

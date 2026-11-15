@@ -39,10 +39,20 @@ pub fn get_db_pool() -> &'static PgPool {
 /// 与 [`tibba_cache::RedisCache::ping`] 对称，供 `/readyz` 深检数据库依赖；
 /// 任一环节失败即返回错误，由探针转成 503。
 pub async fn ping_db() -> Result<()> {
-    sqlx::query("SELECT 1")
-        .execute(get_db_pool())
-        .await
-        .map_err(Error::new)?;
+    let pool = DB_POOL.get().ok_or_else(|| {
+        Error::new("db pool not initialized")
+            .with_category("sql")
+            .with_sub_category("not_initialized")
+            .with_status(503)
+            .with_exception(true)
+    })?;
+    sqlx::query("SELECT 1").execute(pool).await.map_err(|e| {
+        Error::new(e)
+            .with_category("sql")
+            .with_sub_category("ping")
+            .with_status(503)
+            .with_exception(true)
+    })?;
     Ok(())
 }
 
@@ -55,9 +65,7 @@ impl Task for SqlTask {
         Box::pin(async move {
             let app_config = must_get_config();
             let stat = Arc::new(PoolStat::default());
-            let pool = new_pg_pool(&app_config.sub_config("database"), Some(stat.clone()))
-                .await
-                .map_err(Error::new)?;
+            let pool = new_pg_pool(&app_config.sub_config("database"), Some(stat.clone())).await?;
 
             // 启动期一次性应用 `./migrations/` 下的所有 SQL 迁移。
             // sqlx 内部维护 `_sqlx_migrations` 表追踪已应用版本，幂等且只补差。
@@ -65,11 +73,19 @@ impl Task for SqlTask {
             sqlx::migrate!("./migrations")
                 .run(&pool)
                 .await
-                .map_err(|e| Error::new(format!("run migrations fail: {e}")))?;
+                .map_err(|e| {
+                    Error::new(format!("run migrations fail: {e}"))
+                        .with_category("sql")
+                        .with_sub_category("migrate")
+                        .with_exception(true)
+                })?;
 
-            DB_POOL
-                .set(pool)
-                .map_err(|_| Error::new("set db pool fail"))?;
+            DB_POOL.set(pool).map_err(|_| {
+                Error::new("set db pool fail")
+                    .with_category("sql")
+                    .with_sub_category("init")
+                    .with_exception(true)
+            })?;
 
             let task = "database_performance";
             let job = Job::new_repeated(Duration::from_secs(60), move |_, _| {
@@ -79,6 +95,7 @@ impl Task for SqlTask {
                 let connection_idle = pool.num_idle();
 
                 info!(
+                    target: "tibba:sql",
                     category = task,
                     connection_size, connection_idle, connected, executions, idle_for,
                 );

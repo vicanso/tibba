@@ -34,6 +34,9 @@ pub async fn session(
     debug!(target: LOG_TARGET, "--> session");
     defer!(debug!(target: LOG_TARGET, "<-- session"););
 
-    req.extensions_mut().insert(Session::new(cache, params));
+    // 若上游路由/测试已预注入 Session，则不再覆盖
+    if req.extensions().get::<Session>().is_none() {
+        req.extensions_mut().insert(Session::new(cache, params));
+    }
     Ok(next.run(req).await)
 }

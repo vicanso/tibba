@@ -249,11 +249,29 @@ impl AuditLogModel {
     }
 }
 
-/// 按字符（而非字节）截断，避免砍坏 UTF-8。空串 / 短串直接克隆返回。
-fn truncate(s: &str, max: usize) -> String {
-    if s.chars().count() <= max {
-        s.to_string()
-    } else {
-        s.chars().take(max).collect()
+/// 按字符（而非字节）截断，避免砍坏 UTF-8；直接返回切片，零堆分配。
+fn truncate(s: &str, max_chars: usize) -> &str {
+    if s.len() <= max_chars {
+        return s;
+    }
+    match s.char_indices().nth(max_chars) {
+        Some((idx, _)) => &s[..idx],
+        None => s,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn truncate_handles_ascii_and_multibyte_boundaries() {
+        assert_eq!(truncate("hello", 5), "hello");
+        assert_eq!(truncate("hello", 10), "hello");
+        assert_eq!(truncate("hello world", 5), "hello");
+        assert_eq!(truncate("hello", 0), "");
+        assert_eq!(truncate("你好世界", 2), "你好");
+        assert_eq!(truncate("你好世界", 4), "你好世界");
+        assert_eq!(truncate("a😀b😀c", 3), "a😀b");
     }
 }

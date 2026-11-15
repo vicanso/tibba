@@ -16,6 +16,7 @@ use axum::Json;
 use axum::Router;
 use axum::extract::State;
 use axum::http::header;
+use axum::middleware::from_fn_with_state;
 use axum::response::IntoResponse;
 use axum::routing::get;
 use base64::{Engine, engine::general_purpose::STANDARD};
@@ -26,10 +27,11 @@ use snafu::{OptionExt, ResultExt, Snafu};
 use std::future::Future;
 use std::io::Cursor;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 use tibba_cache::RedisCache;
 use tibba_error::Error as BaseError;
+use tibba_middleware::{RedisIpRateLimit, redis_ip_rate_limit};
 use tibba_runtime::{AppState, current_process_system_info_async};
 use tibba_session::AdminSession;
 use tibba_util::{JsonResult, QueryParams, get_env, uuid};
@@ -65,12 +67,28 @@ enum Error {
 impl From<Error> for BaseError {
     fn from(val: Error) -> Self {
         let err = match val {
-            Error::EncodePng => BaseError::new("captcha encode png fail"),
-            Error::Image { source } => BaseError::new(source).with_exception(true),
+            Error::EncodePng => BaseError::new("captcha encode png fail")
+                .with_sub_category("encode_png")
+                .with_exception(true),
+            Error::Image { source } => BaseError::new(source)
+                .with_sub_category("image")
+                .with_exception(true),
         };
         err.with_category(ERROR_CATEGORY)
     }
 }
+
+/// 进程生命周期内不变的系统元数据 `(os, arch, hostname)`，惰性缓存避免每次请求重复 syscall。
+static STATIC_SYS_INFO: LazyLock<(String, String, String)> = LazyLock::new(|| {
+    let info = os_info::get();
+    let os = info.os_type().to_string();
+    let arch = info.architecture().unwrap_or_default().to_string();
+    let hostname = hostname::get()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+    (os, arch, hostname)
+});
 
 /// readiness 探针超时；超过即视为未就绪，K8s 会摘流量但**不**重启 Pod。
 const READINESS_TIMEOUT: Duration = Duration::from_secs(2);
@@ -204,7 +222,7 @@ async fn get_application_info(
     State(state): State<&'static AppState>,
 ) -> JsonResult<ApplicationInfo> {
     let uptime = state.get_started_at().elapsed().unwrap_or_default();
-    let os_info = os_info::get();
+    let (os, arch, hostname) = &*STATIC_SYS_INFO;
     // 采样是同步系统调用，丢到阻塞线程池，避免堵住 tokio worker
     let performance = current_process_system_info_async().await;
     let mb = 1024 * 1024;
@@ -212,13 +230,10 @@ async fn get_application_info(
     Ok(Json(ApplicationInfo {
         uptime: format_uptime_approx(uptime),
         env: get_env().to_string(),
-        arch: os_info.architecture().unwrap_or_default().to_string(),
-        os: os_info.os_type().to_string(),
+        arch: arch.clone(),
+        os: os.clone(),
         commit_id: state.get_commit_id().to_string(),
-        hostname: hostname::get()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string(),
+        hostname: hostname.clone(),
         cpu_usage: performance.cpu_usage as u32,
         memory_usage_mb: (performance.memory_usage / mb) as u32,
         open_files: performance.open_files.unwrap_or_default() as u32,
@@ -247,11 +262,42 @@ struct CaptchaInfo {
     data: String,
 }
 
+const CAPTCHA_REDIS_PREFIX: &str = "captcha:";
+const CAPTCHA_RATE_LIMIT_PER_MIN: i64 = 30;
+
+/// 在阻塞线程池中生成 4 位图形验证码及其 PNG 字节流。
+fn render_captcha_png(is_dark: bool) -> Result<(String, Vec<u8>)> {
+    // 字符集排除 '0'，避免与字母 'O' 视觉混淆
+    let mut c = Captcha::new();
+    c.set_chars(&"123456789".chars().collect::<Vec<_>>())
+        .add_chars(4)
+        .apply_filter(Noise::new(0.4))
+        .apply_filter(Wave::new(2.0, 8.0).horizontal())
+        .apply_filter(Wave::new(2.0, 8.0).vertical())
+        .view(120, 38);
+    if is_dark {
+        c.set_color([60, 60, 60]);
+    }
+    // as_png 失败时显式上抛，避免 unwrap_or_default 把空 PNG 静默发给客户端
+    let buffer = c.as_png().context(EncodePngSnafu)?;
+    if is_dark {
+        // 深色主题：对 PNG 图片进行颜色取反处理
+        let mut img = image::load_from_memory(&buffer).context(ImageSnafu)?;
+        img.invert();
+        let mut inverted: Vec<u8> = Vec::new();
+        img.write_to(&mut Cursor::new(&mut inverted), image::ImageFormat::Png)
+            .context(ImageSnafu)?;
+        Ok((c.chars_as_string(), inverted))
+    } else {
+        Ok((c.chars_as_string(), buffer))
+    }
+}
+
 /// 生成图形验证码。
 ///
 /// - `preview=true`：直接返回原始 PNG（用于开发调试），不写入 Redis。
 /// - 默认：生成 4 位纯数字验证码（排除 '0' 以避免与字母 'O' 混淆），
-///   将答案以 UUID 为键存入 Redis（TTL 5 分钟），返回 `{ id, data }` JSON。
+///   将答案以 `captcha:{id}` 为键存入 Redis（TTL 5 分钟），返回 `{ id, data }` JSON。
 /// - `theme=dark`：生成后对图片颜色取反，适配深色主题。
 #[utoipa::path(
     get,
@@ -267,32 +313,14 @@ async fn captcha(
     QueryParams(params): QueryParams<CaptchaParams>,
 ) -> Result<impl IntoResponse> {
     let is_dark = params.theme.unwrap_or_default() == "dark";
-    // 字符集排除 '0'，避免与字母 'O' 视觉混淆
-    let (text, data) = {
-        let mut c = Captcha::new();
-        c.set_chars(&"123456789".chars().collect::<Vec<_>>())
-            .add_chars(4)
-            .apply_filter(Noise::new(0.4))
-            .apply_filter(Wave::new(2.0, 8.0).horizontal())
-            .apply_filter(Wave::new(2.0, 8.0).vertical())
-            .view(120, 38);
-        if is_dark {
-            c.set_color([60, 60, 60]);
-        }
-        // as_png 失败时显式上抛，避免 unwrap_or_default 把空 PNG 静默发给客户端
-        let buffer = c.as_png().context(EncodePngSnafu)?;
-        if is_dark {
-            // 深色主题：对 PNG 图片进行颜色取反处理
-            let mut img = image::load_from_memory(&buffer).context(ImageSnafu)?;
-            img.invert();
-            let mut buffer: Vec<u8> = Vec::new();
-            img.write_to(&mut Cursor::new(&mut buffer), image::ImageFormat::Png)
-                .context(ImageSnafu)?;
-            (c.chars_as_string(), buffer)
-        } else {
-            (c.chars_as_string(), buffer)
-        }
-    };
+    let (text, data) = tokio::task::spawn_blocking(move || render_captcha_png(is_dark))
+        .await
+        .map_err(|e| {
+            BaseError::new(format!("captcha task join error: {e}"))
+                .with_category(ERROR_CATEGORY)
+                .with_sub_category("encode_png")
+                .with_exception(true)
+        })??;
 
     // 预览模式：直接返回 PNG 图片
     if params.preview.unwrap_or_default() {
@@ -300,10 +328,11 @@ async fn captcha(
         return Ok((headers, data).into_response());
     }
 
-    // 将验证码答案存入 Redis，TTL 5 分钟
+    // 将验证码答案存入 Redis（与 validate_captcha 对齐 captcha:{id} 前缀），TTL 5 分钟
     let id = uuid();
+    let cache_key = format!("{CAPTCHA_REDIS_PREFIX}{id}");
     cache
-        .set(&id, &text, Some(Duration::from_secs(5 * 60)))
+        .set(&cache_key, &text, Some(Duration::from_secs(5 * 60)))
         .await?;
     Ok(Json(CaptchaInfo {
         id,
@@ -342,7 +371,18 @@ pub fn new_common_router(params: CommonRouterParams) -> Router {
     let Some(cache) = params.cache else {
         return r;
     };
-    r.route("/commons/captcha", get(captcha).with_state(cache))
+    let limiter = RedisIpRateLimit::new(
+        cache,
+        "captcha",
+        CAPTCHA_RATE_LIMIT_PER_MIN,
+        Duration::from_secs(60),
+    );
+    r.route(
+        "/commons/captcha",
+        get(captcha)
+            .with_state(cache)
+            .route_layer(from_fn_with_state(limiter, redis_ip_rate_limit)),
+    )
 }
 
 /// 本路由模块的 OpenAPI 文档片段。
@@ -360,4 +400,49 @@ struct CommonApiDoc;
 /// 返回 common 路由的 OpenAPI 文档片段，供主 crate 合并进全局文档。
 pub fn openapi() -> utoipa::openapi::OpenApi {
     CommonApiDoc::openapi()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn error_sub_categories_are_distinct() {
+        let e1 = BaseError::from(Error::EncodePng);
+        assert_eq!(e1.category(), ERROR_CATEGORY);
+        assert_eq!(e1.sub_category(), Some("encode_png"));
+        assert!(e1.is_exception());
+
+        let img_err = image::ImageError::Limits(image::error::LimitError::from_kind(
+            image::error::LimitErrorKind::DimensionError,
+        ));
+        let e2 = BaseError::from(Error::Image {
+            source: Box::new(img_err),
+        });
+        assert_eq!(e2.category(), ERROR_CATEGORY);
+        assert_eq!(e2.sub_category(), Some("image"));
+        assert!(e2.is_exception());
+    }
+
+    #[test]
+    fn uptime_formats_at_most_two_units() {
+        assert_eq!(
+            format_uptime_approx(Duration::from_secs(2 * 3600 + 15 * 60 + 30)),
+            "2h 15m"
+        );
+    }
+
+    #[test]
+    fn static_sys_info_and_captcha_render_work() {
+        let (os, _arch, _host) = &*STATIC_SYS_INFO;
+        assert!(!os.is_empty());
+
+        let (text, png) = render_captcha_png(false).expect("light captcha");
+        assert_eq!(text.len(), 4);
+        assert!(png.starts_with(b"\x89PNG"));
+
+        let (text_dark, png_dark) = render_captcha_png(true).expect("dark captcha");
+        assert_eq!(text_dark.len(), 4);
+        assert!(png_dark.starts_with(b"\x89PNG"));
+    }
 }

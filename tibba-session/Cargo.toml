@@ -29,5 +29,11 @@ tibba-util = { path = "../tibba-util", version = "0.3.0", default-features = fal
 time = { workspace = true }
 tracing = { workspace = true }
 
+[dev-dependencies]
+http = { workspace = true }
+pretty_assertions = { workspace = true }
+tibba-config = { path = "../tibba-config", version = "0.3.0" }
+tokio = { workspace = true }
+
 [lints]
 workspace = true

@@ -25,6 +25,7 @@ use serde::{Deserialize, Serialize};
 use snafu::ResultExt;
 use sqlx::FromRow;
 use sqlx::{Pool, Postgres};
+use std::fmt;
 use tibba_model::{Error, SqlxSnafu, format_datetime};
 use time::PrimitiveDateTime;
 
@@ -78,8 +79,8 @@ pub struct ApiKeyAuth {
     pub user_id: i64,
 }
 
-/// 新建 API Key 的入参。
-#[derive(Debug, Clone)]
+/// 新建 API Key 的入参；手写 `Debug` 以遮蔽 `key_hash` 等摘要字段。
+#[derive(Clone)]
 pub struct CreateApiKeyParams<'a> {
     pub user_id: i64,
     pub name: &'a str,
@@ -87,6 +88,35 @@ pub struct CreateApiKeyParams<'a> {
     pub key_hash: &'a str,
     /// 过期天数；`None` 表示永不过期。
     pub expires_in_days: Option<i32>,
+}
+
+impl fmt::Debug for CreateApiKeyParams<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CreateApiKeyParams")
+            .field("user_id", &self.user_id)
+            .field("name", &self.name)
+            .field("key_prefix", &self.key_prefix)
+            .field("key_hash", &"<redacted>")
+            .field("expires_in_days", &self.expires_in_days)
+            .finish()
+    }
+}
+
+fn validate_create_params(params: &CreateApiKeyParams<'_>) -> Result<()> {
+    let trimmed = params.name.trim();
+    if trimmed.is_empty() || params.name.chars().count() > 100 {
+        return Err(Error::Validation {
+            message: "api key name must be non-empty and at most 100 characters".to_string(),
+        });
+    }
+    if let Some(days) = params.expires_in_days
+        && !(1..=3650).contains(&days)
+    {
+        return Err(Error::Validation {
+            message: "expires_in_days must be between 1 and 3650".to_string(),
+        });
+    }
+    Ok(())
 }
 
 #[derive(Default)]
@@ -104,6 +134,7 @@ impl ApiKeyModel {
         pool: &Pool<Postgres>,
         params: CreateApiKeyParams<'_>,
     ) -> Result<i64> {
+        validate_create_params(&params)?;
         let row: (i64,) = sqlx::query_as(
             r#"INSERT INTO api_keys (user_id, name, key_prefix, key_hash, expires_at)
                VALUES ($1, $2, $3, $4,
@@ -191,5 +222,44 @@ impl ApiKeyModel {
             .await
             .context(SqlxSnafu)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_params<'a>(name: &'a str, expires_in_days: Option<i32>) -> CreateApiKeyParams<'a> {
+        CreateApiKeyParams {
+            user_id: 1,
+            name,
+            key_prefix: "tibba_abc",
+            key_hash: "deadbeef_secret_hash",
+            expires_in_days,
+        }
+    }
+
+    #[test]
+    fn debug_redacts_key_hash() {
+        let p = sample_params("ci-token", Some(30));
+        let rendered = format!("{p:?}");
+        assert!(rendered.contains("<redacted>"));
+        assert!(!rendered.contains("deadbeef_secret_hash"));
+    }
+
+    #[test]
+    fn validate_create_params_checks_name_and_expiry() {
+        assert!(validate_create_params(&sample_params("", None)).is_err());
+        assert!(validate_create_params(&sample_params("   ", None)).is_err());
+        let too_long = "a".repeat(101);
+        assert!(validate_create_params(&sample_params(&too_long, None)).is_err());
+        assert!(validate_create_params(&sample_params("ok", Some(0))).is_err());
+        assert!(validate_create_params(&sample_params("ok", Some(-1))).is_err());
+        assert!(validate_create_params(&sample_params("ok", Some(3651))).is_err());
+
+        let exact_100 = "你".repeat(100);
+        assert!(validate_create_params(&sample_params(&exact_100, Some(1))).is_ok());
+        assert!(validate_create_params(&sample_params("ok", Some(3650))).is_ok());
+        assert!(validate_create_params(&sample_params("ok", None)).is_ok());
     }
 }

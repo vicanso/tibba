@@ -17,6 +17,7 @@ use axum::extract::Request;
 use axum::extract::State;
 use axum::middleware::Next;
 use axum::response::Response;
+use std::sync::Arc;
 use tibba_error::Error;
 use tibba_runtime::CTX;
 use tracing::{error, info};
@@ -50,13 +51,14 @@ pub async fn user_tracker(
 ) -> Result<Response> {
     let res = next.run(req).await;
 
-    let ctx = CTX.get();
+    let ctx = CTX.try_with(Arc::clone).ok();
     // Milliseconds elapsed since the request entered the middleware stack
-    let elapsed = ctx.elapsed_ms();
-    let device_id = &ctx.device_id;
-    let trace_id = &ctx.trace_id;
+    let elapsed = ctx.as_deref().map_or(0, |c| c.elapsed_ms());
+    let device_id = ctx.as_deref().map_or("", |c| c.device_id.as_str());
+    let trace_id = ctx.as_deref().map_or("", |c| c.trace_id.as_str());
     // Authenticated account name; empty string when the user is not logged in
-    let account = ctx.get_account();
+    let account = ctx.as_deref().map(|c| c.get_account());
+    let account_str = account.as_deref().map_or("", String::as_str);
     // HTTP status code — useful for correlating with access logs
     let status = res.status().as_u16();
 
@@ -66,7 +68,7 @@ pub async fn user_tracker(
             device_id,
             trace_id,
             name = params.name,   // Logical operation name (e.g. "user_login")
-            account = %account,
+            account = account_str,
             step = params.step,   // Fine-grained step within the operation
             status,
             elapsed,
@@ -99,7 +101,7 @@ pub async fn user_tracker(
         device_id,
         trace_id,
         name = params.name,
-        account = %account,
+        account = account_str,
         step = params.step,
         status,
         error,

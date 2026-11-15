@@ -48,7 +48,58 @@ pub fn init() {
         .add("zh", "csrf_mismatch", "CSRF 令牌不匹配，疑似伪造请求。")
         // 请求超时（main::handle_error，category = "timeout"）
         .add("en", "timeout", "Request took too long.")
-        .add("zh", "timeout", "请求处理超时，请稍后重试。");
+        .add("zh", "timeout", "请求处理超时，请稍后重试。")
+        // 认证与权限（tibba-session）
+        .add(
+            "en",
+            "not_logged_in",
+            "Authentication required, please sign in.",
+        )
+        .add("zh", "not_logged_in", "请先登录后再操作。")
+        .add("en", "not_admin", "Administrator privileges required.")
+        .add("zh", "not_admin", "需要管理员权限。")
+        .add(
+            "en",
+            "permission_denied",
+            "You do not have permission to perform this action.",
+        )
+        .add("zh", "permission_denied", "当前账号缺少执行该操作的权限。")
+        // 幂等、验证码与参数校验（tibba-middleware / tibba-model / tibba-router-*）
+        .add(
+            "en",
+            "idempotency_invalid_key",
+            "Invalid Idempotency-Key header.",
+        )
+        .add(
+            "zh",
+            "idempotency_invalid_key",
+            "幂等键（Idempotency-Key）格式不合法。",
+        )
+        .add(
+            "en",
+            "idempotency_conflict",
+            "A request with this Idempotency-Key is already in progress.",
+        )
+        .add(
+            "zh",
+            "idempotency_conflict",
+            "相同幂等键的请求正在处理中，请勿重复提交。",
+        )
+        .add("en", "captcha", "Invalid or expired verification code.")
+        .add("zh", "captcha", "图形验证码错误或已过期。")
+        .add("en", "validation", "Invalid request parameters.")
+        .add("zh", "validation", "请求参数校验未通过。")
+        // 登录与账号安全状态（tibba-router-user）
+        .add("en", "bad_credentials", "Incorrect account or password.")
+        .add("zh", "bad_credentials", "账号或密码错误。")
+        .add(
+            "en",
+            "too_many_attempts",
+            "Too many failed attempts, please try again later.",
+        )
+        .add("zh", "too_many_attempts", "尝试次数过多，请稍后再试。")
+        .add("en", "account_disabled", "This account has been disabled.")
+        .add("zh", "account_disabled", "该账号已被禁用。");
     // 已注册（如热重载重复调用）则忽略，不覆盖
     let _ = tibba_i18n::init(catalog);
 }

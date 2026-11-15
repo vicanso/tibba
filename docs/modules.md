@@ -16,8 +16,6 @@ graph TD
 
     crypto --> error
 
-    email --> error
-
     i18n --> error
 
     job --> error
@@ -62,12 +60,11 @@ graph TD
     session --> runtime
     session --> util
 
+    email --> error
+    email --> request
+
     llm --> error
     llm --> request
-
-    notify --> email
-    notify --> error
-    notify --> request
 
     oauth --> error
     oauth --> request
@@ -88,12 +85,6 @@ graph TD
     rbac --> model-builtin
     rbac --> session
 
-    router-common --> cache
-    router-common --> error
-    router-common --> runtime
-    router-common --> session
-    router-common --> util
-
     router-file --> error
     router-file --> model-builtin
     router-file --> opendal
@@ -102,12 +93,23 @@ graph TD
 
     router-model --> error
     router-model --> model
-    router-model --> runtime
+    router-model --> model-builtin
     router-model --> session
     router-model --> util
 
     tenant --> error
     tenant --> session
+
+    notify --> email
+    notify --> error
+    notify --> request
+
+    router-common --> cache
+    router-common --> error
+    router-common --> middleware
+    router-common --> runtime
+    router-common --> session
+    router-common --> util
 
     router-user --> cache
     router-user --> crypto

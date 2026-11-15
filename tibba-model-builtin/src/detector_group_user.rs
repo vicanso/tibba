@@ -20,8 +20,8 @@ use sqlx::{Pool, Postgres, QueryBuilder};
 use std::collections::HashMap;
 use tibba_model::{
     Error, JsonSnafu, Model, ModelListParams, Schema, SchemaAllowCreate, SchemaAllowEdit,
-    SchemaOption, SchemaOptionValue, SchemaType, SchemaView, SqlxSnafu, ensure_affected,
-    format_datetime, parse_primitive_datetime,
+    SchemaOption, SchemaOptionValue, SchemaType, SchemaView, SqlxSnafu, checked_db_id,
+    ensure_affected, format_datetime, parse_primitive_datetime,
 };
 use time::PrimitiveDateTime;
 
@@ -76,7 +76,7 @@ struct DetectorGroupUserSchema {
     status: i16,
     effective_start_time: PrimitiveDateTime,
     effective_end_time: PrimitiveDateTime,
-    invited_by: i64,
+    invited_by: Option<i64>,
     remark: String,
     created: PrimitiveDateTime,
     modified: PrimitiveDateTime,
@@ -91,7 +91,7 @@ pub struct DetectorGroupUser {
     pub status: i16,
     pub effective_start_time: String,
     pub effective_end_time: String,
-    pub invited_by: i64,
+    pub invited_by: Option<i64>,
     pub remark: String,
     pub created: String,
     pub modified: String,
@@ -154,7 +154,7 @@ impl Model for DetectorGroupUserModel {
                     value: SchemaOptionValue::Integer(group.id),
                 });
             }
-            group_options.sort_by_key(|option| option.label.clone());
+            group_options.sort_unstable_by(|a, b| a.label.cmp(&b.label));
         }
         SchemaView {
             schemas: vec![
@@ -269,10 +269,11 @@ impl Model for DetectorGroupUserModel {
     }
 
     async fn get_by_id(&self, pool: &Pool<Postgres>, id: u64) -> Result<Option<Self::Output>> {
+        let id = checked_db_id(id)?;
         let result = sqlx::query_as::<_, DetectorGroupUserSchema>(
             r#"SELECT * FROM detector_group_users WHERE id = $1 AND deleted_at IS NULL"#,
         )
-        .bind(id as i64)
+        .bind(id)
         .fetch_optional(pool)
         .await
         .context(SqlxSnafu)?;
@@ -281,12 +282,13 @@ impl Model for DetectorGroupUserModel {
     }
 
     async fn delete_by_id(&self, pool: &Pool<Postgres>, id: u64) -> Result<()> {
+        let id = checked_db_id(id)?;
         // 与其他 Model 保持一致，加 `deleted_at IS NULL` 守卫：
         // 重复删除不再覆盖原始 deleted_at，保留审计痕迹
         let result = sqlx::query(
             r#"UPDATE detector_group_users SET deleted_at = NOW(), modified = NOW() WHERE id = $1 AND deleted_at IS NULL"#,
         )
-        .bind(id as i64)
+        .bind(id)
         .execute(pool)
         .await
         .context(SqlxSnafu)?;
@@ -300,6 +302,7 @@ impl Model for DetectorGroupUserModel {
         id: u64,
         params: serde_json::Value,
     ) -> Result<()> {
+        let id = checked_db_id(id)?;
         let params: DetectorGroupUserUpdateParams =
             serde_json::from_value(params).context(JsonSnafu)?;
 
@@ -312,7 +315,7 @@ impl Model for DetectorGroupUserModel {
         .bind(params.effective_end_time.as_deref().map(parse_primitive_datetime).transpose()?)
         .bind(params.invited_by.map(|v| v as i64))
         .bind(params.remark)
-        .bind(id as i64)
+        .bind(id)
         .execute(pool)
         .await
         .context(SqlxSnafu)?;
@@ -345,5 +348,31 @@ impl Model for DetectorGroupUserModel {
             .await
             .context(SqlxSnafu)?;
         Ok(users.into_iter().map(|s| s.into()).collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use time::macros::datetime;
+
+    #[test]
+    fn detector_group_user_handles_null_invited_by() {
+        let dt = datetime!(2026-06-05 00:00:00);
+        let schema = DetectorGroupUserSchema {
+            id: 1,
+            user_id: 2,
+            group_id: 3,
+            role: 1,
+            status: 1,
+            effective_start_time: dt,
+            effective_end_time: dt,
+            invited_by: None,
+            remark: String::new(),
+            created: dt,
+            modified: dt,
+        };
+        let item = DetectorGroupUser::from(schema);
+        assert_eq!(item.invited_by, None);
     }
 }

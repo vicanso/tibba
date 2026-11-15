@@ -4,11 +4,11 @@
 
 > **分层**：标准（Standard）— 标准 REST 构件，依赖核心
 
-文件、用户 OAuth 关联、权限、HTTP 探测等内置表模型（脚手架默认依赖）。
+内置业务表模型：`File`、`UserOauthLink`、`ApiKey`、`RolePermission`、`AuditLog`、`Configuration` 及 HTTP 探测模型（脚手架默认依赖）。
 
 ## 依赖
 
-依赖：tibba-model
+依赖：`tibba-model`
 
 ## 在工作区中的位置
 

@@ -25,7 +25,7 @@
 //!
 //! GitHub 要求每个请求带 `User-Agent`，否则 403。
 
-use crate::{ApiSnafu, Error, HttpSnafu, JsonSnafu, LOG_TARGET};
+use crate::{ApiSnafu, Error, HttpSnafu, JsonSnafu, LOG_TARGET, format_error_body};
 use http::Method;
 use http::header::{ACCEPT, HeaderValue, USER_AGENT};
 use serde::Deserialize;
@@ -121,11 +121,22 @@ impl GitHubProvider {
         let http = http_client()?;
         let access_token = self.exchange_code(&http, code).await?;
         let user = self.fetch_user(&http, &access_token).await?;
-        let primary_verified_email = self
+        if user.id <= 0 {
+            return Err(Error::Api {
+                provider: "github".to_string(),
+                status: 200,
+                message: "provider returned non-positive user id".to_string(),
+            });
+        }
+        let primary_verified_email = match self
             .fetch_primary_verified_email(&http, &access_token)
             .await
-            .ok()
-            .flatten();
+        {
+            Ok(email) => email,
+            // 仅 403（未授 email scope）或 404 允许无邮箱继续；网络/5xx 错误正常上报
+            Err(Error::Api { status, .. }) if status == 403 || status == 404 => None,
+            Err(err) => return Err(err),
+        };
         debug!(
             target: LOG_TARGET,
             login = %user.login,
@@ -166,17 +177,23 @@ impl GitHubProvider {
             .await
             .context(HttpSnafu)?;
         if !resp.is_success() {
+            let msg = format_error_body(&resp.body);
+            if matches!(resp.status, 400 | 401 | 403 | 422) {
+                return Err(Error::Rejected {
+                    provider: "github".to_string(),
+                    message: msg,
+                });
+            }
             return Err(Error::Api {
                 provider: "github".to_string(),
                 status: resp.status,
-                message: String::from_utf8_lossy(&resp.body).into_owned(),
+                message: msg,
             });
         }
         let parsed: TokenResp = serde_json::from_slice(&resp.body).context(JsonSnafu)?;
         if let Some(err) = parsed.error {
-            return Err(Error::Api {
+            return Err(Error::Rejected {
                 provider: "github".to_string(),
-                status: resp.status,
                 message: parsed.error_description.unwrap_or(err),
             });
         }
@@ -209,7 +226,7 @@ impl GitHubProvider {
             let msg = serde_json::from_slice::<WithMessage>(&resp.body)
                 .ok()
                 .and_then(|w| w.message)
-                .unwrap_or_else(|| String::from_utf8_lossy(&resp.body).into_owned());
+                .unwrap_or_else(|| format_error_body(&resp.body));
             return Err(Error::Api {
                 provider: "github".to_string(),
                 status: resp.status,
@@ -240,7 +257,7 @@ impl GitHubProvider {
             return Err(Error::Api {
                 provider: "github".to_string(),
                 status: resp.status,
-                message: String::from_utf8_lossy(&resp.body).into_owned(),
+                message: format_error_body(&resp.body),
             });
         }
         let emails: Vec<RawEmail> = serde_json::from_slice(&resp.body).context(JsonSnafu)?;

@@ -111,6 +111,10 @@ async fn try_send_reset_email(state: &PasswordResetState, account: &str) -> Resu
     let Some(user) = UserModel::new().get_by_account(state.pool, account).await? else {
         return Ok(());
     };
+    // 禁用账号或尚未完成邮箱验证的账号不发送重置邮件，仍静默返回 Ok(()) 避免枚举
+    if !user.is_enabled() || user.email_verified_at.is_none() {
+        return Ok(());
+    }
     let Some(email) = user.email.as_deref().filter(|s| !s.is_empty()) else {
         return Ok(());
     };
@@ -171,20 +175,19 @@ pub(crate) async fn confirm_reset(
     JsonParams(params): JsonParams<ConfirmParams>,
 ) -> Result<StatusCode> {
     let key = format!("{REDIS_PREFIX}{}", params.token);
-    let user_id: Option<i64> = state.cache.get_struct(&key).await?;
+    // 原子读取并删除一次性重置令牌，消除并发重放窗口
+    let user_id: Option<i64> = state.cache.get_del_struct(&key).await?;
     let user_id = user_id.context(InvalidTokenSnafu)?;
+    let uid = u64::try_from(user_id).map_err(|_| BaseError::from(Error::InvalidToken))?;
+    let user = UserModel::new()
+        .get_by_id(state.pool, uid)
+        .await?
+        .context(InvalidTokenSnafu)?;
+    crate::ensure_enabled(&user)?;
 
-    UserModel::new()
-        .update_password(state.pool, user_id, &params.password)
-        .await?;
-    // 重置密码意味着旧凭证可能已泄露：让此前签发的所有会话一并失效。
-    // 放在删 token 之前——撤销失败时 token 仍有效，用户可以重试。
-    session.revoke_user(user_id).await?;
-
-    // 异步删 token——失败不阻断主流程（token 自身 1h 内会过期）
-    if let Err(e) = state.cache.del(&key).await {
-        warn!(target: LOG_TARGET, error = %e, "delete used token failed");
-    }
+    crate::update_password_blocking(state.pool, user.id, &params.password).await?;
+    // 重置密码意味着旧凭证可能已泄露：让此前签发的所有会话与 JWT refresh 一并失效。
+    session.revoke_user(user.id).await?;
 
     // 审计：密码重置成功。**detail 不带新旧密码**，仅记动作完成
     let _ = AuditLogModel::new()

@@ -27,6 +27,7 @@ serde = { workspace = true }
 snafu = { workspace = true }
 tibba-cache = { path = "../tibba-cache", version = "0.3.0" }
 tibba-error = { path = "../tibba-error", version = "0.3.0" }
+tibba-middleware = { path = "../tibba-middleware", version = "0.3.0" }
 # process-info：/commons/application 需要进程 CPU / 内存采样
 tibba-runtime = { path = "../tibba-runtime", version = "0.3.0", features = [
     "process-info",

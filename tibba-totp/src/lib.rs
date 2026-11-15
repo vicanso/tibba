@@ -40,6 +40,7 @@ use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 // 字段加密的通用实现在 core 层的 tibba-crypto；本 crate 只固定 TOTP 的用途域
 pub use tibba_crypto::SecretCipher;
+use zeroize::Zeroizing;
 
 type HmacSha1 = Hmac<Sha1>;
 
@@ -65,9 +66,9 @@ const BASE32_ALPHABET: &[u8; 32] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 /// 恰为 32 个，使「字节 & 0x1f」映射无取模偏置。
 const RECOVERY_ALPHABET: &[u8; 32] = b"abcdefghijkmnpqrstuvwxyz23456789";
 
-/// 生成一个新的随机 TOTP 密钥（[`SECRET_BYTES`] 字节）。
-pub fn generate_secret() -> Vec<u8> {
-    let mut bytes = vec![0u8; SECRET_BYTES];
+/// 生成一个新的随机 TOTP 密钥（[`SECRET_BYTES`] 字节），用 [`Zeroizing`] 托管以在 drop 时擦除。
+pub fn generate_secret() -> Zeroizing<Vec<u8>> {
+    let mut bytes = Zeroizing::new(vec![0u8; SECRET_BYTES]);
     rand::rng().fill_bytes(&mut bytes);
     bytes
 }
@@ -107,22 +108,37 @@ pub fn otpauth_uri(secret_b32: &str, account: &str, issuer: &str) -> String {
     )
 }
 
-/// 校验动态码并返回匹配的 HOTP 计数器（step）；不匹配返回 `None`。
+/// 将 6 位无符号动态码格式化到栈上固定缓冲区，零堆分配。
+#[inline]
+fn format_6_digits(mut code: u32, buf: &mut [u8; 6]) {
+    for b in buf.iter_mut().rev() {
+        *b = b'0' + (code % 10) as u8;
+        code /= 10;
+    }
+}
+
+/// 校验动态码并返回匹配的 HOTP 计数器（step）；不匹配或 `unix_time < 0` 返回 `None`。
 /// 调用方可据返回的计数器做**防重放**：标记该 step 已消费，拒绝同一 step 再次使用。
 ///
 /// `unix_time` 由调用方传入当前 Unix 秒，保持本 crate 不依赖时钟。
-/// 比较使用常量时间，避免对攻击者可控输入产生计时侧信道。
+/// 比较使用栈上固定字节与常量时间比对，避免堆分配与计时侧信道。
 pub fn verify_code_step(secret: &[u8], code: &str, unix_time: i64) -> Option<u64> {
+    if unix_time < 0 {
+        return None;
+    }
     let code = code.trim();
     // 位数不符直接拒绝（也保证 ct 比较两侧等长）
     if code.len() != DIGITS as usize || !code.bytes().all(|b| b.is_ascii_digit()) {
         return None;
     }
-    let step = unix_time / PERIOD as i64;
+    let step = (unix_time as u64) / PERIOD;
+    let mut expected = [0u8; 6];
     for delta in -SKEW..=SKEW {
-        let counter = (step + delta).max(0) as u64;
-        let expected = format!("{:0width$}", hotp(secret, counter), width = DIGITS as usize);
-        if bool::from(expected.as_bytes().ct_eq(code.as_bytes())) {
+        let Some(counter) = step.checked_add_signed(delta) else {
+            continue;
+        };
+        format_6_digits(hotp(secret, counter), &mut expected);
+        if bool::from(expected.ct_eq(code.as_bytes())) {
             return Some(counter);
         }
     }
@@ -181,14 +197,34 @@ pub fn generate_recovery_codes(count: usize) -> Vec<String> {
 /// 对恢复码做规范化（去横杠/空白、转小写）后取 SHA-256，base64 输出。
 /// 规范化使用户输入带不带横杠都能匹配。落库与校验都走本函数，保证一致。
 pub fn hash_recovery_code(code: &str) -> String {
-    let norm: String = code
-        .chars()
-        .filter(|c| *c != '-' && !c.is_whitespace())
-        .flat_map(char::to_lowercase)
-        .collect();
+    let norm: Zeroizing<String> = Zeroizing::new(
+        code.chars()
+            .filter(|c| *c != '-' && !c.is_whitespace())
+            .flat_map(char::to_lowercase)
+            .collect(),
+    );
     let mut h = Sha256::new();
     h.update(norm.as_bytes());
     STANDARD.encode(h.finalize())
+}
+
+/// 在恢复码哈希数组中以全数组遍历 + 常量时间比较查找匹配项，返回首个命中索引。
+///
+/// 不在命中第一个元素时提前返回，防止通过响应耗时差异泄露恢复码命中与否及位置。
+#[must_use]
+pub fn match_recovery_code(hashes: &[String], input: &str) -> Option<usize> {
+    let candidate = Zeroizing::new(hash_recovery_code(input));
+    let cand_bytes = candidate.as_bytes();
+    let mut matched_idx: Option<usize> = None;
+    for (idx, stored) in hashes.iter().enumerate() {
+        let stored_bytes = stored.as_bytes();
+        let eq =
+            stored_bytes.len() == cand_bytes.len() && bool::from(stored_bytes.ct_eq(cand_bytes));
+        if eq && matched_idx.is_none() {
+            matched_idx = Some(idx);
+        }
+    }
+    matched_idx
 }
 
 /// 最小 percent-encode：保留 unreserved 字符，其余按 UTF-8 字节 `%XX`。
@@ -221,6 +257,31 @@ fn percent_encode(s: &str) -> String {
 #[must_use]
 pub fn secret_cipher(app_secret: &str) -> SecretCipher {
     SecretCipher::from_app_secret(app_secret, SECRET_KEY_DOMAIN)
+}
+
+fn user_aad(user_id: i64) -> String {
+    format!("totp:user:{user_id}")
+}
+
+/// 使用用户 ID 作为 AES-GCM AAD 加密 TOTP 密钥，防止跨用户调换库中密文。
+pub fn encrypt_for_user(
+    cipher: &SecretCipher,
+    user_id: i64,
+    secret: &[u8],
+) -> Result<String, tibba_crypto::Error> {
+    cipher.encrypt_with_aad(secret, user_aad(user_id).as_bytes())
+}
+
+/// 解密用户绑定的 TOTP 密钥；若新 AAD 失败则兼容尝试空 AAD 历史密文，返回 [`Zeroizing`] 托管明文。
+pub fn decrypt_for_user(
+    cipher: &SecretCipher,
+    user_id: i64,
+    blob_b64: &str,
+) -> Result<Zeroizing<Vec<u8>>, tibba_crypto::Error> {
+    if let Ok(plain) = cipher.decrypt_with_aad(blob_b64, user_aad(user_id).as_bytes()) {
+        return Ok(Zeroizing::new(plain));
+    }
+    cipher.decrypt(blob_b64).map(Zeroizing::new)
 }
 
 #[cfg(test)]
@@ -295,7 +356,7 @@ mod tests {
         let cipher = secret_cipher("super-secret-app-key");
         let secret = generate_secret();
         let blob = cipher.encrypt(&secret).expect("encrypt");
-        assert_eq!(cipher.decrypt(&blob).expect("decrypt"), secret);
+        assert_eq!(cipher.decrypt(&blob).expect("decrypt"), *secret);
 
         // 不同 app secret 派生不同密钥，解密失败
         let other = secret_cipher("different-key");
@@ -345,5 +406,41 @@ mod tests {
         assert_eq!(h1, h2);
         assert_eq!(h1, h3);
         assert_ne!(h1, hash_recovery_code("abcde-fghik"));
+
+        let hashes: Vec<String> = codes.iter().map(|c| hash_recovery_code(c)).collect();
+        assert_eq!(match_recovery_code(&hashes, &codes[0]), Some(0));
+        assert_eq!(match_recovery_code(&hashes, &codes[9]), Some(9));
+        assert_eq!(match_recovery_code(&hashes, "zzzzz-zzzzz"), None);
+    }
+
+    #[test]
+    fn verify_rejects_negative_unix_time() {
+        let secret = generate_secret();
+        assert_eq!(verify_code_step(&secret, "000000", -1), None);
+        assert_eq!(verify_code_step(&secret, "000000", i64::MIN), None);
+        assert!(!verify_code(&secret, "000000", -30));
+    }
+
+    #[test]
+    fn user_aad_isolates_users_and_supports_legacy_empty_aad() {
+        let cipher = secret_cipher("super-secret-app-key");
+        let secret = generate_secret();
+
+        let blob = encrypt_for_user(&cipher, 101, &secret).expect("encrypt with user aad");
+        assert_eq!(
+            *decrypt_for_user(&cipher, 101, &blob).expect("same user"),
+            *secret
+        );
+        assert!(
+            decrypt_for_user(&cipher, 202, &blob).is_err(),
+            "必须拒绝跨用户密文"
+        );
+
+        // 历史无 AAD 密文需平滑解密兼容
+        let legacy_blob = cipher.encrypt(&secret).expect("legacy encrypt");
+        assert_eq!(
+            *decrypt_for_user(&cipher, 101, &legacy_blob).expect("legacy fallback"),
+            *secret
+        );
     }
 }

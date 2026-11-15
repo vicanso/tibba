@@ -282,7 +282,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let job_workers = tibba_job::start(ctx.pool, 4);
 
     let basic_config = config::must_get_basic_config();
-    let app = new_router(ctx)?;
+    let mut app = new_router(ctx)?;
 
     // 可选中间件开关（默认全开）；最小服务可用 MiddlewareOptions::minimal() 裁剪
     let mw = MiddlewareOptions::default();
@@ -315,55 +315,64 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // 包成 Arc 以便 session 与 api_key_auth 两个中间件共享同一份配置
     let session_params = Arc::new(config::get_session_params()?);
 
-    // 外层固定：错误处理 / 压缩 / 超时 / body limit / request_id /（可选）otel
-    // Tower ServiceBuilder 按添加顺序包在请求路径外侧。
-    let mut app = app.layer(
-        ServiceBuilder::new()
-            .layer(HandleErrorLayer::new(handle_error))
-            .layer(CompressionLayer::new().compress_when(predicate))
-            .timeout(basic_config.timeout)
-            .layer(DefaultBodyLimit::max(GLOBAL_BODY_LIMIT))
-            .layer(from_fn(request_id)),
-    );
-    if mw.otel {
-        // 无 OTLP endpoint 时 otel_trace 内部 no-op；开关关掉则整层不挂
-        app = app.layer(from_fn(otel_trace));
-    }
-
-    // 安全头 + CORS 始终开启（CORS 策略由配置收敛）
-    app = app
-        .layer(from_fn_with_state(
-            SecurityHeaders::default().with_content_security_policy(
-                "object-src 'none'; frame-ancestors 'none'; base-uri 'self'",
-            ),
-            security_headers,
-        ))
-        .layer(from_fn_with_state(Arc::new(cors_cfg), cors));
-
+    // Axum 的 `Router::layer` 按「先挂在内层、后挂在外层」包装请求管道：
+    // 实际请求从外到内的执行顺序为（第 1 层最先收到请求、最后写出响应）：
+    //  1. request_id        注入 RequestId 与 X-Request-Id（供追踪/日志/错误响应共用）
+    //  2. otel_trace        （可选）提取 W3C traceparent 并建立请求 Span
+    //  3. security_headers  统一追加 CSP / nosniff 等安全响应头
+    //  4. cors              拦截预检并为含错误在内的所有响应补充 CORS 头
+    //  5. compression       对最终响应体按 Content-Type 条件压缩（位于 i18n / http_cache 之外）
+    //  6. i18n              （可选）按 Accept-Language 本地化未压缩的错误响应 JSON
+    //  7. timeout           超时控制（HandleErrorLayer 将超时转为 408 JSON 错误）
+    //  8. body_limit        全局 2 MiB 请求体上限（upload 等路由内层可单独放宽）
+    //  9. entry             建立 tibba_runtime::CTX 作用域、优雅下线 503 与在途计数
+    // 10. stats             位于 entry 内层以便读取 CTX 账号并统计请求耗时
+    // 11. processing_limit  并发上限控制，超限在查库/查 Redis 前返回 429
+    // 12. session           注入 Session 扩展并按需读写 Cookie/Redis
+    // 13. api_key_auth      （可选）识别 API Key 覆盖 Session 并注入 CTX 账号
+    // 14. csrf              （可选）Cookie 状态变更请求的 double-submit CSRF 校验
+    // 15. http_cache        （可选）最内层 GET ETag / If-None-Match 与鉴权私有化降级
     if mw.http_cache {
         app = app.layer(from_fn_with_state(HttpCache::default(), http_cache));
     }
-    if mw.i18n {
-        app = app.layer(from_fn(tibba_i18n::i18n));
+    if mw.csrf {
+        app = app.layer(from_fn(validate_csrf));
     }
-    app = app
-        .layer(from_fn_with_state(state, entry))
-        .layer(from_fn_with_state(state, stats))
-        .layer(from_fn_with_state(
-            (ctx.cache, session_params.clone()),
-            session,
-        ));
     if mw.api_key {
-        // API Key：紧随 session。有效令牌注入登录 Session；无效则按未登录放行
+        // API Key：位于 session 内层，有效令牌覆盖 Session，使后续 extractor 与 stats 同步感知
         app = app.layer(from_fn_with_state(
             (ctx.pool, ctx.cache, session_params.clone()),
             api_key_auth,
         ));
     }
-    if mw.csrf {
-        app = app.layer(from_fn(validate_csrf));
+    app = app
+        .layer(from_fn_with_state((ctx.cache, session_params), session))
+        .layer(from_fn_with_state(state, processing_limit))
+        .layer(from_fn_with_state(state, stats))
+        .layer(from_fn_with_state(state, entry))
+        .layer(DefaultBodyLimit::max(GLOBAL_BODY_LIMIT))
+        .layer(
+            ServiceBuilder::new()
+                .layer(HandleErrorLayer::new(handle_error))
+                .timeout(basic_config.timeout),
+        );
+    if mw.i18n {
+        app = app.layer(from_fn(tibba_i18n::i18n));
     }
-    let app = app.layer(from_fn_with_state(state, processing_limit));
+    app = app
+        .layer(CompressionLayer::new().compress_when(predicate))
+        .layer(from_fn_with_state(Arc::new(cors_cfg), cors))
+        .layer(from_fn_with_state(
+            SecurityHeaders::default().with_content_security_policy(
+                "object-src 'none'; frame-ancestors 'none'; base-uri 'self'",
+            ),
+            security_headers,
+        ));
+    if mw.otel {
+        // 无 OTLP endpoint 时 otel_trace 内部 no-op；开关关掉则整层不挂
+        app = app.layer(from_fn(otel_trace));
+    }
+    let app = app.layer(from_fn(request_id));
     state.run();
 
     let bind_addr = basic_config.bind_addr();

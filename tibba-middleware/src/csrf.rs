@@ -50,6 +50,7 @@ use axum::response::Response;
 use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
 use serde::Serialize;
 use snafu::OptionExt;
+use subtle::ConstantTimeEq;
 use tibba_error::Error as BaseError;
 use tibba_util::{is_development, uuid};
 use tracing::debug;
@@ -107,7 +108,9 @@ pub async fn validate_csrf(jar: CookieJar, req: Request, next: Next) -> Result<R
         .map(str::to_string)
         .context(CsrfHeaderMissingSnafu)?;
 
-    if !constant_time_eq(cookie_token.as_bytes(), header_token.as_bytes()) {
+    if cookie_token.is_empty()
+        || !constant_time_eq(cookie_token.as_bytes(), header_token.as_bytes())
+    {
         debug!(target: LOG_TARGET, "csrf token mismatch");
         return Err(Error::CsrfMismatch.into());
     }
@@ -116,22 +119,30 @@ pub async fn validate_csrf(jar: CookieJar, req: Request, next: Next) -> Result<R
 
 /// 判断请求是否免于 CSRF 校验：
 /// - 安全方法（GET/HEAD/OPTIONS）不改状态；
-/// - 携带 `Authorization` / `X-API-Key` 的 API 客户端走显式凭据，非 cookie 环境鉴权。
+/// - 仅当携带非空 `Bearer` Token 或非空 `X-API-Key` 且**未同时携带 `Cookie`** 时豁免，
+///   避免浏览器携带会话 Cookie 时借伪造 `Authorization` / `X-API-Key` 绕过 CSRF。
 fn is_csrf_exempt(method: &Method, headers: &axum::http::HeaderMap) -> bool {
-    matches!(*method, Method::GET | Method::HEAD | Method::OPTIONS)
-        || headers.contains_key(axum::http::header::AUTHORIZATION)
-        || headers.contains_key(API_KEY_HEADER_NAME)
+    if matches!(*method, Method::GET | Method::HEAD | Method::OPTIONS) {
+        return true;
+    }
+    if headers.contains_key(axum::http::header::COOKIE) {
+        return false;
+    }
+    let has_bearer = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.strip_prefix("Bearer "))
+        .is_some_and(|t| !t.trim().is_empty());
+    let has_api_key = headers
+        .get(API_KEY_HEADER_NAME)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|s| !s.trim().is_empty());
+    has_bearer || has_api_key
 }
 
 /// 常数时间比较，避免按字节短路泄漏 token。
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    a.iter()
-        .zip(b.iter())
-        .fold(0u8, |acc, (x, y)| acc | (x ^ y))
-        == 0
+    a.len() == b.len() && bool::from(a.ct_eq(b))
 }
 
 #[cfg(test)]
@@ -178,5 +189,19 @@ mod tests {
         let mut with_api_key = HeaderMap::new();
         with_api_key.insert("X-API-Key", HeaderValue::from_static("tibba_x"));
         assert!(is_csrf_exempt(&Method::DELETE, &with_api_key));
+
+        // 同时带 Cookie 时不再豁免，防止浏览器场景绕过 CSRF
+        let mut bearer_and_cookie = HeaderMap::new();
+        bearer_and_cookie.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer tibba_x"),
+        );
+        bearer_and_cookie.insert(header::COOKIE, HeaderValue::from_static("tibba_sid=abc"));
+        assert!(!is_csrf_exempt(&Method::POST, &bearer_and_cookie));
+
+        // 空 Bearer 或非 Bearer 不豁免
+        let mut empty_bearer = HeaderMap::new();
+        empty_bearer.insert(header::AUTHORIZATION, HeaderValue::from_static("Bearer   "));
+        assert!(!is_csrf_exempt(&Method::POST, &empty_bearer));
     }
 }

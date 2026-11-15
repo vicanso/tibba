@@ -45,27 +45,32 @@ pub use service::EmailService;
 /// tibba-email 模块对外的错误类型。
 #[derive(Debug, Snafu)]
 pub enum Error {
-    /// Resend HTTP/API 调用失败
-    #[snafu(display("resend api error: {source}"))]
-    Resend {
-        // resend_rs::Error 内含 reqwest::Error，装箱避免 enum 膨胀
-        #[snafu(source(from(resend_rs::Error, Box::new)))]
-        source: Box<resend_rs::Error>,
-    },
-    /// 邮件参数非法（如收件人为空、subject 为空等）。
-    /// 这是 EmailService 自身的前置校验，而非 Resend 的 API 错误。
+    /// 邮件服务未配置（`api_key` 或 `from` 为空）→ 503
+    #[snafu(display("email service not configured: {message}"))]
+    NotConfigured { message: String },
+    /// 邮件参数非法（如收发件人格式错、含换行注入、subject 为空、正文全空等）→ 400
     #[snafu(display("invalid email arguments: {message}"))]
     Invalid { message: String },
+    /// 上游邮件服务调用或传输失败 → 502（告警）
+    #[snafu(display("email send error: {message}"))]
+    Send { message: String },
 }
 
 impl From<Error> for BaseError {
     fn from(val: Error) -> Self {
         let err = match val {
-            Error::Resend { source } => BaseError::new(source).with_sub_category("resend"),
+            Error::NotConfigured { message } => BaseError::new(message)
+                .with_sub_category("not_configured")
+                .with_status(503)
+                .with_exception(false),
             Error::Invalid { message } => BaseError::new(message)
                 .with_sub_category("invalid")
                 .with_status(400)
                 .with_exception(false),
+            Error::Send { message } => BaseError::new(message)
+                .with_sub_category("send")
+                .with_status(502)
+                .with_exception(true),
         };
         err.with_category("email")
     }
@@ -77,11 +82,11 @@ impl From<Error> for BaseError {
 /// - `api_key`：Resend API key（生产环境强烈建议通过环境变量注入，避免落盘）
 /// - `from`：发件人地址，需为 Resend 后台已验证的域名下的邮箱
 ///   （沙盒模式可用 `onboarding@resend.dev`，但收件人必须是账号绑定邮箱）
-/// - `reply_to`：可选 Reply-To 地址
+/// - `reply_to`：可选 Reply-To 地址（空字符串将被自动忽略）
 ///
 /// 所有字段都标了 `#[serde(default)]`，配置文件无 `[email]` 段或部分字段缺失时
 /// 会得到空字符串/None，**应用照常启动**。真正发邮件时 `EmailService::send`
-/// 会校验 `api_key` 和 `from` 非空，缺失则返回 `Error::Invalid`。
+/// 会校验 `api_key` 和 `from` 非空，缺失则返回 `Error::NotConfigured`（503）。
 #[derive(Clone, Default, Deserialize)]
 pub struct EmailConfig {
     /// Resend API key，形如 `re_xxx`

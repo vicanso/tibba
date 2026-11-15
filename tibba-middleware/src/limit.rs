@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{ClientIp, Error, LOG_TARGET};
+use super::{ClientIp, Error, LOG_TARGET, fnv1a_64};
 use axum::extract::Request;
 use axum::extract::State;
 use axum::middleware::Next;
@@ -136,6 +136,18 @@ impl LimitParams {
     }
 }
 
+fn bound_header_identifier(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.len() <= 64
+        && trimmed
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+    {
+        return trimmed.to_string();
+    }
+    format!("h:{:016x}", fnv1a_64(trimmed.as_bytes()))
+}
+
 /// Generates the cache key and TTL for rate limiting
 ///
 /// # Arguments
@@ -150,16 +162,16 @@ fn get_limit_params(req: &Request, ip: IpAddr, params: &LimitParams) -> (String,
             .headers()
             .get(header_name)
             .and_then(|value| value.to_str().ok())
-            .map(|s| s.to_string())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(bound_header_identifier)
             .unwrap_or_else(|| ip.to_string()),
-        LimitType::Account => {
-            let account = CTX.get().get_account();
-            if account.is_empty() {
-                ip.to_string()
-            } else {
-                account.to_string()
-            }
-        }
+        LimitType::Account => CTX
+            .try_with(|ctx| ctx.get_account())
+            .ok()
+            .filter(|acc| !acc.is_empty())
+            .map(|acc| acc.to_string())
+            .unwrap_or_else(|| ip.to_string()),
         LimitType::Ip => ip.to_string(),
     };
     // Append category to key if specified
@@ -234,4 +246,37 @@ pub async fn limiter(
     }
 
     Ok(next.run(req).await)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::Request;
+    use std::net::Ipv4Addr;
+
+    #[test]
+    fn header_identifier_bounds_length_and_delimiters() {
+        assert_eq!(bound_header_identifier(" device-1_2.3 "), "device-1_2.3");
+
+        let long_val = "x".repeat(200);
+        let hashed = bound_header_identifier(&long_val);
+        assert!(hashed.starts_with("h:"));
+        assert_eq!(hashed.len(), 18);
+
+        let colon_val = "abc:admin:123";
+        assert!(bound_header_identifier(colon_val).starts_with("h:"));
+    }
+
+    #[test]
+    fn account_limit_without_ctx_falls_back_to_ip() {
+        let req = Request::builder().body(Body::empty()).expect("request");
+        let ip = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 10));
+        let params = LimitParams::new(5)
+            .with_category("login")
+            .with_limit_type(LimitType::Account);
+        let (key, ttl) = get_limit_params(&req, ip, &params);
+        assert_eq!(key, "login:203.0.113.10");
+        assert_eq!(ttl, Duration::from_secs(300));
+    }
 }

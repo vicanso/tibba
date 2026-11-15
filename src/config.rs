@@ -259,33 +259,40 @@ fn new_diving_config(config: &Config) -> Result<DivingConfig> {
 // 避免没用到邮件功能的部署也被强制配置。
 static EMAIL_CONFIG: OnceLock<tibba_email::EmailConfig> = OnceLock::new();
 
-fn new_email_config(config: &Config) -> Result<tibba_email::EmailConfig> {
-    match config.try_deserialize::<tibba_email::EmailConfig>() {
-        Ok(c) => Ok(c),
-        // tibba_config 在该段缺失或为空时会报 "missing field"/"not found"，吞掉走默认
-        Err(_) => Ok(tibba_email::EmailConfig::default()),
+fn new_email_config(app_config: &Config) -> Result<tibba_email::EmailConfig> {
+    #[derive(Default, Deserialize)]
+    struct Section {
+        #[serde(default)]
+        email: tibba_email::EmailConfig,
     }
+    Ok(app_config.try_deserialize::<Section>()?.email)
 }
 
 // OAuth 全 provider 聚合配置。同样容忍 `[oauth]` 段缺失（→ Default::default()），
-// 真正用 OAuth 时由 `GitHubConfig::build_provider` 校验非空，缺失返回 503。
+// 但字段类型错误或非法语法会在启动期暴露；真正用 OAuth 时由各 provider `build_provider`
+// 校验非空，缺失返回 503。
 static OAUTH_CONFIG: OnceLock<tibba_oauth::OAuthConfig> = OnceLock::new();
 
-fn new_oauth_config(config: &Config) -> Result<tibba_oauth::OAuthConfig> {
-    match config.try_deserialize::<tibba_oauth::OAuthConfig>() {
-        Ok(c) => Ok(c),
-        Err(_) => Ok(tibba_oauth::OAuthConfig::default()),
+fn new_oauth_config(app_config: &Config) -> Result<tibba_oauth::OAuthConfig> {
+    #[derive(Default, Deserialize)]
+    struct Section {
+        #[serde(default)]
+        oauth: tibba_oauth::OAuthConfig,
     }
+    Ok(app_config.try_deserialize::<Section>()?.oauth)
 }
 
 // JWT 备选鉴权配置。整段缺失或 secret 为空时应用照常启动，
 // 仅 JWT 端点（/login/jwt 等）和 JwtUser extractor 返回 503。
 static JWT_CONFIG: OnceLock<tibba_jwt::JwtConfig> = OnceLock::new();
 
-fn new_jwt_config(config: &Config) -> Result<tibba_jwt::JwtConfig> {
-    let jwt_config = config
-        .try_deserialize::<tibba_jwt::JwtConfig>()
-        .unwrap_or_default();
+fn new_jwt_config(app_config: &Config) -> Result<tibba_jwt::JwtConfig> {
+    #[derive(Default, Deserialize)]
+    struct Section {
+        #[serde(default)]
+        jwt: tibba_jwt::JwtConfig,
+    }
+    let jwt_config = app_config.try_deserialize::<Section>()?.jwt;
     // 启用 JWT（secret 非空）时强制 ≥32 字符；短 HS256 密钥可离线爆破伪造 token（越权）。
     // 空 secret 表示未启用，照常放行（相关端点返回 503）。
     if jwt_config.is_configured() && jwt_config.secret.len() < 32 {
@@ -342,12 +349,13 @@ impl fmt::Debug for WebhookConfig {
 
 static WEBHOOK_CONFIG: OnceLock<WebhookConfig> = OnceLock::new();
 
-fn new_webhook_config(config: &Config) -> Result<WebhookConfig> {
-    // 整段缺失视为未配置（不签名），与 jwt / oauth 的可选语义一致
-    match config.try_deserialize::<WebhookConfig>() {
-        Ok(c) => Ok(c),
-        Err(_) => Ok(WebhookConfig::default()),
+fn new_webhook_config(app_config: &Config) -> Result<WebhookConfig> {
+    #[derive(Default, Deserialize)]
+    struct Section {
+        #[serde(default)]
+        webhook: WebhookConfig,
     }
+    Ok(app_config.try_deserialize::<Section>()?.webhook)
 }
 
 pub fn must_get_webhook_config() -> &'static WebhookConfig {
@@ -436,15 +444,15 @@ async fn init_config() -> Result<()> {
     DIVING_CONFIG
         .set(diving_config)
         .map_err(|_| config_error("diving config init failed"))?;
-    let email_config = new_email_config(&app_config.sub_config("email"))?;
+    let email_config = new_email_config(app_config)?;
     EMAIL_CONFIG
         .set(email_config)
         .map_err(|_| config_error("email config init failed"))?;
-    let oauth_config = new_oauth_config(&app_config.sub_config("oauth"))?;
+    let oauth_config = new_oauth_config(app_config)?;
     OAUTH_CONFIG
         .set(oauth_config)
         .map_err(|_| config_error("oauth config init failed"))?;
-    let jwt_config = new_jwt_config(&app_config.sub_config("jwt"))?;
+    let jwt_config = new_jwt_config(app_config)?;
     // 若 [jwt] 已配 secret，启动期一次性把全局 signer 初始化好；未配则跳过
     // （延迟到首次访问 JWT 端点时由 try_global_signer 返回 None → 503）
     if jwt_config.is_configured() {
@@ -472,7 +480,7 @@ async fn init_config() -> Result<()> {
             .set(token_config)
             .map_err(|_| config_error("token config init failed"))?;
     }
-    let webhook_config = new_webhook_config(&app_config.sub_config("webhook"))?;
+    let webhook_config = new_webhook_config(app_config)?;
     WEBHOOK_CONFIG
         .set(webhook_config)
         .map_err(|_| config_error("webhook config init failed"))?;
@@ -549,5 +557,38 @@ mod tests {
         let webhook_dbg = format!("{webhook:?}");
         assert!(!webhook_dbg.contains("whsec-secret-value"), "{webhook_dbg}");
         assert!(webhook_dbg.contains("[REDACTED]"), "{webhook_dbg}");
+    }
+
+    #[test]
+    fn optional_config_sections_default_when_missing_and_fail_fast_on_malformed() {
+        let empty = Config::builder().add_toml("").build().expect("empty cfg");
+        assert!(new_email_config(&empty).is_ok());
+        assert!(new_oauth_config(&empty).is_ok());
+        assert!(new_jwt_config(&empty).is_ok());
+        assert!(new_webhook_config(&empty).is_ok());
+
+        let bad_jwt = Config::builder()
+            .add_toml("[jwt]\naccess_ttl = \"not-a-duration\"")
+            .build()
+            .expect("cfg");
+        assert!(new_jwt_config(&bad_jwt).is_err());
+
+        let bad_oauth = Config::builder()
+            .add_toml("oauth = \"invalid\"")
+            .build()
+            .expect("cfg");
+        assert!(new_oauth_config(&bad_oauth).is_err());
+
+        let bad_email = Config::builder()
+            .add_toml("email = 42")
+            .build()
+            .expect("cfg");
+        assert!(new_email_config(&bad_email).is_err());
+
+        let bad_webhook = Config::builder()
+            .add_toml("webhook = 42")
+            .build()
+            .expect("cfg");
+        assert!(new_webhook_config(&bad_webhook).is_err());
     }
 }

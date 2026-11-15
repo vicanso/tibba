@@ -4,11 +4,11 @@
 
 > **分层**：标准（Standard）— 标准 REST 构件，依赖核心
 
-RFC 6238 TOTP 生成校验与密钥落库加密。
+RFC 6238 TOTP 动态码生成校验、恢复码哈希/常数时间匹配及基于 `tibba-crypto` 的密钥落库加密。
 
 ## 依赖
 
-依赖：tibba-error
+依赖：`tibba-crypto`
 
 ## 在工作区中的位置
 

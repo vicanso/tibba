@@ -16,8 +16,8 @@ use super::Model;
 use super::user::{ROLE_ADMIN, ROLE_SUPER_ADMIN};
 use super::{
     Error, JsonSnafu, ModelListParams, Schema, SchemaAllowCreate, SchemaAllowEdit, SchemaType,
-    SchemaView, SqlxSnafu, Status, StoredJsonSnafu, ensure_affected, format_datetime,
-    is_data_overridable_response_header, new_schema_options, now_primitive_utc,
+    SchemaView, SqlxSnafu, Status, StoredJsonSnafu, checked_db_id, ensure_affected,
+    format_datetime, is_data_overridable_response_header, new_schema_options, now_primitive_utc,
     parse_primitive_datetime,
 };
 use http::header::{HeaderMap, HeaderName, HeaderValue};
@@ -28,6 +28,7 @@ use sqlx::FromRow;
 use sqlx::types::Json;
 use sqlx::{Pool, Postgres, QueryBuilder};
 use std::collections::HashMap;
+use std::fmt;
 use std::str::FromStr;
 use time::PrimitiveDateTime;
 
@@ -53,7 +54,7 @@ pub struct Configuration {
     pub status: i16,
     pub category: String,
     pub name: String,
-    pub data: HashMap<String, serde_json::Value>,
+    pub data: serde_json::Value,
     pub description: String,
     pub effective_start_time: String,
     pub effective_end_time: String,
@@ -68,7 +69,7 @@ impl From<ConfigurationSchema> for Configuration {
             status: schema.status,
             category: schema.category,
             name: schema.name,
-            data: serde_json::from_value(schema.data.0).unwrap_or_default(),
+            data: schema.data.0,
             description: schema.description,
             effective_start_time: format_datetime(schema.effective_start_time),
             effective_end_time: format_datetime(schema.effective_end_time),
@@ -98,10 +99,29 @@ pub struct ConfigurationUpdateParams {
     pub effective_end_time: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+/// 告警配置；`Debug` 手写实现以遮蔽 Webhook URL 中携带的 token / 密钥参数。
+#[derive(Clone, Deserialize, Default)]
 pub struct AlarmConfig {
     pub category: String,
     pub url: String,
+}
+
+impl fmt::Debug for AlarmConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AlarmConfig")
+            .field("category", &self.category)
+            .field("url", &crate::redact_url(&self.url))
+            .finish()
+    }
+}
+
+fn validate_effective_range(start: PrimitiveDateTime, end: PrimitiveDateTime) -> Result<()> {
+    if start > end {
+        return Err(Error::Validation {
+            message: "effective_start_time must not be after effective_end_time".to_string(),
+        });
+    }
+    Ok(())
 }
 
 #[derive(Default)]
@@ -185,6 +205,9 @@ impl Model for ConfigurationModel {
     }
     async fn insert(&self, pool: &Pool<Postgres>, data: serde_json::Value) -> Result<u64> {
         let params: ConfigurationInsertParams = serde_json::from_value(data).context(JsonSnafu)?;
+        let start = parse_primitive_datetime(&params.effective_start_time)?;
+        let end = parse_primitive_datetime(&params.effective_end_time)?;
+        validate_effective_range(start, end)?;
         let row: (i64,) = sqlx::query_as(
             r#"
             INSERT INTO configurations (category, name, data, description, status, effective_start_time, effective_end_time) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id"#,
@@ -194,8 +217,8 @@ impl Model for ConfigurationModel {
         .bind(params.data)
         .bind(params.description)
         .bind(params.status)
-        .bind(parse_primitive_datetime(&params.effective_start_time)?)
-        .bind(parse_primitive_datetime(&params.effective_end_time)?)
+        .bind(start)
+        .bind(end)
         .fetch_one(pool)
         .await
         .context(SqlxSnafu)?;
@@ -204,10 +227,11 @@ impl Model for ConfigurationModel {
     }
 
     async fn get_by_id(&self, pool: &Pool<Postgres>, id: u64) -> Result<Option<Self::Output>> {
+        let id = checked_db_id(id)?;
         let result = sqlx::query_as::<_, ConfigurationSchema>(
             r#"SELECT * FROM configurations WHERE id = $1 AND deleted_at IS NULL"#,
         )
-        .bind(id as i64)
+        .bind(id)
         .fetch_optional(pool)
         .await
         .context(SqlxSnafu)?;
@@ -216,10 +240,11 @@ impl Model for ConfigurationModel {
     }
 
     async fn delete_by_id(&self, pool: &Pool<Postgres>, id: u64) -> Result<()> {
+        let id = checked_db_id(id)?;
         let result = sqlx::query(
             r#"UPDATE configurations SET deleted_at = NOW(), modified = NOW() WHERE id = $1 AND deleted_at IS NULL"#,
         )
-        .bind(id as i64)
+        .bind(id)
         .execute(pool)
         .await
         .context(SqlxSnafu)?;
@@ -233,16 +258,43 @@ impl Model for ConfigurationModel {
         id: u64,
         data: serde_json::Value,
     ) -> Result<()> {
+        let id = checked_db_id(id)?;
         let params: ConfigurationUpdateParams = serde_json::from_value(data).context(JsonSnafu)?;
+        let new_start = params
+            .effective_start_time
+            .as_deref()
+            .map(parse_primitive_datetime)
+            .transpose()?;
+        let new_end = params
+            .effective_end_time
+            .as_deref()
+            .map(parse_primitive_datetime)
+            .transpose()?;
+        match (new_start, new_end) {
+            (Some(s), Some(e)) => validate_effective_range(s, e)?,
+            (Some(_), None) | (None, Some(_)) => {
+                if let Some((cur_s, cur_e)) = sqlx::query_as::<_, (PrimitiveDateTime, PrimitiveDateTime)>(
+                    r#"SELECT effective_start_time, effective_end_time FROM configurations WHERE id = $1 AND deleted_at IS NULL"#,
+                )
+                .bind(id)
+                .fetch_optional(pool)
+                .await
+                .context(SqlxSnafu)?
+                {
+                    validate_effective_range(new_start.unwrap_or(cur_s), new_end.unwrap_or(cur_e))?;
+                }
+            }
+            (None, None) => {}
+        }
         let result = sqlx::query(
             r#"UPDATE configurations SET data = COALESCE($1, data), description = COALESCE($2, description), status = COALESCE($3, status), effective_start_time = COALESCE($4, effective_start_time), effective_end_time = COALESCE($5, effective_end_time), modified = NOW() WHERE id = $6 AND deleted_at IS NULL"#,
         )
         .bind(params.data)
         .bind(params.description)
         .bind(params.status)
-        .bind(params.effective_start_time.as_deref().map(parse_primitive_datetime).transpose()?)
-        .bind(params.effective_end_time.as_deref().map(parse_primitive_datetime).transpose()?)
-        .bind(id as i64)
+        .bind(new_start)
+        .bind(new_end)
+        .bind(id)
         .execute(pool)
         .await
         .context(SqlxSnafu)?;
@@ -375,5 +427,52 @@ impl ConfigurationModel {
         // 库里存的数据解不开是服务端问题（数据损坏或 schema 改了没迁移），不是 400
         let data: T = serde_json::from_value(configuration.data.0).context(StoredJsonSnafu)?;
         Ok(Some(data))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use time::macros::datetime;
+
+    #[test]
+    fn configuration_preserves_json_array_and_scalar() {
+        let dt = datetime!(2026-06-05 00:00:00);
+        let schema = ConfigurationSchema {
+            id: 1,
+            status: 1,
+            category: "app".to_string(),
+            name: "list".to_string(),
+            data: Json(serde_json::json!(["a", "b"])),
+            description: String::new(),
+            effective_start_time: dt,
+            effective_end_time: dt,
+            created: dt,
+            modified: dt,
+        };
+        let cfg = Configuration::from(schema);
+        assert_eq!(cfg.data, serde_json::json!(["a", "b"]));
+    }
+
+    #[test]
+    fn alarm_config_debug_redacts_webhook_credentials() {
+        let alarm = AlarmConfig {
+            category: "wecom".to_string(),
+            url: "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=SECRET123".to_string(),
+        };
+        let dbg = format!("{alarm:?}");
+        assert!(!dbg.contains("SECRET123"), "{dbg}");
+        assert!(dbg.contains("?<redacted>"), "{dbg}");
+    }
+
+    #[test]
+    fn effective_range_rejects_inverted_bounds() {
+        let start = datetime!(2026-06-06 00:00:00);
+        let end = datetime!(2026-06-05 00:00:00);
+        assert!(matches!(
+            validate_effective_range(start, end),
+            Err(Error::Validation { .. })
+        ));
+        assert!(validate_effective_range(end, start).is_ok());
     }
 }

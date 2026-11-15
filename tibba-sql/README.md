@@ -4,11 +4,11 @@
 
 > **分层**：标准（Standard）— 标准 REST 构件，依赖核心
 
-从配置构建 sqlx PgPool，连接池统计与 URI 解析。
+从配置构建 sqlx PostgreSQL 连接池，支持连接池状态统计与配置项分段安全初始化及 URI 校验。
 
 ## 依赖
 
-依赖：tibba-config, tibba-error, tibba-util
+依赖：`tibba-config`、`tibba-error`、`tibba-util`
 
 ## 在工作区中的位置
 

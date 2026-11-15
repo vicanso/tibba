@@ -14,9 +14,9 @@
 
 use opendal::Operator;
 use opendal::layers::MimeGuessLayer;
-use path_absolutize::Absolutize;
 use serde::Deserialize;
 use snafu::{ResultExt, Snafu};
+use std::fmt;
 use std::path::PathBuf;
 use tibba_config::Config;
 use tibba_error::Error as BaseError;
@@ -31,20 +31,39 @@ pub use storage::*;
 const POSTGRES_PREFIXES: [&str; 2] = ["postgres://", "postgresql://"];
 /// 本地文件系统存储 URL 前缀。
 const FS_PREFIX: &str = "file://";
+/// 仅供 `tibba-sql` 消费的连接池参数名，传入 OpenDAL `Postgresql` 后端前需剥离。
+const TIBBA_POOL_PARAMS: &[&str] = &[
+    "max_connections",
+    "min_connections",
+    "connect_timeout",
+    "idle_timeout",
+    "max_lifetime",
+    "test_before_acquire",
+    "acquire_timeout",
+];
 
 /// OpenDAL 存储配置，`url` 决定后端类型，`schema` 可显式指定协议（如 "http"）。
 #[derive(Clone, Validate, Deserialize, Default)]
+#[validate(schema(function = "validate_opendal_config"))]
 pub struct OpenDalConfig {
-    #[validate(length(min = 10))]
     pub url: String,
     #[serde(default)]
     pub schema: String,
 }
 
+fn validate_opendal_config(
+    cfg: &OpenDalConfig,
+) -> std::result::Result<(), validator::ValidationError> {
+    if cfg.url.trim().len() < 6 {
+        return Err(validator::ValidationError::new("opendal url is too short"));
+    }
+    Ok(())
+}
+
 /// 手写 `Debug`：`url` 里带着凭据——S3 的 `secret_access_key` 在查询串里，
 /// 数据库后端的口令在 userinfo 里。derive 会把它们原样打进日志。
-impl std::fmt::Debug for OpenDalConfig {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for OpenDalConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("OpenDalConfig")
             .field("url", &redact_url(&self.url))
             .field("schema", &self.schema)
@@ -52,19 +71,27 @@ impl std::fmt::Debug for OpenDalConfig {
     }
 }
 
-/// 去掉 URL 里所有可能含凭据的部分：userinfo 与整个查询串。
+/// 去掉 URL 里所有可能含凭据的部分：userinfo、整个查询串与 `#fragment`。
 ///
-/// 查询串整体丢弃而不是逐个参数打码：S3 的凭据参数名有好几种写法，
-/// 白名单保留哪些参数迟早会漏；排查连接问题时有 scheme + host + path 已经足够。
-fn redact_url(url: &str) -> String {
-    let (scheme, rest) = match url.split_once("://") {
-        Some(parts) => parts,
-        None => return url.split('?').next().unwrap_or_default().to_string(),
+/// 只在第一个 `/` 之前的 authority 段内查找 `@`，避免路径里合法的 `@` 被误切掉。
+pub(crate) fn redact_url(url: &str) -> String {
+    let no_frag = url.split('#').next().unwrap_or_default();
+    let has_query = no_frag.contains('?');
+    let base = no_frag.split('?').next().unwrap_or_default();
+    let suffix = if has_query { "?<redacted>" } else { "" };
+
+    let Some((scheme, rest)) = base.split_once("://") else {
+        return base.to_string();
     };
-    let rest = rest.split('?').next().unwrap_or_default();
-    let rest = rest.rsplit_once('@').map_or(rest, |(_, host)| host);
-    let suffix = if url.contains('?') { "?<redacted>" } else { "" };
-    format!("{scheme}://{rest}{suffix}")
+    let (authority, path_suffix) = match rest.split_once('/') {
+        Some((auth, p)) => (auth, Some(p)),
+        None => (rest, None),
+    };
+    let host = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+    match path_suffix {
+        Some(p) => format!("{scheme}://{host}/{p}{suffix}"),
+        None => format!("{scheme}://{host}{suffix}"),
+    }
 }
 
 /// 从应用配置中读取并校验 OpenDalConfig。
@@ -98,6 +125,9 @@ pub enum Error {
         #[snafu(source(from(validator::ValidationErrors, Box::new)))]
         source: Box<validator::ValidationErrors>,
     },
+    /// 非法对象存储路径（如目录穿越、控制字符等，映射 400）。
+    #[snafu(display("{message}"))]
+    InvalidPath { message: String },
     /// 其他无效参数或配置错误。
     #[snafu(display("{message}"))]
     Invalid { message: String },
@@ -109,36 +139,72 @@ impl From<Error> for BaseError {
     fn from(val: Error) -> Self {
         let err = match val {
             Error::OpenDal { source } => opendal_error(*source),
-            Error::Config { source } => BaseError::new(*source).with_sub_category("config"),
+            Error::Config { source } => BaseError::new(*source)
+                .with_sub_category("config")
+                .with_status(500)
+                .with_exception(true),
             Error::ParseUri { source } => BaseError::new(*source)
                 .with_sub_category("parse_uri")
+                .with_status(500)
                 .with_exception(true),
             Error::Validate { source } => BaseError::new(*source)
                 .with_sub_category("validate")
+                .with_status(500)
                 .with_exception(true),
-            Error::Invalid { message } => BaseError::new(message).with_exception(true),
+            Error::InvalidPath { message } => BaseError::new(message)
+                .with_sub_category("invalid_path")
+                .with_status(400)
+                .with_exception(false),
+            Error::Invalid { message } => BaseError::new(message)
+                .with_sub_category("invalid")
+                .with_status(500)
+                .with_exception(true),
         };
         err.with_category("open_dal")
     }
 }
 
 /// 按 OpenDAL 的错误类别映射状态码。
-///
-/// 此前一律「500 + 告警」，于是下载一个不存在的对象、或在 fs 后端上调 presign，
-/// 都被当成服务端故障报警。其中只有「后端不可用 / 内部错误」才是真的故障。
 fn opendal_error(source: opendal::Error) -> BaseError {
     use opendal::ErrorKind;
     match source.kind() {
         ErrorKind::NotFound => BaseError::new("object not found")
             .with_sub_category("not_found")
-            .with_status(404),
+            .with_status(404)
+            .with_exception(false),
+        ErrorKind::PermissionDenied => BaseError::new("permission denied")
+            .with_sub_category("permission_denied")
+            .with_status(403)
+            .with_exception(false),
+        ErrorKind::AlreadyExists => BaseError::new("object already exists")
+            .with_sub_category("already_exists")
+            .with_status(409)
+            .with_exception(false),
+        ErrorKind::ConditionNotMatch => BaseError::new("precondition failed")
+            .with_sub_category("condition_not_match")
+            .with_status(412)
+            .with_exception(false),
+        ErrorKind::RangeNotSatisfied => BaseError::new("requested range not satisfiable")
+            .with_sub_category("range_not_satisfied")
+            .with_status(416)
+            .with_exception(false),
+        ErrorKind::IsADirectory | ErrorKind::NotADirectory => BaseError::new("invalid object path")
+            .with_sub_category("invalid_path")
+            .with_status(400)
+            .with_exception(false),
         // 后端不支持该能力（如 fs 上 presign）：请求方选错了操作，不是故障
         ErrorKind::Unsupported => BaseError::new(source.to_string())
             .with_sub_category("unsupported")
-            .with_status(501),
+            .with_status(501)
+            .with_exception(false),
         ErrorKind::RateLimited => BaseError::new("storage backend rate limited")
             .with_sub_category("rate_limited")
-            .with_status(503),
+            .with_status(429)
+            .with_exception(false),
+        ErrorKind::ConfigInvalid => BaseError::new("storage configuration invalid")
+            .with_sub_category("config_invalid")
+            .with_status(500)
+            .with_exception(true),
         _ => BaseError::new(source)
             .with_sub_category("backend")
             .with_status(500)
@@ -147,7 +213,7 @@ fn opendal_error(source: opendal::Error) -> BaseError {
 }
 
 /// S3 连接参数，从 URL 查询字符串中解析。
-#[derive(Deserialize, Debug, PartialEq)]
+#[derive(Deserialize, PartialEq)]
 struct S3Params {
     bucket: String,
     region: Option<String>,
@@ -155,12 +221,62 @@ struct S3Params {
     secret_access_key: Option<String>,
 }
 
+impl fmt::Debug for S3Params {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("S3Params")
+            .field("bucket", &self.bucket)
+            .field("region", &self.region)
+            .field("access_key_id", &self.access_key_id.as_ref().map(|_| "***"))
+            .field(
+                "secret_access_key",
+                &self.secret_access_key.as_ref().map(|_| "***"),
+            )
+            .finish()
+    }
+}
+
+/// 从 `s3://` / `http(s)://` URI 构造 S3 endpoint：若 scheme 为 `s3` 则转换为 `https`。
+fn s3_endpoint_from_uri(schema: &str, host: &str) -> String {
+    if schema.eq_ignore_ascii_case("s3") {
+        format!("https://{host}")
+    } else {
+        format!("{schema}://{host}")
+    }
+}
+
+/// 剥离 `tibba-sql` 自定义连接池参数，保留 Postgres 原生参数供 OpenDAL `PgConnectOptions` 使用。
+fn strip_tibba_pool_params(url: &str) -> String {
+    let (main, frag) = match url.split_once('#') {
+        Some((m, f)) => (m, Some(f)),
+        None => (url, None),
+    };
+    let (base, query) = match main.split_once('?') {
+        Some((b, q)) => (b, q),
+        None => return url.to_string(),
+    };
+    let kept: Vec<&str> = query
+        .split('&')
+        .filter(|pair| !pair.is_empty())
+        .filter(|pair| {
+            let key = pair.split_once('=').map_or(*pair, |(k, _)| k);
+            !TIBBA_POOL_PARAMS.contains(&key)
+        })
+        .collect();
+    let mut out = if kept.is_empty() {
+        base.to_string()
+    } else {
+        format!("{base}?{}", kept.join("&"))
+    };
+    if let Some(f) = frag {
+        out.push('#');
+        out.push_str(f);
+    }
+    out
+}
+
 /// 将 OpenDAL builder 组装成统一的 `Storage`：
 /// 1) 套 `MimeGuessLayer` 让对象自动带 Content-Type
 /// 2) 错误统一走 `OpenDalSnafu`
-///
-/// 各后端工厂只负责拼装自己的 builder，公共的 Operator 构造与 layer 装载
-/// 集中在这里，避免 4 处复制相同的三行模板。
 fn finalize_dal<B>(builder: B) -> Result<Storage>
 where
     B: opendal::Builder,
@@ -175,7 +291,13 @@ where
 /// 从 S3 兼容 URL 创建 S3 存储后端。
 fn new_s3_dal(url: &str) -> Result<Storage> {
     let parsed = parse_uri::<S3Params>(url).context(ParseUriSnafu)?;
-    let mut builder = opendal::services::S3::default().endpoint(&parsed.endpoint());
+    if parsed.hosts.len() != 1 {
+        return Err(Error::Invalid {
+            message: "s3 uri must specify exactly one host".to_string(),
+        });
+    }
+    let endpoint = s3_endpoint_from_uri(parsed.schema, &parsed.hosts[0].to_authority());
+    let mut builder = opendal::services::S3::default().endpoint(&endpoint);
     if let Some(path) = parsed.path {
         builder = builder.root(path);
     }
@@ -195,17 +317,22 @@ fn new_s3_dal(url: &str) -> Result<Storage> {
 
 /// 从 Postgres 连接字符串创建数据库存储后端，对象存进 `objects` 表
 /// （`"key"` / `value BYTEA`，见 baseline 迁移）。
-///
-/// 此前是 MySQL 后端：本项目早已全面迁到 Postgres，`objects` 表的 DDL 也是
-/// PG 语法，MySQL 后端根本用不上它——要用它就得额外维护一套 MySQL。
 fn new_postgres_dal(url: &str) -> Result<Storage> {
+    let cleaned = strip_tibba_pool_params(url);
     finalize_dal(
         opendal::services::Postgresql::default()
-            .connection_string(url)
+            .connection_string(&cleaned)
             .table("objects")
             .key_field("key")
             .value_field("value"),
     )
+}
+
+fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .filter(|v| !v.is_empty())
+        .or_else(|| std::env::var_os("USERPROFILE").filter(|v| !v.is_empty()))
+        .map(PathBuf::from)
 }
 
 /// 将路径字符串规范化为绝对路径，支持 `~/` 家目录前缀展开。
@@ -215,14 +342,16 @@ fn resolve_path(path_str: &str) -> String {
         return String::new();
     }
     let path = if let Some(stripped) = path_str.strip_prefix("~/") {
-        dirs::home_dir()
+        home_dir()
             .map(|home| home.join(stripped))
             .unwrap_or_else(|| PathBuf::from(path_str))
+    } else if path_str == "~" {
+        home_dir().unwrap_or_else(|| PathBuf::from(path_str))
     } else {
         PathBuf::from(path_str)
     };
 
-    path.absolutize().map_or_else(
+    std::path::absolute(&path).map_or_else(
         |_| path.to_string_lossy().into_owned(),
         |p| p.to_string_lossy().into_owned(),
     )
@@ -316,5 +445,113 @@ mod tests {
         let other = opendal_error(opendal::Error::new(ErrorKind::Unexpected, "boom"));
         assert_eq!(other.status(), 500);
         assert!(other.is_exception());
+
+        assert_eq!(
+            opendal_error(opendal::Error::new(ErrorKind::PermissionDenied, "denied")).status(),
+            403
+        );
+        assert_eq!(
+            opendal_error(opendal::Error::new(ErrorKind::AlreadyExists, "exists")).status(),
+            409
+        );
+        assert_eq!(
+            opendal_error(opendal::Error::new(ErrorKind::ConditionNotMatch, "etag")).status(),
+            412
+        );
+        assert_eq!(
+            opendal_error(opendal::Error::new(ErrorKind::RangeNotSatisfied, "range")).status(),
+            416
+        );
+        assert_eq!(
+            opendal_error(opendal::Error::new(ErrorKind::IsADirectory, "dir")).status(),
+            400
+        );
+        let rate = opendal_error(opendal::Error::new(ErrorKind::RateLimited, "slow"));
+        assert_eq!(rate.status(), 429);
+        assert!(!rate.is_exception());
+    }
+
+    #[test]
+    fn validate_object_path_rejects_traversal_and_control_chars() {
+        assert_eq!(
+            validate_object_path("2026/07/a.png").expect("valid"),
+            "2026/07/a.png"
+        );
+        assert_eq!(
+            validate_object_path("/2026/07/a.png").expect("valid"),
+            "2026/07/a.png"
+        );
+        for bad in [
+            "",
+            "/",
+            "dir/",
+            "../etc/passwd",
+            "a/../b",
+            "./a",
+            "a/./b",
+            "a//b",
+            "a\\b",
+            "a\0b",
+            "a\nb",
+        ] {
+            let err = validate_object_path(bad).expect_err(bad);
+            let base = BaseError::from(err);
+            assert_eq!(base.status(), 400);
+            assert!(!base.is_exception());
+        }
+    }
+
+    #[test]
+    fn redact_url_preserves_at_in_path_and_strips_fragment() {
+        assert_eq!(
+            redact_url("https://s3.example.com/user@org/obj.png?X-Amz-Signature=xyz#frag"),
+            "https://s3.example.com/user@org/obj.png?<redacted>"
+        );
+    }
+
+    #[test]
+    fn s3_and_presign_debug_redact_secrets() {
+        let s3 = S3Params {
+            bucket: "b".to_string(),
+            region: Some("us-east-1".to_string()),
+            access_key_id: Some("AKIA123456".to_string()),
+            secret_access_key: Some("SUPERSECRET".to_string()),
+        };
+        let dbg = format!("{s3:?}");
+        assert!(!dbg.contains("AKIA123456") && !dbg.contains("SUPERSECRET"));
+
+        let presign = PresignResult {
+            method: "PUT".to_string(),
+            url: "https://s3.example.com/a.png?X-Amz-Signature=secret999".to_string(),
+            headers: vec![
+                ("content-type".to_string(), "image/png".to_string()),
+                ("authorization".to_string(), "Bearer topsecret".to_string()),
+            ],
+        };
+        let p_dbg = format!("{presign:?}");
+        assert!(!p_dbg.contains("secret999") && !p_dbg.contains("topsecret"));
+        assert!(p_dbg.contains("image/png"));
+    }
+
+    #[test]
+    fn s3_endpoint_and_pg_pool_param_stripping_work() {
+        assert_eq!(
+            s3_endpoint_from_uri("s3", "s3.us-east-1.amazonaws.com"),
+            "https://s3.us-east-1.amazonaws.com"
+        );
+        assert_eq!(
+            s3_endpoint_from_uri("http", "127.0.0.1:9000"),
+            "http://127.0.0.1:9000"
+        );
+        assert_eq!(
+            strip_tibba_pool_params(
+                "postgres://u:p@db:5432/tibba?sslmode=require&max_connections=10&idle_timeout=30s#f"
+            ),
+            "postgres://u:p@db:5432/tibba?sslmode=require#f"
+        );
+        assert_eq!(
+            strip_tibba_pool_params("postgres://u:p@db:5432/tibba?max_connections=10"),
+            "postgres://u:p@db:5432/tibba"
+        );
     }
 }

@@ -16,11 +16,17 @@ name = "tibba_email"
 path = "src/lib.rs"
 
 [dependencies]
-resend-rs = { workspace = true }
+http = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 snafu = { workspace = true }
 tibba-error = { path = "../tibba-error", version = "0.3.0" }
+tibba-request = { path = "../tibba-request", version = "0.3.0" }
 tracing = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+tokio = { workspace = true }
 
 [lints]
 workspace = true

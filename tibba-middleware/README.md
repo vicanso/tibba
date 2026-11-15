@@ -4,11 +4,11 @@
 
 > **分层**：标准（Standard）— 标准 REST 构件，依赖核心
 
-request_id、CORS、CSRF、限流、ETag、安全头、入口/统计、幂等等横切中间件与 MiddlewareOptions。
+request_id、CORS、CSRF、IP/并发限流、HTTP 缓存与 ETag、安全头、入口统计及请求幂等中间件与 `MiddlewareOptions` 统一配置。
 
 ## 依赖
 
-依赖：tibba-cache, tibba-error, tibba-runtime, tibba-session, tibba-util
+依赖：`tibba-cache`、`tibba-error`、`tibba-runtime`、`tibba-session`、`tibba-util`
 
 ## 在工作区中的位置
 

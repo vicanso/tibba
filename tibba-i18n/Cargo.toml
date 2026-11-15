@@ -16,11 +16,11 @@ path = "src/lib.rs"
 
 [dependencies]
 axum = { workspace = true }
-serde_json = { workspace = true }
 tibba-error = { path = "../tibba-error", version = "0.3.0" }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }
+serde_json = { workspace = true }
 
 [lints]
 workspace = true

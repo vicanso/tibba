@@ -19,7 +19,7 @@ use sqlx::{Pool, Postgres, QueryBuilder};
 use std::collections::HashMap;
 use tibba_model::{
     Error, JsonSnafu, Model, ModelListParams, Schema, SchemaAllowCreate, SchemaAllowEdit,
-    SchemaType, SchemaView, SqlxSnafu, ensure_affected, format_datetime,
+    SchemaType, SchemaView, SqlxSnafu, checked_db_id, ensure_affected, format_datetime,
 };
 use time::PrimitiveDateTime;
 
@@ -185,10 +185,11 @@ impl Model for DetectorGroupModel {
     }
 
     async fn get_by_id(&self, pool: &Pool<Postgres>, id: u64) -> Result<Option<Self::Output>> {
+        let id = checked_db_id(id)?;
         let result = sqlx::query_as::<_, DetectorGroupSchema>(
             r#"SELECT * FROM detector_groups WHERE id = $1 AND deleted_at IS NULL"#,
         )
-        .bind(id as i64)
+        .bind(id)
         .fetch_optional(pool)
         .await
         .context(SqlxSnafu)?;
@@ -197,12 +198,13 @@ impl Model for DetectorGroupModel {
     }
 
     async fn delete_by_id(&self, pool: &Pool<Postgres>, id: u64) -> Result<()> {
+        let id = checked_db_id(id)?;
         // 与其他 Model（files / http_detectors 等）保持一致，加 `deleted_at IS NULL`
         // 守卫：避免重复删除时把原始 deleted_at 覆盖成新时间，丢失审计痕迹
         let result = sqlx::query(
             r#"UPDATE detector_groups SET deleted_at = NOW(), modified = NOW() WHERE id = $1 AND deleted_at IS NULL"#,
         )
-        .bind(id as i64)
+        .bind(id)
         .execute(pool)
         .await
         .context(SqlxSnafu)?;
@@ -216,17 +218,19 @@ impl Model for DetectorGroupModel {
         id: u64,
         params: serde_json::Value,
     ) -> Result<()> {
+        let id = checked_db_id(id)?;
         let params: DetectorGroupUpdateParams =
             serde_json::from_value(params).context(JsonSnafu)?;
+        let owner_id = params.owner_id.map(checked_db_id).transpose()?;
 
         let result = sqlx::query(
             r#"UPDATE detector_groups SET name = COALESCE($1, name), owner_id = COALESCE($2, owner_id), status = COALESCE($3, status), remark = COALESCE($4, remark), modified = NOW() WHERE id = $5 AND deleted_at IS NULL"#,
         )
         .bind(params.name)
-        .bind(params.owner_id.map(|v| v as i64))
+        .bind(owner_id)
         .bind(params.status)
         .bind(params.remark)
-        .bind(id as i64)
+        .bind(id)
         .execute(pool)
         .await
         .context(SqlxSnafu)?;

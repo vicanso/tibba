@@ -16,7 +16,6 @@ name = "tibba_model"
 path = "src/lib.rs"
 
 [dependencies]
-chrono = { workspace = true }
 http = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -45,6 +45,25 @@ mod google;
 /// 该 crate 所有日志事件的 tracing target。
 /// 可通过 `RUST_LOG=tibba:oauth=info`（或 `debug`）进行过滤。
 pub(crate) const LOG_TARGET: &str = "tibba:oauth";
+pub(crate) const MAX_ERROR_BODY_BYTES: usize = 512;
+
+/// 按字节上限截断 UTF-8 字符串，始终停在合法字符边界。
+pub(crate) fn truncate_utf8_str(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    let idx = s.floor_char_boundary(max_bytes);
+    &s[..idx]
+}
+
+/// 按字节上限将响应体转为可安全放进错误信息的 UTF-8 文本。
+pub(crate) fn format_error_body(bytes: &[u8]) -> String {
+    let end = bytes.len().min(MAX_ERROR_BODY_BYTES);
+    match std::str::from_utf8(&bytes[..end]) {
+        Ok(s) => s.to_string(),
+        Err(err) => String::from_utf8_lossy(&bytes[..err.valid_up_to()]).into_owned(),
+    }
+}
 
 /// tibba-oauth 模块对外的错误类型。
 #[derive(Debug, Snafu)]
@@ -58,7 +77,10 @@ pub enum Error {
     /// 解析第三方响应 JSON 失败（响应格式与预期不符）
     #[snafu(display("oauth json parse error: {source}"))]
     Json { source: serde_json::Error },
-    /// 第三方 API 返回 4xx / 5xx 或业务级错误（如 access_token 不存在）
+    /// Token 交换被第三方拒绝或授权码无效/过期 → 401（客户端侧错误，不告警）
+    #[snafu(display("oauth token rejected ({provider}): {message}"))]
+    Rejected { provider: String, message: String },
+    /// 第三方 API 返回异常状态或未返回预期用户身份
     #[snafu(display("oauth api error ({provider} {status}): {message}"))]
     Api {
         provider: String,
@@ -73,15 +95,36 @@ pub enum Error {
 impl From<Error> for BaseError {
     fn from(val: Error) -> Self {
         let err = match val {
-            Error::Http { source } => BaseError::new(source).with_sub_category("http"),
-            Error::Json { source } => BaseError::new(source).with_sub_category("json"),
+            // 复用 tibba_request::Error -> BaseError 转换，自动剥离 URL 中的敏感查询参数
+            Error::Http { source } => {
+                let mut err = BaseError::from(*source).with_sub_category("http");
+                if err.status() == 500 {
+                    err = err.with_status(502).with_exception(true);
+                }
+                err
+            }
+            Error::Json { source } => BaseError::new(source)
+                .with_sub_category("json")
+                .with_status(502)
+                .with_exception(true),
+            Error::Rejected { provider, message } => {
+                let truncated = truncate_utf8_str(&message, MAX_ERROR_BODY_BYTES);
+                BaseError::new(format!("{provider} oauth rejected: {truncated}"))
+                    .with_sub_category("rejected")
+                    .with_status(401)
+                    .with_exception(false)
+            }
             Error::Api {
                 provider,
                 status,
                 message,
-            } => BaseError::new(format!("{provider} api error({status}): {message}"))
-                .with_sub_category("api")
-                .with_status(502),
+            } => {
+                let truncated = truncate_utf8_str(&message, MAX_ERROR_BODY_BYTES);
+                BaseError::new(format!("{provider} api error({status}): {truncated}"))
+                    .with_sub_category("api")
+                    .with_status(502)
+                    .with_exception(status >= 500 || status == 429)
+            }
             Error::NotConfigured { provider } => {
                 BaseError::new(format!("oauth provider not configured: {provider}"))
                     .with_sub_category("not_configured")
@@ -252,5 +295,53 @@ mod tests {
         let g_prov_dbg = format!("{g_provider:?}");
         assert!(!g_prov_dbg.contains("google-super-secret"), "{g_prov_dbg}");
         assert!(g_prov_dbg.contains("[REDACTED]"), "{g_prov_dbg}");
+
+        let oauth_cfg = OAuthConfig {
+            github: gh_cfg,
+            google: g_cfg,
+        };
+        let oauth_dbg = format!("{oauth_cfg:?}");
+        assert!(!oauth_dbg.contains("gh-super-secret"));
+        assert!(!oauth_dbg.contains("google-super-secret"));
+    }
+
+    #[test]
+    fn error_mapping_and_utf8_truncation() {
+        let rejected = BaseError::from(Error::Rejected {
+            provider: "github".to_string(),
+            message: "bad code".to_string(),
+        });
+        assert_eq!(rejected.category(), "oauth");
+        assert_eq!(rejected.status(), 401);
+        assert!(!rejected.is_exception());
+
+        let not_cfg = BaseError::from(Error::NotConfigured {
+            provider: "google".to_string(),
+        });
+        assert_eq!(not_cfg.status(), 503);
+        assert!(!not_cfg.is_exception());
+
+        let upstream_500 = BaseError::from(Error::Api {
+            provider: "github".to_string(),
+            status: 500,
+            message: "你".repeat(300),
+        });
+        assert_eq!(upstream_500.status(), 502);
+        assert!(upstream_500.is_exception());
+        assert!(upstream_500.message().len() < 600);
+
+        let upstream_400 = BaseError::from(Error::Api {
+            provider: "google".to_string(),
+            status: 400,
+            message: "bad request".to_string(),
+        });
+        assert_eq!(upstream_400.status(), 502);
+        assert!(!upstream_400.is_exception());
+
+        // format_error_body 对半个多字节 UTF-8 截断不得产生替代字符
+        let sample = "你好世界".repeat(100);
+        let truncated = format_error_body(sample.as_bytes());
+        assert!(truncated.len() <= MAX_ERROR_BODY_BYTES);
+        assert!(!truncated.contains('\u{FFFD}'));
     }
 }

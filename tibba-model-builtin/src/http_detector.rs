@@ -19,10 +19,11 @@ use sqlx::FromRow;
 use sqlx::types::Json;
 use sqlx::{Pool, Postgres, QueryBuilder};
 use std::collections::HashMap;
+use std::fmt;
 use tibba_model::{
     Error, JsonSnafu, Model, ModelListParams, Schema, SchemaAllowCreate, SchemaAllowEdit,
-    SchemaOption, SchemaOptionValue, SchemaType, SchemaView, SqlxSnafu, ensure_affected,
-    format_datetime, new_schema_options,
+    SchemaOption, SchemaOptionValue, SchemaType, SchemaView, SqlxSnafu, checked_db_id,
+    ensure_affected, format_datetime, new_schema_options, redact_url,
 };
 use time::PrimitiveDateTime;
 
@@ -63,7 +64,8 @@ struct HttpDetectorSchema {
     modified: PrimitiveDateTime,
 }
 
-#[derive(Deserialize, Serialize, Clone, Debug)]
+/// HTTP 拨测任务；手写 `Debug` 以遮蔽敏感请求头与 `alarm_url` 中的 webhook token。
+#[derive(Deserialize, Serialize, Clone)]
 pub struct HttpDetector {
     pub id: i64,
     pub status: i16,
@@ -91,6 +93,65 @@ pub struct HttpDetector {
     pub remark: String,
     pub created: String,
     pub modified: String,
+}
+
+fn is_sensitive_header(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    matches!(
+        lower.as_str(),
+        "authorization" | "proxy-authorization" | "cookie" | "set-cookie" | "x-api-key"
+    ) || lower.contains("token")
+        || lower.contains("secret")
+        || lower.contains("password")
+}
+
+struct RedactedHeaders<'a>(&'a HashMap<String, String>);
+
+impl fmt::Debug for RedactedHeaders<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut map = f.debug_map();
+        for (k, v) in self.0 {
+            if is_sensitive_header(k) {
+                map.entry(k, &"<redacted>");
+            } else {
+                map.entry(k, v);
+            }
+        }
+        map.finish()
+    }
+}
+
+impl fmt::Debug for HttpDetector {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("HttpDetector")
+            .field("id", &self.id)
+            .field("status", &self.status)
+            .field("name", &self.name)
+            .field("group_id", &self.group_id)
+            .field("interval", &self.interval)
+            .field("url", &self.url)
+            .field("method", &self.method)
+            .field("alpn_protocols", &self.alpn_protocols)
+            .field("resolves", &self.resolves)
+            .field("headers", &self.headers.as_ref().map(RedactedHeaders))
+            .field("dns_servers", &self.dns_servers)
+            .field("ip_version", &self.ip_version)
+            .field("skip_verify", &self.skip_verify)
+            .field("body_len", &self.body.as_ref().map(Vec::len))
+            .field("script_len", &self.script.as_ref().map(String::len))
+            .field("alarm_url", &redact_url(&self.alarm_url))
+            .field("random_querystring", &self.random_querystring)
+            .field("alarm_on_change", &self.alarm_on_change)
+            .field("retries", &self.retries)
+            .field("failure_threshold", &self.failure_threshold)
+            .field("regions", &self.regions)
+            .field("verbose", &self.verbose)
+            .field("created_by", &self.created_by)
+            .field("remark", &self.remark)
+            .field("created", &self.created)
+            .field("modified", &self.modified)
+            .finish()
+    }
 }
 
 impl From<HttpDetectorSchema> for HttpDetector {
@@ -205,8 +266,8 @@ impl HttpDetectorModel {
         // 转义，遇控制字符 / unicode 会产出非法 JSON 被 Postgres 拒绝
         .bind(sqlx::types::Json(vec![region.as_str()]))
         .bind(sqlx::types::Json(vec![REGION_ANY]))
-        .bind(limit as i64)
-        .bind(offset as i64)
+        .bind(limit.clamp(1, 500) as i64)
+        .bind(offset.min(i64::MAX as u64) as i64)
         .fetch_all(pool)
         .await
         .context(SqlxSnafu)?;
@@ -230,7 +291,7 @@ impl Model for HttpDetectorModel {
                     value: SchemaOptionValue::Integer(group.id),
                 });
             }
-            group_options.sort_by_key(|option| option.label.clone());
+            group_options.sort_unstable_by(|a, b| a.label.cmp(&b.label));
         }
         SchemaView {
             schemas: vec![
@@ -420,10 +481,11 @@ impl Model for HttpDetectorModel {
         Ok(row.0 as u64)
     }
     async fn get_by_id(&self, pool: &Pool<Postgres>, id: u64) -> Result<Option<Self::Output>> {
+        let id = checked_db_id(id)?;
         let result = sqlx::query_as::<_, HttpDetectorSchema>(
             r#"SELECT * FROM http_detectors WHERE id = $1 AND deleted_at IS NULL"#,
         )
-        .bind(id as i64)
+        .bind(id)
         .fetch_optional(pool)
         .await
         .context(SqlxSnafu)?;
@@ -431,10 +493,11 @@ impl Model for HttpDetectorModel {
         Ok(result.map(|schema| schema.into()))
     }
     async fn delete_by_id(&self, pool: &Pool<Postgres>, id: u64) -> Result<()> {
+        let id = checked_db_id(id)?;
         let result = sqlx::query(
             r#"UPDATE http_detectors SET deleted_at = NOW(), modified = NOW() WHERE id = $1 AND deleted_at IS NULL"#,
         )
-        .bind(id as i64)
+        .bind(id)
         .execute(pool)
         .await
         .context(SqlxSnafu)?;
@@ -447,14 +510,16 @@ impl Model for HttpDetectorModel {
         id: u64,
         params: serde_json::Value,
     ) -> Result<()> {
+        let id = checked_db_id(id)?;
         let params: HttpDetectorUpdateParams = serde_json::from_value(params).context(JsonSnafu)?;
+        let group_id = params.group_id.map(checked_db_id).transpose()?;
 
         let result = sqlx::query(
             r#"UPDATE http_detectors SET status = COALESCE($1, status), name = COALESCE($2, name), group_id = COALESCE($3, group_id), url = COALESCE($4, url), method = COALESCE($5, method), alpn_protocols = COALESCE($6, alpn_protocols), resolves = COALESCE($7, resolves), headers = COALESCE($8, headers), ip_version = COALESCE($9, ip_version), skip_verify = COALESCE($10, skip_verify), body = COALESCE($11, body), "interval" = COALESCE($12, "interval"), script = COALESCE($13, script), alarm_url = COALESCE($14, alarm_url), random_querystring = COALESCE($15, random_querystring), alarm_on_change = COALESCE($16, alarm_on_change), retries = COALESCE($17, retries), failure_threshold = COALESCE($18, failure_threshold), "verbose" = COALESCE($19, "verbose"), regions = COALESCE($20, regions), remark = COALESCE($21, remark), modified = NOW() WHERE id = $22 AND deleted_at IS NULL"#,
         )
         .bind(params.status)
         .bind(params.name)
-        .bind(params.group_id.map(|v| v as i64))
+        .bind(group_id)
         .bind(params.url)
         .bind(params.method)
         .bind(params.alpn_protocols.map(Json))
@@ -473,7 +538,7 @@ impl Model for HttpDetectorModel {
         .bind(params.verbose)
         .bind(params.regions.map(Json))
         .bind(params.remark)
-        .bind(id as i64)
+        .bind(id)
         .execute(pool)
         .await
         .context(SqlxSnafu)?;
@@ -505,5 +570,54 @@ impl Model for HttpDetectorModel {
             .await
             .context(SqlxSnafu)?;
         Ok(detectors.into_iter().map(|s| s.into()).collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn debug_redacts_sensitive_headers_and_alarm_url() {
+        let mut headers = HashMap::new();
+        headers.insert("Authorization".to_string(), "Bearer s3cr3t".to_string());
+        headers.insert("x-custom-secret".to_string(), "topsecret".to_string());
+        headers.insert("Accept".to_string(), "application/json".to_string());
+        let detector = HttpDetector {
+            id: 1,
+            status: 1,
+            name: "probe".to_string(),
+            group_id: 2,
+            interval: 60,
+            url: "https://example.com/health".to_string(),
+            method: "GET".to_string(),
+            alpn_protocols: None,
+            resolves: None,
+            headers: Some(headers),
+            dns_servers: None,
+            ip_version: 0,
+            skip_verify: false,
+            body: None,
+            script: None,
+            alarm_url: "https://user:pass@hooks.example.com/notify?key=webhook_secret#frag"
+                .to_string(),
+            random_querystring: false,
+            alarm_on_change: false,
+            retries: 1,
+            failure_threshold: 2,
+            regions: vec![REGION_ANY.to_string()],
+            verbose: false,
+            created_by: 1,
+            remark: String::new(),
+            created: "2026-01-01T00:00:00Z".to_string(),
+            modified: "2026-01-01T00:00:00Z".to_string(),
+        };
+        let rendered = format!("{detector:?}");
+        assert!(!rendered.contains("s3cr3t"));
+        assert!(!rendered.contains("topsecret"));
+        assert!(!rendered.contains("webhook_secret"));
+        assert!(!rendered.contains("user:pass"));
+        assert!(rendered.contains("application/json"));
+        assert!(rendered.contains("<redacted>"));
     }
 }

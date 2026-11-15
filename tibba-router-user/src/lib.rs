@@ -15,32 +15,35 @@
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::middleware::from_fn_with_state;
-use axum::response::{IntoResponse, Response};
+use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{delete, get, patch, post};
 use axum::{Json, Router};
-use axum_extra::extract::cookie::CookieJar;
+use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use snafu::{OptionExt, Snafu};
 use sqlx::PgPool;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
+use subtle::ConstantTimeEq;
 use tibba_cache::RedisCache;
-use tibba_crypto::{PasswordCheck, verify_password};
+use tibba_crypto::{PasswordCheck, hash_password, verify_password};
 use tibba_email::EmailConfig;
 use tibba_error::Error as BaseError;
 use tibba_middleware::{
     ClientIp, RedisIpRateLimit, RequestId, redis_ip_rate_limit, user_tracker, validate_captcha,
 };
-use tibba_model::{Model, User, UserModel, UserUpdateParams};
-use tibba_model_builtin::{AuditLogModel, AuditLogParams, RolePermissionModel};
+use tibba_model::{Model, Status, User, UserModel, UserUpdateParams};
+use tibba_model_builtin::{
+    AuditLogModel, AuditLogParams, CreateLinkParams, RolePermissionModel, UserOauthLinkModel,
+};
 use tibba_oauth::OAuthConfig;
 use tibba_session::{Session, SessionResponse, UserSession};
 use tibba_util::{
     JsonParams, JsonResult, generate_device_id_cookie, get_device_id_from_cookie, is_development,
-    is_test, now, timestamp, timestamp_hash, uuid, validate_timestamp_hash, x_sha256,
+    is_test, now, sha256, timestamp, timestamp_hash, uuid, validate_timestamp_hash, x_sha256,
     x_user_account, x_user_account_strict, x_user_email, x_user_password, x_uuid,
 };
 use tracing::warn;
@@ -52,12 +55,31 @@ const LOG_TARGET: &str = "tibba:router_user";
 
 /// IP 限流窗口：固定 1 分钟。
 const RATE_WINDOW: Duration = Duration::from_secs(60);
-/// 发信端点（邮箱验证 / 密码重置）每 IP 每分钟上限，缓解邮件轰炸与账号枚举。
+/// 发信/验证/重置端点每 IP 每分钟上限，缓解邮件轰炸与账号枚举。
 const EMAIL_ENDPOINT_RATE_MAX: i64 = 5;
 /// 注册端点每 IP 每分钟上限，缓解批量注册 / 枚举。
 const REGISTER_RATE_MAX: i64 = 10;
-/// 登录端点每 IP 每分钟上限（叠加于账号+IP 暴力锁定之上，挡高频撞库）。
+/// 登录及 JWT 鉴权端点每 IP 每分钟上限（叠加于账号+IP 暴力锁定之上，挡高频撞库）。
 const LOGIN_RATE_MAX: i64 = 30;
+/// OAuth 跳转及回调端点每 IP 每分钟上限。
+const OAUTH_RATE_MAX: i64 = 20;
+/// TOTP 操作端点每 IP 每分钟上限。
+const TOTP_RATE_MAX: i64 = 10;
+
+/// 用于不存在账号时的虚拟 Argon2 哈希，消除用户名存在性的时间侧信道。
+static DUMMY_PASSWORD_HASH: LazyLock<String> = LazyLock::new(|| {
+    hash_password(b"tibba-dummy-password-for-timing-mitigation").expect("dummy argon2 hash")
+});
+
+/// OAuth 浏览器绑定的防 CSRF Cookie 名。
+pub(crate) const OAUTH_NONCE_COOKIE: &str = "tibba_oauth_nonce";
+
+/// OAuth 冲突后缀候选字符表（小写字母+数字，满足账号名白名单）。
+const OAUTH_SUFFIX_ALPHABET: [char; 36] = [
+    '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i',
+    'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
+];
+const MAX_OAUTH_ACCOUNT_RETRY: u8 = 5;
 
 mod api_key;
 mod email_verify;
@@ -123,6 +145,10 @@ pub(crate) enum Error {
     /// 账号已被禁用（HTTP 403）
     #[snafu(display("account is disabled"))]
     AccountDisabled,
+
+    /// OAuth 自动分配唯一账号名连续冲突（HTTP 503）
+    #[snafu(display("could not allocate unique account name"))]
+    AccountAllocationFailed,
 }
 
 impl From<Error> for BaseError {
@@ -150,9 +176,374 @@ impl From<Error> for BaseError {
                 .with_sub_category("account_disabled")
                 .with_status(403)
                 .with_exception(false),
+            Error::AccountAllocationFailed => {
+                BaseError::new("could not allocate unique account name")
+                    .with_sub_category("account_allocation_failed")
+                    .with_status(503)
+                    .with_exception(true)
+            }
         };
         err.with_category(ERROR_CATEGORY)
     }
+}
+
+pub(crate) fn map_sqlx_err(source: sqlx::Error) -> BaseError {
+    tibba_model::Error::Sqlx { source }.into()
+}
+
+/// 将 CPU 密集型 Argon2id 哈希放入阻塞线程池，避免阻塞异步运行时工作线程。
+pub(crate) async fn hash_password_blocking(password: &str) -> Result<String> {
+    let secret = password.as_bytes().to_vec();
+    tokio::task::spawn_blocking(move || hash_password(&secret))
+        .await
+        .map_err(|e| {
+            BaseError::new(format!("password hash task failed: {e}"))
+                .with_category(ERROR_CATEGORY)
+                .with_sub_category("blocking_task")
+                .with_status(500)
+                .with_exception(true)
+        })?
+        .map_err(|source| tibba_model::Error::Crypto { source }.into())
+}
+
+/// 在阻塞线程池执行恒定时间逻辑的密码验证：账号不存在时对 `DUMMY_PASSWORD_HASH` 完成一次完整验证后返回 `Mismatch`，
+/// 防止攻击者通过响应延迟探测账号是否存在。
+pub(crate) async fn verify_user_password_constant_time(
+    stored_hash: Option<&str>,
+    candidate: &str,
+) -> Result<PasswordCheck> {
+    let is_missing = stored_hash.is_none();
+    let target = stored_hash
+        .unwrap_or(DUMMY_PASSWORD_HASH.as_str())
+        .to_string();
+    let cand = candidate.as_bytes().to_vec();
+    let check = tokio::task::spawn_blocking(move || verify_password(&target, &cand))
+        .await
+        .map_err(|e| {
+            BaseError::new(format!("password verify task failed: {e}"))
+                .with_category(ERROR_CATEGORY)
+                .with_sub_category("blocking_task")
+                .with_status(500)
+                .with_exception(true)
+        })??;
+    if is_missing {
+        Ok(PasswordCheck::Mismatch)
+    } else {
+        Ok(check)
+    }
+}
+
+/// 在阻塞线程池完成 Argon2id 哈希并写回用户 `password` 列。
+pub(crate) async fn update_password_blocking(
+    pool: &PgPool,
+    user_id: i64,
+    password: &str,
+) -> Result<()> {
+    let password_hash = hash_password_blocking(password).await?;
+    let result = sqlx::query(
+        r#"UPDATE users SET password = $1, modified = NOW()
+           WHERE id = $2 AND deleted_at IS NULL"#,
+    )
+    .bind(&password_hash)
+    .bind(user_id)
+    .execute(pool)
+    .await
+    .map_err(map_sqlx_err)?;
+    if result.rows_affected() == 0 {
+        return Err(tibba_model::Error::NotFound.into());
+    }
+    Ok(())
+}
+
+/// 校验站内相对重定向路径，阻断 `//evil.com`、反斜杠或控制字符引发的开放重定向。
+pub(crate) fn sanitize_relative_redirect(raw: &str) -> &str {
+    if raw.starts_with('/')
+        && !raw.starts_with("//")
+        && !raw.contains('\\')
+        && !raw.bytes().any(|b| b.is_ascii_control())
+    {
+        raw
+    } else {
+        "/"
+    }
+}
+
+/// 在已净化的相对路径后追加 2FA 挑战查询参数。
+pub(crate) fn append_mfa_query(base_path: &str, mfa_token: &str) -> String {
+    let sep = if base_path.contains('?') { '&' } else { '?' };
+    format!("{base_path}{sep}mfa_required=1&mfa_token={mfa_token}")
+}
+
+/// 构造 HttpOnly `SameSite=Lax` 的 OAuth 浏览器绑定 nonce Cookie。
+pub(crate) fn build_oauth_nonce_cookie(nonce: &str, ttl_secs: i64) -> Cookie<'static> {
+    Cookie::build((OAUTH_NONCE_COOKIE, nonce.to_string()))
+        .path("/")
+        .http_only(true)
+        .same_site(SameSite::Lax)
+        .secure(!is_development())
+        .max_age(time::Duration::seconds(ttl_secs))
+        .build()
+}
+
+/// 清除 OAuth nonce Cookie。
+pub(crate) fn clear_oauth_nonce_cookie() -> Cookie<'static> {
+    Cookie::build((OAUTH_NONCE_COOKIE, ""))
+        .path("/")
+        .http_only(true)
+        .same_site(SameSite::Lax)
+        .secure(!is_development())
+        .max_age(time::Duration::ZERO)
+        .build()
+}
+
+/// 校验并消费 OAuth 一次性 state 与浏览器绑定的 nonce Cookie。
+pub(crate) async fn verify_oauth_state_and_nonce(
+    cache: &RedisCache,
+    prefix: &str,
+    csrf_state: &str,
+    jar: &CookieJar,
+    category: &'static str,
+) -> Result<()> {
+    let invalid = || {
+        BaseError::new("oauth state invalid or expired")
+            .with_category(category)
+            .with_sub_category("state_invalid")
+            .with_status(401)
+            .with_exception(false)
+    };
+    let Some(cookie_nonce) = jar.get(OAUTH_NONCE_COOKIE) else {
+        return Err(invalid());
+    };
+    if csrf_state.is_empty() {
+        return Err(invalid());
+    }
+    let state_key = format!("{prefix}{csrf_state}");
+    let stored_nonce: Option<String> = cache.get_del_struct(&state_key).await?;
+    let Some(stored_nonce) = stored_nonce else {
+        return Err(invalid());
+    };
+    let a = cookie_nonce.value().as_bytes();
+    let b = stored_nonce.as_bytes();
+    if a.len() != b.len() || !bool::from(a.ct_eq(b)) {
+        return Err(invalid());
+    }
+    Ok(())
+}
+
+/// 为 OAuth 新用户分配唯一账号名：清洗提示字符串，空值回退 `"user"`，保证长度落在 `4..=20`，
+/// 冲突时截断主体并拼接 6 位随机小写字母数字后缀（`nanoid`）重试最多 5 次。
+pub(crate) async fn allocate_oauth_account(
+    pool: &PgPool,
+    prefix: &str,
+    raw_hint: &str,
+) -> Result<String> {
+    let model = UserModel::new();
+    let max_stem = 20usize.saturating_sub(prefix.len());
+    let mut cleaned: String = raw_hint
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
+        .take(max_stem)
+        .collect();
+    if cleaned.is_empty() {
+        cleaned = "user".chars().take(max_stem).collect();
+    } else if prefix.len() + cleaned.len() < 4 {
+        cleaned.push_str("_user");
+        cleaned.truncate(max_stem);
+    }
+
+    let base = format!("{prefix}{cleaned}");
+    if model.get_by_account(pool, &base).await?.is_none() {
+        return Ok(base);
+    }
+
+    let short_max = 20usize.saturating_sub(prefix.len() + 7);
+    let short_cleaned: String = cleaned.chars().take(short_max).collect();
+    let short_base = format!("{prefix}{short_cleaned}");
+    for _ in 0..MAX_OAUTH_ACCOUNT_RETRY {
+        let suffix = nanoid::nanoid!(6, &OAUTH_SUFFIX_ALPHABET);
+        let candidate = format!("{short_base}_{suffix}");
+        if model.get_by_account(pool, &candidate).await?.is_none() {
+            return Ok(candidate);
+        }
+    }
+    Err(Error::AccountAllocationFailed.into())
+}
+
+pub(crate) struct OAuthLandingSpec<'a> {
+    pub provider: &'static str,
+    pub account_prefix: &'static str,
+    pub account_hint: &'a str,
+    pub provider_user_id: &'a str,
+    pub provider_login: &'a str,
+    pub verified_email: Option<&'a str>,
+}
+
+/// OAuth 用户三档落地（已绑定 → 已验证邮箱自动合并 → 单事务新建用户+关联记录）。
+pub(crate) async fn land_oauth_user(
+    pool: &PgPool,
+    spec: OAuthLandingSpec<'_>,
+    category: &'static str,
+) -> Result<User> {
+    let missing_user = || {
+        BaseError::new("linked local user not found")
+            .with_category(category)
+            .with_sub_category("linked_user_missing")
+            .with_status(401)
+            .with_exception(false)
+    };
+    let user_model = UserModel::new();
+    let link_model = UserOauthLinkModel::new();
+
+    if let Some(link) = link_model
+        .find_by_provider_uid(pool, spec.provider, spec.provider_user_id)
+        .await?
+    {
+        let uid = u64::try_from(link.user_id).map_err(|_| missing_user())?;
+        let user = user_model
+            .get_by_id(pool, uid)
+            .await?
+            .ok_or_else(missing_user)?;
+        return Ok(user);
+    }
+
+    if let Some(email) = spec.verified_email
+        && let Some(existing) = user_model.get_by_verified_email(pool, email).await?
+    {
+        link_model
+            .create(
+                pool,
+                CreateLinkParams {
+                    user_id: existing.id,
+                    provider: spec.provider,
+                    provider_user_id: spec.provider_user_id,
+                    provider_login: spec.provider_login,
+                    provider_email: email,
+                },
+            )
+            .await?;
+        return Ok(existing);
+    }
+
+    let account = allocate_oauth_account(pool, spec.account_prefix, spec.account_hint).await?;
+    let random_password = sha256(format!("{}{}", uuid(), uuid()).as_bytes());
+    let password_hash = hash_password_blocking(&random_password).await?;
+    let email_str = spec.verified_email.unwrap_or("");
+
+    // 单事务原子建用户（含已验证邮箱）并写入 OAuth 绑定，避免中途失败留下孤儿用户
+    let mut tx = pool.begin().await.map_err(map_sqlx_err)?;
+    let row: (i64,) = sqlx::query_as(
+        r#"INSERT INTO users (status, account, password, email, email_verified_at)
+           VALUES (
+               $1,
+               $2,
+               $3,
+               $4,
+               CASE WHEN NULLIF($4, '') IS NOT NULL THEN NOW() ELSE NULL END
+           )
+           RETURNING id"#,
+    )
+    .bind(Status::Enabled as i16)
+    .bind(&account)
+    .bind(&password_hash)
+    .bind(email_str)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(map_sqlx_err)?;
+    let new_id = row.0;
+
+    sqlx::query(
+        r#"INSERT INTO user_oauth_links
+             (user_id, provider, provider_user_id, provider_login, provider_email)
+           VALUES ($1, $2, $3, $4, $5)"#,
+    )
+    .bind(new_id)
+    .bind(spec.provider)
+    .bind(spec.provider_user_id)
+    .bind(spec.provider_login)
+    .bind(email_str)
+    .execute(&mut *tx)
+    .await
+    .map_err(map_sqlx_err)?;
+
+    tx.commit().await.map_err(map_sqlx_err)?;
+
+    let uid = u64::try_from(new_id).map_err(|_| missing_user())?;
+    user_model
+        .get_by_id(pool, uid)
+        .await?
+        .ok_or_else(missing_user)
+}
+
+pub(crate) struct OAuthCompleteParams<'a> {
+    pub pool: &'static PgPool,
+    pub cache: &'static RedisCache,
+    pub session: Session,
+    pub user: User,
+    pub provider: &'static str,
+    pub success_redirect: &'a str,
+    pub request_id: &'a RequestId,
+    pub ip: String,
+    pub headers: &'a HeaderMap,
+}
+
+/// 完成 OAuth 回调：拦截禁用账号、对启用 2FA 用户签发 MFA 挑战（不直接建会话），否则建 Session 并回跳。
+pub(crate) async fn complete_oauth_login(params: OAuthCompleteParams<'_>) -> Result<Response> {
+    ensure_enabled(&params.user)?;
+    let clean_jar = CookieJar::new().add(clear_oauth_nonce_cookie());
+    let safe_target = sanitize_relative_redirect(params.success_redirect);
+
+    let totp_state = UserModel::new()
+        .get_totp_state(params.pool, params.user.id)
+        .await?;
+    if totp_state.enabled {
+        let mfa_token =
+            totp::create_mfa_challenge(params.cache, totp::MFA_PREFIX_SESSION, params.user.id)
+                .await?;
+        let mfa_url = append_mfa_query(safe_target, &mfa_token);
+        return Ok((clean_jar, Redirect::temporary(&mfa_url)).into_response());
+    }
+
+    let groups = params.user.groups.clone().unwrap_or_default();
+    let roles = params.user.roles.clone().unwrap_or_default();
+    let permissions = RolePermissionModel::new()
+        .list_permissions_for_roles(params.pool, &roles)
+        .await?;
+
+    let mut session = params
+        .session
+        .with_account(&params.user.account, params.user.id)
+        .with_groups(groups)
+        .with_roles(roles)
+        .with_permissions(permissions);
+    session.save().await?;
+
+    if let Err(e) = UserModel::new()
+        .update_last_login_at(params.pool, &params.user.account)
+        .await
+    {
+        warn!(target: LOG_TARGET, error = %e, "update_last_login_at failed");
+    }
+
+    let _ = AuditLogModel::new()
+        .log(
+            params.pool,
+            AuditLogParams::new("user.oauth_login")
+                .with_user(params.user.id)
+                .with_target("user", params.user.id.to_string())
+                .with_request(
+                    params.request_id.as_str(),
+                    params.ip,
+                    user_agent_of(params.headers),
+                )
+                .with_detail(json!({ "provider": params.provider })),
+        )
+        .await;
+
+    Ok((
+        clean_jar,
+        SessionResponse(session, Redirect::temporary(safe_target)),
+    )
+        .into_response())
 }
 
 /// 登录令牌接口的响应结构体。
@@ -201,20 +592,40 @@ pub(crate) struct LoginParams {
     pub password: String,
 }
 
+fn is_timestamp_within_window(ts: i64, now_ts: i64) -> bool {
+    ts.abs_diff(now_ts) <= 60
+}
+
 impl LoginParams {
     /// 校验登录令牌：
     /// - 开发/测试环境下 `ts <= 0` 时跳过校验；
-    /// - 时间戳偏差超过 60 秒时拒绝（防重放）；
+    /// - 时间戳偏差超过 60 秒时拒绝（使用无溢出 `abs_diff` 防重放）；
     /// - 验证 HMAC 签名是否匹配。
     pub(crate) fn validate_token(&self, secret: &str) -> Result<()> {
         // 开发/测试环境允许跳过时间戳校验
         if self.ts <= 0 && (is_development() || is_test()) {
             return Ok(());
         }
-        if (self.ts - timestamp()).abs() > 60 {
+        if !is_timestamp_within_window(self.ts, timestamp()) {
             return Err(Error::TokenExpired.into());
         }
         validate_timestamp_hash(self.ts, &self.token, &self.hash, secret)?;
+        Ok(())
+    }
+
+    /// 校验并原子消费一次性登录令牌（`login_nonce:{token}` TTL 120s），防有效窗内重放。
+    pub(crate) async fn consume_login_token(&self, secret: &str, cache: &RedisCache) -> Result<()> {
+        self.validate_token(secret)?;
+        if self.ts <= 0 && (is_development() || is_test()) {
+            return Ok(());
+        }
+        let nonce_key = format!("login_nonce:{}", self.token);
+        let locked = cache
+            .lock(&nonce_key, Some(Duration::from_secs(120)))
+            .await?;
+        if !locked {
+            return Err(Error::TokenExpired.into());
+        }
         Ok(())
     }
 }
@@ -279,31 +690,36 @@ async fn login(
     headers: HeaderMap,
     JsonParams(params): JsonParams<LoginParams>,
 ) -> Result<Response> {
-    params.validate_token(&secret)?;
+    params.consume_login_token(&secret, cache).await?;
     let account = params.account;
     let ip_str = ip.to_string();
 
     // 暴力破解闸门：账号 / IP 在窗口内失败过多则直接 429，连密码都不再比对
     login_guard::ensure_not_locked(cache, &account, &ip_str).await?;
 
-    let Some(user) = UserModel::new().get_by_account(pool, &account).await? else {
+    let user = UserModel::new().get_by_account(pool, &account).await?;
+    // 无论账号是否存在都走同等开销的 Argon2 验证，防止用户名枚举的时间侧信道
+    let check = verify_user_password_constant_time(
+        user.as_ref().map(|u| u.password.as_str()),
+        &params.password,
+    )
+    .await?;
+
+    let Some(user) = user else {
         login_guard::record_failure(cache, &account, &ip_str).await;
         return Err(Error::BadCredentials.into());
     };
 
     // 密码验证：客户端传入 sha256(明文)，服务端与库中 Argon2 哈希比对
-    match verify_password(&user.password, params.password.as_bytes())? {
+    match check {
         PasswordCheck::Mismatch => {
             login_guard::record_failure(cache, &account, &ip_str).await;
             return Err(Error::BadCredentials.into());
         }
         // 命中旧式明文 sha256 存量：借本次成功登录升级为 Argon2；升级失败仅记日志，不阻断登录
         PasswordCheck::MatchedNeedsRehash => {
-            if let Err(err) = UserModel::new()
-                .update_password(pool, user.id, &params.password)
-                .await
-            {
-                warn!(target: LOG_TARGET, account, error = %BaseError::from(err), "password rehash to argon2 failed");
+            if let Err(err) = update_password_blocking(pool, user.id, &params.password).await {
+                warn!(target: LOG_TARGET, account, error = %err, "password rehash to argon2 failed");
             }
         }
         PasswordCheck::Matched => {}
@@ -355,14 +771,12 @@ async fn establish_session(
     let groups = user.groups.clone().unwrap_or_default();
     let roles = user.roles.clone().unwrap_or_default();
 
-    // 把 roles 翻译为权限码并集，缓存到 Session（避免每次 handler 重查 DB）。
-    // 失败仅记录但不阻断登录——RBAC 还未铺开时 role_permissions 可能为空。
+    // 把 roles 翻译为权限码并集；数据库查询异常直接失败，避免静默签发空权限会话
     let permissions = RolePermissionModel::new()
         .list_permissions_for_roles(pool, &roles)
-        .await
-        .unwrap_or_default();
+        .await?;
 
-    let session = session
+    let mut session = session
         .with_account(&account, user.id)
         .with_groups(groups)
         .with_roles(roles)
@@ -545,12 +959,24 @@ async fn register(
     headers: HeaderMap,
     JsonParams(params): JsonParams<RegisterParams>,
 ) -> JsonResult<RegisterResp> {
-    let model = UserModel::new();
-    let id = model
-        .register(state.pool, &params.account, &params.password)
-        .await?;
+    let password_hash = hash_password_blocking(&params.password).await?;
+    let mut tx = state.pool.begin().await.map_err(map_sqlx_err)?;
+    let row: (i64,) = sqlx::query_as(
+        r#"INSERT INTO users (status, account, password)
+           VALUES ($1, $2, $3)
+           RETURNING id"#,
+    )
+    .bind(Status::Enabled as i16)
+    .bind(&params.account)
+    .bind(&password_hash)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(map_sqlx_err)?;
+    tx.commit().await.map_err(map_sqlx_err)?;
+
+    let id = u64::try_from(row.0).unwrap_or(0);
     if let Some(cb) = &state.on_register {
-        cb(id as i64).await;
+        cb(row.0).await;
     }
 
     // 审计：记录注册事件
@@ -558,8 +984,8 @@ async fn register(
         .log(
             state.pool,
             AuditLogParams::new("user.register")
-                .with_user(id as i64)
-                .with_target("user", id.to_string())
+                .with_user(row.0)
+                .with_target("user", row.0.to_string())
                 .with_request(request_id.as_str(), ip.to_string(), user_agent_of(&headers)),
         )
         .await;
@@ -586,12 +1012,12 @@ async fn refresh_session(mut session: UserSession) -> Result<Session> {
     Ok(session.into())
 }
 
-/// 登出接口，清除当前 Session。审计 reset 之前抓 user_id，未登录态不记。
+/// 登出接口，销毁当前服务端 Redis Session 并下发清除 Cookie（审计在 destroy 之前记录）。
 #[utoipa::path(
     delete,
     path = "/users/logout",
     tag = "user",
-    responses((status = 200, description = "已登出，Session 已清空"))
+    responses((status = 200, description = "已登出，服务端与客户端 Session 已销毁"))
 )]
 async fn logout(
     State(pool): State<&'static PgPool>,
@@ -599,7 +1025,7 @@ async fn logout(
     ClientIp(ip): ClientIp,
     headers: HeaderMap,
     mut session: Session,
-) -> Session {
+) -> Result<Session> {
     let user_id = session.get_user_id();
     if user_id != 0 {
         let _ = AuditLogModel::new()
@@ -612,8 +1038,8 @@ async fn logout(
             )
             .await;
     }
-    session.reset();
-    session
+    session.destroy().await?;
+    Ok(session)
 }
 
 /// 更新用户资料的请求参数（所有字段均为可选）。
@@ -761,12 +1187,14 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
     };
 
     // IP 维度限流器：基于 Redis 固定窗口，跨实例共享配额（多副本部署一致）。
-    // 发信端点严格限、注册略宽、登录再宽（叠加于账号+IP 暴力锁定之上）。
+    // 在 Axum 路由链里后挂载的 `.layer(...)` 位于更外层，先于内层中间件执行。
     let email_endpoint_limit =
         RedisIpRateLimit::new(params.cache, "email", EMAIL_ENDPOINT_RATE_MAX, RATE_WINDOW);
     let register_limit =
         RedisIpRateLimit::new(params.cache, "register", REGISTER_RATE_MAX, RATE_WINDOW);
     let login_limit = RedisIpRateLimit::new(params.cache, "login", LOGIN_RATE_MAX, RATE_WINDOW);
+    let oauth_limit = RedisIpRateLimit::new(params.cache, "oauth", OAUTH_RATE_MAX, RATE_WINDOW);
+    let totp_limit = RedisIpRateLimit::new(params.cache, "totp", TOTP_RATE_MAX, RATE_WINDOW);
 
     Router::new()
         .route(
@@ -808,12 +1236,9 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
                     pool: params.pool,
                     on_register: params.on_register,
                 })
-                // IP 限流：挡批量注册 / 账号枚举
-                .layer(from_fn_with_state(
-                    register_limit.clone(),
-                    redis_ip_rate_limit,
-                ))
-                .layer(from_fn_with_state((name, "register").into(), user_tracker)),
+                .layer(from_fn_with_state((name, "register").into(), user_tracker))
+                // IP 限流置于最外层：挡批量注册 / 账号枚举
+                .layer(from_fn_with_state(register_limit, redis_ip_rate_limit)),
         )
         .route(
             "/logout",
@@ -834,38 +1259,41 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
             "/api-keys/{id}",
             delete(api_key::revoke_api_key).with_state((params.pool, params.cache)),
         )
-        // 邮箱验证（登录态调用，request 端点带 user_tracker 防刷）
+        // 邮箱验证（请求与确认均挂限流，防止暴力枚举 token 与邮件轰炸）
         .route(
             "/email/verify/request",
             post(email_verify::request_verify)
                 .with_state(email_verify_state.clone())
-                // 发信端点：IP 限流挡邮件轰炸；先于 user_tracker（更外层）执行
-                .layer(from_fn_with_state(
-                    email_endpoint_limit.clone(),
-                    redis_ip_rate_limit,
-                ))
                 .layer(from_fn_with_state(
                     (name, "email_verify_request").into(),
                     user_tracker,
+                ))
+                .layer(from_fn_with_state(
+                    email_endpoint_limit.clone(),
+                    redis_ip_rate_limit,
                 )),
         )
         .route(
             "/email/verify/confirm",
-            post(email_verify::confirm_verify).with_state(email_verify_state),
+            post(email_verify::confirm_verify)
+                .with_state(email_verify_state)
+                .layer(from_fn_with_state(
+                    email_endpoint_limit.clone(),
+                    redis_ip_rate_limit,
+                )),
         )
-        // 密码重置（匿名调用，request 端点强烈防刷以缓解枚举/扫描）
+        // 密码重置（匿名调用，请求与确认均挂严格防刷）
         .route(
             "/password/reset/request",
             post(password_reset::request_reset)
                 .with_state(password_reset_state.clone())
-                // 发信端点：IP 限流挡邮件轰炸 / 枚举扫描
-                .layer(from_fn_with_state(
-                    email_endpoint_limit.clone(),
-                    redis_ip_rate_limit,
-                ))
                 .layer(from_fn_with_state(
                     (name, "password_reset_request").into(),
                     user_tracker,
+                ))
+                .layer(from_fn_with_state(
+                    email_endpoint_limit.clone(),
+                    redis_ip_rate_limit,
                 )),
         )
         .route(
@@ -875,6 +1303,10 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
                 .layer(from_fn_with_state(
                     (name, "password_reset_confirm").into(),
                     user_tracker,
+                ))
+                .layer(from_fn_with_state(
+                    email_endpoint_limit,
+                    redis_ip_rate_limit,
                 )),
         )
         // GitHub OAuth：start 生成 state 跳 GitHub；callback 拿 code 后落地用户 + 建 Session
@@ -885,7 +1317,8 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
                 .layer(from_fn_with_state(
                     (name, "oauth_github_start").into(),
                     user_tracker,
-                )),
+                ))
+                .layer(from_fn_with_state(oauth_limit.clone(), redis_ip_rate_limit)),
         )
         .route(
             "/oauth/github/callback",
@@ -894,7 +1327,8 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
                 .layer(from_fn_with_state(
                     (name, "oauth_github_callback").into(),
                     user_tracker,
-                )),
+                ))
+                .layer(from_fn_with_state(oauth_limit.clone(), redis_ip_rate_limit)),
         )
         // Google OAuth：与 GitHub 对称，差异在 provider endpoint / userinfo JSON
         .route(
@@ -904,7 +1338,8 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
                 .layer(from_fn_with_state(
                     (name, "oauth_google_start").into(),
                     user_tracker,
-                )),
+                ))
+                .layer(from_fn_with_state(oauth_limit.clone(), redis_ip_rate_limit)),
         )
         .route(
             "/oauth/google/callback",
@@ -913,9 +1348,10 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
                 .layer(from_fn_with_state(
                     (name, "oauth_google_callback").into(),
                     user_tracker,
-                )),
+                ))
+                .layer(from_fn_with_state(oauth_limit, redis_ip_rate_limit)),
         )
-        // TOTP 两步验证（均需登录态）：enroll 生成密钥 → activate 激活 → disable 关闭
+        // TOTP 两步验证（均需登录态且挂 IP 限流）：enroll 生成密钥 → activate 激活 → disable 关闭
         .route(
             "/totp/enroll",
             post(totp::enroll)
@@ -923,7 +1359,8 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
                 .layer(from_fn_with_state(
                     (name, "totp_enroll").into(),
                     user_tracker,
-                )),
+                ))
+                .layer(from_fn_with_state(totp_limit.clone(), redis_ip_rate_limit)),
         )
         .route(
             "/totp/activate",
@@ -932,7 +1369,8 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
                 .layer(from_fn_with_state(
                     (name, "totp_activate").into(),
                     user_tracker,
-                )),
+                ))
+                .layer(from_fn_with_state(totp_limit.clone(), redis_ip_rate_limit)),
         )
         .route(
             "/totp/disable",
@@ -941,7 +1379,8 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
                 .layer(from_fn_with_state(
                     (name, "totp_disable").into(),
                     user_tracker,
-                )),
+                ))
+                .layer(from_fn_with_state(totp_limit, redis_ip_rate_limit)),
         )
         .route("/totp/status", get(totp::status).with_state(totp_state))
         // JWT 备选鉴权路径（与现有 Session+Cookie /login 正交）
@@ -959,7 +1398,7 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
                 // IP 限流置于最外层，与表单 /login 同策略
                 .layer(from_fn_with_state(login_limit.clone(), redis_ip_rate_limit)),
         )
-        // JWT 登录 2FA 第二步（带频率限制）
+        // JWT 登录 2FA 第二步（与登录共享 IP 限流配额）
         .route(
             "/login/jwt/mfa",
             post(jwt_auth::login_jwt_mfa)
@@ -967,7 +1406,8 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
                 .layer(from_fn_with_state(
                     (name, "login_jwt_mfa").into(),
                     user_tracker,
-                )),
+                ))
+                .layer(from_fn_with_state(login_limit.clone(), redis_ip_rate_limit)),
         )
         .route(
             "/refresh/jwt",
@@ -976,7 +1416,8 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
                 .layer(from_fn_with_state(
                     (name, "refresh_jwt").into(),
                     user_tracker,
-                )),
+                ))
+                .layer(from_fn_with_state(login_limit, redis_ip_rate_limit)),
         )
         .route(
             "/logout/jwt",
@@ -1041,4 +1482,94 @@ pub(crate) fn user_agent_of(headers: &HeaderMap) -> String {
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
         .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sanitize_relative_redirect_blocks_open_redirects() {
+        assert_eq!(sanitize_relative_redirect("/dashboard"), "/dashboard");
+        assert_eq!(
+            sanitize_relative_redirect("/app?tab=profile"),
+            "/app?tab=profile"
+        );
+        assert_eq!(sanitize_relative_redirect("https://evil.com"), "/");
+        assert_eq!(sanitize_relative_redirect("//evil.com"), "/");
+        assert_eq!(sanitize_relative_redirect("/\\evil.com"), "/");
+        assert_eq!(sanitize_relative_redirect("/bad\npath"), "/");
+        assert_eq!(sanitize_relative_redirect(""), "/");
+    }
+
+    #[test]
+    fn append_mfa_query_preserves_existing_query() {
+        assert_eq!(
+            append_mfa_query("/dashboard", "tok123"),
+            "/dashboard?mfa_required=1&mfa_token=tok123"
+        );
+        assert_eq!(
+            append_mfa_query("/dashboard?from=oauth", "tok123"),
+            "/dashboard?from=oauth&mfa_required=1&mfa_token=tok123"
+        );
+    }
+
+    #[test]
+    fn login_token_validation_handles_extreme_timestamps_without_overflow() {
+        assert!(!is_timestamp_within_window(i64::MIN, 1_700_000_000));
+        assert!(!is_timestamp_within_window(i64::MAX, 1_700_000_000));
+        assert!(is_timestamp_within_window(1_700_000_000, 1_700_000_050));
+
+        let secret = "test-secret";
+        let token = uuid();
+        let (ts, hash) = timestamp_hash(&token, secret).expect("timestamp_hash");
+        let valid_params = LoginParams {
+            ts,
+            token: token.clone(),
+            hash: hash.clone(),
+            account: "alice".to_string(),
+            password: "a".repeat(64),
+        };
+        assert!(valid_params.validate_token(secret).is_ok());
+
+        let overflow_params = LoginParams {
+            ts: i64::MAX,
+            token,
+            hash,
+            account: "alice".to_string(),
+            password: "a".repeat(64),
+        };
+        let err = overflow_params
+            .validate_token(secret)
+            .expect_err("extreme timestamp must be rejected");
+        assert_eq!(err.status(), 401);
+        assert_eq!(err.sub_category(), Some("token_expired"));
+    }
+
+    #[tokio::test]
+    async fn constant_time_password_verify_covers_missing_and_present_hashes() {
+        let secret = "deadbeef".repeat(8);
+        let hashed = hash_password_blocking(&secret)
+            .await
+            .expect("hash password");
+
+        assert!(matches!(
+            verify_user_password_constant_time(None, &secret)
+                .await
+                .expect("missing user check"),
+            PasswordCheck::Mismatch
+        ));
+        assert!(matches!(
+            verify_user_password_constant_time(Some(&hashed), &secret)
+                .await
+                .expect("valid user check"),
+            PasswordCheck::Matched
+        ));
+        assert!(matches!(
+            verify_user_password_constant_time(Some(&hashed), &"0".repeat(64))
+                .await
+                .expect("wrong password check"),
+            PasswordCheck::Mismatch
+        ));
+    }
 }

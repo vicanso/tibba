@@ -57,17 +57,40 @@ pub enum Error {
         #[snafu(source(from(tibba_util::Error, Box::new)))]
         source: Box<tibba_util::Error>,
     },
+    /// 数据库配置语义无效（如多主机、零超时或连接数越界）。
+    #[snafu(display("invalid database config: {message}"))]
+    InvalidConfig { message: &'static str },
 }
 
 impl From<Error> for BaseError {
     fn from(val: Error) -> Self {
         let err = match val {
-            Error::Sqlx { source } => BaseError::new(source)
-                .with_sub_category("sqlx")
+            Error::Sqlx { source } => {
+                let status = match source.as_ref() {
+                    sqlx::Error::PoolTimedOut | sqlx::Error::PoolClosed => 503,
+                    _ => 500,
+                };
+                BaseError::new(source)
+                    .with_sub_category("sqlx")
+                    .with_status(status)
+                    .with_exception(true)
+            }
+            Error::Validate { source } => BaseError::new(source)
+                .with_sub_category("validate")
+                .with_status(500)
                 .with_exception(true),
-            Error::Validate { source } => BaseError::new(source).with_sub_category("validate"),
-            Error::Config { source } => BaseError::new(source).with_sub_category("config"),
-            Error::ParseUri { source } => BaseError::new(source).with_sub_category("parse_uri"),
+            Error::Config { source } => BaseError::new(source)
+                .with_sub_category("config")
+                .with_status(500)
+                .with_exception(true),
+            Error::ParseUri { source } => BaseError::new(source)
+                .with_sub_category("parse_uri")
+                .with_status(500)
+                .with_exception(true),
+            Error::InvalidConfig { message } => BaseError::new(message)
+                .with_sub_category("invalid_config")
+                .with_status(500)
+                .with_exception(true),
         };
         err.with_category("sql")
     }
@@ -83,15 +106,14 @@ type Result<T> = std::result::Result<T, Error>;
 #[validate(schema(function = "validate_pool_bounds"))]
 pub struct DatabaseConfig {
     /// 实际用于建连的 URL（含密码，已去除连接池查询参数）
-    #[validate(length(min = 10))]
     pub url: String,
     /// 密码已替换为 [`PASSWORD_MASK`] 的 URL，仅用于日志输出
     pub redacted_url: String,
     /// 连接池最大连接数（2–1000）
     #[validate(range(min = 2, max = 1000))]
     pub max_connections: u32,
-    /// 连接池最小保活连接数（0–10）
-    #[validate(range(min = 0, max = 10))]
+    /// 连接池最小保活连接数（0–1000）
+    #[validate(range(min = 0, max = 1000))]
     pub min_connections: u32,
     /// 取得连接的超时时间（含排队等空闲连接与新建连接），映射到 sqlx 的
     /// `acquire_timeout`。此前解析了却从未应用，实际生效的是 sqlx 默认的 30s。
@@ -171,6 +193,7 @@ pub struct PoolStat {
 
 impl PoolStat {
     /// 原子性地读取并重置所有计数器，返回 `(新建连接数, 取出次数, 累计空闲秒数)`。
+    #[must_use]
     pub fn stat(&self) -> (u32, usize, u64) {
         let connected = self.connected.swap(0, Ordering::Relaxed);
         let executions = self.executions.swap(0, Ordering::Relaxed);
@@ -209,14 +232,31 @@ fn strip_pool_params(url: &mut Url) {
     }
 }
 
-/// 最小连接数不得超过最大连接数：否则连接池的保活目标永远达不到，
-/// sqlx 会在后台不停尝试补齐连接。
+/// 校验数据库连接池与超时配置，错误消息绝不回显原始 URL（防口令泄漏）。
 fn validate_pool_bounds(
     config: &DatabaseConfig,
 ) -> std::result::Result<(), validator::ValidationError> {
+    if config.url.trim().len() < 10 {
+        return Err(validator::ValidationError::new("database url is too short"));
+    }
     if config.min_connections > config.max_connections {
         return Err(validator::ValidationError::new(
             "min_connections must not exceed max_connections",
+        ));
+    }
+    if config.connect_timeout.is_zero() {
+        return Err(validator::ValidationError::new(
+            "connect_timeout must be greater than zero",
+        ));
+    }
+    if config.idle_timeout.is_zero() {
+        return Err(validator::ValidationError::new(
+            "idle_timeout must be greater than zero",
+        ));
+    }
+    if config.max_lifetime.is_zero() {
+        return Err(validator::ValidationError::new(
+            "max_lifetime must be greater than zero",
         ));
     }
     Ok(())
@@ -225,14 +265,36 @@ fn validate_pool_bounds(
 /// 脱敏 URL 中替换真实密码的占位符。
 const PASSWORD_MASK: &str = "***";
 
-/// 生成日志用的脱敏 URL：有密码则替换为 [`PASSWORD_MASK`]，无密码原样返回。
-///
-/// 按 URL 结构替换而非 `str::replace`：后者是子串匹配，密码若恰好是 `5432`
-/// 或主机名的一部分，会把端口 / 主机一起改掉。
+fn is_sensitive_query_key(key: &str) -> bool {
+    let lower = key.to_ascii_lowercase();
+    lower == "password"
+        || lower == "sslpassword"
+        || lower == "passfile"
+        || lower.contains("secret")
+        || lower.contains("token")
+}
+
+/// 生成日志用的脱敏 URL：遮蔽 userinfo 密码及敏感查询参数（`password`/`sslpassword`/`*secret*`/`*token*`），
+/// 并剥离 `#fragment`；无敏感字段则保留连接语义参数（如 `sslmode`）。
 fn redact_url(mut url: Url) -> String {
     if url.password().is_some() && url.set_password(Some(PASSWORD_MASK)).is_err() {
         // 带密码的 URL 必然有 host，理论上不会失败；兜底也绝不回退到明文
         return String::from("<unprintable database url>");
+    }
+    url.set_fragment(None);
+    if url.query().is_some() {
+        let pairs: Vec<(String, String)> = url
+            .query_pairs()
+            .map(|(k, v)| {
+                let val = if is_sensitive_query_key(&k) {
+                    PASSWORD_MASK.to_string()
+                } else {
+                    v.into_owned()
+                };
+                (k.into_owned(), val)
+            })
+            .collect();
+        url.query_pairs_mut().clear().extend_pairs(pairs);
     }
     url.to_string()
 }
@@ -242,6 +304,11 @@ fn redact_url(mut url: Url) -> String {
 fn new_database_config(config: &Config) -> Result<DatabaseConfig> {
     let origin_url = config.get_string("uri").context(ConfigSnafu)?;
     let parsed = parse_uri::<DatabaseQuery>(&origin_url).context(ParseUriSnafu)?;
+    if parsed.hosts.len() != 1 {
+        return Err(Error::InvalidConfig {
+            message: "database uri must specify exactly one host",
+        });
+    }
 
     let mut url = parsed.url().context(ParseUriSnafu)?;
     // 只剥离连接池参数；sslmode 等 Postgres 连接参数必须保留，见 strip_pool_params
@@ -412,5 +479,56 @@ mod tests {
             "密码不得出现在 Debug 输出中: {debug}"
         );
         assert!(debug.contains("***"), "应输出脱敏 URL: {debug}");
+    }
+
+    #[test]
+    fn redact_url_masks_sensitive_query_params_and_fragment() {
+        let url = Url::parse(
+            "postgres://app@db.internal:5432/tibba?sslmode=require&sslpassword=s3cr3t&token=my_secret_tok#frag",
+        )
+        .expect("valid url");
+        let redacted = redact_url(url);
+        assert!(!redacted.contains("s3cr3t"), "{redacted}");
+        assert!(!redacted.contains("my_secret_tok"), "{redacted}");
+        assert!(!redacted.contains("frag"), "{redacted}");
+        assert!(redacted.contains("sslmode=require"), "{redacted}");
+        assert!(redacted.contains("sslpassword=***"), "{redacted}");
+        assert!(redacted.contains("token=***"), "{redacted}");
+    }
+
+    #[test]
+    fn zero_timeouts_and_multi_host_are_rejected_without_leaking_url() {
+        let err = new_database_config(&config(
+            "postgres://app:mysecret@h1:5432,h2:5432/tibba?sslmode=require",
+        ))
+        .expect_err("多主机应当被拒绝");
+        assert!(matches!(err, Error::InvalidConfig { .. }), "{err}");
+        assert!(!err.to_string().contains("mysecret"));
+
+        let err = new_database_config(&config(
+            "postgres://app:mysecret@db:5432/tibba?connect_timeout=0s",
+        ))
+        .expect_err("零超时应当被拒绝");
+        assert!(matches!(err, Error::Validate { .. }), "{err}");
+        assert!(!err.to_string().contains("mysecret"));
+    }
+
+    #[test]
+    fn sqlx_pool_timeout_maps_to_503() {
+        let err = BaseError::from(Error::Sqlx {
+            source: Box::new(sqlx::Error::PoolTimedOut),
+        });
+        assert_eq!(err.status(), 503);
+        assert!(err.is_exception());
+
+        let closed = BaseError::from(Error::Sqlx {
+            source: Box::new(sqlx::Error::PoolClosed),
+        });
+        assert_eq!(closed.status(), 503);
+        assert!(closed.is_exception());
+
+        let invalid = BaseError::from(Error::InvalidConfig { message: "bad" });
+        assert_eq!(invalid.status(), 500);
+        assert!(invalid.is_exception());
     }
 }

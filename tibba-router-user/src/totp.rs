@@ -20,9 +20,9 @@
 //! - `POST /totp/disable`  — 提交动态码/恢复码关闭 2FA
 //! - `GET  /totp/status`   — 返回 `{ enrolled, enabled }`
 //!
-//! ## 登录挑战（供 lib.rs / jwt_auth.rs 复用）
-//! 密码校验通过后，若用户已启用 2FA，则不直接建立会话，而是签发短期
-//! `mfa_token`（Redis，5min），客户端凭它 + 动态码调 `/login/mfa`
+//! ## 登录挑战（供 lib.rs / jwt_auth.rs / oauth 复用）
+//! 密码或 OAuth 校验通过后，若用户已启用 2FA，则不直接建立会话，而是签发短期
+//! `mfa_token`（Redis，120s），客户端凭它 + 动态码调 `/login/mfa`
 //! （或 `/login/jwt/mfa`）完成第二步。见 [`create_mfa_challenge`] /
 //! [`consume_mfa_challenge`] / [`verify_second_factor`]。
 
@@ -43,12 +43,14 @@ use tibba_session::UserSession;
 // 本文件多处用 `secret_cipher` 作局部变量（对应数据库列名），导入改名避免遮蔽
 use tibba_totp::secret_cipher as totp_cipher;
 use tibba_util::{JsonParams, JsonResult, timestamp, uuid};
+use tracing::warn;
 use utoipa::ToSchema;
 use validator::Validate;
 
 type Result<T, E = BaseError> = std::result::Result<T, E>;
 
 const ERROR_CATEGORY: &str = "totp_router";
+const LOG_TARGET: &str = "tibba:totp_router";
 
 /// `otpauth://` URI 的 issuer，显示在 authenticator app 中作为账号分组名。
 const ISSUER: &str = "tibba";
@@ -56,14 +58,20 @@ const ISSUER: &str = "tibba";
 /// 恢复码数量：激活时一次性生成，明文仅返回一次。
 const RECOVERY_CODE_COUNT: usize = 10;
 
-/// 登录挑战令牌有效期：5 分钟，足够用户切到 authenticator app 取码。
-pub(crate) const MFA_TTL: Duration = Duration::from_secs(5 * 60);
+/// 登录挑战令牌有效期：120 秒，缩短中间挑战暴露窗口。
+pub(crate) const MFA_TTL: Duration = Duration::from_secs(120);
 /// Session 登录挑战的 Redis 前缀。
 pub(crate) const MFA_PREFIX_SESSION: &str = "mfa_login:";
 /// JWT 登录挑战的 Redis 前缀（与 Session 隔离，令牌不可跨路径复用）。
 pub(crate) const MFA_PREFIX_JWT: &str = "mfa_login_jwt:";
-/// TOTP 已消费 step 的标记 TTL：覆盖动态码有效窗（±SKEW × PERIOD ≈ 90s），到期自动清理。
-const TOTP_REPLAY_TTL: Duration = Duration::from_secs(90);
+/// TOTP 已消费 step 的标记 TTL：覆盖动态码有效窗（±SKEW × PERIOD）并留余量，到期自动清理。
+const TOTP_REPLAY_TTL: Duration = Duration::from_secs(120);
+/// 单用户 2FA 失败计数键前缀。
+const TOTP_FAIL_PREFIX: &str = "totp:fail:";
+/// 单用户 2FA 失败阈值：窗口内失败达阈值即锁定。
+const TOTP_FAIL_MAX: i64 = 5;
+/// 2FA 失败计数固定窗口。
+const TOTP_FAIL_WINDOW: Duration = Duration::from_secs(15 * 60);
 
 #[derive(Debug, Snafu)]
 pub(crate) enum Error {
@@ -82,6 +90,9 @@ pub(crate) enum Error {
     /// 登录挑战令牌不存在或已过期（HTTP 401）
     #[snafu(display("mfa challenge invalid or expired"))]
     InvalidChallenge,
+    /// 2FA 验证失败次数过多，账户被临时锁定（HTTP 429）
+    #[snafu(display("too many failed 2fa attempts, please retry later"))]
+    TooManyAttempts,
 }
 
 impl From<Error> for BaseError {
@@ -107,6 +118,12 @@ impl From<Error> for BaseError {
                 .with_sub_category("invalid_challenge")
                 .with_status(401)
                 .with_exception(false),
+            Error::TooManyAttempts => {
+                BaseError::new("too many failed 2fa attempts, please retry later")
+                    .with_sub_category("too_many_attempts")
+                    .with_status(429)
+                    .with_exception(false)
+            }
         };
         err.with_category(ERROR_CATEGORY)
     }
@@ -154,7 +171,7 @@ pub(crate) async fn enroll(
 
     let secret = tibba_totp::generate_secret();
     let cipher = totp_cipher(&state.secret);
-    let secret_cipher = cipher.encrypt(&secret)?;
+    let secret_cipher = tibba_totp::encrypt_for_user(&cipher, user_id, &secret)?;
     UserModel::new()
         .set_totp_pending(state.pool, user_id, &secret_cipher)
         .await?;
@@ -202,18 +219,22 @@ pub(crate) async fn activate(
     JsonParams(params): JsonParams<CodeParams>,
 ) -> JsonResult<ActivateResp> {
     let user_id = session.get_user_id();
+    ensure_totp_not_locked(state.cache, user_id).await?;
+
     let totp = UserModel::new().get_totp_state(state.pool, user_id).await?;
     if totp.enabled {
         return Err(Error::AlreadyEnabled.into());
     }
     let secret_cipher = totp.secret_cipher.as_deref().context(NotPendingSnafu)?;
 
-    // 仅接受 TOTP 动态码激活（此时尚无恢复码）
+    // 仅接受 TOTP 动态码激活（此时尚无恢复码），并纳入防重放与失败锁定
     let cipher = totp_cipher(&state.secret);
-    let secret = cipher.decrypt(secret_cipher)?;
-    if !tibba_totp::verify_code(&secret, params.code.trim(), timestamp()) {
+    let secret = tibba_totp::decrypt_for_user(&cipher, user_id, secret_cipher)?;
+    if !verify_and_mark_totp_step(state.cache, user_id, &secret, params.code.trim()).await? {
+        record_totp_failure(state.cache, user_id).await;
         return Err(Error::BadCode.into());
     }
+    clear_totp_failures(state.cache, user_id).await;
 
     // 生成恢复码：明文返回用户，仅哈希落库
     let recovery_codes = tibba_totp::generate_recovery_codes(RECOVERY_CODE_COUNT);
@@ -319,10 +340,56 @@ pub(crate) async fn status(
     }))
 }
 
+fn fail_key(user_id: i64) -> String {
+    format!("{TOTP_FAIL_PREFIX}{user_id}")
+}
+
+/// 检查用户在当前窗口内的 2FA 失败次数是否超限。
+async fn ensure_totp_not_locked(cache: &RedisCache, user_id: i64) -> Result<()> {
+    let count = cache.get::<i64>(&fail_key(user_id)).await?;
+    if count.unwrap_or(0) >= TOTP_FAIL_MAX {
+        return Err(Error::TooManyAttempts.into());
+    }
+    Ok(())
+}
+
+/// 记录一次 2FA 失败；Redis 故障仅记录告警，避免把正常 401 升级成 500。
+async fn record_totp_failure(cache: &RedisCache, user_id: i64) {
+    if let Err(e) = cache
+        .incr(&fail_key(user_id), 1, Some(TOTP_FAIL_WINDOW))
+        .await
+    {
+        warn!(target: LOG_TARGET, user_id, error = %e, "record totp failure failed");
+    }
+}
+
+/// 2FA 验证通过后清除失败计数。
+async fn clear_totp_failures(cache: &RedisCache, user_id: i64) {
+    if let Err(e) = cache.del(&fail_key(user_id)).await {
+        warn!(target: LOG_TARGET, user_id, error = %e, "clear totp failures failed");
+    }
+}
+
+/// 校验 TOTP 动态码并原子标记同一时间步防重放。
+async fn verify_and_mark_totp_step(
+    cache: &RedisCache,
+    user_id: i64,
+    secret: &[u8],
+    code: &str,
+) -> Result<bool> {
+    let Some(counter) = tibba_totp::verify_code_step(secret, code, timestamp()) else {
+        return Ok(false);
+    };
+    // 防重放：同一 step 只接受一次。incr 原子自增并在首次设 TTL（120s），
+    // count == 1 为首次使用（接受），> 1 说明该 step 已用过（重放，拒绝）。
+    let used_key = format!("totp:used:{user_id}:{counter}");
+    let count = cache.incr(&used_key, 1, Some(TOTP_REPLAY_TTL)).await?;
+    Ok(count == 1)
+}
+
 /// 校验第二因子：先按 TOTP 动态码验，失败再尝试作为一次性恢复码消费。
 ///
-/// 恢复码命中时通过 `consume_recovery_code` 原子移除，杜绝重放。
-/// 6 位动态码不会误命中恢复码哈希，反之亦然，故两路顺序尝试无副作用。
+/// 恢复码命中时通过常量时间全量扫描定位并通过 `consume_recovery_code` 原子移除，杜绝重放与计时侧信道。
 pub(crate) async fn verify_second_factor(
     pool: &PgPool,
     cache: &RedisCache,
@@ -330,27 +397,31 @@ pub(crate) async fn verify_second_factor(
     user_id: i64,
     code: &str,
 ) -> Result<bool> {
+    ensure_totp_not_locked(cache, user_id).await?;
+
     let totp = UserModel::new().get_totp_state(pool, user_id).await?;
     // 1) TOTP 动态码
     if let Some(secret_cipher) = &totp.secret_cipher {
         let cipher = totp_cipher(app_secret);
-        let secret = cipher.decrypt(secret_cipher)?;
-        if let Some(counter) = tibba_totp::verify_code_step(&secret, code, timestamp()) {
-            // 防重放：同一 step 只接受一次。incr 原子自增并在首次设 TTL（覆盖有效窗），
-            // count==1 为首次使用（接受），>1 说明该 step 已用过（重放，拒绝）。
-            let used_key = format!("totp_used:{user_id}:{counter}");
-            let count = cache.incr(&used_key, 1, Some(TOTP_REPLAY_TTL)).await?;
-            return Ok(count == 1);
+        let secret = tibba_totp::decrypt_for_user(&cipher, user_id, secret_cipher)?;
+        if verify_and_mark_totp_step(cache, user_id, &secret, code).await? {
+            clear_totp_failures(cache, user_id).await;
+            return Ok(true);
         }
     }
-    // 2) 恢复码（原子消费）
-    let hash = tibba_totp::hash_recovery_code(code);
-    if totp.recovery_hashes.contains(&hash) {
+    // 2) 恢复码（全数组常量时间匹配 + 原子消费）
+    if let Some(idx) = tibba_totp::match_recovery_code(&totp.recovery_hashes, code)
+        && let Some(matched_hash) = totp.recovery_hashes.get(idx)
+    {
         let consumed = UserModel::new()
-            .consume_recovery_code(pool, user_id, &hash)
+            .consume_recovery_code(pool, user_id, matched_hash)
             .await?;
-        return Ok(consumed);
+        if consumed {
+            clear_totp_failures(cache, user_id).await;
+            return Ok(true);
+        }
     }
+    record_totp_failure(cache, user_id).await;
     Ok(false)
 }
 

@@ -189,7 +189,6 @@ chrono = "0.4.45"
 config = "0.15.25"
 cookie = "0.18.2"
 dashmap = "6.2.1"
-dirs = "7.0.0"
 futures = "0.3.34"
 governor = "0.10.4"
 opentelemetry = "0.32.0"
@@ -206,11 +205,9 @@ http = "1.5.0"
 http-body-util = "0.1.5"
 humantime = "2.4.0"
 humantime-serde = "1.1.1"
-jsonwebtoken = { version = "11.0.0", default-features = false }
-resend-rs = { version = "0.32.3", default-features = false, features = [
-    "rustls-tls",
-] }
 image = "0.25.10"
+imageoptimize = "0.4.4"
+jsonwebtoken = { version = "11.0.0", default-features = false, features = ["aws_lc_rs"] }
 lru = "0.18.4"
 metrics = "0.24"
 metrics-exporter-prometheus = { version = "0.18", default-features = false }
@@ -230,7 +227,6 @@ opendal = { version = "0.59.1", features = [
 ] }
 os_info = { version = "3.15.0", default-features = false }
 parse-size = "1.1.0"
-path-absolutize = "4.0.1"
 pretty_assertions = "1.4.1"
 rand = "0.10.2"
 # 加密 nonce 的系统熵源。rand_core 0.10 起只剩 trait，OsRng 已移除，
@@ -293,6 +289,7 @@ zeroize = "1.8"
 zstd = "0.14.0"
 
 [dev-dependencies]
+http-body-util = { workspace = true }
 pretty_assertions = { workspace = true }
 serde_json = { workspace = true }
 tibba-error = { path = "./tibba-error" }

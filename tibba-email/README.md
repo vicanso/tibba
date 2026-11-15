@@ -4,11 +4,11 @@
 
 > **分层**：标准（Standard）— 标准 REST 构件，依赖核心
 
-邮件服务抽象，默认 Resend 实现，供验证邮件/密码重置等使用。
+邮件发送服务抽象与 Resend HTTP API 实现，复用 `tibba-request` 出站客户端（无 `resend-rs` 冗余依赖），供邮箱验证与密码重置等场景使用。
 
 ## 依赖
 
-依赖：tibba-error
+依赖：`tibba-error`、`tibba-request`
 
 ## 在工作区中的位置
 

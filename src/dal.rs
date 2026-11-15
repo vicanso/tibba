@@ -56,7 +56,9 @@ impl Task for DalTask {
         })
     }
     fn priority(&self) -> u8 {
-        8
+        // 必须在 SqlTask(16) 完成迁移之后启动、在数据库连接池关闭之前结束，
+        // 避免 postgresql:// 后端在 objects 表尚未就绪或连接池已关闭时访问数据库
+        20
     }
 }
 

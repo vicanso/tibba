@@ -12,19 +12,37 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use chrono::{DateTime, offset};
 use snafu::Snafu;
 use tibba_error::Error as BaseError;
 use time::macros::format_description;
 use time::{OffsetDateTime, PrimitiveDateTime};
 
-pub fn format_datetime(datetime: PrimitiveDateTime) -> String {
-    let ts = datetime.assume_utc().unix_timestamp();
-    if let Some(value) = DateTime::from_timestamp(ts, 0) {
-        value.with_timezone(&offset::Local).to_string()
-    } else {
-        String::new()
+/// 遮蔽 URL 中的 userinfo、查询串与 fragment，避免日志打印 webhook token 等凭据。
+pub fn redact_url(url: &str) -> String {
+    let no_frag = url.split('#').next().unwrap_or_default();
+    let has_query = no_frag.contains('?');
+    let base = no_frag.split('?').next().unwrap_or_default();
+    let suffix = if has_query { "?<redacted>" } else { "" };
+    let Some((scheme, rest)) = base.split_once("://") else {
+        return format!("{base}{suffix}");
+    };
+    let (auth, path) = match rest.split_once('/') {
+        Some((a, p)) => (a, Some(p)),
+        None => (rest, None),
+    };
+    let host = auth.rsplit_once('@').map_or(auth, |(_, h)| h);
+    match path {
+        Some(p) => format!("{scheme}://{host}/{p}{suffix}"),
+        None => format!("{scheme}://{host}{suffix}"),
     }
+}
+
+/// 将数据库的 UTC `PrimitiveDateTime` 格式化为 RFC3339 UTC 字符串（精确到秒）。
+pub fn format_datetime(datetime: PrimitiveDateTime) -> String {
+    let dt = datetime.replace_nanosecond(0).unwrap_or(datetime);
+    dt.assume_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap_or_default()
 }
 
 /// 响应头是否允许由**数据**（文件元数据、按分组配置的响应头）设置。
@@ -123,12 +141,22 @@ pub enum Error {
     NotFound,
     #[snafu(display("Invalid datetime: {value}"))]
     InvalidDatetime { value: String },
+    /// 请求字段或业务范围校验失败（→ 400）。
+    #[snafu(display("{message}"))]
+    Validation { message: String },
     #[snafu(display("Insufficient balance"))]
     InsufficientBalance,
     #[snafu(display("{message}"))]
     InvalidAmount { message: String },
     #[snafu(display("{source}"))]
     Crypto { source: tibba_crypto::Error },
+}
+
+/// 将外部 `u64` 主键安全转换为 Postgres `BIGINT`（`i64`），溢出 `i64::MAX` 时返回 400 校验错误。
+pub fn checked_db_id(id: u64) -> Result<i64> {
+    i64::try_from(id).map_err(|_| Error::Validation {
+        message: format!("id out of range: {id}"),
+    })
 }
 
 impl From<Error> for BaseError {
@@ -160,6 +188,9 @@ impl From<Error> for BaseError {
                     .with_sub_category("invalid_datetime")
                     .with_status(400)
             }
+            Error::Validation { message } => BaseError::new(message)
+                .with_sub_category("validation")
+                .with_status(400),
             Error::InsufficientBalance => BaseError::new("Insufficient balance")
                 .with_sub_category("insufficient_balance")
                 .with_status(402),
@@ -175,19 +206,13 @@ impl From<Error> for BaseError {
 
 /// 把 sqlx 错误按**成因**映射成状态码。
 ///
-/// 此前一律 `500 + exception`，于是：
-/// - 重复注册账号（`users.account` 唯一索引冲突）回的是
-///   `500 {"message":"internal server error"}` 并触发告警；
-/// - 按 ID 查不存在的行（`RowNotFound`）同样被当成服务端故障。
-///
-/// 约束类错误是**请求与现有数据冲突**，属于客户端可理解、可处理的结果：
-///
 /// | 成因 | 状态码 |
 /// |------|--------|
 /// | `RowNotFound` | 404 |
 /// | 唯一约束冲突 | 409 |
 /// | 外键冲突（引用的行不存在 / 仍被引用） | 409 |
-/// | 非空 / CHECK 约束 | 400 |
+/// | 非空 / CHECK / 数据格式与越界（22xxx） | 400 |
+/// | 连接池超时 / 关闭 | 503 + 告警 |
 /// | 其余（连接、超时、语法…） | 500 + 告警 |
 ///
 /// 4xx 的 message 用固定文案而不是 Postgres 原文：原文会带出表结构细节。
@@ -207,6 +232,12 @@ fn sqlx_error(source: sqlx::Error) -> BaseError {
 
     if matches!(source, sqlx::Error::RowNotFound) {
         return client(404, "not_found", "Not found", None);
+    }
+    if matches!(source, sqlx::Error::PoolTimedOut | sqlx::Error::PoolClosed) {
+        return BaseError::new("database pool busy or closed")
+            .with_sub_category("pool_unavailable")
+            .with_status(503)
+            .with_exception(true);
     }
     if let sqlx::Error::Database(db) = &source {
         let constraint = db.constraint();
@@ -236,6 +267,17 @@ fn sqlx_error(source: sqlx::Error) -> BaseError {
                 );
             }
             _ => {}
+        }
+        if matches!(
+            db.code().as_deref(),
+            Some("22001" | "22P02" | "22003" | "22007" | "22008")
+        ) {
+            return client(
+                400,
+                "invalid_input",
+                "invalid input syntax or value",
+                constraint,
+            );
         }
     }
     BaseError::new(source)
@@ -458,5 +500,71 @@ mod error_mapping_tests {
             .status(),
             400
         );
+        assert_eq!(
+            BaseError::from(Error::Validation {
+                message: "bad".to_string()
+            })
+            .status(),
+            400
+        );
+        let pool_err = BaseError::from(Error::Sqlx {
+            source: sqlx::Error::PoolTimedOut,
+        });
+        assert_eq!(pool_err.status(), 503);
+        assert!(pool_err.is_exception());
+    }
+
+    #[test]
+    fn format_datetime_produces_rfc3339_utc_and_roundtrips() {
+        let dt = time::macros::datetime!(2026-06-05 12:34:56);
+        let formatted = format_datetime(dt);
+        assert_eq!(formatted, "2026-06-05T12:34:56Z");
+        assert_eq!(parse_primitive_datetime(&formatted).unwrap(), dt);
+    }
+
+    #[test]
+    fn checked_db_id_rejects_overflow() {
+        assert_eq!(checked_db_id(42).unwrap(), 42);
+        let err = checked_db_id(u64::MAX).unwrap_err();
+        assert_eq!(BaseError::from(err).status(), 400);
+    }
+
+    #[test]
+    fn sqlx_sqlstate_22xxx_maps_to_400() {
+        #[derive(Debug)]
+        struct CodeErr(&'static str);
+        impl std::fmt::Display for CodeErr {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("bad input")
+            }
+        }
+        impl std::error::Error for CodeErr {}
+        impl DatabaseError for CodeErr {
+            fn message(&self) -> &str {
+                "bad input"
+            }
+            fn code(&self) -> Option<Cow<'_, str>> {
+                Some(Cow::Borrowed(self.0))
+            }
+            fn as_error(&self) -> &(dyn std::error::Error + Send + Sync + 'static) {
+                self
+            }
+            fn as_error_mut(&mut self) -> &mut (dyn std::error::Error + Send + Sync + 'static) {
+                self
+            }
+            fn into_error(self: Box<Self>) -> Box<dyn std::error::Error + Send + Sync + 'static> {
+                self
+            }
+            fn kind(&self) -> ErrorKind {
+                ErrorKind::Other
+            }
+        }
+        for sqlstate in ["22001", "22P02", "22003", "22007"] {
+            let err = BaseError::from(Error::Sqlx {
+                source: sqlx::Error::Database(Box::new(CodeErr(sqlstate))),
+            });
+            assert_eq!(err.status(), 400, "{sqlstate}");
+            assert!(!err.is_exception());
+        }
     }
 }

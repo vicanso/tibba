@@ -23,6 +23,7 @@ metrics = { workspace = true }
 scopeguard = { workspace = true }
 serde = { workspace = true }
 snafu = { workspace = true }
+subtle = { workspace = true }
 tibba-cache = { path = "../tibba-cache", version = "0.3.0" }
 tibba-error = { path = "../tibba-error", version = "0.3.0" }
 tibba-runtime = { path = "../tibba-runtime", version = "0.3.0" }
@@ -36,7 +37,9 @@ tracing-opentelemetry = { workspace = true }
 urlencoding = { workspace = true }
 
 [dev-dependencies]
+http-body-util = { workspace = true }
 pretty_assertions = { workspace = true }
+tower = { workspace = true }
 
 [lints]
 workspace = true

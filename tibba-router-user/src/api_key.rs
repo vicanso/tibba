@@ -78,6 +78,14 @@ fn api_key_cache_key(key_hash: &str) -> String {
     format!("apikey:{key_hash}")
 }
 
+/// 校验 API Key 明文格式：`tibba_` 前缀 + 64 位 ASCII 十六进制字符。
+/// 在计算 SHA-256 或查库/Redis 之前过滤掉明显畸形的头值，避免污染负缓存。
+pub(crate) fn is_well_formed_api_key(token: &str) -> bool {
+    token
+        .strip_prefix(TOKEN_PREFIX)
+        .is_some_and(|hex| hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
 /// 生成新令牌，返回 `(明文 token, key_hash, key_prefix)`。
 ///
 /// 明文 = `tibba_` + 64 位随机 hex（两段 uuid 取 sha256）；库中只存 `sha256(明文)`。
@@ -92,8 +100,8 @@ fn generate_token() -> (String, String, String) {
 /// 创建 API Key 的请求体。
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub(crate) struct CreateApiKeyBody {
-    /// key 标签（区分用途，如 "ci"）
-    #[validate(length(min = 1, max = 128))]
+    /// key 标签（区分用途，如 "ci"），最多 100 字符且去空白后非空
+    #[validate(length(min = 1, max = 100))]
     name: String,
     /// 过期天数（1-3650）；省略表示永不过期
     #[validate(range(min = 1, max = 3650))]
@@ -155,13 +163,23 @@ pub(crate) async fn create_api_key(
     session: UserSession,
     JsonParams(body): JsonParams<CreateApiKeyBody>,
 ) -> JsonResult<CreateApiKeyResp> {
+    let trimmed_name = body.name.trim();
+    if trimmed_name.is_empty() {
+        return Err(
+            BaseError::new("api key name must not be empty or whitespace")
+                .with_category("router_user")
+                .with_sub_category("validation")
+                .with_status(400)
+                .with_exception(false),
+        );
+    }
     let (token, key_hash, key_prefix) = generate_token();
     let id = ApiKeyModel::new()
         .create(
             pool,
             CreateApiKeyParams {
                 user_id: session.get_user_id(),
-                name: &body.name,
+                name: trimmed_name,
                 key_prefix: &key_prefix,
                 key_hash: &key_hash,
                 expires_in_days: body.expires_in_days,
@@ -170,7 +188,7 @@ pub(crate) async fn create_api_key(
         .await?;
     Ok(Json(CreateApiKeyResp {
         id,
-        name: body.name,
+        name: trimmed_name.to_string(),
         key_prefix,
         token,
         expires_in_days: body.expires_in_days,
@@ -296,10 +314,16 @@ async fn build_session(
     }
     let roles = user.roles.clone().unwrap_or_default();
     let groups = user.groups.clone().unwrap_or_default();
-    let permissions = RolePermissionModel::new()
+    let permissions = match RolePermissionModel::new()
         .list_permissions_for_roles(pool, &roles)
         .await
-        .unwrap_or_default();
+    {
+        Ok(perms) => perms,
+        Err(e) => {
+            warn!(target: LOG_TARGET, user_id, error = %BaseError::from(e), "list api key permissions failed");
+            return None;
+        }
+    };
     let session = Session::new(cache, params)
         .with_account(&user.account, user.id)
         .with_groups(groups)
@@ -357,7 +381,7 @@ pub async fn api_key_auth(
     next: Next,
 ) -> Response {
     if let Some(token) = extract_token(req.headers())
-        && token.starts_with(TOKEN_PREFIX)
+        && is_well_formed_api_key(&token)
     {
         let key_hash = sha256(token.as_bytes());
         match lookup_api_key(pool, cache, &key_hash).await {
@@ -376,4 +400,38 @@ pub async fn api_key_auth(
         }
     }
     next.run(req).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn generated_token_passes_format_check() {
+        let (token, key_hash, key_prefix) = generate_token();
+        assert!(is_well_formed_api_key(&token));
+        assert_eq!(token.len(), TOKEN_PREFIX.len() + 64);
+        assert_eq!(key_prefix.len(), PREFIX_DISPLAY_LEN);
+        assert_eq!(key_hash.len(), 64);
+        assert!(token.starts_with(&key_prefix));
+    }
+
+    #[test]
+    fn well_formed_api_key_rejects_malformed_inputs() {
+        assert!(!is_well_formed_api_key(""));
+        assert!(!is_well_formed_api_key("tibba_"));
+        assert!(!is_well_formed_api_key("tibba_short"));
+        // 非法十六进制字符（'g'）
+        let bad_char = format!("tibba_{}", "g".repeat(64));
+        assert!(!is_well_formed_api_key(&bad_char));
+        // 长度超 64
+        let too_long = format!("tibba_{}", "a".repeat(65));
+        assert!(!is_well_formed_api_key(&too_long));
+        // 缺前缀
+        let no_prefix = "a".repeat(64);
+        assert!(!is_well_formed_api_key(&no_prefix));
+        // 大写十六进制也应合法
+        let upper_hex = format!("tibba_{}", "A".repeat(64));
+        assert!(is_well_formed_api_key(&upper_hex));
+    }
 }
