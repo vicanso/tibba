@@ -30,7 +30,7 @@ totp = [
 oauth = ["dep:http", "dep:serde_json", "dep:tibba-request", "dep:urlencoding"]
 
 [dependencies]
-axum = { workspace = true }
+axum = { workspace = true, features = ["default"] }
 axum-extra = { workspace = true }
 base64 = { workspace = true, optional = true }
 cookie = { workspace = true }

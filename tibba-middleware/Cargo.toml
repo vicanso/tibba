@@ -20,7 +20,7 @@ default = []
 otel = ["dep:opentelemetry", "dep:tracing-opentelemetry"]
 
 [dependencies]
-axum = { workspace = true }
+axum = { workspace = true, features = ["default"] }
 axum-extra = { workspace = true }
 metrics = { workspace = true }
 # 入站请求创建服务端 span 并提取上游 W3C trace 上下文（可选分布式追踪）

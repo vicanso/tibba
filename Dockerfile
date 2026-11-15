@@ -25,7 +25,7 @@ COPY --from=webbuilder /tibba/admin/dist /tibba/admin/dist
 RUN echo "$GIT_COMMIT_ID" | cut -c1-7 > configs/commit_id.txt \
     && make release-embed \
     && ls -lh target/release/tibba \
-    && strip target/release/tibba || true
+    && (strip target/release/tibba || true)
 
 FROM debian:bookworm-slim
 

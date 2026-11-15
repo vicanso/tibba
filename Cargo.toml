@@ -66,7 +66,7 @@ full = [
 ]
 
 [dependencies]
-axum = { workspace = true }
+axum = { workspace = true, features = ["default"] }
 axum-extra = { workspace = true }
 glob = { workspace = true }
 metrics-exporter-prometheus = { workspace = true }
@@ -150,7 +150,7 @@ repository = "https://github.com/vicanso/tibba"
 aes-gcm = "0.11.1"
 arc-swap = "1.9.5"
 argon2 = "0.6.0"
-axum = { version = "0.8.9", features = ["multipart"] }
+axum = { version = "0.8.9", default-features = false }
 axum-extra = { version = "0.12.6", features = ["cookie", "cookie-signed"] }
 base64 = "0.23.1"
 bytes = "1.12.1"

@@ -16,7 +16,7 @@ workspace = true
 [features]
 default = []
 # 文件管理路由（/files/*），依赖 tibba-opendal 与 mime_guess2
-file = ["dep:mime_guess2", "dep:tibba-opendal"]
+file = ["axum/multipart", "dep:mime_guess2", "dep:tibba-opendal"]
 # 任务队列运维路由（/jobs/*），依赖 tibba-model/job
 job = ["tibba-model/job"]
 # 邮箱验证与密码重置路由（/users/email/* 与 /users/password/reset/*）
@@ -33,7 +33,7 @@ oauth = ["tibba-auth/oauth"]
 api-key = []
 
 [dependencies]
-axum = { workspace = true }
+axum = { workspace = true, features = ["default"] }
 axum-extra = { workspace = true }
 hostname = { workspace = true }
 humantime = { workspace = true }

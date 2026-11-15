@@ -55,7 +55,7 @@ url = { workspace = true }
 x509-parser = { workspace = true, optional = true }
 
 [dev-dependencies]
-axum = { workspace = true }
+axum = { workspace = true, features = ["default"] }
 pretty_assertions = { workspace = true }
 # 响应体上限要跑一个真实的本地 HTTP 服务端才测得准（rt/macros 仅测试用）
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }
