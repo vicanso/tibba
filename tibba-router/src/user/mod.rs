@@ -38,7 +38,6 @@ use tibba_auth::oauth::OAuthConfig;
 use tibba_auth::{Session, SessionResponse, UserSession};
 use tibba_cache::RedisCache;
 use tibba_crypto::{PasswordCheck, hash_password, verify_password};
-use tibba_email::EmailConfig;
 use tibba_error::Error as BaseError;
 use tibba_middleware::{ClientIp, RedisIpRateLimit, RequestId, redis_ip_rate_limit, user_tracker};
 use tibba_model::{
@@ -47,6 +46,8 @@ use tibba_model::{
 };
 #[cfg(feature = "oauth")]
 use tibba_model::{CreateLinkParams, UserOauthLinkModel};
+#[cfg(feature = "email")]
+use tibba_request::email::EmailConfig;
 #[cfg(feature = "oauth")]
 use tibba_util::sha256;
 use tibba_util::{
@@ -64,6 +65,7 @@ const LOG_TARGET: &str = "tibba:router_user";
 /// IP 限流窗口：固定 1 分钟。
 const RATE_WINDOW: Duration = Duration::from_secs(60);
 /// 发信/验证/重置端点每 IP 每分钟上限，缓解邮件轰炸与账号枚举。
+#[cfg(feature = "email")]
 const EMAIL_ENDPOINT_RATE_MAX: i64 = 5;
 /// 注册端点每 IP 每分钟上限，缓解批量注册 / 枚举。
 const REGISTER_RATE_MAX: i64 = 10;
@@ -96,6 +98,7 @@ const MAX_OAUTH_ACCOUNT_RETRY: u8 = 5;
 
 #[cfg(feature = "api-key")]
 mod api_key;
+#[cfg(feature = "email")]
 mod email_verify;
 #[cfg(feature = "jwt")]
 mod jwt_auth;
@@ -104,6 +107,7 @@ mod login_guard;
 mod oauth_github;
 #[cfg(feature = "oauth")]
 mod oauth_google;
+#[cfg(feature = "email")]
 mod password_reset;
 #[cfg(feature = "totp")]
 mod totp;
@@ -1163,6 +1167,7 @@ pub struct UserRouterParams {
     /// Redis 缓存（存储登录防护计数、邮箱验证 token、密码重置 token 等）
     pub cache: &'static RedisCache,
     /// 全局邮件配置——被邮箱验证 / 密码重置端点用来构造 EmailService
+    #[cfg(feature = "email")]
     pub email_config: &'static EmailConfig,
     /// 全局 OAuth 配置——被 `/oauth/{github,google}/*` 端点使用
     #[cfg(feature = "oauth")]
@@ -1174,26 +1179,13 @@ pub struct UserRouterParams {
     pub on_register: Option<OnRegisterFn>,
 }
 
-/// 创建用户相关路由。核心包含登录/注册/会话/资料/邮箱验证/密码重置，
-/// 其余能力（`api-key`、`oauth`、`totp`、`jwt`）随对应 feature 启用挂载。
+/// 创建用户相关路由。核心包含登录/注册/会话/资料，
+/// 其余能力（`email`、`api-key`、`oauth`、`totp`、`jwt`）随对应 feature 启用挂载。
 pub fn new_user_router(params: UserRouterParams) -> Router {
     let name = "user";
 
-    let email_verify_state = email_verify::EmailVerifyState {
-        pool: params.pool,
-        cache: params.cache,
-        email_config: params.email_config,
-    };
-    let password_reset_state = password_reset::PasswordResetState {
-        pool: params.pool,
-        cache: params.cache,
-        email_config: params.email_config,
-    };
-
     // IP 维度限流器：基于 Redis 固定窗口，跨实例共享配额（多副本部署一致）。
     // 在 Axum 路由链里后挂载的 `.layer(...)` 位于更外层，先于内层中间件执行。
-    let email_endpoint_limit =
-        RedisIpRateLimit::new(params.cache, "email", EMAIL_ENDPOINT_RATE_MAX, RATE_WINDOW);
     let register_limit =
         RedisIpRateLimit::new(params.cache, "register", REGISTER_RATE_MAX, RATE_WINDOW);
     let login_limit = RedisIpRateLimit::new(params.cache, "login", LOGIN_RATE_MAX, RATE_WINDOW);
@@ -1236,57 +1228,74 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
                 .with_state(params.pool)
                 .layer(from_fn_with_state((name, "logout").into(), user_tracker)),
         )
-        .route("/profile", patch(update_profile).with_state(params.pool))
-        // 邮箱验证（请求与确认均挂限流，防止暴力枚举 token 与邮件轰炸）
-        .route(
-            "/email/verify/request",
-            post(email_verify::request_verify)
-                .with_state(email_verify_state.clone())
-                .layer(from_fn_with_state(
-                    (name, "email_verify_request").into(),
-                    user_tracker,
-                ))
-                .layer(from_fn_with_state(
-                    email_endpoint_limit.clone(),
-                    redis_ip_rate_limit,
-                )),
-        )
-        .route(
-            "/email/verify/confirm",
-            post(email_verify::confirm_verify)
-                .with_state(email_verify_state)
-                .layer(from_fn_with_state(
-                    email_endpoint_limit.clone(),
-                    redis_ip_rate_limit,
-                )),
-        )
-        // 密码重置（匿名调用，请求与确认均挂严格防刷）
-        .route(
-            "/password/reset/request",
-            post(password_reset::request_reset)
-                .with_state(password_reset_state.clone())
-                .layer(from_fn_with_state(
-                    (name, "password_reset_request").into(),
-                    user_tracker,
-                ))
-                .layer(from_fn_with_state(
-                    email_endpoint_limit.clone(),
-                    redis_ip_rate_limit,
-                )),
-        )
-        .route(
-            "/password/reset/confirm",
-            post(password_reset::confirm_reset)
-                .with_state(password_reset_state)
-                .layer(from_fn_with_state(
-                    (name, "password_reset_confirm").into(),
-                    user_tracker,
-                ))
-                .layer(from_fn_with_state(
-                    email_endpoint_limit,
-                    redis_ip_rate_limit,
-                )),
-        );
+        .route("/profile", patch(update_profile).with_state(params.pool));
+
+    // 邮箱验证与密码重置（请求与确认均挂限流，防止暴力枚举 token 与邮件轰炸）
+    #[cfg(feature = "email")]
+    {
+        let email_verify_state = email_verify::EmailVerifyState {
+            pool: params.pool,
+            cache: params.cache,
+            email_config: params.email_config,
+        };
+        let password_reset_state = password_reset::PasswordResetState {
+            pool: params.pool,
+            cache: params.cache,
+            email_config: params.email_config,
+        };
+        let email_endpoint_limit =
+            RedisIpRateLimit::new(params.cache, "email", EMAIL_ENDPOINT_RATE_MAX, RATE_WINDOW);
+
+        router = router
+            .route(
+                "/email/verify/request",
+                post(email_verify::request_verify)
+                    .with_state(email_verify_state.clone())
+                    .layer(from_fn_with_state(
+                        (name, "email_verify_request").into(),
+                        user_tracker,
+                    ))
+                    .layer(from_fn_with_state(
+                        email_endpoint_limit.clone(),
+                        redis_ip_rate_limit,
+                    )),
+            )
+            .route(
+                "/email/verify/confirm",
+                post(email_verify::confirm_verify)
+                    .with_state(email_verify_state)
+                    .layer(from_fn_with_state(
+                        email_endpoint_limit.clone(),
+                        redis_ip_rate_limit,
+                    )),
+            )
+            .route(
+                "/password/reset/request",
+                post(password_reset::request_reset)
+                    .with_state(password_reset_state.clone())
+                    .layer(from_fn_with_state(
+                        (name, "password_reset_request").into(),
+                        user_tracker,
+                    ))
+                    .layer(from_fn_with_state(
+                        email_endpoint_limit.clone(),
+                        redis_ip_rate_limit,
+                    )),
+            )
+            .route(
+                "/password/reset/confirm",
+                post(password_reset::confirm_reset)
+                    .with_state(password_reset_state)
+                    .layer(from_fn_with_state(
+                        (name, "password_reset_confirm").into(),
+                        user_tracker,
+                    ))
+                    .layer(from_fn_with_state(
+                        email_endpoint_limit,
+                        redis_ip_rate_limit,
+                    )),
+            );
+    }
 
     // API Key / 个人访问令牌（PAT）
     #[cfg(feature = "api-key")]
@@ -1478,14 +1487,20 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
         register,
         logout,
         update_profile,
-        email_verify::request_verify,
-        email_verify::confirm_verify,
-        password_reset::request_reset,
-        password_reset::confirm_reset,
     ),
     tags((name = "user", description = "用户认证、资料与会话管理"))
 )]
 struct UserBaseApiDoc;
+
+#[cfg(feature = "email")]
+#[derive(OpenApi)]
+#[openapi(paths(
+    email_verify::request_verify,
+    email_verify::confirm_verify,
+    password_reset::request_reset,
+    password_reset::confirm_reset,
+))]
+struct EmailApiDoc;
 
 #[cfg(feature = "api-key")]
 #[derive(OpenApi)]
@@ -1525,6 +1540,8 @@ struct JwtMfaApiDoc;
 pub fn openapi() -> utoipa::openapi::OpenApi {
     #[allow(unused_mut)]
     let mut doc = UserBaseApiDoc::openapi();
+    #[cfg(feature = "email")]
+    doc.merge(EmailApiDoc::openapi());
     #[cfg(feature = "api-key")]
     doc.merge(ApiKeyApiDoc::openapi());
     #[cfg(feature = "totp")]

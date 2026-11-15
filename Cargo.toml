@@ -14,15 +14,17 @@ default-run = "tibba"
 [lints]
 workspace = true
 
-# 默认开启文件存储与异步任务；最小构建可用 `--no-default-features`
+# 默认开启文件存储、异步任务与邮件发送；最小构建可用 `--no-default-features`
 [features]
-default = ["file", "job"]
+default = ["file", "job", "email"]
 # 文件上传 / 下载 / 预览与对象存储抽象（tibba-opendal 默认本地 fs）
 file = ["dep:tibba-opendal", "tibba-router/file"]
 # S3 兼容对象存储后端（隐含 file）
 s3 = ["file", "tibba-opendal/s3"]
 # Postgres 异步任务队列与 /jobs/* 运维路由
-job = ["dep:tibba-job", "tibba-router/job"]
+job = ["tibba-model/job", "tibba-router/job"]
+# 邮件发送、邮箱验证与密码重置能力
+email = ["dep:tibba-request", "tibba-request/email", "tibba-router/email"]
 # JWT 备选登录 / 刷新 / 登出与无状态 access 校验
 jwt = ["tibba-auth/jwt", "tibba-router/jwt"]
 # TOTP 两步验证
@@ -36,6 +38,7 @@ otel = [
     "dep:opentelemetry",
     "dep:opentelemetry-otlp",
     "dep:opentelemetry_sdk",
+    "dep:tibba-request",
     "dep:tracing-opentelemetry",
     "tibba-middleware/otel",
     "tibba-request/otel",
@@ -51,6 +54,7 @@ full = [
     "file",
     "s3",
     "job",
+    "email",
     "jwt",
     "totp",
     "oauth",
@@ -64,40 +68,38 @@ full = [
 [dependencies]
 axum = { workspace = true }
 axum-extra = { workspace = true }
-glob = "0.3.4"
+glob = { workspace = true }
 metrics-exporter-prometheus = { workspace = true }
 mime_guess2 = { workspace = true, optional = true }
-num_cpus = "1.17.0"
+num_cpus = { workspace = true }
 opentelemetry = { workspace = true, optional = true }
 opentelemetry-otlp = { workspace = true, optional = true }
 opentelemetry_sdk = { workspace = true, optional = true }
-regex = "1.13.1"
+regex = { workspace = true }
 rust-embed = { workspace = true, optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sqlx = { workspace = true }
 substring = { workspace = true }
-tibba-auth = { path = "./tibba-auth" }
-tibba-cache = { path = "./tibba-cache" }
-tibba-config = { path = "./tibba-config" }
-tibba-crypto = { path = "./tibba-crypto" }
-tibba-email = { path = "./tibba-email" }
-tibba-error = { path = "./tibba-error" }
-tibba-job = { path = "./tibba-job", optional = true }
-tibba-middleware = { path = "./tibba-middleware" }
-tibba-model = { path = "./tibba-model" }
-tibba-opendal = { path = "./tibba-opendal", optional = true }
-tibba-request = { path = "./tibba-request", default-features = false }
-tibba-router = { path = "./tibba-router" }
-tibba-runtime = { path = "./tibba-runtime", default-features = false }
-tibba-util = { path = "./tibba-util" }
+tibba-auth = { workspace = true }
+tibba-cache = { workspace = true }
+tibba-config = { workspace = true }
+tibba-crypto = { workspace = true }
+tibba-error = { workspace = true }
+tibba-middleware = { workspace = true }
+tibba-model = { workspace = true }
+tibba-opendal = { workspace = true, optional = true }
+tibba-request = { workspace = true, optional = true }
+tibba-router = { workspace = true }
+tibba-runtime = { workspace = true }
+tibba-util = { workspace = true, features = ["compression", "http"] }
 time = { workspace = true }
 tokio = { workspace = true }
-toml = "1.1.6"
+toml = { workspace = true }
 tracing = { workspace = true }
 tracing-opentelemetry = { workspace = true, optional = true }
 # env-filter：让 RUST_LOG 支持 `tibba:cache=debug` 这类按 target 过滤的指令。
-tracing-subscriber = { version = "0.3.23", features = ["local-time", "env-filter"] }
+tracing-subscriber = { workspace = true }
 utoipa = { workspace = true }
 validator = { workspace = true }
 
@@ -105,10 +107,10 @@ validator = { workspace = true }
 http-body-util = { workspace = true }
 pretty_assertions = { workspace = true }
 serde_json = { workspace = true }
-tibba-auth = { path = "./tibba-auth" }
-tibba-error = { path = "./tibba-error" }
-tibba-middleware = { path = "./tibba-middleware" }
-tibba-runtime = { path = "./tibba-runtime", default-features = false }
+tibba-auth = { workspace = true }
+tibba-error = { workspace = true }
+tibba-middleware = { workspace = true }
+tibba-runtime = { workspace = true }
 tower = { workspace = true, features = ["util"] }
 
 [profile.release]
@@ -122,9 +124,7 @@ members = [
     "tibba-cache",
     "tibba-config",
     "tibba-crypto",
-    "tibba-email",
     "tibba-error",
-    "tibba-job",
     "tibba-middleware",
     "tibba-model",
     "tibba-opendal",
@@ -148,18 +148,20 @@ repository = "https://github.com/vicanso/tibba"
 
 [workspace.dependencies]
 aes-gcm = "0.11.1"
-arc-swap = "1.9.2"
+arc-swap = "1.9.5"
 argon2 = "0.6.0"
 axum = { version = "0.8.9", features = ["multipart"] }
 axum-extra = { version = "0.12.6", features = ["cookie", "cookie-signed"] }
 base64 = "0.23.1"
 bytes = "1.12.1"
 bytesize-serde = "0.2.1"
-config = "0.15.25"
+config = "0.15.27"
 cookie = "0.18.2"
 dashmap = "6.2.1"
+deadpool = { version = "0.13", default-features = false, features = ["managed", "rt_tokio_1"] }
 futures = "0.3.34"
 getrandom = "0.4.3"
+glob = "0.3.4"
 hex = "0.4.3"
 hmac = "0.13.0"
 hostname = "0.4.2"
@@ -167,28 +169,30 @@ http = "1.5.0"
 http-body-util = "0.1.5"
 humantime = "2.4.0"
 humantime-serde = "1.1.1"
-jsonwebtoken = { version = "11.0.0", default-features = false, features = ["aws_lc_rs"] }
-lz4_flex = "0.14.0"
+jsonwebtoken = { version = "12.0.0", default-features = false, features = ["aws_lc_rs"] }
+lz4_flex = "0.14.2"
 metrics = "0.24"
 metrics-exporter-prometheus = { version = "0.18", default-features = false }
-mime = "0.3.17"
+mime = "0.3.18"
 mime_guess2 = "2.3.1"
 nanoid = "0.5.0"
-opendal = { version = "0.59.1", default-features = false, features = [
+num_cpus = "1.17.0"
+opendal = { version = "0.59.5", default-features = false, features = [
     "layers-mime-guess",
 ] }
-opentelemetry = "0.32.0"
-opentelemetry-otlp = { version = "0.32.0", default-features = false, features = [
+opentelemetry = "0.33.1"
+opentelemetry-otlp = { version = "0.33.1", default-features = false, features = [
     "http-proto",
     "reqwest-blocking-client",
     "trace",
 ] }
-opentelemetry_sdk = { version = "0.32.1", features = ["rt-tokio"] }
+opentelemetry_sdk = { version = "0.33.1", features = ["rt-tokio"] }
 os_info = { version = "3.15.0", default-features = false }
 parse-size = "1.1.0"
 pretty_assertions = "1.4.1"
-rand = "0.10.2"
+rand = "0.10.3"
 redis = { version = "1.7.0", features = ["tokio-comp", "aio"] }
+regex = "1.13.1"
 reqwest = { version = "0.13.5", default-features = false, features = [
     "rustls",
     "http2",
@@ -196,13 +200,13 @@ reqwest = { version = "0.13.5", default-features = false, features = [
     "json",
     "form",
 ] }
-rust-embed = { version = "8.12.0", features = ["include-exclude"] }
+rust-embed = { version = "8.14.0", features = ["include-exclude"] }
 scopeguard = "1.2.0"
 serde = { version = "1.0.229", features = ["derive"] }
-serde_json = "1.0.151"
+serde_json = "1.0.154"
 serde_urlencoded = "0.7.1"
 sha1 = "0.11.0"
-sha2 = "0.11.0"
+sha2 = "0.11.1"
 snafu = "0.9.2"
 # 关闭默认 feature：数据库时间类型统一用 time，macros 与 FromRow 派生按需保留。
 sqlx = { version = "0.9.0", default-features = false, features = [
@@ -215,9 +219,21 @@ sqlx = { version = "0.9.0", default-features = false, features = [
 ] }
 subtle = "2.6.1"
 substring = "1.4.5"
-sysinfo = "0.39.6"
+sysinfo = { version = "0.40.3", default-features = false, features = ["system"] }
+tibba-auth = { path = "./tibba-auth", version = "0.3.0" }
+tibba-cache = { path = "./tibba-cache", version = "0.3.0" }
+tibba-config = { path = "./tibba-config", version = "0.3.0" }
+tibba-crypto = { path = "./tibba-crypto", version = "0.3.0" }
+tibba-error = { path = "./tibba-error", version = "0.3.0" }
+tibba-middleware = { path = "./tibba-middleware", version = "0.3.0" }
+tibba-model = { path = "./tibba-model", version = "0.3.0" }
+tibba-opendal = { path = "./tibba-opendal", version = "0.3.0" }
+tibba-request = { path = "./tibba-request", version = "0.3.0" }
+tibba-router = { path = "./tibba-router", version = "0.3.0" }
+tibba-runtime = { path = "./tibba-runtime", version = "0.3.0" }
+tibba-util = { path = "./tibba-util", version = "0.3.0", default-features = false }
 time = { version = "0.3.55", features = ["serde", "formatting"] }
-tokio = { version = "1.53.1", features = [
+tokio = { version = "1.54.1", features = [
     "macros",
     "rt",
     "rt-multi-thread",
@@ -225,6 +241,7 @@ tokio = { version = "1.53.1", features = [
     "signal",
 ] }
 tokio-cron-scheduler = { version = "0.15.1", features = ["signal"] }
+toml = "1.2.1"
 tower = { version = "0.5.3", features = ["timeout"] }
 tower-http = { version = "0.7.1", features = [
     "compression-br",
@@ -232,12 +249,13 @@ tower-http = { version = "0.7.1", features = [
     "compression-zstd",
 ] }
 tracing = "0.1.44"
-tracing-opentelemetry = "0.33.0"
+tracing-opentelemetry = "0.34.0"
+tracing-subscriber = { version = "0.3.23", features = ["local-time", "env-filter"] }
 url = "2.5.8"
 urlencoding = "2.1.3"
-utoipa = { version = "5.5.0", features = ["axum_extras"] }
-uuid = { version = "1.26.1", features = ["v7"] }
+utoipa = { version = "6.0.0", features = ["axum_extras"] }
+uuid = { version = "1.29.2", features = ["v7"] }
 validator = { version = "0.21.0", features = ["derive"] }
 x509-parser = "0.18.1"
-zeroize = "1.8"
-zstd = "0.14.0"
+zeroize = "1.9.1"
+zstd = "0.14.4"

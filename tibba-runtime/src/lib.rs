@@ -27,7 +27,7 @@
 //!
 //! `shutdown` 管「通知大家该停了」，`hook` 的 `run_after_tasks` 管「大家停完之后
 //! 做清理」；`hook` 管「启动/关闭各跑一次」，`scheduler` 管「按 cron 周期性反复跑」。
-//! 与 `tibba-job`（Postgres 异步任务队列）的分工：本 crate 是进程内编排，
+//! 与 `tibba_model::job`（Postgres 异步任务队列）的分工：本 crate 是进程内编排，
 //! 不落库、不跨进程重试。
 //!
 //! 两个可选 feature 默认关闭：`sysinfo` 与 `tokio-cron-scheduler` 传递依赖较重，

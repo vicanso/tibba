@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{Error, LOG_TARGET};
+use super::{Error, LOG_TARGET};
+use crate::{Client, ClientBuilder, Params};
 use http::Method;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::sync::OnceLock;
 use std::time::Duration;
 use tibba_error::Error as BaseError;
-use tibba_request::{Client, ClientBuilder, Params};
 use tracing::info;
 
 type Result<T, E = BaseError> = std::result::Result<T, E>;

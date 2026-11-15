@@ -1,5 +1,5 @@
 #!/bin/bash
-# 按「核心 / 标准」两层发布 tibba-* 到 crates.io（14 个 crate）。
+# 按「核心 / 标准」两层发布 tibba-* 到 crates.io（12 个 crate）。
 # 分层说明见 docs/crates.md；各 crate README 中有 **分层** 标记。
 set -euo pipefail
 
@@ -21,13 +21,11 @@ CORE_C3=(
     tibba-request
 )
 
-# ── 标准（Standard, 7 crates）：标准 REST 构件，依赖核心 ─────────────────
+# ── 标准（Standard, 5 crates）：标准 REST 构件，依赖核心 ─────────────────
 # Batch S1 — 基础设施与数据模型
 STANDARD_S1=(
     tibba-model
-    tibba-job
     tibba-opendal
-    tibba-email
 )
 # Batch S2 — 认证授权合集（依赖 cache / crypto / request / runtime / config）
 STANDARD_S2=(
@@ -51,7 +49,7 @@ usage() {
   ./scripts/publish.sh              # 发布全部：core → standard
   ./scripts/publish.sh all          # 同上
   ./scripts/publish.sh core         # 仅核心（7 crates）
-  ./scripts/publish.sh standard     # 仅标准（7 crates，请先保证 core 已发布）
+  ./scripts/publish.sh standard     # 仅标准（5 crates，请先保证 core 已发布）
   ./scripts/publish.sh <crate>      # 发布单个 crate，如 tibba-error
 
 环境变量:
@@ -92,7 +90,7 @@ publish_core() {
 
 publish_standard() {
     echo "######## STANDARD ########"
-    publish_batch "standard/S1 (model/job/opendal/email)" "${STANDARD_S1[@]}"
+    publish_batch "standard/S1 (model/opendal)" "${STANDARD_S1[@]}"
     publish_batch "standard/S2 (auth)" "${STANDARD_S2[@]}"
     publish_batch "standard/S3 (middleware)" "${STANDARD_S3[@]}"
     publish_batch "standard/S4 (router)" "${STANDARD_S4[@]}"

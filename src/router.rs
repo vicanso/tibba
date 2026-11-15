@@ -14,9 +14,11 @@
 
 use crate::admin_web::serve_web;
 use crate::app_ctx::AppCtx;
+use crate::config::must_get_basic_config;
+#[cfg(feature = "email")]
+use crate::config::must_get_email_config;
 #[cfg(feature = "oauth")]
 use crate::config::must_get_oauth_config;
-use crate::config::{must_get_basic_config, must_get_email_config};
 use crate::metrics::metrics_handler;
 use axum::Router;
 use axum::routing::get;
@@ -85,7 +87,7 @@ pub fn new_router(ctx: &AppCtx) -> Result<Router> {
             storage.check().await?;
             #[cfg(feature = "job")]
             {
-                let queue_stats = tibba_job::JobQueue::new(pool).stats().await?;
+                let queue_stats = tibba_model::job::JobQueue::new(pool).stats().await?;
                 if queue_stats.pending > READINESS_MAX_PENDING {
                     return Err(Error::new(format!(
                         "job queue backlog too high: {} pending",
@@ -108,6 +110,7 @@ pub fn new_router(ctx: &AppCtx) -> Result<Router> {
         secret: basic_config.secret.clone(),
         pool,
         cache,
+        #[cfg(feature = "email")]
         email_config: must_get_email_config(),
         #[cfg(feature = "oauth")]
         oauth_config: must_get_oauth_config(),

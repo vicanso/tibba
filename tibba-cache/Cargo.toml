@@ -15,14 +15,11 @@ name = "tibba_cache"
 path = "src/lib.rs"
 
 [dependencies]
-# 单节点 / 集群均自建 Manager（deadpool-redis 的 Manager 无法注入 response_timeout），
-# 故直接依赖 deadpool::managed + redis，不再需要 deadpool-redis
-deadpool = { version = "0.13", default-features = false, features = [
-    "managed",
-    "rt_tokio_1",
-] }
 # singleflight 的按 key 互斥锁注册表
 dashmap = { workspace = true }
+# 单节点 / 集群均自建 Manager（deadpool-redis 的 Manager 无法注入 response_timeout），
+# 故直接依赖 deadpool::managed + redis，不再需要 deadpool-redis
+deadpool = { workspace = true }
 # 消费 pub/sub 消息流（跨节点失效）
 futures = { workspace = true }
 humantime-serde = { workspace = true }
@@ -31,12 +28,10 @@ redis = { workspace = true, features = ["cluster-async"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 snafu = { workspace = true }
-tibba-config = { path = "../tibba-config", version = "0.3.0" }
-tibba-error = { path = "../tibba-error", version = "0.3.0" }
+tibba-config = { workspace = true }
+tibba-error = { workspace = true }
 # 只用 compress/decompress 与 parse_uri，不需要 util 的 http 簇
-tibba-util = { path = "../tibba-util", version = "0.3.0", default-features = false, features = [
-    "compression",
-] }
+tibba-util = { workspace = true, features = ["compression"] }
 # sync：singleflight 的按 key 互斥锁；time：pub/sub 建连超时与重连退避休眠
 tokio = { workspace = true, features = ["sync", "time"] }
 tracing = { workspace = true }

@@ -17,7 +17,7 @@
 ## 路径一：派生仓库
 
 ```bash
-./scripts/init-project.sh my-app ~/github            # 保留 default features（file + job）
+./scripts/init-project.sh my-app ~/github            # 保留 default features（file + job + email）
 ./scripts/init-project.sh my-app ~/github --minimal  # 将 default features 置为 []
 ./scripts/init-project.sh my-app ~/github --dry-run  # 预览替换内容
 ```

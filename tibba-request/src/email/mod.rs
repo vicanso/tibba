@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! tibba-email
+//! tibba_request::email
 //!
 //! 应用级邮件发送抽象。屏蔽具体提供商（当前仅 Resend），为业务侧提供
 //! `EmailService` 句柄。配置由 `EmailConfig` 反序列化得到。

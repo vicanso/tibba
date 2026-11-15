@@ -26,7 +26,7 @@
 **best-effort**（错误仅记日志，通过 `ShutdownTimeouts` 为单任务和总清理设定超时预算：`DEFAULT_TASK_TIMEOUT` = 5s、`DEFAULT_SHUTDOWN_TIMEOUT` = 10s）。
 `shutdown` 统一处理 `SIGINT` / `SIGTERM` 并广播优雅停机信号；`scheduler` 提供 `singleton_cron_job`，通过注入的分布式锁回调实现「全集群单实例」触发。
 
-与 `tibba-job`（Postgres 异步任务队列）的分工：本 crate 是进程内编排，不落库、不跨进程重试。
+与 `tibba_model::job`（Postgres 异步任务队列）的分工：本 crate 是进程内编排，不落库、不跨进程重试。
 
 ## Features
 

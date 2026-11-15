@@ -46,12 +46,12 @@ sha1 = { workspace = true, optional = true }
 sha2 = { workspace = true, optional = true }
 snafu = { workspace = true }
 subtle = { workspace = true, optional = true }
-tibba-cache = { path = "../tibba-cache", version = "0.3.0" }
-tibba-crypto = { path = "../tibba-crypto", version = "0.3.0", optional = true }
-tibba-error = { path = "../tibba-error", version = "0.3.0" }
-tibba-request = { path = "../tibba-request", version = "0.3.0", optional = true }
-tibba-runtime = { path = "../tibba-runtime", version = "0.3.0" }
-tibba-util = { path = "../tibba-util", version = "0.3.0", default-features = false }
+tibba-cache = { workspace = true }
+tibba-crypto = { workspace = true, optional = true }
+tibba-error = { workspace = true }
+tibba-request = { workspace = true, optional = true }
+tibba-runtime = { workspace = true }
+tibba-util = { workspace = true }
 time = { workspace = true }
 tracing = { workspace = true }
 urlencoding = { workspace = true, optional = true }
@@ -61,7 +61,7 @@ zeroize = { workspace = true, optional = true }
 http = { workspace = true }
 http-body-util = { workspace = true }
 pretty_assertions = { workspace = true }
-tibba-config = { path = "../tibba-config", version = "0.3.0" }
+tibba-config = { workspace = true }
 tokio = { workspace = true }
 tower = { workspace = true }
 

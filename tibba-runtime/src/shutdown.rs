@@ -20,7 +20,7 @@
 //! | 谁 | 机制 | 实际覆盖的信号 |
 //! |----|------|---------------|
 //! | HTTP | `axum::serve(..).with_graceful_shutdown(fut)` | SIGINT + SIGTERM |
-//! | 任务队列 | `tibba-job` 自建 `watch::channel` + 显式 `shutdown()` | 靠调用方手动串 |
+//! | 任务队列 | `tibba_model::job` 自建 `watch::channel` + 显式 `shutdown()` | 靠调用方手动串 |
 //! | Cron | `JobScheduler::shutdown_on_ctrl_c()` | **只有 SIGINT** |
 //!
 //! 第三条是个实打实的问题：那个方法内部就是 `tokio::signal::ctrl_c()`，而容器

@@ -2,7 +2,7 @@
 
 基于 **Axum + PostgreSQL + Redis** 的轻量级 Rust Web 服务脚手架。
 
-Workspace 内聚为 **14 个 `tibba-*` crate**（7 个 Core + 7 个 Standard）；依赖关系图见 [modules.md](docs/modules.md)。可选能力全部通过根 `Cargo.toml` feature flag 按需裁剪。
+Workspace 内聚为 **12 个 `tibba-*` crate**（7 个 Core + 5 个 Standard）；依赖关系图见 [modules.md](docs/modules.md)。可选能力全部通过根 `Cargo.toml` feature flag 按需裁剪。
 
 ## 架构速览
 
@@ -116,13 +116,14 @@ make init name=my-app dest=~/github flags=--minimal  # 将 default features 置�
 
 ## Cargo Features 与精简构建
 
-根包默认开启 `default = ["file", "job"]`；其余能力按需打开，全量启用使用 `full`：
+根包默认开启 `default = ["file", "job", "email"]`；其余能力按需打开，全量启用使用 `full`：
 
 | Feature | 说明 |
 |---------|------|
 | `file`（默认开） | 文件上传 / 下载 / 预览与对象存储抽象（本地 fs） |
 | `s3` | S3 兼容对象存储后端（隐含 `file`） |
 | `job`（默认开） | PostgreSQL 异步任务队列与 `/jobs/*` 运维路由 |
+| `email`（默认开） | 邮件发送、邮箱验证与密码重置能力 |
 | `jwt` | JWT 登录 / 刷新 / 登出与无状态 access 校验 |
 | `totp` | TOTP 两步验证 |
 | `oauth` | GitHub / Google OAuth2 登录 |
@@ -131,10 +132,10 @@ make init name=my-app dest=~/github flags=--minimal  # 将 default features 置�
 | `process-info` | 进程 CPU / 内存 / FD / 磁盘 I/O 采样 |
 | `scheduler` | 进程内 cron 周期监控任务调度器 |
 | `embed-admin` | 编译期嵌入 `admin/dist/` SPA 静态资源 |
-| `full` | 启用上述全部 11 个可选 feature |
+| `full` | 启用上述全部 12 个可选 feature |
 
 ```bash
-# 最小二进制（关闭 file 与 job）
+# 最小二进制（关闭 file、job 与 email）
 make release-minimal
 
 # 内嵌 admin SPA 构建
@@ -146,7 +147,7 @@ cargo build --release --no-default-features --features "jwt,totp,api-key"
 
 ## 分层与发布
 
-Workspace 分为 **Core（7 crates）** 与 **Standard（7 crates）**，详细说明见 [crates.md](docs/crates.md)：
+Workspace 分为 **Core（7 crates）** 与 **Standard（5 crates）**，详细说明见 [crates.md](docs/crates.md)：
 
 ```bash
 ./scripts/publish.sh core      # 仅核心层

@@ -29,7 +29,9 @@ const PROCESS_CACHE_MAX_SIZE: usize = 64;
 const PROCESS_CACHE_TTL: Duration = Duration::from_secs(10);
 
 /// 复用的进程信息采样器，跨刷新周期保留前次快照以计算 CPU 使用率及磁盘读写增量。
-static PROCESS_SYSTEM: LazyLock<Mutex<System>> = LazyLock::new(|| Mutex::new(System::new()));
+/// `sysinfo 0.40+` 中 `System::new()` 在不支持平台上返回 `Err`，降级为 `None` 以避免采样 panic。
+static PROCESS_SYSTEM: LazyLock<Mutex<Option<System>>> =
+    LazyLock::new(|| Mutex::new(System::new().ok()));
 /// PID -> `(采样时刻, 快照)` 缓存，替代外部 `cached` 宏以减少传递依赖。
 static PROCESS_INFO_CACHE: LazyLock<Mutex<HashMap<usize, (Instant, ProcessSystemInfo)>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
@@ -111,6 +113,9 @@ pub fn get_process_system_info(pid: usize) -> ProcessSystemInfo {
         let mut sys = PROCESS_SYSTEM
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let Some(sys) = sys.as_mut() else {
+            return ProcessSystemInfo::default();
+        };
         let sysinfo_pid = Pid::from(pid);
         // remove_dead_processes = true：清理已退出的历史 PID 条目，避免长期运行内存增长
         sys.refresh_processes(ProcessesToUpdate::Some(&[sysinfo_pid]), true);

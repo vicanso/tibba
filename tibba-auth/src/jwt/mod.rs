@@ -242,8 +242,10 @@ impl JwtSigner {
         // 默认 leeway 60s，容忍小幅时钟偏差
         validation.leeway = 60;
         Ok(Self {
-            encoding_key: jsonwebtoken::EncodingKey::from_secret(secret_bytes),
-            decoding_key: jsonwebtoken::DecodingKey::from_secret(secret_bytes),
+            encoding_key: jsonwebtoken::EncodingKey::from_secret(secret_bytes)
+                .context(SignSnafu)?,
+            decoding_key: jsonwebtoken::DecodingKey::from_secret(secret_bytes)
+                .context(VerifySnafu)?,
             validation,
             access_ttl: cfg.access_ttl,
             refresh_ttl: cfg.refresh_ttl,
@@ -463,7 +465,7 @@ mod tests {
         let expired_tok = jsonwebtoken::encode(
             &jsonwebtoken::Header::new(jsonwebtoken::Algorithm::HS256),
             &expired_claims,
-            &jsonwebtoken::EncodingKey::from_secret(cfg.secret.as_bytes()),
+            &jsonwebtoken::EncodingKey::from_secret(cfg.secret.as_bytes()).expect("encoding key"),
         )
         .expect("encode expired");
         assert!(signer.verify_access(&expired_tok).is_err());

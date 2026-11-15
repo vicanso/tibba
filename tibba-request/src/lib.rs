@@ -19,6 +19,8 @@ use tibba_error::Error as BaseError;
 /// 可通过 `RUST_LOG=tibba:request=info`（或 `debug`）进行过滤。
 pub(crate) const LOG_TARGET: &str = "tibba:request";
 
+#[cfg(feature = "email")]
+pub mod email;
 mod request;
 #[cfg(feature = "stream")]
 mod sse;

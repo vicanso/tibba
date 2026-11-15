@@ -29,11 +29,11 @@ scopeguard = { workspace = true }
 serde = { workspace = true }
 snafu = { workspace = true }
 subtle = { workspace = true }
-tibba-auth = { path = "../tibba-auth", version = "0.3.0" }
-tibba-cache = { path = "../tibba-cache", version = "0.3.0" }
-tibba-error = { path = "../tibba-error", version = "0.3.0" }
-tibba-runtime = { path = "../tibba-runtime", version = "0.3.0" }
-tibba-util = { path = "../tibba-util", version = "0.3.0", default-features = false, features = ["http"] }
+tibba-auth = { workspace = true }
+tibba-cache = { workspace = true }
+tibba-error = { workspace = true }
+tibba-runtime = { workspace = true }
+tibba-util = { workspace = true, features = ["http"] }
 tokio = { workspace = true }
 tower = { workspace = true }
 tower-http = { workspace = true }

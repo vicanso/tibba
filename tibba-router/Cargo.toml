@@ -17,8 +17,10 @@ workspace = true
 default = []
 # 文件管理路由（/files/*），依赖 tibba-opendal 与 mime_guess2
 file = ["dep:mime_guess2", "dep:tibba-opendal"]
-# 任务队列运维路由（/jobs/*），依赖 tibba-job
-job = ["dep:tibba-job"]
+# 任务队列运维路由（/jobs/*），依赖 tibba-model/job
+job = ["tibba-model/job"]
+# 邮箱验证与密码重置路由（/users/email/* 与 /users/password/reset/*）
+email = ["dep:tibba-request", "tibba-request/email"]
 # /commons/application 采集 CPU / 内存 / FD / 磁盘 I/O（依赖 sysinfo）
 process-info = ["tibba-runtime/process-info"]
 # JWT 备选登录/刷新/登出路由
@@ -43,17 +45,16 @@ serde_json = { workspace = true }
 snafu = { workspace = true }
 sqlx = { workspace = true }
 subtle = { workspace = true }
-tibba-auth = { path = "../tibba-auth" }
-tibba-cache = { path = "../tibba-cache" }
-tibba-crypto = { path = "../tibba-crypto" }
-tibba-email = { path = "../tibba-email" }
-tibba-error = { path = "../tibba-error" }
-tibba-job = { path = "../tibba-job", optional = true }
-tibba-middleware = { path = "../tibba-middleware" }
-tibba-model = { path = "../tibba-model" }
-tibba-opendal = { path = "../tibba-opendal", optional = true }
-tibba-runtime = { path = "../tibba-runtime" }
-tibba-util = { path = "../tibba-util", default-features = false, features = ["http"] }
+tibba-auth = { workspace = true }
+tibba-cache = { workspace = true }
+tibba-crypto = { workspace = true }
+tibba-error = { workspace = true }
+tibba-middleware = { workspace = true }
+tibba-model = { workspace = true }
+tibba-opendal = { workspace = true, optional = true }
+tibba-request = { workspace = true, optional = true }
+tibba-runtime = { workspace = true }
+tibba-util = { workspace = true, features = ["http"] }
 time = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }

@@ -103,6 +103,11 @@ mod tests {
         {
             assert!(paths.contains_key("/jobs/stats"));
         }
+        #[cfg(feature = "email")]
+        {
+            assert!(paths.contains_key("/users/email/verify/request"));
+            assert!(paths.contains_key("/users/password/reset/request"));
+        }
         #[cfg(feature = "totp")]
         {
             assert!(paths.contains_key("/users/login/mfa"));

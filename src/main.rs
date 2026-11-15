@@ -196,7 +196,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // 持有句柄以便进程退出前优雅排空在途任务（见下方 serve 之后的 shutdown）
     #[cfg(feature = "job")]
-    let job_workers = tibba_job::start(ctx.pool, 4);
+    let job_workers = tibba_model::job::start(ctx.pool, 4);
 
     let basic_config = config::must_get_basic_config();
     let app = router::new_router(ctx)?;
@@ -269,7 +269,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(feature = "job")]
     {
         let pool = ctx.pool;
-        if let Ok(before) = tibba_job::JobQueue::new(pool).stats().await {
+        if let Ok(before) = tibba_model::job::JobQueue::new(pool).stats().await {
             info!(
                 target: LOG_TARGET,
                 pending = before.pending,
@@ -278,7 +278,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             );
         }
         job_workers.shutdown(JOB_DRAIN_TIMEOUT).await;
-        if let Ok(after) = tibba_job::JobQueue::new(pool).stats().await {
+        if let Ok(after) = tibba_model::job::JobQueue::new(pool).stats().await {
             if after.running > 0 {
                 warn!(
                     target: LOG_TARGET,

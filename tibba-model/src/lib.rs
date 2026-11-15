@@ -270,6 +270,8 @@ mod api_key;
 mod audit_log;
 mod configuration;
 mod file;
+#[cfg(feature = "job")]
+pub mod job;
 mod model;
 mod permission;
 mod role_permission;

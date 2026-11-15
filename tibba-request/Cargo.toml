@@ -28,6 +28,8 @@ tls-info = ["dep:x509-parser"]
 stream = ["reqwest/stream", "dep:futures"]
 # 为出站请求注入 W3C traceparent / tracestate（分布式追踪）
 otel = ["dep:opentelemetry", "dep:tracing-opentelemetry"]
+# 应用级邮件发送抽象（Resend HTTP API，复用本 crate 连接池与拦截器）
+email = []
 
 [dependencies]
 bytes = { workspace = true }
@@ -39,9 +41,9 @@ reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 snafu = { workspace = true }
-tibba-error = { path = "../tibba-error", version = "0.3.0" }
+tibba-error = { workspace = true }
 # 只用 Stopwatch / json_get，不需要 util 的 http 与 compression 簇
-tibba-util = { path = "../tibba-util", version = "0.3.0", default-features = false }
+tibba-util = { workspace = true }
 # net：SSRF 防护需 lookup_host 解析目标域名。time：重试退避的定时器。
 # workspace 默认未启用这两个特性，这里单独开启
 tokio = { workspace = true, features = ["time", "net"] }

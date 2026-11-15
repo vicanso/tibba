@@ -213,13 +213,15 @@ pub fn get_session_params() -> Result<SessionParams> {
         .with_max_renewal(session_config.max_renewal))
 }
 
-static EMAIL_CONFIG: OnceLock<tibba_email::EmailConfig> = OnceLock::new();
+#[cfg(feature = "email")]
+static EMAIL_CONFIG: OnceLock<tibba_request::email::EmailConfig> = OnceLock::new();
 
-fn new_email_config(app_config: &Config) -> Result<tibba_email::EmailConfig> {
+#[cfg(feature = "email")]
+fn new_email_config(app_config: &Config) -> Result<tibba_request::email::EmailConfig> {
     #[derive(Default, Deserialize)]
     struct Section {
         #[serde(default)]
-        email: tibba_email::EmailConfig,
+        email: tibba_request::email::EmailConfig,
     }
     Ok(app_config.try_deserialize::<Section>()?.email)
 }
@@ -289,7 +291,8 @@ pub fn must_get_basic_config() -> &'static BasicConfig {
         .unwrap_or_else(|| panic!("basic config not initialized"))
 }
 
-pub fn must_get_email_config() -> &'static tibba_email::EmailConfig {
+#[cfg(feature = "email")]
+pub fn must_get_email_config() -> &'static tibba_request::email::EmailConfig {
     EMAIL_CONFIG
         .get()
         .unwrap_or_else(|| panic!("email config not initialized"))
@@ -332,10 +335,13 @@ pub fn init_config() -> Result<()> {
         .set(session_config)
         .map_err(|_| config_error("session config init failed"))?;
 
-    let email_config = new_email_config(app_config)?;
-    EMAIL_CONFIG
-        .set(email_config)
-        .map_err(|_| config_error("email config init failed"))?;
+    #[cfg(feature = "email")]
+    {
+        let email_config = new_email_config(app_config)?;
+        EMAIL_CONFIG
+            .set(email_config)
+            .map_err(|_| config_error("email config init failed"))?;
+    }
 
     #[cfg(feature = "oauth")]
     {
@@ -416,16 +422,20 @@ mod tests {
         assert!(session_dbg.contains("[REDACTED]"), "{session_dbg}");
     }
 
+    #[cfg(any(feature = "email", feature = "oauth", feature = "jwt"))]
     #[test]
     fn optional_config_sections_default_when_missing_and_fail_fast_on_malformed() {
         let empty = Config::builder().add_toml("").build().expect("empty cfg");
-        assert!(new_email_config(&empty).is_ok());
+        #[cfg(feature = "email")]
+        {
+            assert!(new_email_config(&empty).is_ok());
 
-        let bad_email = Config::builder()
-            .add_toml("email = 42")
-            .build()
-            .expect("cfg");
-        assert!(new_email_config(&bad_email).is_err());
+            let bad_email = Config::builder()
+                .add_toml("email = 42")
+                .build()
+                .expect("cfg");
+            assert!(new_email_config(&bad_email).is_err());
+        }
 
         #[cfg(feature = "oauth")]
         {

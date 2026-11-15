@@ -16,8 +16,6 @@ graph TD
 
     crypto --> error
 
-    job --> error
-
     runtime --> error
 
     util --> error
@@ -45,10 +43,6 @@ graph TD
     auth --> runtime
     auth --> util
 
-    email --> error
-    email --> request
-    email --> util
-
     middleware --> auth
     middleware --> cache
     middleware --> error
@@ -58,12 +52,11 @@ graph TD
     router --> auth
     router --> cache
     router --> crypto
-    router --> email
     router --> error
-    router --> job
     router --> middleware
     router --> model
     router --> opendal
+    router --> request
     router --> runtime
     router --> util
 ```

@@ -20,7 +20,7 @@ usage() {
   <目标目录>   父目录；项目会创建在 <目标目录>/<项目名>，该路径必须不存在
 
 选项:
-  --minimal    把应用的 default features 设为空（关闭 default 中的 file / job）
+  --minimal    把应用的 default features 设为空（关闭 default 中的 file / job / email）
   --dry-run    只打印将要执行的替换，不写任何文件
   -h, --help   显示本帮助
 
@@ -104,7 +104,7 @@ echo "源仓库:   $SRC_DIR"
 echo "目标:     $TARGET"
 echo "项目名:   $NAME"
 echo "env 前缀: ${UPPER}_WEB__（原 TIBBA_WEB__）"
-[ "$MINIMAL" -eq 1 ] && echo "features: default = []（关闭 file / job）"
+[ "$MINIMAL" -eq 1 ] && echo "features: default = []（关闭 file / job / email）"
 echo
 
 if [ "$DRY_RUN" -eq 1 ]; then
@@ -115,7 +115,7 @@ if [ "$DRY_RUN" -eq 1 ]; then
     echo "  src/*.rs:       TIBBA_WEB / TIBBA_THREADS → ${UPPER}_*"
     echo "  Dockerfile:     \\btibba\\b → $NAME"
     echo "  entrypoint.sh:  \\btibba\\b → $NAME"
-    [ "$MINIMAL" -eq 1 ] && echo "  Cargo.toml:     default = [\"file\", \"job\"] → default = []"
+    [ "$MINIMAL" -eq 1 ] && echo "  Cargo.toml:     default = [\"file\", \"job\", \"email\"] → default = []"
     echo
     echo "[dry-run] 未写入任何文件。"
     exit 0
@@ -174,7 +174,7 @@ perl -i -pe '
 perl -i -pe 's/\btibba\b/'"$NAME"'/g' Dockerfile entrypoint.sh
 
 if [ "$MINIMAL" -eq 1 ]; then
-    perl -i -pe 's/^default = \["file", "job"\]$/default = []/' Cargo.toml
+    perl -i -pe 's/^default = \["file", "job", "email"\]$/default = []/' Cargo.toml
 fi
 
 # 项目自己的 README 标题，避免新项目顶着 tibba 的名字

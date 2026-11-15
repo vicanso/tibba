@@ -28,8 +28,8 @@ use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use tibba_auth::AdminSession;
 use tibba_error::Error as BaseError;
-use tibba_job::{DeadJob, JobQueue};
 use tibba_model::format_datetime;
+use tibba_model::job::{DeadJob, JobQueue};
 use utoipa::{IntoParams, OpenApi, ToSchema};
 
 type Result<T> = std::result::Result<T, BaseError>;
