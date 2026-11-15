@@ -53,10 +53,12 @@ use super::{
     Error, Expired, InvalidationBus, InvalidationListener, LOG_TARGET, RedisCache, TtlFifoStore,
 };
 use serde::{Serialize, de::DeserializeOwned};
+use std::future::Future;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tibba_error::Error as BaseError;
 use tracing::warn;
 
 type Result<T> = std::result::Result<T, Error>;
@@ -224,8 +226,11 @@ impl<T: Clone + Serialize + DeserializeOwned> TwoLevelStore<T> {
         T: Send + Sync + 'static,
     {
         let bus = self.invalidation.as_ref()?;
-        let l1 = Arc::clone(&self.l1);
-        Some(bus.spawn_listener(move |key| l1.del(key)))
+        let l1_del = Arc::clone(&self.l1);
+        let l1_clear = Arc::clone(&self.l1);
+        Some(
+            bus.spawn_listener_with_reconnect(move |key| l1_del.del(key), move || l1_clear.clear()),
+        )
     }
 
     /// 广播一条失效通知；未开启时是空操作。
@@ -344,6 +349,51 @@ impl<T: Clone + Serialize + DeserializeOwned> TwoLevelStore<T> {
             self.fill_l1(key, value.clone(), l1_ttl);
         }
         Ok(result)
+    }
+
+    /// 读双层缓存；L1 与 L2 均未命中时通过进程内 singleflight 合并并发回源，
+    /// 仅调用一次 `loader`，结果按双层不同 TTL 策略回填 L2 与 L1。
+    ///
+    /// - 缓存损坏（反序列化失败）时按未命中处理，由 `loader` 回源覆盖自愈；
+    /// - 回源填充不广播跨节点失效；数据变更请显式调用 [`Self::set`] 或 [`Self::del`]。
+    pub async fn get_or_set<F, Fut>(
+        &self,
+        key: &str,
+        loader: F,
+    ) -> std::result::Result<T, BaseError>
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = std::result::Result<T, BaseError>>,
+    {
+        if let Some(value) = self.l1.get(key) {
+            return Ok(value.data);
+        }
+        let unit = unit_secs(self.ttl);
+        if let Some(value) = self.redis.read_cached::<T>(key).await? {
+            let l1_ttl = Duration::from_secs(secs_to_next_boundary(unit, now_secs()));
+            self.fill_l1(key, value.clone(), l1_ttl);
+            return Ok(value);
+        }
+
+        let _flight =
+            super::single_flight::begin_flight(self.redis.get_key(key).into_owned()).await;
+
+        // 拿到回源权后再双查 L1/L2：等锁期间前序并发任务很可能已完成回填
+        if let Some(value) = self.l1.get(key) {
+            return Ok(value.data);
+        }
+        if let Some(value) = self.redis.read_cached::<T>(key).await? {
+            let l1_ttl = Duration::from_secs(secs_to_next_boundary(unit, now_secs()));
+            self.fill_l1(key, value.clone(), l1_ttl);
+            return Ok(value);
+        }
+
+        let value = loader().await?;
+        let redis_ttl = Duration::from_secs(l2_ttl_secs(self.l2_unit(), key, self.jitter_percent));
+        self.redis.set_struct(key, &value, Some(redis_ttl)).await?;
+        let l1_ttl = Duration::from_secs(l1_ttl_for_set(unit, now_secs()));
+        self.fill_l1(key, value.clone(), l1_ttl);
+        Ok(value)
     }
 
     /// 从两层缓存中删除指定键。

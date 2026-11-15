@@ -191,8 +191,8 @@ impl WebhookHandler {
     /// 执行一次投递：签名 + POST，2xx 视为成功（非 2xx 由通用拦截器转为 `Err` 触发重试）。
     /// `delivery_id` 由调用方传入且跨重试稳定，作为 `X-Webhook-Id` 供接收方幂等去重。
     async fn deliver(&self, delivery: &WebhookDelivery, delivery_id: &str) -> Result<()> {
-        // 签名基于精确的 body 字节；reqwest 的 .json() 用同一 serde_json 序列化，字节一致，
-        // 故此处对 to_vec 的结果签名，与下方 body 实际发送内容保持一致
+        // 预先序列化 JSON 字节：签名直接作用于将要发送的同一份字节流，
+        // 发送侧走 `with_json_bytes` 避免二次序列化且严格保证与签名一致。
         let body = serde_json::to_vec(&delivery.payload).context(SerdeSnafu)?;
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -222,7 +222,7 @@ impl WebhookHandler {
         self.client
             .request_raw(
                 Params::new(Method::POST, &delivery.url)
-                    .with_body(&delivery.payload)
+                    .with_json_bytes(&body)
                     .with_headers(&headers),
             )
             .await

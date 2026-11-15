@@ -371,6 +371,12 @@ impl RedisClient {
         self.slow_cmd_threshold
     }
 
+    /// 建连超时（与 URI `connection_timeout` 一致）。
+    #[must_use]
+    pub fn connection_timeout(&self) -> Duration {
+        self.connection_timeout
+    }
+
     /// 同 [`Self::dedicated_command_conn`]，自定义 response timeout（必须 `> 0`）。
     pub async fn dedicated_command_conn_with_timeout(
         &self,
@@ -458,6 +464,7 @@ impl RedisClient {
     }
 
     /// 获取连接池状态统计信息。
+    #[must_use]
     pub fn stat(&self) -> RedisStat {
         let status = match &self.pool {
             RedisPool::Single(p) => p.status(),
@@ -494,19 +501,70 @@ impl RedisClient {
     }
 
     /// 是否为集群模式。
+    #[must_use]
     pub fn is_cluster(&self) -> bool {
         matches!(self.pool, RedisPool::Cluster(_))
     }
 }
 
+/// 高频 Redis 命令静态名称表：命中时直接返回 `Cow::Borrowed`，消除每条命令的 `String` 分配。
+const COMMON_COMMANDS: &[&str] = &[
+    "GET",
+    "SET",
+    "PSETEX",
+    "SETEX",
+    "DEL",
+    "MGET",
+    "INCR",
+    "INCRBY",
+    "DECR",
+    "EXISTS",
+    "PEXPIRE",
+    "EXPIRE",
+    "TTL",
+    "PTTL",
+    "GETDEL",
+    "PING",
+    "UNWATCH",
+    "PUBLISH",
+    "EVAL",
+    "EVALSHA",
+    "BRPOP",
+    "BLPOP",
+    "BRPOPLPUSH",
+    "BLMOVE",
+    "BLMPOP",
+    "BZPOPMIN",
+    "BZPOPMAX",
+    "BZMPOP",
+    "SUBSCRIBE",
+    "PSUBSCRIBE",
+    "SSUBSCRIBE",
+    "WAIT",
+    "XREAD",
+    "XREADGROUP",
+    "SCAN",
+    "LPUSH",
+    "RPOP",
+    "ZADD",
+    "ZCARD",
+    "ZRANGE",
+    "ZREMRANGEBYSCORE",
+];
+
 #[inline]
-fn get_command_name(cmd: &Cmd) -> &str {
+fn get_command_name(cmd: &Cmd) -> Cow<'static, str> {
     if let Some(Arg::Simple(val)) = cmd.args_iter().next()
         && let Ok(s) = std::str::from_utf8(val)
     {
-        return s;
+        for &known in COMMON_COMMANDS {
+            if known.eq_ignore_ascii_case(s) {
+                return Cow::Borrowed(known);
+            }
+        }
+        return Cow::Owned(s.to_owned());
     }
-    "unknown"
+    Cow::Borrowed("unknown")
 }
 
 /// 无条件阻塞的命令：list / zset 阻塞读与 pubsub 订阅族。
@@ -540,13 +598,13 @@ pub fn is_intentional_blocking_command(cmd: &Cmd) -> bool {
     let name = get_command_name(cmd);
     if ALWAYS_BLOCKING
         .iter()
-        .any(|candidate| candidate.eq_ignore_ascii_case(name))
+        .any(|candidate| candidate.eq_ignore_ascii_case(name.as_ref()))
     {
         return true;
     }
     if BLOCKING_WITH_BLOCK_ARG
         .iter()
-        .any(|candidate| candidate.eq_ignore_ascii_case(name))
+        .any(|candidate| candidate.eq_ignore_ascii_case(name.as_ref()))
     {
         return cmd
             .args_iter()
@@ -596,7 +654,7 @@ macro_rules! impl_connection_like {
             /// 执行单条 Redis 命令，若设置了统计回调则记录耗时与错误。
             fn req_packed_command<'a>(&'a mut self, cmd: &'a Cmd) -> RedisFuture<'a, Value> {
                 if let Some(cb) = self.stat_callback {
-                    let name = Cow::Owned(get_command_name(cmd).to_owned());
+                    let name = get_command_name(cmd);
                     let block = is_intentional_blocking_command(cmd);
                     let fut = self.conn.req_packed_command(cmd);
                     wrap_with_stat(name, block, fut, cb)
@@ -930,5 +988,21 @@ mod tests {
             .arg("s")
             .arg(">");
         assert!(is_intentional_blocking_command(&blocking));
+    }
+
+    #[test]
+    fn common_commands_borrow_static_names() {
+        assert!(matches!(
+            get_command_name(&redis::cmd("get")),
+            Cow::Borrowed("GET")
+        ));
+        assert!(matches!(
+            get_command_name(&redis::cmd("PSETEX")),
+            Cow::Borrowed("PSETEX")
+        ));
+        assert!(matches!(
+            get_command_name(&redis::cmd("CUSTOM.CMD")),
+            Cow::Owned(ref s) if s == "CUSTOM.CMD"
+        ));
     }
 }

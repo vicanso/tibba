@@ -33,7 +33,9 @@ use argon2::password_hash::phc::PasswordHash;
 use argon2::password_hash::{PasswordHasher, PasswordVerifier};
 use argon2::{Algorithm, Argon2, Params, Version};
 use snafu::{ResultExt, ensure};
+use std::sync::OnceLock;
 use subtle::ConstantTimeEq;
+use zeroize::{Zeroize, Zeroizing};
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -182,6 +184,11 @@ impl PasswordPolicy {
         self
     }
 
+    /// 校验当前策略参数与 pepper 配置是否合法，推荐在服务启动阶段调用以尽早暴露错误配置。
+    pub fn validate(&self) -> Result<()> {
+        self.hasher().map(|_| ())
+    }
+
     /// 拒绝超长输入，挡住慢哈希 DoS。
     fn ensure_len(&self, secret: &[u8]) -> Result<()> {
         ensure!(
@@ -224,10 +231,31 @@ impl PasswordPolicy {
         Ok(hash.to_string())
     }
 
+    /// 对已解析的 PHC 结构判定是否需要重算（供 [`Self::needs_rehash`] 与 [`Self::verify`] 复用）。
+    fn parsed_needs_rehash(&self, parsed: &PasswordHash) -> bool {
+        // argon2i / argon2d 用于口令存储都弱于 argon2id，一并升级
+        // password-hash 0.6 起 Algorithm 只实现 TryFrom<&str>（不再有 TryFrom<Ident>）
+        if !matches!(
+            Algorithm::try_from(parsed.algorithm.as_str()),
+            Ok(Algorithm::Argon2id)
+        ) {
+            return true;
+        }
+        // V0x10 存在历史弱化版本问题，非 V0x13 一律重算
+        if parsed.version != Some(u32::from(Version::V0x13)) {
+            return true;
+        }
+        let Ok(params) = Params::try_from(parsed) else {
+            return true;
+        };
+        // 只比两个真正的代价因子；p_cost 更高并不等于更强，不参与判定
+        params.m_cost() < self.m_cost || params.t_cost() < self.t_cost
+    }
+
     /// 存储的哈希是否需要按当前策略重算。
     ///
-    /// 判为「需要」的情形：旧式明文 sha256、无法解析的哈希、非 Argon2id 算法，
-    /// 或代价参数弱于当前策略。
+    /// 判为「需要」的情形：旧式明文 sha256、无法解析的哈希、非 Argon2id 算法、
+    /// 非 `v=19`（`0x13`）版本，或代价参数弱于当前策略。
     ///
     /// **只升不降**：管理员调低参数时不会把存量哈希重算成更弱的版本——那是一次
     /// 静默的安全降级。确需统一参数请走离线迁移。
@@ -239,19 +267,7 @@ impl PasswordPolicy {
             // 解析不了的哈希本身就该被替换
             return true;
         };
-        // argon2i / argon2d 用于口令存储都弱于 argon2id，一并升级
-        // password-hash 0.6 起 Algorithm 只实现 TryFrom<&str>（不再有 TryFrom<Ident>）
-        if !matches!(
-            Algorithm::try_from(parsed.algorithm.as_str()),
-            Ok(Algorithm::Argon2id)
-        ) {
-            return true;
-        }
-        let Ok(params) = Params::try_from(&parsed) else {
-            return true;
-        };
-        // 只比两个真正的代价因子；p_cost 更高并不等于更强，不参与判定
-        params.m_cost() < self.m_cost || params.t_cost() < self.t_cost
+        self.parsed_needs_rehash(&parsed)
     }
 
     /// 校验 `secret` 是否匹配已存储的哈希 `stored`。
@@ -259,19 +275,30 @@ impl PasswordPolicy {
     /// - `stored` 为 Argon2 PHC 串：走标准 Argon2 验证（内部常数时间）。验证使用
     ///   **哈希串自带**的参数（`PasswordVerifier` 从 PHC 串读取），因此调高策略参数
     ///   后旧哈希依然验得过；只是会额外被标记为需要重算。
-    /// - `stored` 为 64 位十六进制（旧式明文 sha256）：常数时间比对，命中返回
-    ///   [`PasswordCheck::MatchedNeedsRehash`] 提示调用方升级。
+    /// - `stored` 为 64 位十六进制（旧式明文 sha256）：常数时间比对（兼容大小写 hex），
+    ///   命中返回 [`PasswordCheck::MatchedNeedsRehash`] 提示调用方升级。
     pub fn verify(&self, stored: &str, secret: &[u8]) -> Result<PasswordCheck> {
         // 长度检查放在最前：验证路径同样会跑一次 Argon2，DoS 面与 hash 一样大
         self.ensure_len(secret)?;
 
         // 旧式明文 sha256（无 `$` 前缀、恰好 64 位 hex）——常数时间比对，命中提示升级
         if is_legacy_sha256(stored) {
-            return if constant_time_eq(stored.as_bytes(), secret) {
-                Ok(PasswordCheck::MatchedNeedsRehash)
+            let mut stored_bytes = [0u8; 32];
+            let mut secret_bytes = Zeroizing::new([0u8; 32]);
+            let matched = if hex::decode_to_slice(stored, &mut stored_bytes).is_ok()
+                && hex::decode_to_slice(secret, secret_bytes.as_mut()).is_ok()
+            {
+                let ok = constant_time_eq(&stored_bytes, &*secret_bytes);
+                stored_bytes.zeroize();
+                ok
             } else {
-                Ok(PasswordCheck::Mismatch)
+                constant_time_eq(stored.as_bytes(), secret)
             };
+            return Ok(if matched {
+                PasswordCheck::MatchedNeedsRehash
+            } else {
+                PasswordCheck::Mismatch
+            });
         }
 
         let parsed = PasswordHash::new(stored).context(PhcParseSnafu)?;
@@ -284,7 +311,7 @@ impl PasswordPolicy {
         // 时行为完全正常）。这里始终走同一个构造入口，堵死这条路。
         match self.hasher()?.verify_password(secret, &parsed) {
             Ok(()) => {
-                if self.needs_rehash(stored) {
+                if self.parsed_needs_rehash(&parsed) {
                     Ok(PasswordCheck::MatchedNeedsRehash)
                 } else {
                     Ok(PasswordCheck::Matched)
@@ -298,19 +325,39 @@ impl PasswordPolicy {
     }
 }
 
-/// 用默认策略对 `secret` 加盐哈希，返回可直接入库的 PHC 字符串。
+/// 进程级全局密码策略；启动期未显式初始化时按 [`PasswordPolicy::default`] 初始化。
+static GLOBAL_PASSWORD_POLICY: OnceLock<PasswordPolicy> = OnceLock::new();
+
+fn init_policy_in_slot(slot: &OnceLock<PasswordPolicy>, policy: PasswordPolicy) -> Result<()> {
+    policy.validate()?;
+    slot.set(policy)
+        .map_err(|_| Error::PolicyAlreadyInitialized)
+}
+
+/// 初始化进程级全局密码策略（通常在启动配置加载后调用一次，如配置 pepper 或代价参数）。
+pub fn init_global_password_policy(policy: PasswordPolicy) -> Result<()> {
+    init_policy_in_slot(&GLOBAL_PASSWORD_POLICY, policy)
+}
+
+/// 获取全局密码策略；未显式初始化时返回默认策略。
+#[must_use]
+pub fn global_password_policy() -> &'static PasswordPolicy {
+    GLOBAL_PASSWORD_POLICY.get_or_init(PasswordPolicy::default)
+}
+
+/// 用全局策略对 `secret` 加盐哈希，返回可直接入库的 PHC 字符串。
 ///
 /// `secret` 通常是客户端已 `sha256(password)` 处理的定长凭证——再套一层 Argon2 以获得
 /// 加盐、慢哈希与 pass-the-hash 抵抗；即便直接传原始口令也同样适用。
 ///
-/// 需要自定义代价参数时用 [`PasswordPolicy`]。
+/// 需要自定义代价参数或 pepper 时，在启动期调用 [`init_global_password_policy`] 或直接使用 [`PasswordPolicy`]。
 pub fn hash_password(secret: &[u8]) -> Result<String> {
-    PasswordPolicy::default().hash(secret)
+    global_password_policy().hash(secret)
 }
 
-/// 用默认策略校验 `secret` 是否匹配已存储的哈希，见 [`PasswordPolicy::verify`]。
+/// 用全局策略校验 `secret` 是否匹配已存储的哈希，见 [`PasswordPolicy::verify`]。
 pub fn verify_password(stored: &str, secret: &[u8]) -> Result<PasswordCheck> {
-    PasswordPolicy::default().verify(stored, secret)
+    global_password_policy().verify(stored, secret)
 }
 
 /// 判断 `stored` 是否为旧式明文 sha256：恰好 64 位、全部十六进制字符。
@@ -602,5 +649,52 @@ mod tests {
         assert_eq!(policy.t_cost, Params::DEFAULT_T_COST);
         assert_eq!(policy.p_cost, Params::DEFAULT_P_COST);
         assert_eq!(policy.max_secret_len, DEFAULT_MAX_SECRET_LEN);
+    }
+
+    #[test]
+    fn legacy_sha256_verify_is_case_insensitive_and_constant_time() {
+        let lower = "abcdef01".repeat(8);
+        let upper = lower.to_ascii_uppercase();
+        assert_eq!(
+            verify_password(&lower, upper.as_bytes()).unwrap(),
+            PasswordCheck::MatchedNeedsRehash
+        );
+        assert_eq!(
+            verify_password(&upper, lower.as_bytes()).unwrap(),
+            PasswordCheck::MatchedNeedsRehash
+        );
+    }
+
+    #[test]
+    fn argon2_v0x10_triggers_needs_rehash() {
+        let params = Params::new(8, 1, 1, None).unwrap();
+        let legacy_v16 = Argon2::new(Algorithm::Argon2id, Version::V0x10, params);
+        let stored = legacy_v16.hash_password(b"secret").unwrap().to_string();
+
+        let policy = cheap(8, 1);
+        assert!(policy.needs_rehash(&stored), "V0x10 应触发升级为 V0x13");
+        assert_eq!(
+            policy.verify(&stored, b"secret").unwrap(),
+            PasswordCheck::MatchedNeedsRehash
+        );
+    }
+
+    #[test]
+    fn policy_validate_and_slot_init_behave_safely() {
+        assert!(PasswordPolicy::default().validate().is_ok());
+        assert!(
+            PasswordPolicy::new()
+                .with_m_cost(1)
+                .with_p_cost(4)
+                .validate()
+                .is_err()
+        );
+
+        let slot = OnceLock::new();
+        assert!(init_policy_in_slot(&slot, cheap(8, 1)).is_ok());
+        assert!(matches!(
+            init_policy_in_slot(&slot, cheap(8, 1)).unwrap_err(),
+            Error::PolicyAlreadyInitialized
+        ));
     }
 }

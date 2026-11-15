@@ -366,13 +366,22 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let app = app.layer(from_fn_with_state(state, processing_limit));
     state.run();
 
-    info!("listening on http://{}/", basic_config.listen);
-    let listener = tokio::net::TcpListener::bind(basic_config.listen.clone()).await?;
+    let bind_addr = basic_config.bind_addr();
+    info!("listening on http://{bind_addr}/");
+    let listener = tokio::net::TcpListener::bind(&*bind_addr).await?;
     axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
-    .with_graceful_shutdown(shutdown_token().cancelled_owned())
+    .with_graceful_shutdown(async move {
+        shutdown_token().cancelled().await;
+        // 收到退出信号第一时间切换为停止态，让 /ping 等健康探针尽快摘除实例
+        state.stop();
+        if is_production() {
+            // 给负载均衡预留摘流窗口，再停止接新连接并排空在途 HTTP 请求
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        }
+    })
     .await?;
 
     // HTTP 已优雅排空（不再有新请求入队任务），再排空在途异步任务：

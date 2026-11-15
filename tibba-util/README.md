@@ -9,7 +9,7 @@
 
 ## 校验器（`validate` 模块）
 
-`x_*` 校验函数与 `CODE_*` 错误码常量，直接从 crate 根导出：
+`x_*` 校验函数与 `CODE_*` 错误码常量，直接从 crate 根导出（涵盖 `x_user_account`、`x_user_password`、`x_user_email`、`x_listen_addr`、`x_uuid`、`x_sha256`、`x_file_name`、`x_schema_name` 等）：
 
 ```rust
 use tibba_util::{x_user_account, x_uuid, x_file_name};
@@ -24,20 +24,26 @@ struct LoginParams {
 每个校验器可通过同名环境变量临时关闭（`-` 换 `_`、转小写、值设为 `*`），
 便于本地开发绕过格式限制：`x_user_password='*'`。
 
+## 安全与限额辅助
+
+- **压缩安全**：`decompress_with_limit` 默认以 `DEFAULT_DECOMPRESS_LIMIT`（64 MiB）限制解压后体积，防止压缩炸弹；LZ4 输入超出 `u32::MAX` 时拒绝截断并报错
+- **常数时间签名**：`sign_hash` / `timestamp_hash` 与 `validate_sign_hash` / `validate_timestamp_hash` 使用 HMAC-SHA256 与 `subtle` 常数时间比对
+- **请求/响应 Extractor**：提供 `JsonParams`、`QueryParams` 与带 `Cache-Control` 控制的 `CacheJson`
+
 ## Features
 
 默认全开，现有调用方无需改动；只用轻量函数的下游可裁剪：
 
 | Feature | 默认 | 内容 | 甩掉的依赖 |
 |---------|------|------|-----------|
-| `compression` | 开 | `compress` / `decompress` / `Algorithm` | zstd（含 zstd-sys C 编译）、lz4_flex |
+| `compression` | 开 | `compress` / `decompress` / `decompress_with_limit` / `Algorithm` | zstd（含 zstd-sys C 编译）、lz4_flex |
 | `http` | 开 | header / cookie 辅助（`get_header_value`、`generate_device_id_cookie` 等） | axum-extra、cookie |
 
 ```toml
 # 只要 parse_uri / timestamp / uuid 等轻量函数
-tibba-util = { version = "0.2.6", default-features = false }
+tibba-util = { version = "0.3.0", default-features = false }
 # 加压缩
-tibba-util = { version = "0.2.6", default-features = false, features = ["compression"] }
+tibba-util = { version = "0.3.0", default-features = false, features = ["compression"] }
 ```
 
 对应的 `Error` 变体随 feature 一并裁剪（如 `Zstd` 仅在 `compression` 开启时存在）。

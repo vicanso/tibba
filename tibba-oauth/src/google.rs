@@ -22,9 +22,14 @@
 //! Google 要求 scope 含 `openid email profile` 才能在 userinfo 拿到上述字段。
 
 use crate::{ApiSnafu, Error, HttpSnafu, JsonSnafu, LOG_TARGET};
+use http::Method;
+use http::header::{ACCEPT, HeaderValue};
 use serde::Deserialize;
 use snafu::{OptionExt, ResultExt};
+use std::fmt;
+use std::sync::OnceLock;
 use std::time::Duration;
+use tibba_request::{Client, ClientBuilder, Params};
 use tracing::debug;
 
 const AUTHORIZE_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
@@ -33,12 +38,31 @@ const USERINFO_URL: &str = "https://www.googleapis.com/oauth2/v3/userinfo";
 const DEFAULT_SCOPE: &str = "openid email profile";
 const HTTP_TIMEOUT_SECS: u64 = 15;
 
+static HTTP_CLIENT: OnceLock<Client> = OnceLock::new();
+
 /// 已配置的 Google OAuth 客户端。无状态，可复用。
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct GoogleProvider {
     client_id: String,
     client_secret: String,
     redirect_uri: String,
+}
+
+impl fmt::Debug for GoogleProvider {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("GoogleProvider")
+            .field("client_id", &self.client_id)
+            .field(
+                "client_secret",
+                &if self.client_secret.is_empty() {
+                    ""
+                } else {
+                    "[REDACTED]"
+                },
+            )
+            .field("redirect_uri", &self.redirect_uri)
+            .finish()
+    }
 }
 
 /// 第三方（Google）侧的用户身份信息汇总。`primary_verified_email`
@@ -56,6 +80,7 @@ pub struct GoogleUser {
 }
 
 impl GoogleProvider {
+    #[must_use]
     pub fn new(
         client_id: impl Into<String>,
         client_secret: impl Into<String>,
@@ -70,6 +95,7 @@ impl GoogleProvider {
 
     /// 生成 OAuth authorize URL。`state` 由调用方生成并存储（Redis）。
     /// 额外加 `prompt=select_account` 让用户每次都看到账号选择器，避免被默认账号沉默登录。
+    #[must_use]
     pub fn authorize_url(&self, state: &str) -> String {
         format!(
             "{AUTHORIZE_URL}?client_id={cid}&redirect_uri={ruri}&state={st}&scope={scope}&response_type=code&access_type=online&prompt=select_account",
@@ -105,7 +131,7 @@ impl GoogleProvider {
         })
     }
 
-    async fn exchange_code(&self, http: &reqwest::Client, code: &str) -> Result<String, Error> {
+    async fn exchange_code(&self, http: &Client, code: &str) -> Result<String, Error> {
         #[derive(Deserialize)]
         struct TokenResp {
             access_token: Option<String>,
@@ -123,66 +149,70 @@ impl GoogleProvider {
             ("grant_type", "authorization_code"),
         ];
         let resp = http
-            .post(TOKEN_URL)
-            .header(reqwest::header::ACCEPT, "application/json")
-            .form(&params)
-            .send()
+            .execute(
+                Params::new(Method::POST, TOKEN_URL)
+                    .with_header(ACCEPT, HeaderValue::from_static("application/json"))
+                    .with_form(&params),
+            )
             .await
             .context(HttpSnafu)?;
-        let status = resp.status();
-        let bytes = resp.bytes().await.context(HttpSnafu)?;
-        if !status.is_success() {
+        if !resp.is_success() {
             return Err(Error::Api {
                 provider: "google".to_string(),
-                status: status.as_u16(),
-                message: String::from_utf8_lossy(&bytes).into_owned(),
+                status: resp.status,
+                message: String::from_utf8_lossy(&resp.body).into_owned(),
             });
         }
-        let parsed: TokenResp = serde_json::from_slice(&bytes).context(JsonSnafu)?;
+        let parsed: TokenResp = serde_json::from_slice(&resp.body).context(JsonSnafu)?;
         if let Some(err) = parsed.error {
             return Err(Error::Api {
                 provider: "google".to_string(),
-                status: status.as_u16(),
+                status: resp.status,
                 message: parsed.error_description.unwrap_or(err),
             });
         }
         parsed.access_token.context(ApiSnafu {
             provider: "google".to_string(),
-            status: status.as_u16(),
+            status: resp.status,
             message: "token response missing access_token",
         })
     }
 
     async fn fetch_userinfo(
         &self,
-        http: &reqwest::Client,
+        http: &Client,
         access_token: &str,
     ) -> Result<RawUserInfo, Error> {
         let resp = http
-            .get(USERINFO_URL)
-            .bearer_auth(access_token)
-            .header(reqwest::header::ACCEPT, "application/json")
-            .send()
+            .execute(
+                Params::new(Method::GET, USERINFO_URL)
+                    .with_bearer_auth(access_token)
+                    .with_header(ACCEPT, HeaderValue::from_static("application/json")),
+            )
             .await
             .context(HttpSnafu)?;
-        let status = resp.status();
-        let bytes = resp.bytes().await.context(HttpSnafu)?;
-        if !status.is_success() {
+        if !resp.is_success() {
             return Err(Error::Api {
                 provider: "google".to_string(),
-                status: status.as_u16(),
-                message: String::from_utf8_lossy(&bytes).into_owned(),
+                status: resp.status,
+                message: String::from_utf8_lossy(&resp.body).into_owned(),
             });
         }
-        serde_json::from_slice::<RawUserInfo>(&bytes).context(JsonSnafu)
+        serde_json::from_slice::<RawUserInfo>(&resp.body).context(JsonSnafu)
     }
 }
 
-fn http_client() -> Result<reqwest::Client, Error> {
-    reqwest::Client::builder()
-        .timeout(Duration::from_secs(HTTP_TIMEOUT_SECS))
+fn http_client() -> Result<Client, Error> {
+    if let Some(client) = HTTP_CLIENT.get() {
+        return Ok(client.clone());
+    }
+    let client = ClientBuilder::new("oauth-google")
+        .with_timeout(Duration::from_secs(HTTP_TIMEOUT_SECS))
+        .with_common_interceptor()
         .build()
-        .context(HttpSnafu)
+        .context(HttpSnafu)?;
+    let _ = HTTP_CLIENT.set(client.clone());
+    Ok(HTTP_CLIENT.get().cloned().unwrap_or(client))
 }
 
 /// Google UserInfo endpoint 的 OIDC 标准响应字段。

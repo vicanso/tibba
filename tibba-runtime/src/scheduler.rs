@@ -34,6 +34,13 @@ enum Error {
     #[snafu(display("create scheduler failed: {source}"))]
     Create { source: JobSchedulerError },
 
+    /// 解析 cron 表达式或创建任务实例失败。
+    #[snafu(display("create job for schedule {schedule:?} failed: {source}"))]
+    CreateJob {
+        schedule: String,
+        source: JobSchedulerError,
+    },
+
     /// 向调度器添加指定名称的任务失败。
     #[snafu(display("add job {name} failed: {source}"))]
     AddJob {
@@ -49,11 +56,13 @@ enum Error {
 impl From<Error> for BaseError {
     fn from(val: Error) -> Self {
         let err = match val {
-            Error::Create { source } => BaseError::new(source),
+            Error::Create { source } | Error::Start { source } => BaseError::new(source),
+            Error::CreateJob { schedule, source } => {
+                BaseError::new(source).with_sub_category(schedule)
+            }
             Error::AddJob { name, source } => BaseError::new(source).with_sub_category(name),
-            Error::Start { source } => BaseError::new(source),
         };
-        err.with_category("scheduler")
+        err.with_category("scheduler").with_exception(true)
     }
 }
 
@@ -85,7 +94,7 @@ pub fn singleton_cron_job<F, Fut>(
     lock_key: impl Into<String>,
     lock_ttl: Duration,
     body: F,
-) -> std::result::Result<Job, JobSchedulerError>
+) -> Result<Job>
 where
     F: Fn() -> Fut + Send + Sync + 'static,
     Fut: Future<Output = ()> + Send + 'static,
@@ -93,7 +102,7 @@ where
     let lock_key = lock_key.into();
     // body 可能被多次触发调用，用 Arc 在每次闭包调用时共享而非移动消耗
     let body = Arc::new(body);
-    Job::new_async(schedule, move |_uuid, _scheduler| {
+    Ok(Job::new_async(schedule, move |_uuid, _scheduler| {
         let lock = lock.clone();
         let lock_key = lock_key.clone();
         let body = body.clone();
@@ -104,6 +113,7 @@ where
             }
         })
     })
+    .context(CreateJobSnafu { schedule })?)
 }
 
 /// 全局任务注册表，键为任务名称，值为 cron Job 实例。
@@ -194,4 +204,37 @@ pub async fn run_scheduler_jobs() -> Result<JobScheduler> {
     info!(target: SCHEDULER_LOG_TARGET, jobs = added, "scheduler started");
 
     Ok(scheduler)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn singleton_cron_job_maps_invalid_schedule_to_base_error() {
+        let lock: TryLock = Arc::new(|_key, _ttl| Box::pin(async { true }));
+        let Err(err) = singleton_cron_job(
+            "invalid-cron",
+            lock.clone(),
+            "lock:test",
+            Duration::from_secs(5),
+            || async {},
+        ) else {
+            panic!("invalid schedule should return error");
+        };
+        assert_eq!(err.category(), "scheduler");
+        assert_eq!(err.sub_category(), Some("invalid-cron"));
+        assert!(err.is_exception());
+
+        assert!(
+            singleton_cron_job(
+                "0/5 * * * * *",
+                lock,
+                "lock:test",
+                Duration::from_secs(5),
+                || async {}
+            )
+            .is_ok()
+        );
+    }
 }

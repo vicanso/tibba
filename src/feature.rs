@@ -28,11 +28,19 @@ use axum::extract::Path;
 use axum::http::StatusCode;
 use axum::routing::{get, put};
 use serde::Deserialize;
+use std::sync::OnceLock;
+use std::time::Duration;
+use tibba_cache::InvalidationListener;
 use tibba_error::Error;
 use tibba_feature::{FeatureFlag, FeatureFlags};
 use tibba_session::AdminSession;
 
 type Result<T> = std::result::Result<T, Error>;
+
+/// 全局特性开关实例及跨节点失效订阅句柄：
+/// 开启 10s 进程内缓存并通过 `"inval:feature_flags"` Pub/Sub 频道实时失效，
+/// 把 listener 一并存入 `OnceLock` 保持进程生命周期内持续订阅。
+static FEATURE_FLAGS: OnceLock<(FeatureFlags, Option<InvalidationListener>)> = OnceLock::new();
 
 /// 设置开关的请求体。
 #[derive(Debug, Deserialize)]
@@ -41,8 +49,17 @@ struct SetFlagBody {
     enabled: bool,
 }
 
-fn feature_flags() -> FeatureFlags {
-    FeatureFlags::new(get_app_ctx().cache)
+/// 获取全局特性开关管理器单例。
+pub fn feature_flags() -> &'static FeatureFlags {
+    &FEATURE_FLAGS
+        .get_or_init(|| {
+            let flags = FeatureFlags::new(get_app_ctx().cache)
+                .with_local_cache(Duration::from_secs(10))
+                .with_instant_invalidation("inval:feature_flags");
+            let listener = flags.spawn_invalidation_listener();
+            (flags, listener)
+        })
+        .0
 }
 
 /// `GET /features` —— 列出全部开关（Admin）。

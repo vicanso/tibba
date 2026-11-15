@@ -46,6 +46,7 @@ sha2 = { workspace = true }
 subtle = { workspace = true }
 snafu = { workspace = true }
 tibba-error = { path = "../tibba-error", version = "0.3.0" }
+tracing = { workspace = true }
 uuid = { workspace = true }
 url = { workspace = true }
 validator = { workspace = true }

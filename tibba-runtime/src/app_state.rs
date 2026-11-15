@@ -21,6 +21,7 @@ use std::time::SystemTime;
 /// 历史上的 `peak_processing` / `total_requests` / `error_requests` 等
 /// 统计字段已迁移到 Prometheus（见 `src/metrics.rs` 与 `tibba-middleware`），
 /// 这里只保留流控判断必须的 `processing` 原子计数。
+#[derive(Debug)]
 pub struct AppState {
     /// 服务名称
     name: String,
@@ -48,6 +49,7 @@ impl AppState {
     /// 以 Git 提交 ID 创建 AppState；其余可选项用链式 `with_xxx` 设置。
     ///
     /// 默认不限制并发，见 [`Self::with_processing_limit`]。
+    #[must_use]
     pub fn new(commit_id: impl Into<String>) -> Self {
         Self {
             name: String::new(),
@@ -85,21 +87,25 @@ impl AppState {
     }
 
     /// 返回服务名称。
+    #[must_use]
     pub fn get_name(&self) -> &str {
         &self.name
     }
 
     /// 返回语义化版本号。
+    #[must_use]
     pub fn get_version(&self) -> &str {
         &self.version
     }
 
     /// 返回 Git 提交 ID。
+    #[must_use]
     pub fn get_commit_id(&self) -> &str {
         &self.commit_id
     }
 
     /// 最大并发请求数；`None` 表示不限制。
+    #[must_use]
     pub fn get_processing_limit(&self) -> Option<NonZeroU32> {
         self.processing_limit
     }
@@ -119,19 +125,21 @@ impl AppState {
     pub fn dec_processing(&self) -> u32 {
         match self
             .processing
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
-                Some(v.saturating_sub(1))
-            }) {
-            Ok(prev) | Err(prev) => prev.saturating_sub(1),
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_sub(1))
+        {
+            Ok(prev) => prev - 1,
+            Err(cur) => cur,
         }
     }
 
     /// 返回当前正在处理的请求数。
+    #[must_use]
     pub fn get_processing(&self) -> u32 {
         self.processing.load(Ordering::Relaxed)
     }
 
     /// 返回 `true` 表示应用当前处于运行状态。
+    #[must_use]
     pub fn is_running(&self) -> bool {
         self.running.load(Ordering::Relaxed)
     }
@@ -147,6 +155,7 @@ impl AppState {
     }
 
     /// 返回应用的启动时间。
+    #[must_use]
     pub fn get_started_at(&self) -> SystemTime {
         self.started_at
     }

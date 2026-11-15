@@ -41,6 +41,7 @@
 
 use serde::Deserialize;
 use snafu::{ResultExt, Snafu};
+use std::fmt;
 use std::sync::OnceLock;
 use std::time::Duration;
 use tibba_error::Error as BaseError;
@@ -120,7 +121,7 @@ fn default_issuer() -> String {
 /// - `access_ttl`：access token TTL，humantime 解析（"15m" / "30s"）
 /// - `refresh_ttl`：refresh token TTL（控制 Redis 中 opaque token 的 expiry）
 /// - `issuer`：写进 `iss` claim 用于多服务区分
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct JwtConfig {
     #[serde(default)]
     pub secret: String,
@@ -130,6 +131,22 @@ pub struct JwtConfig {
     pub refresh_ttl: Duration,
     #[serde(default = "default_issuer")]
     pub issuer: String,
+}
+
+impl fmt::Debug for JwtConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let secret = if self.secret.is_empty() {
+            ""
+        } else {
+            "[REDACTED]"
+        };
+        f.debug_struct("JwtConfig")
+            .field("secret", &secret)
+            .field("access_ttl", &self.access_ttl)
+            .field("refresh_ttl", &self.refresh_ttl)
+            .field("issuer", &self.issuer)
+            .finish()
+    }
 }
 
 impl Default for JwtConfig {
@@ -263,4 +280,30 @@ pub fn must_global_signer() -> &'static JwtSigner {
     GLOBAL_SIGNER
         .get()
         .unwrap_or_else(|| panic!("jwt signer not initialized; [jwt] secret missing?"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn jwt_config_debug_redacts_secret() {
+        let cfg = JwtConfig {
+            secret: "super-jwt-secret".to_string(),
+            access_ttl: Duration::from_secs(60),
+            refresh_ttl: Duration::from_secs(3600),
+            issuer: "tibba".to_string(),
+        };
+        let formatted = format!("{cfg:?}");
+        assert!(!formatted.contains("super-jwt-secret"));
+        assert!(formatted.contains("[REDACTED]"));
+
+        let empty = JwtConfig {
+            secret: String::new(),
+            access_ttl: Duration::from_secs(60),
+            refresh_ttl: Duration::from_secs(3600),
+            issuer: "tibba".to_string(),
+        };
+        assert!(format!("{empty:?}").contains("secret: \"\""));
+    }
 }

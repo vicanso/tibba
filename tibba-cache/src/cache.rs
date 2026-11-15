@@ -31,7 +31,7 @@ type Result<T> = std::result::Result<T, Error>;
 /// 抽成自由函数只为可测：`RedisCache` 需要一个 `&'static RedisClient` 才能构造，
 /// 而这段纯算术是最容易出错、也最该被钉住的部分。
 #[inline]
-fn ttl_to_millis(ttl: Duration) -> u64 {
+pub(super) fn ttl_to_millis(ttl: Duration) -> u64 {
     u64::try_from(ttl.as_millis()).unwrap_or(u64::MAX).max(1)
 }
 
@@ -70,12 +70,14 @@ impl RedisCache {
     }
 
     /// 底层 [`RedisClient`] 引用。
+    #[must_use]
     #[inline]
     pub fn client(&self) -> &'static RedisClient {
         self.client
     }
 
     /// 创建新的 RedisCache 实例，默认 TTL 10 分钟，无前缀。
+    #[must_use]
     pub fn new(client: &'static RedisClient) -> Self {
         Self {
             ttl: Duration::from_secs(10 * 60),
@@ -244,9 +246,9 @@ impl RedisCache {
             .await
     }
 
-    /// 从 Redis 读取值，类型由泛型参数指定。
-    pub async fn get<T: redis::FromRedisValue>(&self, key: &str) -> Result<T> {
-        self.get_value::<T>(&self.get_key(key)).await
+    /// 从 Redis 读取值，键不存在时返回 `None`，类型由泛型参数指定。
+    pub async fn get<T: redis::FromRedisValue>(&self, key: &str) -> Result<Option<T>> {
+        self.get_value::<Option<T>>(&self.get_key(key)).await
     }
 
     /// 将结构体序列化为 JSON 后存入 Redis。
@@ -302,8 +304,8 @@ impl RedisCache {
         Ok(result)
     }
 
-    /// 原子性地读取并删除指定键（需 Redis ≥6.2.0）。
-    pub async fn get_del<T: redis::FromRedisValue>(&self, key: &str) -> Result<T> {
+    /// 原子性地读取并删除指定键（需 Redis ≥6.2.0），键不存在时返回 `None`。
+    pub async fn get_del<T: redis::FromRedisValue>(&self, key: &str) -> Result<Option<T>> {
         let result = self
             .conn()
             .await?
@@ -314,6 +316,19 @@ impl RedisCache {
             })?;
 
         Ok(result)
+    }
+
+    /// 原子性地读取并反序列化为结构体，同时删除该键（需 Redis ≥6.2.0），键不存在时返回 `None`。
+    /// 适用于 MFA 登录挑战、OAuth state 等一次性消费场景，彻底消除读取与删除之间的重放窗口。
+    pub async fn get_del_struct<T>(&self, key: &str) -> Result<Option<T>>
+    where
+        T: DeserializeOwned,
+    {
+        let buf: Option<Vec<u8>> = self.get_del(key).await?;
+        match buf {
+            None => Ok(None),
+            Some(b) => serde_json::from_slice(&b).context(SerdeJsonSnafu).map(Some),
+        }
     }
 
     /// 检查指定键是否存在。
@@ -356,7 +371,7 @@ impl RedisCache {
         &self,
         key: &str,
         value: &T,
-        ttl_ms: u64,
+        ttl: Option<Duration>,
         algorithm: Algorithm,
     ) -> Result<()>
     where
@@ -364,7 +379,8 @@ impl RedisCache {
     {
         let value = serde_json::to_vec(value).context(SerdeJsonSnafu)?;
         let buf = compress(&value, algorithm).context(CompressionSnafu)?;
-        self.set_value(key, &buf, ttl_ms).await
+        self.set_value(&self.get_key(key), &buf, self.get_ttl_ms(ttl))
+            .await
     }
 
     async fn get_struct_compressed<T>(&self, key: &str, algorithm: Algorithm) -> Result<Option<T>>
@@ -389,13 +405,8 @@ impl RedisCache {
     where
         T: ?Sized + Serialize,
     {
-        self.set_struct_compressed(
-            &self.get_key(key),
-            value,
-            self.get_ttl_ms(ttl),
-            Algorithm::Lz4,
-        )
-        .await
+        self.set_struct_compressed(key, value, ttl, Algorithm::Lz4)
+            .await
     }
 
     /// 从 Redis 读取并以 LZ4 解压后反序列化为结构体，键不存在时返回 `None`。
@@ -417,13 +428,8 @@ impl RedisCache {
     where
         T: ?Sized + Serialize,
     {
-        self.set_struct_compressed(
-            &self.get_key(key),
-            value,
-            self.get_ttl_ms(ttl),
-            DEFAULT_ZSTD,
-        )
-        .await
+        self.set_struct_compressed(key, value, ttl, DEFAULT_ZSTD)
+            .await
     }
 
     /// 从 Redis 读取并以 Zstd 解压后反序列化为结构体，键不存在时返回 `None`。

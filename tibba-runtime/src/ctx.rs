@@ -31,6 +31,7 @@ pub struct Context {
 
 impl Context {
     /// 创建新的请求上下文，记录设备 ID 和 Trace ID，并以当前时刻为起始时间。
+    #[must_use]
     pub fn new(device_id: impl Into<String>, trace_id: impl Into<String>) -> Self {
         Self {
             device_id: device_id.into(),
@@ -41,6 +42,7 @@ impl Context {
     }
 
     /// 返回自请求开始以来经过的时间。
+    #[must_use]
     pub fn elapsed(&self) -> Duration {
         self.start_time.elapsed()
     }
@@ -50,11 +52,13 @@ impl Context {
     /// 超过 `u64::MAX` 毫秒时饱和，不回绕——与 `tibba_util::Stopwatch::elapsed_ms`
     /// 的溢出行为保持一致（此前这里是裸 `as u64` 截断，同一个「经过毫秒数」的
     /// 概念在两处有两种溢出语义）。
+    #[must_use]
     pub fn elapsed_ms(&self) -> u64 {
         u64::try_from(self.start_time.elapsed().as_millis()).unwrap_or(u64::MAX)
     }
 
     /// 返回当前上下文关联的登录账号。
+    #[must_use]
     pub fn get_account(&self) -> Arc<String> {
         self.account.load_full()
     }

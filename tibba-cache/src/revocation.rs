@@ -25,11 +25,36 @@
 //! 标记的 TTL 应不短于受影响凭证的最长有效期——过了这个时间，被它针对的旧
 //! 凭证本身也已过期，标记可以安全消失。
 
-use super::{Error, RedisCache};
+use super::{Error, RedisCache, ttl_to_millis};
+use redis::Script;
+use std::sync::LazyLock;
 use std::time::Duration;
 use tibba_util::timestamp;
 
 type Result<T> = std::result::Result<T, Error>;
+
+/// 单调写入凭证撤销水位线：原子比较现有时间戳与剩余 TTL，仅向上推进，防止并发写或时钟偏斜回退。
+static REVOKE_MONOTONIC_SCRIPT: LazyLock<Script> = LazyLock::new(|| {
+    Script::new(
+        r"
+local new_ts = tonumber(ARGV[1])
+local new_ttl = tonumber(ARGV[2])
+local cur_raw = redis.call('GET', KEYS[1])
+local cur_ts = cur_raw and tonumber(cur_raw) or nil
+local ts_str = ARGV[1]
+if cur_ts and cur_ts > new_ts then
+    ts_str = cur_raw
+end
+local cur_ttl = redis.call('PTTL', KEYS[1])
+local ttl = new_ttl
+if cur_ttl and cur_ttl > new_ttl then
+    ttl = cur_ttl
+end
+redis.call('SET', KEYS[1], ts_str, 'PX', ttl)
+return tonumber(ts_str)
+",
+    )
+});
 
 fn user_key(user_id: i64) -> String {
     format!("revoke:user:{user_id}")
@@ -39,18 +64,30 @@ fn role_key(role: &str) -> String {
     format!("revoke:role:{role}")
 }
 
+async fn record_revocation(cache: &RedisCache, key: &str, now: i64, ttl: Duration) -> Result<()> {
+    let ttl_ms = ttl_to_millis(ttl).min(i64::MAX as u64);
+    let _: i64 = cache
+        .eval(
+            &REVOKE_MONOTONIC_SCRIPT,
+            &[key],
+            &[&now.to_string(), &ttl_ms.to_string()],
+        )
+        .await?;
+    Ok(())
+}
+
 /// 使该用户此前签发的所有凭证失效。
 pub async fn revoke_user_credentials(
     cache: &RedisCache,
     user_id: i64,
     ttl: Duration,
 ) -> Result<()> {
-    cache.set(&user_key(user_id), timestamp(), Some(ttl)).await
+    record_revocation(cache, &user_key(user_id), timestamp(), ttl).await
 }
 
 /// 使持有该角色的用户此前签发的所有凭证失效（角色的权限被收回时使用）。
 pub async fn revoke_role_credentials(cache: &RedisCache, role: &str, ttl: Duration) -> Result<()> {
-    cache.set(&role_key(role), timestamp(), Some(ttl)).await
+    record_revocation(cache, &role_key(role), timestamp(), ttl).await
 }
 
 /// 签发于 `iat` 的凭证是否已被撤销（按用户或按其任一角色）。
@@ -77,7 +114,7 @@ fn revoked_since(iat: i64, marks: &[Option<i64>]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::revoked_since;
+    use super::{REVOKE_MONOTONIC_SCRIPT, revoked_since};
 
     #[test]
     fn credentials_issued_before_any_mark_are_revoked() {
@@ -90,5 +127,10 @@ mod tests {
         // 撤销后（含同一秒）重新签发：有效
         assert!(!revoked_since(100, &[Some(100)]));
         assert!(!revoked_since(101, &[Some(50), Some(100)]));
+    }
+
+    #[test]
+    fn monotonic_revocation_script_has_valid_sha() {
+        assert_eq!(REVOKE_MONOTONIC_SCRIPT.get_hash().len(), 40);
     }
 }

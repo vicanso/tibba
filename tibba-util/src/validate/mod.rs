@@ -22,6 +22,7 @@
 use std::collections::HashSet;
 use std::env;
 use std::sync::LazyLock;
+use tracing::warn;
 use validator::ValidationError;
 
 type Result<T> = std::result::Result<T, ValidationError>;
@@ -48,7 +49,37 @@ fn collect_disabled(lookup: impl Fn(&str) -> Option<String>) -> HashSet<&'static
         .collect()
 }
 
-/// 首次校验时快照一次「已关闭的校验器」集合。
+/// 根据环境决定是否启用环境变量开关，生产环境强制 fail-closed 忽略所有放行配置。
+fn collect_disabled_for_env(
+    is_production: bool,
+    lookup: impl Fn(&str) -> Option<String>,
+) -> HashSet<&'static str> {
+    let disabled = collect_disabled(lookup);
+    if is_production {
+        if !disabled.is_empty() {
+            let mut ignored: Vec<&'static str> = disabled.into_iter().collect();
+            ignored.sort_unstable();
+            warn!(
+                target: crate::LOG_TARGET,
+                codes = ?ignored,
+                "validator bypass environment variables are ignored in production"
+            );
+        }
+        return HashSet::new();
+    }
+    if !disabled.is_empty() {
+        let mut active: Vec<&'static str> = disabled.iter().copied().collect();
+        active.sort_unstable();
+        warn!(
+            target: crate::LOG_TARGET,
+            codes = ?active,
+            "validators disabled via environment variables"
+        );
+    }
+    disabled
+}
+
+/// 首次校验时快照一次「已关闭的校验器」集合（仅 dev/test 环境生效）。
 ///
 /// 此前每次调用都要 `code.replace("-","_").to_lowercase()`（两次堆分配）再
 /// `env::var` 遍历一遍环境，而这是**每请求 × 每个被校验字段**都会走的路径——
@@ -56,13 +87,13 @@ fn collect_disabled(lookup: impl Fn(&str) -> Option<String>) -> HashSet<&'static
 ///
 /// 快照而非每次读取是有意为之：这些开关只用于本地开发，进程启动前设好即可。
 /// Rust 2024 起 `std::env::set_var` 已是 `unsafe`（多线程下与读环境竞态），
-/// 本就不该在运行中改。
+/// 本就不该在运行中改；生产环境即使误配 `x_*=*` 也绝不放行。
 static DISABLED_CODES: LazyLock<HashSet<&'static str>> =
-    LazyLock::new(|| collect_disabled(|key| env::var(key).ok()));
+    LazyLock::new(|| collect_disabled_for_env(crate::is_production(), |key| env::var(key).ok()));
 
-/// 该校验器是否已被环境变量关闭。O(1) 查表，零分配。
+/// 该校验器是否已被环境变量关闭。O(1) 查表，零分配；生产环境恒为 false。
 fn is_disabled(code: &str) -> bool {
-    DISABLED_CODES.contains(code)
+    !crate::is_production() && DISABLED_CODES.contains(code)
 }
 
 fn new_error(code: &'static str, message: String) -> ValidationError {
@@ -86,10 +117,32 @@ pub(super) fn has_control_or_space(value: &str) -> bool {
     value.chars().any(|c| c.is_ascii_control() || c == ' ')
 }
 
-/// 校验一个 ASCII 标识符：非空、长度上限、且只含 [`is_identifier_char`] 允许的字符。
+/// 校验标识符首尾与相邻点号约束，拒绝前导 `.`/`-`、连续 `..` 及尾随 `.`。
 ///
-/// 此前只查「非空 + ASCII + 长度」，于是控制字符、空格、`/`、`..` 全部放行——
-/// 而这些值会被用作存储分组、模型注册名，是拼进键名与日志的。
+/// 虽然 `is_identifier_char` 允许 `-` 与 `.` 用于连接多段名称（如 `team-a`、`v1.2`），
+/// 但孤立或边界处的 `.`/`-`（如 `..`、`-foo`、`foo.`）会在路径、键名或命令行上下文中产生歧义。
+pub(super) fn check_identifier_boundaries(
+    value: &str,
+    code: &'static str,
+    field_name: &str,
+) -> Result<()> {
+    if value.starts_with('.') || value.starts_with('-') {
+        return Err(new_error(
+            code,
+            format!("{field_name} must not start with '.' or '-'"),
+        ));
+    }
+    if value.contains("..") || value.ends_with('.') {
+        return Err(new_error(
+            code,
+            format!("{field_name} must not contain '..' or end with '.'"),
+        ));
+    }
+    Ok(())
+}
+
+/// 校验一个 ASCII 标识符：非空、长度上限、只含 [`is_identifier_char`] 允许的字符，
+/// 且不得以 `.`/`-` 开头、包含 `..` 或以 `.` 结尾。
 fn validate_ascii_name(
     name: &str,
     code: &'static str,
@@ -114,7 +167,7 @@ fn validate_ascii_name(
             format!("{field_name} may only contain letters, digits, '_', '-' and '.'"),
         ));
     }
-    Ok(())
+    check_identifier_boundaries(name, code, field_name)
 }
 
 /// 声明校验器错误码常量，并同步生成 [`ALL_CODES`] 注册表。
@@ -212,5 +265,19 @@ mod tests {
                 "{code} 的开关未生效（可能未登记进 ALL_CODES）"
             );
         }
+    }
+
+    #[test]
+    fn production_env_ignores_validator_bypass_vars() {
+        let disabled =
+            collect_disabled_for_env(true, |k| (k == "x_user_account").then(|| "*".to_string()));
+        assert!(
+            disabled.is_empty(),
+            "生产环境必须强制忽略校验器放行环境变量"
+        );
+
+        let dev_disabled =
+            collect_disabled_for_env(false, |k| (k == "x_user_account").then(|| "*".to_string()));
+        assert_eq!(dev_disabled, HashSet::from([CODE_USER_ACCOUNT]));
     }
 }

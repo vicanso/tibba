@@ -30,6 +30,7 @@ snafu = { workspace = true }
 # 旧式 sha256 存量的常数时间比对
 subtle = { workspace = true }
 tibba-error = { path = "../tibba-error", version = "0.3.0" }
+zeroize = { workspace = true }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }

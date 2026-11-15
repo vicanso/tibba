@@ -180,7 +180,7 @@ pub(crate) async fn confirm_verify(
 ) -> Result<StatusCode> {
     let key = format!("{REDIS_PREFIX}{}", params.token);
     // 取出即删（GETDEL）：验证码是一次性的，读与删之间不留重放窗口
-    let pending: Option<Vec<u8>> = state.cache.get_del(&key).await?;
+    let pending = state.cache.get_del::<Vec<u8>>(&key).await?;
     let pending: PendingVerification = pending
         .and_then(|raw| serde_json::from_slice(&raw).ok())
         .context(InvalidTokenSnafu)?;

@@ -12,11 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::timestamp;
+use super::{HmacInitSnafu, timestamp};
 use hex::encode;
 use hmac::{Hmac, KeyInit, Mac};
 use nanoid::nanoid;
 use sha2::{Digest, Sha256};
+use snafu::ResultExt;
+use std::io::{Cursor, Write};
 use subtle::ConstantTimeEq;
 use tibba_error::Error;
 use uuid::Uuid;
@@ -26,6 +28,9 @@ type Result<T> = std::result::Result<T, Error>;
 /// HMAC-SHA256 类型别名，与 `tibba-crypto::KeyGrip` 保持一致。
 type HmacSha256 = Hmac<Sha256>;
 
+/// HMAC-SHA256 摘要字节长度。
+const HMAC_SHA256_LEN: usize = 32;
+
 const SIGNATURE_TTL_SECS: i64 = 5 * 60; // 5 minutes
 
 /// 常数时间字节切片比较，避免签名校验时按字节短路泄露时序侧信道。
@@ -33,9 +38,21 @@ const SIGNATURE_TTL_SECS: i64 = 5 * 60; // 5 minutes
 /// 走 `subtle`（workspace 内 `tibba-totp` 已在用）而不是手写 XOR 折叠：手写版本
 /// 依赖「编译器不会把这个循环优化成短路比较」这一无法在源码层保证的假设，
 /// `subtle` 用优化屏障把它落实下来。长度不一致直接 false——签名长度固定
-/// （hex 恒为 64 字符），长度本身是公开信息，不构成额外侧信道。
+/// （固定 32 字节摘要），长度本身是公开信息，不构成额外侧信道。
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     a.ct_eq(b).into()
+}
+
+/// 以 `secret` 为密钥对各段做 HMAC-SHA256，返回 32 字节原始摘要。
+fn hmac_sha256_bytes(
+    secret: &[u8],
+    parts: &[&[u8]],
+) -> std::result::Result<[u8; HMAC_SHA256_LEN], crate::Error> {
+    let mut mac = HmacSha256::new_from_slice(secret).context(HmacInitSnafu)?;
+    for part in parts {
+        mac.update(part);
+    }
+    Ok(mac.finalize().into_bytes().into())
 }
 
 /// 以 `secret` 为密钥对各段做 HMAC-SHA256，返回小写十六进制摘要。
@@ -49,15 +66,18 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 ///
 /// 输出仍是 64 字符十六进制，与旧实现同形，`x_sha256` 这类格式校验无需改动。
 fn hmac_sha256(secret: &[u8], parts: &[&[u8]]) -> Result<String> {
-    // `Hmac` 接受任意长度密钥（超出块长时先哈希），这里的 Err 实际不可达；
-    // 但仍如实上抛而非 unwrap——crate 内禁止 unwrap，且真出错时静默产生一个
-    // 错误签名远比报错更难排查。
-    let mut mac =
-        HmacSha256::new_from_slice(secret).map_err(|e| Error::new(e).with_category("sign_hash"))?;
-    for part in parts {
-        mac.update(part);
+    Ok(encode(hmac_sha256_bytes(secret, parts)?))
+}
+
+/// 零堆分配签名校验：直接将待校验 hex 摘要解码到 32 字节栈缓冲区后再常数时间比对，
+/// 同时兼容大小写十六进制输入。
+fn verify_hmac_sha256(secret: &[u8], parts: &[&[u8]], hash: &str) -> Result<bool> {
+    let mut provided = [0u8; HMAC_SHA256_LEN];
+    if hex::decode_to_slice(hash, &mut provided).is_err() {
+        return Ok(false);
     }
-    Ok(encode(mac.finalize().into_bytes()))
+    let expected = hmac_sha256_bytes(secret, parts)?;
+    Ok(constant_time_eq(&expected, &provided))
 }
 
 /// 生成 UUIDv7 字符串（`xxxxxxxx-xxxx-7xxx-xxxx-xxxxxxxxxxxx`）。
@@ -77,38 +97,27 @@ pub fn uuid() -> String {
     Uuid::now_v7().to_string()
 }
 
-/// Generates a NanoID string of specified length
+/// 生成指定长度的 URL 安全 NanoID 字符串。
 ///
-/// Creates a URL-safe, unique string using NanoID algorithm
+/// # 参数
+/// * `size` - 生成 ID 的长度
 ///
-/// # Arguments
-/// * `size` - Length of the generated ID
-///
-/// # Returns
-/// * String containing the NanoID
-///
-/// # Note
-/// NanoID provides:
-/// - URL-safe characters
-/// - Configurable length
-/// - High collision resistance
+/// # 返回值
+/// * 指定长度的随机 NanoID 字符串
 pub fn nanoid(size: usize) -> String {
     nanoid!(size)
 }
 
-/// Formats a floating-point number with specified precision
+/// 按指定小数位数格式化浮点数（最多保留 4 位小数）。
 ///
-/// Converts float to string with fixed number of decimal places
-/// Supports precision from 0 to 4 decimal places
+/// # 参数
+/// * `value` - 待格式化的浮点数
+/// * `precision` - 小数位数（上限截断为 4）
 ///
-/// # Arguments
-/// * `value` - Floating point number to format
-/// * `precision` - Number of decimal places (0-4)
+/// # 返回值
+/// * 格式化后的定点数字符串
 ///
-/// # Returns
-/// * String containing formatted number
-///
-/// # Examples
+/// # 示例
 /// ```ignore
 /// assert_eq!("1.12", float_to_fixed(1.123412, 2));
 /// assert_eq!("1", float_to_fixed(1.123412, 0));
@@ -126,13 +135,13 @@ fn sha256_multi(parts: &[&[u8]]) -> String {
     encode(hasher.finalize())
 }
 
-/// Computes the SHA-256 hash of the input data
+/// 计算输入字节切片的 SHA-256 小写十六进制摘要。
 ///
-/// # Arguments
-/// * `data` - Input data to hash
+/// # 参数
+/// * `data` - 待哈希的原始字节切片
 ///
-/// # Returns
-/// * String containing the SHA-256 hash
+/// # 返回值
+/// * 64 字符小写十六进制 SHA-256 摘要
 pub fn sha256(data: &[u8]) -> String {
     sha256_multi(&[data])
 }
@@ -174,8 +183,7 @@ pub fn timestamp_hash(value: &str, secret: &str) -> Result<(i64, String)> {
 /// 比较走常数时间：直接 `!=` 比 hex 字符串会泄露逐字节比较的时序，
 /// 攻击者可借此逐字节推断出合法签名。
 pub fn validate_sign_hash(value: &str, hash: &str, secret: &str) -> Result<()> {
-    let expected = sign_hash(value, secret)?;
-    if !constant_time_eq(expected.as_bytes(), hash.as_bytes()) {
+    if !verify_hmac_sha256(secret.as_bytes(), &[value.as_bytes()], hash)? {
         return Err(Error::new("signature is invalid")
             .with_category("sign_hash")
             .with_status(401));
@@ -194,13 +202,16 @@ pub fn validate_timestamp_hash(ts: i64, value: &str, hash: &str, secret: &str) -
             .with_category(category)
             .with_status(401));
     }
-    let ts_str = ts.to_string();
-    let expected_hash = hmac_sha256(
-        secret.as_bytes(),
-        &[ts_str.as_bytes(), b":", value.as_bytes()],
-    )?;
+    let mut ts_buf = [0u8; 24];
+    let mut cursor = Cursor::new(&mut ts_buf[..]);
+    let _ = write!(&mut cursor, "{ts}");
+    let ts_len = cursor.position() as usize;
 
-    if !constant_time_eq(expected_hash.as_bytes(), hash.as_bytes()) {
+    if !verify_hmac_sha256(
+        secret.as_bytes(),
+        &[&ts_buf[..ts_len], b":", value.as_bytes()],
+        hash,
+    )? {
         return Err(Error::new("signature is invalid")
             .with_category(category)
             .with_status(401));
@@ -263,10 +274,12 @@ mod tests {
         assert!(sig.bytes().all(|b| b.is_ascii_hexdigit()));
 
         assert!(validate_sign_hash("payload", &sig, "secret").is_ok());
+        assert!(validate_sign_hash("payload", &sig.to_ascii_uppercase(), "secret").is_ok());
         // 任一字段变化都应当让校验失败
         assert!(validate_sign_hash("payloadX", &sig, "secret").is_err());
         assert!(validate_sign_hash("payload", &sig, "secretX").is_err());
         assert!(validate_sign_hash("payload", "deadbeef", "secret").is_err());
+        assert!(validate_sign_hash("payload", &"g".repeat(64), "secret").is_err());
     }
 
     /// 签名必须真的依赖密钥：换密钥要得到不同结果，且不能等于无密钥的裸哈希。
@@ -290,6 +303,9 @@ mod tests {
     fn timestamp_hash_round_trip() {
         let (ts, sig) = timestamp_hash("payload", "secret").unwrap();
         assert!(validate_timestamp_hash(ts, "payload", &sig, "secret").is_ok());
+        assert!(
+            validate_timestamp_hash(ts, "payload", &sig.to_ascii_uppercase(), "secret").is_ok()
+        );
 
         // 过期时间戳应当被拒绝（签名本身是对的，只是超出有效期）
         let expired_ts = ts - (SIGNATURE_TTL_SECS + 1);

@@ -12,14 +12,29 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{DeserializeSnafu, Error};
+use super::{DeserializeSnafu, Error, ParsePortSnafu, UrlParseSnafu};
 use serde::de::DeserializeOwned;
 use snafu::ResultExt;
+use std::borrow::Cow;
+use std::fmt;
 use url::Url;
 
 type Result<T> = std::result::Result<T, Error>;
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+/// 脱敏 URI 字符串中的 userinfo 口令部分，避免调试日志泄露凭证。
+fn redact_uri_userinfo(uri: &str) -> Cow<'_, str> {
+    let Some((scheme, rest)) = uri.split_once("://") else {
+        return Cow::Borrowed(uri);
+    };
+    let auth_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let (authority, suffix) = rest.split_at(auth_end);
+    let Some((_userinfo, hosts)) = authority.rsplit_once('@') else {
+        return Cow::Borrowed(uri);
+    };
+    Cow::Owned(format!("{scheme}://***@{hosts}{suffix}"))
+}
+
+#[derive(PartialEq, Eq, Clone)]
 pub struct ParsedUri<'a, Q> {
     pub origin_uri: &'a str,
     pub schema: &'a str,
@@ -29,6 +44,21 @@ pub struct ParsedUri<'a, Q> {
     pub path: Option<&'a str>,
     pub raw_query: Option<&'a str>,
     pub query: Q,
+}
+
+impl<Q: fmt::Debug> fmt::Debug for ParsedUri<'_, Q> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ParsedUri")
+            .field("origin_uri", &redact_uri_userinfo(self.origin_uri))
+            .field("schema", &self.schema)
+            .field("username", &self.username)
+            .field("password", &self.password.map(|_| "***"))
+            .field("hosts", &self.hosts)
+            .field("path", &self.path)
+            .field("raw_query", &self.raw_query)
+            .field("query", &self.query)
+            .finish()
+    }
 }
 
 impl<'a, Q> ParsedUri<'a, Q> {
@@ -75,9 +105,7 @@ impl<'a, Q> ParsedUri<'a, Q> {
             buf.push_str(query);
         }
 
-        Url::parse(&buf).map_err(|e| Error::Invalid {
-            message: e.to_string(),
-        })
+        Url::parse(&buf).context(UrlParseSnafu)
     }
 }
 
@@ -108,22 +136,25 @@ impl Host<'_> {
 
 /// 解析端口号。
 fn parse_port(value: &str) -> Result<u16> {
-    value.parse::<u16>().map_err(|e| Error::Invalid {
-        message: format!("invalid port {value:?}: {e}"),
-    })
+    value.parse::<u16>().context(ParsePortSnafu { value })
 }
 
 /// 解析单个 host 片段，支持 `host`、`host:port`、`[v6]`、`[v6]:port` 四种形式。
 fn parse_host(part: &str) -> Result<Host<'_>> {
     // RFC 3986：IPv6 字面量必须用方括号包裹，否则地址自身的冒号与端口分隔符无法区分
     if let Some(rest) = part.strip_prefix('[') {
-        let (addr, tail) = rest.split_once(']').ok_or(Error::Invalid {
+        let (addr, tail) = rest.split_once(']').ok_or_else(|| Error::Invalid {
             message: format!("unclosed IPv6 bracket in host {part:?}"),
         })?;
+        if addr.is_empty() {
+            return Err(Error::Invalid {
+                message: format!("empty host in {part:?}"),
+            });
+        }
         let port = match tail {
             "" => None,
             _ => {
-                let digits = tail.strip_prefix(':').ok_or(Error::Invalid {
+                let digits = tail.strip_prefix(':').ok_or_else(|| Error::Invalid {
                     message: format!("unexpected text after IPv6 bracket in host {part:?}"),
                 })?;
                 Some(parse_port(digits)?)
@@ -140,25 +171,32 @@ fn parse_host(part: &str) -> Result<Host<'_>> {
         });
     }
 
-    match part.rsplit_once(':') {
-        Some((name, port_str)) => Ok(Host {
-            name,
-            port: Some(parse_port(port_str)?),
-        }),
-        None => Ok(Host {
-            name: part,
-            port: None,
-        }),
+    let (name, port) = match part.rsplit_once(':') {
+        Some((name, port_str)) => (name, Some(parse_port(port_str)?)),
+        None => (part, None),
+    };
+    if name.is_empty() {
+        return Err(Error::Invalid {
+            message: format!("empty host in {part:?}"),
+        });
     }
+    Ok(Host { name, port })
 }
 
 pub fn parse_uri<'a, Q>(uri: &'a str) -> Result<ParsedUri<'a, Q>>
 where
     Q: DeserializeOwned,
 {
-    let (schema, rest) = uri.split_once("://").ok_or(Error::Invalid {
+    let (schema, rest) = uri.split_once("://").ok_or_else(|| Error::Invalid {
         message: "Missing scheme".to_string(),
     })?;
+    if schema.is_empty() {
+        return Err(Error::Invalid {
+            message: "Missing scheme".to_string(),
+        });
+    }
+    // RFC 3986：先剥离 `#fragment`，再切分 `?query` 与 `/path`
+    let (rest, _) = rest.split_once('#').unwrap_or((rest, ""));
     let (main, query_str) = rest.split_once('?').unwrap_or((rest, ""));
     let (authority, path) = main.split_once('/').unwrap_or((main, ""));
     let path = if path.is_empty() { None } else { Some(path) };
@@ -436,5 +474,38 @@ mod tests {
                 "错误信息应指出缺少 host，实际: {err}"
             );
         }
+    }
+
+    #[test]
+    fn empty_scheme_or_empty_host_is_rejected() {
+        for bad in ["://host:6379", "redis://:6379", "redis://[]:6379"] {
+            assert!(
+                parse_uri::<HashMap<String, String>>(bad).is_err(),
+                "{bad} 应当被拒绝"
+            );
+        }
+    }
+
+    #[test]
+    fn fragment_is_stripped_before_query_and_path() {
+        let parsed = parse_uri::<TestQuery>("https://example.com/path?timeout=5#section").unwrap();
+        assert_eq!(parsed.path, Some("path"));
+        assert_eq!(parsed.raw_query, Some("timeout=5"));
+        assert_eq!(parsed.query.timeout, 5);
+
+        let parsed = parse_uri::<HashMap<String, String>>("https://example.com/app#sec").unwrap();
+        assert_eq!(parsed.path, Some("app"));
+        assert_eq!(parsed.raw_query, None);
+    }
+
+    #[test]
+    fn debug_redacts_password_and_origin_userinfo() {
+        let parsed = parse_uri::<HashMap<String, String>>(
+            "postgres://alice:supersecret@db.internal:5432/app",
+        )
+        .unwrap();
+        let debug_text = format!("{parsed:?}");
+        assert!(!debug_text.contains("supersecret"));
+        assert!(debug_text.contains("***"));
     }
 }

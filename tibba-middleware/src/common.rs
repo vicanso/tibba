@@ -135,7 +135,7 @@ pub async fn validate_captcha(
     }
 
     // 一次性读取并删除存储的验证码
-    let code: Option<String> = cache.get_del(key).await?;
+    let code = cache.get_del::<String>(key).await?;
     let Some(code) = code else {
         return Err(make_err("captcha is expired").into());
     };

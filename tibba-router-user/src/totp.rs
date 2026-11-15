@@ -374,10 +374,5 @@ pub(crate) async fn consume_mfa_challenge(
     token: &str,
 ) -> Result<Option<i64>> {
     let key = format!("{prefix}{token}");
-    let user_id: Option<i64> = cache.get_struct(&key).await?;
-    if user_id.is_some() {
-        // 一次性：命中后立即删，失败不影响主流程（令牌 5min 内自然过期）
-        let _ = cache.del(&key).await;
-    }
-    Ok(user_id)
+    cache.get_del_struct(&key).await.map_err(Into::into)
 }

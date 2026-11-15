@@ -26,17 +26,17 @@ workspace 内全部 `tibba-*` 均可发布，无例外。
 
 | Crate | 职责 | 可选 feature |
 |-------|------|--------------|
-| `tibba-error` | HTTP 错误类型 | |
-| `tibba-util` | 通用工具 + 自定义校验器（`x_*`） | `compression`（zstd/lz4）、`http`（cookie/header 辅助），默认全开 |
-| `tibba-config` | 配置加载 | |
-| `tibba-crypto` | 密码哈希（Argon2id）/ 签名密钥轮换 / 字段对称加密（AES-256-GCM） | |
+| `tibba-error` | HTTP 错误类型（按需装箱、告警与脱敏解耦、上游重建） | |
+| `tibba-util` | 通用工具 + 校验器（`x_*`）+ 有限解压 / 签名辅助 | `compression`（zstd/lz4）、`http`（cookie/header 辅助），默认全开 |
+| `tibba-config` | 配置加载（支持 `*_FILE` 密钥文件展开） | |
+| `tibba-crypto` | 密码哈希（Argon2id + Pepper）/ 签名密钥轮换 / 字段对称加密（AES-256-GCM） | |
 | `tibba-runtime` | AppState / 请求上下文 / 进程指标 / 启停钩子 / 停机信号 / Cron | `process-info`、`scheduler` |
-| `tibba-cache` | Redis 缓存 / Lua 脚本 / 分布式锁 / 滑动窗口限流 / cache-aside + singleflight | |
-| `tibba-request` | 出站 HTTP 客户端 | |
+| `tibba-cache` | Redis 缓存 / 专用阻塞连接 / 分布式锁 / `GETDEL` / 滑动限流 / 两级缓存 + 失效广播 | |
+| `tibba-request` | 出站 HTTP / SSE 客户端（并发限制、熔断、重试、OTel、SSRF 防护） | `stream`、`tls-info` |
 
 7 个 core 与「重依赖簇」一一对应，这是有原则的下限：`error`→axum、
 `util`→编码/时间/HTTP 杂项、`config`→config-rs、`crypto`→argon2/hmac/sha2/aes-gcm、
-`runtime`→arc-swap/tokio/dashmap、`cache`→redis/deadpool、`request`→reqwest/otel。
+`runtime`→arc-swap/tokio/dashmap、`cache`→redis/deadpool、`request`→reqwest/http/otel。
 每对 crate 的消费者集合都不相同，任何进一步合并都会让某个 crate 背上用不到的依赖簇。
 
 ## 标准 Standard

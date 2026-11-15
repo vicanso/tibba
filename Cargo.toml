@@ -42,7 +42,6 @@ metrics-exporter-prometheus = { workspace = true }
 nanoid = { workspace = true }
 quick-js = { version = "0.4.1", optional = true }
 rand = { workspace = true }
-reqwest = { workspace = true }
 mime_guess2 = { workspace = true }
 rust-embed = { workspace = true }
 serde = { workspace = true }
@@ -52,6 +51,7 @@ sqlx = { workspace = true }
 time = { workspace = true }
 tibba-cache = { path = "./tibba-cache" }
 tibba-config = { path = "./tibba-config" }
+tibba-crypto = { path = "./tibba-crypto" }
 tibba-email = { path = "./tibba-email" }
 tibba-error = { path = "./tibba-error" }
 tibba-feature = { path = "./tibba-feature" }
@@ -70,6 +70,7 @@ tibba-router-common = { path = "./tibba-router-common" }
 tibba-router-file = { path = "./tibba-router-file" }
 tibba-router-model = { path = "./tibba-router-model" }
 tibba-router-user = { path = "./tibba-router-user" }
+tibba-request = { path = "./tibba-request" }
 # process-info：/commons/application 与定时日志需要进程采样
 # scheduler：主应用需要 cron 定时任务
 tibba-runtime = { path = "./tibba-runtime", features = [
@@ -239,6 +240,7 @@ getrandom = "0.4.3"
 redis = { version = "1.7.0", features = ["tokio-comp", "aio"] }
 reqwest = { version = "0.13.5", default-features = false, features = [
     "rustls",
+    "http2",
     "query",
     "json",
     "form",
@@ -287,6 +289,7 @@ uuid = { version = "1.26.1", features = ["v7"] }
 validator = { version = "0.21.0", features = ["derive"] }
 # 解析对端证书 DER 取有效期（tibba-request 的 tls-info feature）；默认不启用
 x509-parser = "0.18.1"
+zeroize = "1.8"
 zstd = "0.14.0"
 
 [dev-dependencies]

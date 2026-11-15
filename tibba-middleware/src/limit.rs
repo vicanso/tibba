@@ -189,7 +189,7 @@ pub async fn error_limiter(
     let (key, ttl) = get_limit_params(&req, ip, &params);
     // 读当前错误计数；Redis 出错时按软限流语义放行（不阻断正常流量），但记 warn 便于排障
     let current_count = match cache.get::<i64>(&key).await {
-        Ok(count) => count,
+        Ok(count) => count.unwrap_or(0),
         Err(e) => {
             warn!(target: LOG_TARGET, error = %e, "error_limiter read count failed, allowing");
             0

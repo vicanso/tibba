@@ -13,14 +13,15 @@
 // limitations under the License.
 
 use super::{
-    BuildSnafu, ConflictingSecretSnafu, EmptySecretFileSnafu, Error, ParseSizeSnafu, ReadSnafu,
-    SecretFileSnafu,
+    BuildSnafu, ConflictingSecretSnafu, EmptySecretFileSnafu, Error, InvalidByteSizeSnafu,
+    ParseSizeSnafu, ReadSnafu, SecretFileSnafu, SecretFileTooLargeSnafu,
 };
 use config::{Config as RawConfig, Environment, File, FileFormat, Map};
 use parse_size::parse_size;
 use serde::Deserialize;
 use snafu::{ResultExt, ensure};
 use std::borrow::Cow;
+use std::io::Read;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -35,6 +36,30 @@ const ENV_SEPARATOR: &str = "__";
 /// 密钥文件环境变量的后缀，见 [`ConfigBuilder::with_env_prefix`]。
 const SECRET_FILE_SUFFIX: &str = "_FILE";
 
+/// 单个密钥文件读取字节上限：64 KiB，防止误挂载大文件或特殊设备导致启动期 OOM。
+const MAX_SECRET_FILE_BYTES: usize = 64 * 1024;
+
+/// 仅当 `file_key` 按 ASCII 大小写不敏感匹配 `<pattern_prefix><non_empty_key>_FILE`
+/// 时，返回去掉 `_FILE` 后缀后的目标配置键名。
+fn strip_secret_file_key<'a>(file_key: &'a str, pattern_prefix: &str) -> Option<&'a str> {
+    let prefix_len = pattern_prefix.len();
+    let suffix_len = SECRET_FILE_SUFFIX.len();
+    if file_key.len() <= prefix_len + suffix_len {
+        return None;
+    }
+    let head = file_key.get(..prefix_len)?;
+    let tail = file_key.get(file_key.len() - suffix_len..)?;
+    if !head.eq_ignore_ascii_case(pattern_prefix) || !tail.eq_ignore_ascii_case(SECRET_FILE_SUFFIX)
+    {
+        return None;
+    }
+    let target_key = file_key.get(..file_key.len() - suffix_len)?;
+    if target_key.get(prefix_len..).is_none_or(str::is_empty) {
+        return None;
+    }
+    Some(target_key)
+}
+
 /// 把 `X_FILE=<路径>` 展开成 `X=<文件内容>`。
 ///
 /// # 为什么需要这个
@@ -44,51 +69,96 @@ const SECRET_FILE_SUFFIX: &str = "_FILE";
 /// 也是 postgres / mysql / redis 官方镜像通行的约定。
 ///
 /// # 匹配规则
-/// 与 config-rs 的 `Environment` 保持一致：键名先转小写再比前缀，因此大小写
-/// 不敏感。只处理带本配置前缀的变量——否则 `SSL_CERT_FILE` 这类系统环境变量
-/// 会被当成密钥去读，把进程拦在启动前。
+/// 与 config-rs 的 `Environment` 保持一致：键名按 ASCII 大小写不敏感比较，
+/// 不在 `to_lowercase()` 后按原长度做切片，避免非 ASCII 环境变量触发越界。
+/// 只处理带本配置前缀且键名非空的变量；展开后清除原 `*_FILE` 键，避免污染
+/// `#[serde(deny_unknown_fields)]` 配置结构体。
 ///
 /// # 取值处理
-/// 去掉**末尾**的换行（`\n` / `\r\n`）：`echo "secret" > file` 会带一个换行，
-/// 而这类失误太常见。只去尾部，不做 trim——密钥中间与开头的空白都是有效内容。
+/// 限制单文件最大 [`MAX_SECRET_FILE_BYTES`] 字节并用 `Zeroizing` 托管缓冲区；
+/// 去掉**末尾**换行（`\n` / `\r\n`），其余空白原样保留。
 fn expand_secret_files(
     raw: Map<String, String>,
     prefix: &str,
     separator: &str,
 ) -> Result<Map<String, String>> {
-    let pattern = format!("{prefix}{separator}").to_lowercase();
-    let suffix = SECRET_FILE_SUFFIX.to_lowercase();
+    let pattern_prefix = format!("{prefix}{separator}");
 
     let mut expanded = raw.clone();
     for (file_key, path) in &raw {
-        let lower = file_key.to_lowercase();
-        if !lower.starts_with(&pattern) || !lower.ends_with(&suffix) {
+        let Some(target_key) = strip_secret_file_key(file_key, &pattern_prefix) else {
+            continue;
+        };
+        // 移除原 `*_FILE` 变量，避免 config-rs 将 `<key>_file` 透传给反序列化结构体
+        expanded.remove(file_key);
+        // 与 config-rs `ignore_empty(true)` 对齐：空 `*_FILE` 视作未设置
+        if path.is_empty() {
             continue;
         }
-        // 去掉 `_FILE` 得到真正的配置键
-        let key = file_key[..file_key.len() - SECRET_FILE_SUFFIX.len()].to_string();
-        // 同时设了 X 与 X_FILE：无法判断该用哪个，宁可起不来也不要用错密钥
-        ensure!(
-            !raw.contains_key(&key),
-            ConflictingSecretSnafu {
-                key,
+
+        // 大小写不敏感地检查同名直接变量或其他 `*_FILE` 冲突；空直接变量不构成冲突
+        if let Some((conflict_key, _)) = raw.iter().find(|(k, v)| {
+            !v.is_empty()
+                && ((k.as_str() != file_key.as_str() && k.eq_ignore_ascii_case(file_key))
+                    || k.eq_ignore_ascii_case(target_key))
+        }) {
+            return ConflictingSecretSnafu {
+                key: conflict_key.clone(),
                 file_key: file_key.clone(),
+            }
+            .fail();
+        }
+
+        // 若存在大小写不同的空直接变量，从 expanded 清除以免覆盖密钥文件取值
+        let empty_direct_keys: Vec<String> = expanded
+            .iter()
+            .filter(|(k, v)| v.is_empty() && k.eq_ignore_ascii_case(target_key))
+            .map(|(k, _)| k.clone())
+            .collect();
+        for k in empty_direct_keys {
+            expanded.remove(&k);
+        }
+
+        let mut file = std::fs::File::open(path).context(SecretFileSnafu {
+            key: target_key.to_string(),
+            path: path.clone(),
+        })?;
+        let mut buf = zeroize::Zeroizing::new(Vec::new());
+        file.by_ref()
+            .take(MAX_SECRET_FILE_BYTES as u64 + 1)
+            .read_to_end(&mut buf)
+            .context(SecretFileSnafu {
+                key: target_key.to_string(),
+                path: path.clone(),
+            })?;
+        ensure!(
+            buf.len() <= MAX_SECRET_FILE_BYTES,
+            SecretFileTooLargeSnafu {
+                key: target_key.to_string(),
+                path: path.clone(),
+                limit: MAX_SECRET_FILE_BYTES,
             }
         );
 
-        let content = std::fs::read_to_string(path).context(SecretFileSnafu {
-            key: key.clone(),
-            path: path.clone(),
-        })?;
-        let value = content.trim_end_matches(['\n', '\r']).to_string();
+        let text = match std::str::from_utf8(&buf) {
+            Ok(s) => s,
+            Err(err) => {
+                return Err(Error::SecretFile {
+                    key: target_key.to_string(),
+                    path: path.clone(),
+                    source: std::io::Error::new(std::io::ErrorKind::InvalidData, err),
+                });
+            }
+        };
+        let value = text.trim_end_matches(['\n', '\r']).to_string();
         ensure!(
             !value.is_empty(),
             EmptySecretFileSnafu {
-                key: key.clone(),
+                key: target_key.to_string(),
                 path: path.clone(),
             }
         );
-        expanded.insert(key, value);
+        expanded.insert(target_key.to_string(), value);
     }
     Ok(expanded)
 }
@@ -274,7 +344,15 @@ impl Config {
 
     /// 将当前命名空间下的配置整体反序列化为指定类型。
     pub fn try_deserialize<'de, T: Deserialize<'de>>(&self) -> Result<T> {
-        self.settings.get(&self.get_key("")).context(ReadSnafu)
+        if self.prefix.is_empty() {
+            self.settings
+                .as_ref()
+                .clone()
+                .try_deserialize()
+                .context(ReadSnafu)
+        } else {
+            self.settings.get(&self.prefix).context(ReadSnafu)
+        }
     }
 
     /// 读取任意可反序列化类型的配置值。
@@ -320,8 +398,9 @@ impl Config {
         // `timeout = "60s"` 与 `timeout = 120` 两种写法，无需读两遍。
         // 键不存在 / 类型无法转字符串时，这里的 ReadSnafu 就是准确的错误。
         let raw = self.settings.get_string(&full_key).context(ReadSnafu)?;
+        let trimmed = raw.trim();
 
-        if let Ok(duration) = humantime::parse_duration(&raw) {
+        if let Ok(duration) = humantime::parse_duration(trimmed) {
             return Ok(duration);
         }
         // 回退：纯**非负**整数视为秒数。
@@ -329,7 +408,7 @@ impl Config {
         // 负数不再悄悄钳成 0：对超时类配置，0 往往意味着「不超时」或「立即过期」，
         // 两种都和写 `-1` 的人想要的东西毫无关系。解析成 u64 让负数自然落到下面
         // 的 InvalidDuration，报错里带着键名与原值，比一个静默的 0 好排查得多。
-        if let Ok(seconds) = raw.trim().parse::<u64>() {
+        if let Ok(seconds) = trimmed.parse::<u64>() {
             return Ok(Duration::from_secs(seconds));
         }
 
@@ -341,22 +420,28 @@ impl Config {
 
     /// 读取字节大小配置值，支持 "10MB"、"1KB" 等人类可读格式，返回字节数。
     pub fn get_byte_size(&self, key: &str) -> Result<usize> {
-        let value = self
-            .settings
-            .get_string(&self.get_key(key))
-            .context(ReadSnafu)?;
-        let size = parse_size(value).context(ParseSizeSnafu)?;
+        let full_key = self.get_key(key);
+        let value = self.settings.get_string(&full_key).context(ReadSnafu)?;
+        let size = parse_size(&value).context(ParseSizeSnafu {
+            key: full_key.as_ref(),
+            value: &value,
+        })?;
         // parse_size 返回 u64；32 位目标上 `as usize` 会静默截断成一个小得多的值
         // （`8GB` → 0），这里宁可报错
-        usize::try_from(size).map_err(|_| Error::InvalidByteSize {
-            key: self.get_key(key).into_owned(),
-            value: size,
-        })
+        let Ok(bytes) = usize::try_from(size) else {
+            return InvalidByteSizeSnafu {
+                key: full_key.into_owned(),
+                value: size,
+            }
+            .fail();
+        };
+        Ok(bytes)
     }
 
     /// 创建具有指定前缀的子配置视图，用于隔离不同模块的配置命名空间。
     /// `prefix` 为空时返回当前配置的克隆。
-    pub fn sub_config(&self, prefix: &str) -> Config {
+    #[must_use]
+    pub fn sub_config(&self, prefix: &str) -> Self {
         if prefix.is_empty() {
             return self.clone();
         }
@@ -674,11 +759,31 @@ mod tests {
         path.to_string_lossy().into_owned()
     }
 
+    /// RAII 临时目录守卫：结合进程号与原子序号避免并发冲突，退出作用域时自动清理。
+    struct TempDir(std::path::PathBuf);
+
+    impl std::ops::Deref for TempDir {
+        type Target = std::path::Path;
+
+        fn deref(&self) -> &Self::Target {
+            &self.0
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
     /// 每个用例一个独立目录，避免并行测试互相踩。
-    fn temp_dir(tag: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("tibba-config-{tag}-{}", std::process::id()));
+    fn temp_dir(tag: &str) -> TempDir {
+        static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let id = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir =
+            std::env::temp_dir().join(format!("tibba-config-{tag}-{}-{id}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("创建临时目录");
-        dir
+        TempDir(dir)
     }
 
     /// `*_FILE` 把文件内容取成配置值，并去掉尾部换行。
@@ -884,5 +989,88 @@ mod tests {
         assert_eq!(config.get_string("app_name").unwrap(), "config2");
         assert_eq!(config.get_int("port").unwrap(), 8080);
         assert_eq!(config.get_bool("debug").unwrap(), true);
+    }
+
+    #[test]
+    fn root_try_deserialize_works_and_drops_secret_file_keys() {
+        #[derive(Debug, Deserialize, PartialEq)]
+        #[serde(deny_unknown_fields)]
+        struct RootCfg {
+            app: String,
+            secret: String,
+        }
+
+        let dir = temp_dir("root-deser");
+        let path = write_secret(&dir, "sec", "top-secret\n");
+        let config = Config::builder()
+            .add_toml("app = \"tibba\"\nsecret = \"placeholder\"\n")
+            .with_env_prefix("MYAPP")
+            .build_with_env(Some(env_map(&[("MYAPP__SECRET_FILE", &path)])))
+            .unwrap();
+        let parsed: RootCfg = config.try_deserialize().expect("根配置整棵反序列化应成功");
+        assert_eq!(
+            parsed,
+            RootCfg {
+                app: "tibba".to_string(),
+                secret: "top-secret".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn secret_file_edge_cases_empty_case_insensitive_conflict_and_size_limit() {
+        let dir = temp_dir("edges");
+        let path = write_secret(&dir, "sec", "from-file");
+
+        // 空 *_FILE 变量视作未设置；空直接变量不与 *_FILE 冲突
+        let cfg = Config::builder()
+            .add_toml("a = \"keep\"\nb = \"keep\"")
+            .with_env_prefix("MYAPP")
+            .build_with_env(Some(env_map(&[
+                ("MYAPP__A_FILE", ""),
+                ("MYAPP__B", ""),
+                ("MYAPP__B_FILE", &path),
+            ])))
+            .unwrap();
+        assert_eq!(cfg.get_string("a").unwrap(), "keep");
+        assert_eq!(cfg.get_string("b").unwrap(), "from-file");
+
+        // 大小写不同的直接变量与 *_FILE 也属于互斥冲突
+        let err = Config::builder()
+            .with_env_prefix("MYAPP")
+            .build_with_env(Some(env_map(&[
+                ("myapp__b", "inline"),
+                ("MYAPP__B_FILE", &path),
+            ])))
+            .unwrap_err();
+        assert!(matches!(err, Error::ConflictingSecret { .. }), "{err}");
+
+        // 超过 64 KiB 上限的密钥文件必须被拒绝
+        let huge_path = write_secret(&dir, "huge", &"x".repeat(MAX_SECRET_FILE_BYTES + 1));
+        let err = Config::builder()
+            .with_env_prefix("MYAPP")
+            .build_with_env(Some(env_map(&[("MYAPP__SECRET_FILE", &huge_path)])))
+            .unwrap_err();
+        assert!(matches!(err, Error::SecretFileTooLarge { .. }), "{err}");
+    }
+
+    #[test]
+    fn duration_trims_whitespace_and_parse_size_includes_context() {
+        let cfg = Config::builder()
+            .add_toml("wait = \" 60s \"\nnum = \" 15 \"\nbad_size = \"not-size\"")
+            .build()
+            .unwrap();
+        assert_eq!(cfg.get_duration("wait").unwrap(), Duration::from_secs(60));
+        assert_eq!(cfg.get_duration("num").unwrap(), Duration::from_secs(15));
+
+        let err = cfg.get_byte_size("bad_size").unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("bad_size"), "{msg}");
+        assert!(msg.contains("not-size"), "{msg}");
+    }
+
+    #[test]
+    fn config_error_size_stays_compact() {
+        assert!(std::mem::size_of::<Error>() <= 64);
     }
 }

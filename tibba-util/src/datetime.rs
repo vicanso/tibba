@@ -15,30 +15,21 @@
 use chrono::{DateTime, Local, Utc, offset};
 use std::time::{Duration, Instant};
 
-/// Returns the current local time as a formatted string
-///
-/// Uses the system's local timezone for formatting
-/// Format example: "2025-01-01 12:00:00.000 +08:00"
+/// 返回当前本地时间的格式化字符串，例如 `"2025-01-01 12:00:00.000 +08:00"`。
 pub fn now() -> String {
     Local::now().to_string()
 }
 
-/// Returns the current Unix timestamp in seconds
-///
-/// Represents seconds elapsed since Unix epoch (1970-01-01 00:00:00 UTC)
+/// 返回当前 Unix 时间戳（自 UTC 1970-01-01 00:00:00 起的秒数）。
 pub fn timestamp() -> i64 {
     Utc::now().timestamp()
 }
 
-/// Converts a Unix timestamp to a formatted local datetime string
+/// 将 Unix 时间戳转换为本地时区的格式化日期时间字符串；时间戳非法时返回空串。
 ///
-/// # Arguments
-/// * `secs` - Seconds since Unix epoch
-/// * `nsecs` - Nanoseconds component
-///
-/// # Returns
-/// * Formatted datetime string in local timezone
-/// * Empty string if timestamp is invalid
+/// # 参数
+/// * `secs` - Unix 秒数
+/// * `nsecs` - 纳秒偏移
 pub fn from_timestamp(secs: i64, nsecs: u32) -> String {
     if let Some(value) = DateTime::from_timestamp(secs, nsecs) {
         value.with_timezone(&offset::Local).to_string()
@@ -47,21 +38,21 @@ pub fn from_timestamp(secs: i64, nsecs: u32) -> String {
     }
 }
 
-/// A stopwatch structure for measuring elapsed time.
+/// 用于统计耗时的单调秒表。
 #[derive(Debug, Clone, Copy)]
 pub struct Stopwatch {
     start: Instant,
 }
 
 impl Stopwatch {
-    /// Create a new stopwatch instance and start timing.
+    /// 创建并立即启动秒表。
     pub fn new() -> Self {
         Self {
             start: Instant::now(),
         }
     }
 
-    /// Return the elapsed time since the stopwatch was created.
+    /// 返回自秒表创建以来经过的 [`Duration`]。
     pub fn elapsed(&self) -> Duration {
         self.start.elapsed()
     }
@@ -85,13 +76,13 @@ impl Stopwatch {
         u64::try_from(self.elapsed().as_micros()).unwrap_or(u64::MAX)
     }
 
-    /// Return a human-readable elapsed time string.
+    /// 返回人类可读的耗时字符串（如 `"12ms"`）。
     pub fn elapsed_human(&self) -> String {
         humantime::format_duration(self.elapsed()).to_string()
     }
 }
 
-/// Implement the Default trait for Stopwatch, allowing it to be created via `Stopwatch::default()`.
+/// 为 `Stopwatch` 提供默认实现，等价于 [`Stopwatch::new`]。
 impl Default for Stopwatch {
     fn default() -> Self {
         Self::new()

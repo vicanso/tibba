@@ -37,11 +37,11 @@ type Result<T> = std::result::Result<T, Error>;
 /// 调用方若确实需要「要么全成功要么不动」，应先自行校验，或写入一个临时
 /// `HeaderMap` 再整体 extend。
 ///
-/// # Arguments
-/// * `headers` - Mutable reference to HeaderMap
+/// # 参数
+/// * `headers` - 可变 `HeaderMap` 引用
 /// * `values` - 待写入的 (名称, 值) 序列
 ///
-/// # Returns
+/// # 返回值
 /// * `Result<()>` - 全部写入成功，或首个非法条目对应的错误
 pub fn insert_headers<K, V>(
     headers: &mut HeaderMap<HeaderValue>,
@@ -65,31 +65,36 @@ where
     Ok(())
 }
 
-/// Sets an HTTP header only if it doesn't already exist
+/// 仅当目标请求/响应头尚不存在时才写入，已存在则保留原值。
 ///
-/// # Arguments
-/// * `headers` - Mutable reference to HeaderMap
-/// * `name` - Header name
-/// * `value` - Header value
+/// # 参数
+/// * `headers` - 可变 `HeaderMap` 引用
+/// * `name` - 头名称
+/// * `value` - 头值
 ///
-/// # Returns
-/// * `Result<()>` - Success or error if header name/value is invalid
+/// # 返回值
+/// * `Result<()>` - 写入成功（或头已存在/为空跳过），或名称/值非法时的错误
 ///
-/// 本函数在**每个响应**上被安全头、trace 头等中间件调用多次。此前它先把
-/// `name` / `value` 各 `to_string()` 一次再交给 [`insert_headers`]——后者本就
-/// 接受 `AsRef<str>`，这两次堆分配纯属多余。
-///
-/// 名称与值在编译期已知的调用方，更好的做法是预先构造好 `HeaderName` /
-/// `HeaderValue`，直接 `headers.entry(name).or_insert(value)`，连解析都省掉。
+/// 本函数通过 `headers.entry(name)` 合并 lookup 与插入，且仅在 `Vacant`
+/// 分支校验并构造 `HeaderValue`；若头名与头值在编译期已知，调用方也可直接
+/// 使用 `HeaderName` / `HeaderValue` 配合 `entry().or_insert()`。
 pub fn set_header_if_not_exist(
     headers: &mut HeaderMap<HeaderValue>,
     name: &str,
     value: &str,
 ) -> Result<()> {
-    if headers.contains_key(name) {
+    if name.is_empty() || value.is_empty() {
         return Ok(());
     }
-    insert_headers(headers, [(name, value)])
+    let name = HeaderName::try_from(name).context(InvalidHeaderNameSnafu)?;
+    match headers.entry(name) {
+        header::Entry::Occupied(_) => Ok(()),
+        header::Entry::Vacant(entry) => {
+            let value = HeaderValue::try_from(value).context(InvalidHeaderValueSnafu)?;
+            entry.insert(value);
+            Ok(())
+        }
+    }
 }
 
 /// 响应尚未设置 `Cache-Control` 时补上 `no-cache`。

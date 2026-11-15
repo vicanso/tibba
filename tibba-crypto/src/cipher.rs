@@ -45,18 +45,23 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use sha2::{Digest, Sha256};
 use snafu::{OptionExt, ResultExt, ensure};
+use zeroize::{Zeroize, Zeroizing};
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
 /// GCM 推荐的 nonce 长度（96 bit）。
 const NONCE_LEN: usize = 12;
+/// GCM 认证 tag 长度（128 bit）。
+const TAG_LEN: usize = 16;
 
-/// AES-256-GCM 字段加密器。
+/// AES-256-GCM 字段加密器（预展开 AES 轮密钥并可选持有历史轮换密钥）。
 ///
 /// 构造方式二选一：[`Self::from_app_secret`]（由应用 secret 派生，最常用）或
-/// [`Self::from_key`]（外部密钥管理系统下发的 32 字节密钥）。
+/// [`Self::from_key`]（外部密钥管理系统下发的 32 字节密钥）；可通过
+/// [`Self::with_fallback_app_secret`] / [`Self::with_fallback_key`] 追加旧密钥以支持平滑轮换。
 pub struct SecretCipher {
-    key: [u8; 32],
+    primary: Aes256Gcm,
+    fallbacks: Vec<Aes256Gcm>,
 }
 
 /// 不输出密钥。默认 derive 会把整把密钥打进日志 / panic 回溯。
@@ -64,8 +69,25 @@ impl std::fmt::Debug for SecretCipher {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SecretCipher")
             .field("key", &"<redacted>")
+            .field("fallbacks", &self.fallbacks.len())
             .finish()
     }
+}
+
+/// 由应用 secret 与用途域派生 32 字节密钥：`SHA256(secret || ":" || domain)`。
+/// 保留原始派生协议以保证与既有 TOTP 等落库密文完全兼容。
+fn derive_key(secret: &str, domain: &str) -> Zeroizing<[u8; 32]> {
+    let mut h = Sha256::new();
+    h.update(secret.as_bytes());
+    h.update(b":");
+    h.update(domain.as_bytes());
+    Zeroizing::new(h.finalize().into())
+}
+
+fn build_aes_gcm(mut key: [u8; 32]) -> Aes256Gcm {
+    let cipher = Aes256Gcm::new(&Key::<Aes256Gcm>::from(key));
+    key.zeroize();
+    cipher
 }
 
 impl SecretCipher {
@@ -75,23 +97,31 @@ impl SecretCipher {
     /// 详见模块文档——**不要**在多种数据上复用同一个 domain。
     #[must_use]
     pub fn from_app_secret(secret: &str, domain: &str) -> Self {
-        let mut h = Sha256::new();
-        h.update(secret.as_bytes());
-        h.update(b":");
-        h.update(domain.as_bytes());
-        Self {
-            key: h.finalize().into(),
-        }
+        let key = derive_key(secret, domain);
+        Self::from_key(*key)
     }
 
     /// 直接以 32 字节密钥构造，供密钥由外部 KMS / 配置下发的部署使用。
     #[must_use]
     pub fn from_key(key: [u8; 32]) -> Self {
-        Self { key }
+        Self {
+            primary: build_aes_gcm(key),
+            fallbacks: Vec::new(),
+        }
     }
 
-    fn cipher(&self) -> Aes256Gcm {
-        Aes256Gcm::new(&Key::<Aes256Gcm>::from(self.key))
+    /// 追加历史应用 secret 作为解密回退密钥（轮换期平滑解密旧密文），支持链式调用。
+    #[must_use]
+    pub fn with_fallback_app_secret(self, secret: &str, domain: &str) -> Self {
+        let key = derive_key(secret, domain);
+        self.with_fallback_key(*key)
+    }
+
+    /// 追加历史 32 字节原始密钥作为解密回退密钥，支持链式调用。
+    #[must_use]
+    pub fn with_fallback_key(mut self, key: [u8; 32]) -> Self {
+        self.fallbacks.push(build_aes_gcm(key));
+        self
     }
 
     /// 加密明文，返回 `base64(nonce || ciphertext)`。
@@ -113,7 +143,7 @@ impl SecretCipher {
 
         // aes_gcm::Error 刻意不透出细节（避免成为 oracle），故归一为 Encrypt
         let ciphertext = self
-            .cipher()
+            .primary
             .encrypt(
                 &Nonce::from(nonce),
                 Payload {
@@ -137,23 +167,51 @@ impl SecretCipher {
 
     /// 解密 [`Self::encrypt_with_aad`] 的产物，`aad` 必须与加密时完全一致。
     pub fn decrypt_with_aad(&self, blob_b64: &str, aad: &[u8]) -> Result<Vec<u8>> {
+        let (plaintext, _rotated) = self.decrypt_and_check_rotation_with_aad(blob_b64, aad)?;
+        Ok(plaintext)
+    }
+
+    /// 解密并返回 `(明文, 是否命中了回退旧密钥)`，便于调用方按需用新主密钥重加密写回。
+    pub fn decrypt_and_check_rotation(&self, blob_b64: &str) -> Result<(Vec<u8>, bool)> {
+        self.decrypt_and_check_rotation_with_aad(blob_b64, &[])
+    }
+
+    /// 带 AAD 的解密并检测是否命中回退密钥，返回 `(明文, 是否需重加密)`。
+    pub fn decrypt_and_check_rotation_with_aad(
+        &self,
+        blob_b64: &str,
+        aad: &[u8],
+    ) -> Result<(Vec<u8>, bool)> {
         let blob = STANDARD.decode(blob_b64).context(Base64Snafu)?;
-        ensure!(blob.len() > NONCE_LEN, BlobTooShortSnafu);
+        // AES-GCM 密文至少包含 12 字节 nonce 与 16 字节 tag（即使明文为空）
+        ensure!(blob.len() >= NONCE_LEN + TAG_LEN, BlobTooShortSnafu);
 
         let (nonce, ciphertext) = blob.split_at(NONCE_LEN);
         // split_at 保证长度恰为 NONCE_LEN，转换不会失败；
         // 万一失败按解密失败处理，不 panic
         let nonce = <&Nonce<_>>::try_from(nonce).ok().context(DecryptSnafu)?;
-        self.cipher()
-            .decrypt(
+
+        if let Ok(plaintext) = self.primary.decrypt(
+            nonce,
+            Payload {
+                msg: ciphertext,
+                aad,
+            },
+        ) {
+            return Ok((plaintext, false));
+        }
+        for fallback in &self.fallbacks {
+            if let Ok(plaintext) = fallback.decrypt(
                 nonce,
                 Payload {
                     msg: ciphertext,
                     aad,
                 },
-            )
-            .ok()
-            .context(DecryptSnafu)
+            ) {
+                return Ok((plaintext, true));
+            }
+        }
+        Err(Error::Decrypt)
     }
 }
 
@@ -208,12 +266,41 @@ mod tests {
             c.decrypt("not base64!!").unwrap_err(),
             Error::Base64 { .. }
         ));
-        // 长度不足以容纳 nonce + tag
+        // 长度不足以容纳 nonce + tag（< 28 字节）
         assert!(matches!(
             c.decrypt(&STANDARD.encode([0u8; NONCE_LEN])).unwrap_err(),
             Error::BlobTooShort
         ));
+        assert!(matches!(
+            c.decrypt(&STANDARD.encode([0u8; NONCE_LEN + TAG_LEN - 1]))
+                .unwrap_err(),
+            Error::BlobTooShort
+        ));
         assert!(matches!(c.decrypt("").unwrap_err(), Error::BlobTooShort));
+    }
+
+    #[test]
+    fn fallback_keys_support_graceful_secret_rotation() {
+        let old = SecretCipher::from_app_secret("old-secret", "totp");
+        let rotated = SecretCipher::from_app_secret("new-secret", "totp")
+            .with_fallback_app_secret("old-secret", "totp");
+
+        let old_blob = old.encrypt_with_aad(b"totp-seed", b"user:1").expect("加密");
+        let new_blob = rotated
+            .encrypt_with_aad(b"new-seed", b"user:1")
+            .expect("加密");
+
+        let (pt, needs_reencrypt) = rotated
+            .decrypt_and_check_rotation_with_aad(&old_blob, b"user:1")
+            .expect("命中旧密钥");
+        assert_eq!(pt, b"totp-seed");
+        assert!(needs_reencrypt);
+
+        let (pt_new, needs_reencrypt_new) = rotated
+            .decrypt_and_check_rotation_with_aad(&new_blob, b"user:1")
+            .expect("命中新主密钥");
+        assert_eq!(pt_new, b"new-seed");
+        assert!(!needs_reencrypt_new);
     }
 
     /// **用途隔离**：domain 不同即密钥不同，密文不可跨用途解密。

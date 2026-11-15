@@ -58,11 +58,11 @@ fn ip_key(ip: &str) -> String {
 /// 登录前置闸门：账号或 IP 在窗口内失败过多则返回 429（[`Error::TooManyAttempts`]），
 /// 调用方应据此中止后续凭证校验。Redis 读失败时向上传播（应用本就强依赖 Redis）。
 pub(crate) async fn ensure_not_locked(cache: &RedisCache, account: &str, ip: &str) -> Result<()> {
-    let acct: Option<i64> = cache.get(&account_key(account)).await?;
+    let acct = cache.get::<i64>(&account_key(account)).await?;
     if acct.unwrap_or(0) >= ACCOUNT_MAX_FAILURES {
         return Err(Error::TooManyAttempts.into());
     }
-    let ip_count: Option<i64> = cache.get(&ip_key(ip)).await?;
+    let ip_count = cache.get::<i64>(&ip_key(ip)).await?;
     if ip_count.unwrap_or(0) >= IP_MAX_FAILURES {
         return Err(Error::TooManyAttempts.into());
     }

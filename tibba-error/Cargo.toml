@@ -15,14 +15,13 @@ name = "tibba_error"
 path = "src/lib.rs"
 
 [dependencies]
-axum = { workspace = true }
+axum = { workspace = true, default-features = false, features = ["json"] }
 serde = { workspace = true }
 # from_upstream：把上游服务的错误响应体反序列化回本类型
 serde_json = { workspace = true }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }
-serde_json = { workspace = true }
 # 仅测试用：读取 IntoResponse 产出的响应体需要 async runtime
 tokio = { workspace = true }
 

@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use bytes::BytesMut;
-use futures::{Stream, StreamExt};
+use futures::Stream;
 use serde::{Deserialize, Serialize};
 use snafu::Snafu;
+use std::fmt;
 use std::pin::Pin;
 use tibba_error::Error as BaseError;
 
@@ -31,7 +31,10 @@ pub type BoxStream<T> = Pin<Box<dyn Stream<Item = T> + Send>>;
 #[snafu(visibility(pub))]
 pub enum Error {
     #[snafu(display("http request failed: {source}"))]
-    Request { source: reqwest::Error },
+    Request {
+        #[snafu(source(from(tibba_request::Error, Box::new)))]
+        source: Box<tibba_request::Error>,
+    },
     #[snafu(display("json error: {source}"))]
     Json { source: serde_json::Error },
     /// API 返回的业务错误（status ≥ 400 或 error 字段）
@@ -40,7 +43,7 @@ pub enum Error {
     /// 构造 HTTP header 时失败（例如 API key 含非法字节）
     #[snafu(display("invalid header: {source}"))]
     InvalidHeader {
-        source: reqwest::header::InvalidHeaderValue,
+        source: http::header::InvalidHeaderValue,
     },
 }
 
@@ -78,18 +81,21 @@ pub struct Message {
 }
 
 impl Message {
+    #[must_use]
     pub fn system(content: impl Into<String>) -> Self {
         Self {
             role: Role::System,
             content: content.into(),
         }
     }
+    #[must_use]
     pub fn user(content: impl Into<String>) -> Self {
         Self {
             role: Role::User,
             content: content.into(),
         }
     }
+    #[must_use]
     pub fn assistant(content: impl Into<String>) -> Self {
         Self {
             role: Role::Assistant,
@@ -111,6 +117,7 @@ pub struct ChatParams {
 }
 
 impl ChatParams {
+    #[must_use]
     pub fn new(model: impl Into<String>) -> Self {
         Self {
             model: model.into(),
@@ -173,75 +180,37 @@ pub struct StreamChunk {
 
 // ── 内部 SSE 解析工具 ─────────────────────────────────────────────────────────
 
-/// 持有 SSE 响应体字节流和已收到但未解析的缓冲区。
-///
-/// 使用 `BytesMut` 而非 `String` 作为 buffer 的关键原因：上游 chunk 边界
-/// 任意，可能切在 UTF-8 多字节字符中间。若每次 chunk 都 `from_utf8_lossy`
-/// 一次，前半截字节会被替换成 U+FFFD，再接上后半截就成乱码——中文 / emoji
-/// 等多字节内容的流式输出会被这个 bug 静默吃掉。改为按字节缓冲、提取出完整
-/// 行后再做 UTF-8 解码，分界点永远落在 '\n' 上（ASCII），不再切到多字节中间。
+/// SSE 响应流读取状态，底层行解析与 UTF-8 多字节安全缓冲由 [`tibba_request::SseReader`] 提供。
 pub(crate) struct SseState {
-    pub inner: BoxStream<reqwest::Result<bytes::Bytes>>,
-    pub buffer: BytesMut,
+    reader: tibba_request::SseReader,
 }
 
 impl SseState {
-    pub(crate) fn new(response: reqwest::Response) -> Self {
+    pub(crate) fn new(service: impl Into<String>, inner: tibba_request::BoxByteStream) -> Self {
         Self {
-            inner: Box::pin(response.bytes_stream()),
-            buffer: BytesMut::new(),
+            reader: tibba_request::SseReader::new(service, inner),
         }
     }
 }
 
 /// 表示 SSE 解析的下一个事件结果。
 pub(crate) enum SsePoll {
-    /// 拿到一行 `data: <body>` 的 body（已去掉前缀和 CRLF）。
+    /// 拿到一行 `data:` 事件的载荷（已去掉前缀与 CRLF）。
     Data(String),
     /// 流自然结束（上游字节流耗尽）。
     Done,
-    /// 上游网络/IO 错误。
+    /// 上游网络/IO 错误或单行超限。
     Err(Error),
 }
 
-/// 从 SSE state 中拉取下一行 `data: ...` 的 body，自动跳过 `event:` / 空行 /
-/// 非 `data:` 行；按字节查找 `\n` 后再解码 UTF-8，避免多字节字符在 chunk
-/// 边界被截断（参见 [`SseState`] 上的设计说明）。
-///
-/// 之前 openai / anthropic 各有一份近 30 行的、几乎一致的解析循环，现在统一
-/// 走这里——任何 SSE 协议细节修复只改一处。
+/// 从 SSE state 中拉取下一行 `data:` 载荷，委托给 [`tibba_request::SseReader::next_data`]。
 pub(crate) async fn next_sse_data_line(state: &mut SseState) -> SsePoll {
-    loop {
-        // 尝试从已缓存字节中切出一整行
-        if let Some(nl_pos) = state.buffer.iter().position(|&b| b == b'\n') {
-            // split_to 是 O(1) 的指针调整，不会复制残余字节（原代码 String::to_string 是 O(n)）
-            let line_bytes = state.buffer.split_to(nl_pos + 1);
-            // 去掉行尾 \n 以及可能的 \r
-            let mut line = &line_bytes[..nl_pos];
-            if let Some(stripped) = line.strip_suffix(b"\r") {
-                line = stripped;
-            }
-            // SSE 协议要求 UTF-8。整行字节是完整的，解码不会切到字符中间；
-            // 极端情况（上游真的吐了非法 UTF-8 行）按 SSE 注释行处理跳过
-            let Ok(text) = std::str::from_utf8(line) else {
-                continue;
-            };
-            let Some(data) = text.strip_prefix("data: ") else {
-                // event: / id: / : 注释 / 空行 等都不是 data，直接忽略
-                continue;
-            };
-            if data.is_empty() {
-                continue;
-            }
-            return SsePoll::Data(data.to_string());
-        }
-
-        // 缓冲区没有完整行，拉更多字节
-        match state.inner.next().await {
-            Some(Ok(bytes)) => state.buffer.extend_from_slice(&bytes),
-            Some(Err(e)) => return SsePoll::Err(Error::Request { source: e }),
-            None => return SsePoll::Done,
-        }
+    match state.reader.next_data().await {
+        tibba_request::SsePoll::Data(data) => SsePoll::Data(data),
+        tibba_request::SsePoll::Done => SsePoll::Done,
+        tibba_request::SsePoll::Err(err) => SsePoll::Err(Error::Request {
+            source: Box::new(err),
+        }),
     }
 }
 
@@ -284,8 +253,28 @@ pub struct LlmCall {
     backend: Backend,
 }
 
+impl fmt::Debug for LlmCall {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("LlmCall")
+            .field(
+                "api_key",
+                &if self.api_key.is_empty() {
+                    ""
+                } else {
+                    "[REDACTED]"
+                },
+            )
+            .field("model", &self.model)
+            .field("base_url", &self.base_url)
+            .field("backend", &self.backend)
+            .field("has_system_message", &!self.system_message.is_empty())
+            .finish()
+    }
+}
+
 impl LlmCall {
     /// 创建调用，`api_key`、`model`、`user_message` 为必填，默认使用 OpenAI 协议。
+    #[must_use]
     pub fn new(
         api_key: impl Into<String>,
         model: impl Into<String>,
@@ -396,14 +385,11 @@ mod tests {
 
     /// 用预先准备好的 chunk 列表构造一个 SseState，跳过真实 HTTP。
     fn state_from_chunks(chunks: Vec<&[u8]>) -> SseState {
-        let owned: Vec<reqwest::Result<Bytes>> = chunks
+        let owned: Vec<Result<Bytes, tibba_request::Error>> = chunks
             .into_iter()
             .map(|c| Ok(Bytes::copy_from_slice(c)))
             .collect();
-        SseState {
-            inner: Box::pin(stream::iter(owned)),
-            buffer: BytesMut::new(),
-        }
+        SseState::new("sse-test", Box::pin(stream::iter(owned)))
     }
 
     /// 依次拉所有 data 行，直到 Done。Err 时立即返回。
@@ -495,5 +481,28 @@ mod tests {
         let chunks: Vec<&[u8]> = bytes.iter().map(std::slice::from_ref).collect();
         let mut s = state_from_chunks(chunks);
         assert_eq!(drain(&mut s).await, vec!["abc".to_string()]);
+    }
+
+    #[test]
+    fn builders_and_clients_redact_api_key_in_debug() {
+        let secret = "sk-llm-secret-token-xyz";
+        let call = LlmCall::new(secret, "gpt-4o-mini", "hi");
+        let call_dbg = format!("{call:?}");
+        assert!(!call_dbg.contains(secret), "{call_dbg}");
+        assert!(call_dbg.contains("[REDACTED]"), "{call_dbg}");
+
+        let oai_builder = OpenAiClientBuilder::new(secret);
+        let oai_b_dbg = format!("{oai_builder:?}");
+        assert!(!oai_b_dbg.contains(secret), "{oai_b_dbg}");
+        let oai_client = oai_builder.build().unwrap();
+        let oai_c_dbg = format!("{oai_client:?}");
+        assert!(!oai_c_dbg.contains(secret), "{oai_c_dbg}");
+
+        let ant_builder = AnthropicClientBuilder::new(secret);
+        let ant_b_dbg = format!("{ant_builder:?}");
+        assert!(!ant_b_dbg.contains(secret), "{ant_b_dbg}");
+        let ant_client = ant_builder.build().unwrap();
+        let ant_c_dbg = format!("{ant_client:?}");
+        assert!(!ant_c_dbg.contains(secret), "{ant_c_dbg}");
     }
 }

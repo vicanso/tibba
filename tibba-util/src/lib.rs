@@ -17,7 +17,9 @@ use std::env;
 use std::sync::LazyLock;
 use tibba_error::Error as BaseError;
 
-// Error 变体按 feature 门控：Zstd / Lz4Decompress 只被 compression.rs 构造，
+pub(crate) const LOG_TARGET: &str = "tibba:util";
+
+// Error 变体按 feature 门控：Zstd / Lz4Decompress / Lz4CompressTooLarge 只被 compression.rs 构造，
 // InvalidHeaderName / InvalidHeaderValue 只被 http.rs 构造，
 // 对应 feature 关闭时变体一并消失，避免 enum 携带无法到达的分支。
 #[derive(Snafu, Debug)]
@@ -34,6 +36,10 @@ pub enum Error {
     #[cfg(feature = "compression")]
     #[snafu(display("decompressed size {size} exceeds limit {limit}"))]
     DecompressTooLarge { size: usize, limit: usize },
+    /// LZ4 压缩头仅使用小端 u32 存放原始长度，超出 `u32::MAX` 时拒绝截断写入。
+    #[cfg(feature = "compression")]
+    #[snafu(display("lz4 input size {size} exceeds u32::MAX"))]
+    Lz4CompressTooLarge { size: usize },
     #[cfg(feature = "http")]
     #[snafu(display("{source}"))]
     InvalidHeaderName {
@@ -48,6 +54,15 @@ pub enum Error {
     Invalid { message: String },
     #[snafu(display("{source}"))]
     Deserialize { source: serde_urlencoded::de::Error },
+    #[snafu(display("{source}"))]
+    UrlParse { source: url::ParseError },
+    #[snafu(display("invalid port '{value}': {source}"))]
+    ParsePort {
+        value: String,
+        source: std::num::ParseIntError,
+    },
+    #[snafu(display("{source}"))]
+    HmacInit { source: hmac::digest::InvalidLength },
 }
 
 impl From<Error> for BaseError {
@@ -56,16 +71,24 @@ impl From<Error> for BaseError {
         // 与项目其他 snafu 模块（tibba-config / tibba-sql 等）保持一致
         let err = match val {
             #[cfg(feature = "compression")]
-            Error::Zstd { source } => BaseError::new(source).with_sub_category("zstd"),
+            Error::Zstd { source } => BaseError::new(source)
+                .with_sub_category("zstd")
+                .with_exception(true),
             #[cfg(feature = "compression")]
-            Error::Lz4Decompress { source } => {
-                BaseError::new(source).with_sub_category("lz4_decompress")
-            }
+            Error::Lz4Decompress { source } => BaseError::new(source)
+                .with_sub_category("lz4_decompress")
+                .with_exception(true),
             // 超限多半意味着数据损坏或被篡改，值得告警
             #[cfg(feature = "compression")]
             Error::DecompressTooLarge { size, limit } => {
                 BaseError::new(format!("decompressed size {size} exceeds limit {limit}"))
                     .with_sub_category("decompress_too_large")
+                    .with_exception(true)
+            }
+            #[cfg(feature = "compression")]
+            Error::Lz4CompressTooLarge { size } => {
+                BaseError::new(format!("lz4 input size {size} exceeds u32::MAX"))
+                    .with_sub_category("lz4_compress_too_large")
                     .with_exception(true)
             }
             #[cfg(feature = "http")]
@@ -80,6 +103,14 @@ impl From<Error> for BaseError {
             Error::Deserialize { source } => {
                 BaseError::new(source).with_sub_category("deserialize")
             }
+            Error::UrlParse { source } => BaseError::new(source).with_sub_category("url_parse"),
+            Error::ParsePort { value, source } => {
+                BaseError::new(format!("invalid port '{value}': {source}"))
+                    .with_sub_category("parse_port")
+            }
+            Error::HmacInit { source } => BaseError::new(source)
+                .with_sub_category("hmac_init")
+                .with_exception(true),
         };
         err.with_category("util")
     }
@@ -101,8 +132,13 @@ impl From<Error> for BaseError {
 /// 的后果应该是「本地开发多敲一行 `RUST_ENV=dev`」，而不是「线上门户大开」。
 pub const DEFAULT_RUST_ENV: &str = "production";
 
-static RUST_ENV: LazyLock<String> =
-    LazyLock::new(|| env::var("RUST_ENV").unwrap_or_else(|_| DEFAULT_RUST_ENV.to_string()));
+static RUST_ENV: LazyLock<String> = LazyLock::new(|| {
+    env::var("RUST_ENV")
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| DEFAULT_RUST_ENV.to_string())
+});
 
 /// 原始的 `RUST_ENV` 值（未设置时为 [`DEFAULT_RUST_ENV`]）。
 ///

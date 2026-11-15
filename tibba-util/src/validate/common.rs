@@ -124,14 +124,20 @@ pub fn x_file_name(name: &str) -> Result<()> {
             "file name cannot be empty".to_string(),
         ));
     }
+    if name.trim() != name {
+        return Err(new_error(
+            CODE_FILE_NAME,
+            "file name must not have leading or trailing whitespace".to_string(),
+        ));
+    }
     if name.len() > FILE_NAME_MAX_LEN {
         return Err(new_error(
             CODE_FILE_NAME,
             format!("file name must be at most {FILE_NAME_MAX_LEN} characters"),
         ));
     }
-    // 控制字符：会进日志与响应头（Content-Disposition），必须挡掉
-    if name.chars().any(|c| c.is_ascii_control()) {
+    // 控制字符（含 C0/C1 及 Unicode 控制字符）：会进日志与响应头（Content-Disposition），必须挡掉
+    if name.chars().any(char::is_control) {
         return Err(new_error(
             CODE_FILE_NAME,
             "file name must not contain control characters".to_string(),
@@ -144,20 +150,33 @@ pub fn x_file_name(name: &str) -> Result<()> {
             "file name must not contain path separators".to_string(),
         ));
     }
-    if name.split('.').any(|seg| seg == "..") || name == ".." || name == "." {
+    if name.contains("..") || name == "." {
         return Err(new_error(
             CODE_FILE_NAME,
             "file name must not contain path traversal".to_string(),
         ));
     }
-    // 以 `.` 开头的隐藏文件既无正当用途，也会让「扩展名」的判定变得含糊
+    // 以 `.` 开头（隐藏文件）或结尾（空扩展名）会让对象存储键与扩展名判定产生歧义
     if name.starts_with('.') {
         return Err(new_error(
             CODE_FILE_NAME,
             "file name must not start with '.'".to_string(),
         ));
     }
-    if Path::new(name).extension().is_none() {
+    if name.ends_with('.') {
+        return Err(new_error(
+            CODE_FILE_NAME,
+            "file name must not end with '.'".to_string(),
+        ));
+    }
+    let path = Path::new(name);
+    if path.file_stem().is_none_or(|stem| stem.is_empty()) {
+        return Err(new_error(
+            CODE_FILE_NAME,
+            "file name must have a non-empty stem".to_string(),
+        ));
+    }
+    if path.extension().is_none_or(|ext| ext.is_empty()) {
         return Err(new_error(
             CODE_FILE_NAME,
             "file name must have an extension".to_string(),
@@ -275,11 +294,18 @@ mod tests {
             "../../etc/passwd.txt",
             "..",
             ".",
+            "foo..",
+            "a..b.png",
+            "foo.",
+            " . ",
+            " a.png",
+            "a.png ",
             "a/b.png",
             "a\\b.png",
             ".hidden.png",
             "bad\nname.png",
             "bad\0name.png",
+            "bad\u{0085}name.png",
         ] {
             assert!(x_file_name(bad).is_err(), "{bad:?} 应被拒绝");
         }
@@ -297,7 +323,9 @@ mod tests {
         assert!(x_file_group("team-a_2024").is_ok());
         assert!(x_schema_name("user").is_ok());
 
-        for bad in ["a/b", "a b", "a\nb", "a:b", "组"] {
+        for bad in [
+            "a/b", "a b", "a\nb", "a:b", "组", "..", ".hidden", "-flag", "foo..", "foo.",
+        ] {
             assert!(x_file_group(bad).is_err(), "{bad:?} 应被拒绝");
             assert!(x_schema_name(bad).is_err(), "{bad:?} 应被拒绝");
         }

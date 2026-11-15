@@ -19,7 +19,11 @@
 
 use cached::cached;
 use serde::{Deserialize, Serialize};
+use std::sync::{LazyLock, Mutex};
 use sysinfo::{Pid, ProcessesToUpdate, System};
+
+/// 复用的进程信息采样器，跨刷新周期保留前次快照以计算 CPU 使用率及磁盘读写增量。
+static PROCESS_SYSTEM: LazyLock<Mutex<System>> = LazyLock::new(|| Mutex::new(System::new()));
 
 /// 单个进程的系统资源使用快照。
 ///
@@ -47,6 +51,7 @@ pub struct ProcessSystemInfo {
 /// 获取当前进程的系统资源使用情况，内部委托给 [`get_process_system_info`]。
 ///
 /// ⚠️ **同步阻塞**，async 上下文请用 [`current_process_system_info_async`]。
+#[must_use]
 pub fn current_process_system_info() -> ProcessSystemInfo {
     get_process_system_info(std::process::id() as usize)
 }
@@ -74,7 +79,8 @@ pub async fn get_process_system_info_async(pid: usize) -> ProcessSystemInfo {
 /// 获取指定 PID 进程的系统资源使用情况。
 ///
 /// 结果按 PID 缓存 10 秒（`sync_writes = "by_key"` 确保同一 PID
-/// 同一时刻只有一个线程执行刷新，避免重复采集）。
+/// 同一时刻只有一个线程执行刷新，避免重复采集）；底层复用持久化的 [`System`] 实例并开启
+/// `remove_dead_processes = true`，保证 CPU 百分比与磁盘读写增量有效且已退出进程不累积。
 ///
 /// 采集的指标：内存占用、CPU 使用率与累计时间、文件描述符数量、磁盘读写字节数。
 ///
@@ -84,9 +90,12 @@ pub async fn get_process_system_info_async(pid: usize) -> ProcessSystemInfo {
 // max_size 上限：按 PID 缓存，加 LRU 容量上限防高基数 PID 调用导致 map 无界增长
 #[cached(max_size = 64, ttl_secs = 10, sync_writes = "by_key")]
 pub fn get_process_system_info(pid: usize) -> ProcessSystemInfo {
-    let mut sys = System::new();
+    let mut sys = PROCESS_SYSTEM
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let sysinfo_pid = Pid::from(pid);
-    sys.refresh_processes(ProcessesToUpdate::Some(&[sysinfo_pid]), false);
+    // remove_dead_processes = true：清理已退出的历史 PID 条目，避免长期运行内存增长
+    sys.refresh_processes(ProcessesToUpdate::Some(&[sysinfo_pid]), true);
 
     sys.process(sysinfo_pid)
         .map(|process| {
@@ -103,4 +112,15 @@ pub fn get_process_system_info(pid: usize) -> ProcessSystemInfo {
             }
         })
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn current_process_info_reports_nonzero_memory() {
+        let info = current_process_system_info_async().await;
+        assert!(info.memory_usage > 0);
+    }
 }

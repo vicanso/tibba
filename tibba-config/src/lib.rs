@@ -25,11 +25,21 @@ mod app_config;
 #[derive(Debug, Snafu)]
 pub enum Error {
     #[snafu(display("build config: {source}"))]
-    Build { source: config::ConfigError },
+    Build {
+        #[snafu(source(from(config::ConfigError, Box::new)))]
+        source: Box<config::ConfigError>,
+    },
     #[snafu(display("read config: {source}"))]
-    Read { source: config::ConfigError },
-    #[snafu(display("parse size: {source}"))]
-    ParseSize { source: parse_size::Error },
+    Read {
+        #[snafu(source(from(config::ConfigError, Box::new)))]
+        source: Box<config::ConfigError>,
+    },
+    #[snafu(display("parse size at {key} ({value:?}): {source}"))]
+    ParseSize {
+        key: String,
+        value: String,
+        source: parse_size::Error,
+    },
     /// 时长配置既不是 humantime 格式（`10s` / `1h`）也不是纯数字秒数。
     /// 带上键名与实际取值，避免运维只看到一句笼统的类型错误。
     #[snafu(display("invalid duration at {key}: {value:?}"))]
@@ -57,6 +67,14 @@ pub enum Error {
     #[snafu(display("secret file for {key} at {path} is empty"))]
     EmptySecretFile { key: String, path: String },
 
+    /// `*_FILE` 指向的文件大小超出安全上限。
+    #[snafu(display("secret file for {key} at {path} exceeds {limit} bytes"))]
+    SecretFileTooLarge {
+        key: String,
+        path: String,
+        limit: usize,
+    },
+
     /// 同一项同时给了 `X` 与 `X_FILE`，无法判断该用哪个。
     #[snafu(display("both {key} and {file_key} are set; they are exclusive"))]
     ConflictingSecret { key: String, file_key: String },
@@ -69,29 +87,29 @@ impl From<Error> for BaseError {
             Error::Build { source } => BaseError::new(source).with_sub_category("build"),
             // 运行期读取错误占绝大多数，沿用外层 category 即可，不再赘加 sub
             Error::Read { source } => BaseError::new(source),
-            Error::ParseSize { source } => BaseError::new(source).with_sub_category("parse_size"),
-            Error::InvalidDuration { key, value } => {
-                BaseError::new(format!("invalid duration at {key}: {value:?}"))
-                    .with_sub_category("invalid_duration")
+            // 其余变体均复用 snafu 生成的 Display，避免重复 format! 分配；
+            // 注意只带 key / path，绝不把读出来的密钥原文放进错误信息。
+            ref err @ Error::ParseSize { .. } => {
+                BaseError::new(err).with_sub_category("parse_size")
             }
-            Error::InvalidByteSize { key, value } => {
-                BaseError::new(format!("byte size at {key} does not fit in usize: {value}"))
-                    .with_sub_category("invalid_byte_size")
+            ref err @ Error::InvalidDuration { .. } => {
+                BaseError::new(err).with_sub_category("invalid_duration")
             }
-            // 三者都是启动期的部署配置错误。注意只带 key / path，
-            // 绝不把读出来的内容放进错误信息——那正是要保护的密钥
-            Error::SecretFile { key, path, source } => {
-                BaseError::new(format!("read secret file for {key} at {path}: {source}"))
-                    .with_sub_category("secret_file")
+            ref err @ Error::InvalidByteSize { .. } => {
+                BaseError::new(err).with_sub_category("invalid_byte_size")
             }
-            Error::EmptySecretFile { key, path } => {
-                BaseError::new(format!("secret file for {key} at {path} is empty"))
-                    .with_sub_category("empty_secret_file")
+            ref err @ Error::SecretFile { .. } => {
+                BaseError::new(err).with_sub_category("secret_file")
             }
-            Error::ConflictingSecret { key, file_key } => BaseError::new(format!(
-                "both {key} and {file_key} are set; they are exclusive"
-            ))
-            .with_sub_category("conflicting_secret"),
+            ref err @ Error::EmptySecretFile { .. } => {
+                BaseError::new(err).with_sub_category("empty_secret_file")
+            }
+            ref err @ Error::SecretFileTooLarge { .. } => {
+                BaseError::new(err).with_sub_category("secret_file_too_large")
+            }
+            ref err @ Error::ConflictingSecret { .. } => {
+                BaseError::new(err).with_sub_category("conflicting_secret")
+            }
         };
         err.with_category("config").with_exception(true)
     }

@@ -53,14 +53,15 @@ docker run -d --name tibba-redis -p 6379:6379 redis:7-alpine
 
 ### 3. 配置
 
-默认读 `configs/default.toml` + `configs/{ENV}.toml`，可用环境变量覆盖，前缀 **`TIBBA_WEB__`**：
+默认读 `configs/default.toml` + `configs/{ENV}.toml`，可用环境变量覆盖，前缀 **`TIBBA_WEB__`**（密钥字段均支持同名 `*_FILE` 后缀从挂载文件读取，如 `TIBBA_WEB__BASIC__SECRET_FILE`）：
 
 | 变量 | 说明 |
 |------|------|
 | `TIBBA_WEB__BASIC__SECRET` | 生产**必须**覆盖（≥32 字符） |
+| `TIBBA_WEB__BASIC__PASSWORD_PEPPER` | 可选密码哈希服务端 pepper（经 `tibba-crypto` 全局策略生效） |
 | `TIBBA_WEB__BASIC__CORS_ALLOW_ORIGINS` | 生产**必须**配置来源白名单 |
 | `TIBBA_WEB__BASIC__SUPER_ADMINS` | 启动时授予超管的账号列表（先注册再重启生效）；首个注册用户不再自动成为超管 |
-| `TIBBA_WEB__BASIC__LISTEN` | 监听地址，默认 `127.0.0.1:5000` |
+| `TIBBA_WEB__BASIC__LISTEN` | 监听地址（由 `x_listen_addr` 校验），默认 `127.0.0.1:5000` |
 | `TIBBA_WEB__DATABASE__URI` | Postgres 连接串 |
 | `TIBBA_WEB__REDIS__URI` | Redis 连接串 |
 | `RUST_LOG` | 日志级别，如 `tibba:app=info,tibba:cache=debug` |

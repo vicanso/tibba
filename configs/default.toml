@@ -8,6 +8,10 @@ processing_limit = 1_000
 # 仅开发 / 测试用示例值；生产必须通过 TIBBA_WEB__BASIC__SECRET 覆盖，否则启动校验失败。
 # 该值派生 TOTP AES-256-GCM 密钥并签发登录防重放令牌，务必强随机、保密。
 secret = "tibba-dev-insecure-secret-do-not-use-in-production"
+# 可选密码哈希全局 pepper（HMAC 预处理，配合 Argon2id）；强烈建议在生产部署第一天即通过
+# 环境变量 TIBBA_WEB__BASIC__PASSWORD_PEPPER 注入。
+# ⚠️ 存量系统若中途启用或修改 pepper，已入库旧密码哈希将无法通过校验（除非全员重置或做双写过渡）。
+# password_pepper = ""
 # 生产必须配置 CORS 白名单，否则启动失败。开发可留空（任意来源）。
 # cors_allow_origins = ["http://localhost:5173"]
 # cors_allow_credentials = true

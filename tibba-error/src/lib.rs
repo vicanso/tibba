@@ -16,46 +16,57 @@ use axum::Json;
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 
-/// 不常用的可选字段集合，装箱存放以控制 [`Error`] 的内存占用。
+/// 不常用的可选字段集合，按需装箱存放以控制 [`Error`] 的内存占用并避免无谓堆分配。
 /// 仅作为 `Error` 内部实现，不对外暴露。
-///
-/// 每个字段都带 `skip_serializing_if`：未设置的字段不进响应体。此前每个错误
-/// 响应都要拖着 `"code":null,"exception":null,"extra":null` 三段常量噪音——
-/// 对一个**每次出错都会发**的结构而言，这既是带宽浪费，也让前端无法用
-/// 「字段是否存在」判断服务端有没有给出该信息。
-#[derive(Debug, Default, Serialize, Deserialize, Clone)]
+#[derive(Debug, Default, Clone)]
 struct ErrorData {
     /// 错误子分类，用于在同一 category 下进一步区分错误来源。
-    #[serde(skip_serializing_if = "Option::is_none")]
     sub_category: Option<String>,
     /// 业务错误码，供前端按码处理特定错误。
-    #[serde(skip_serializing_if = "Option::is_none")]
     code: Option<String>,
     /// 是否为需要告警的异常级错误。
-    #[serde(skip_serializing_if = "Option::is_none")]
     exception: Option<bool>,
     /// 附加信息列表，可携带多条上下文说明。
-    #[serde(skip_serializing_if = "Option::is_none")]
     extra: Option<Vec<String>>,
     /// 是否对客户端隐去 `message` / `extra`；`None` 表示按状态码判定。
     ///
-    /// `#[serde(skip)]`：这是「如何构造响应」的服务端控制位，不是响应内容本身，
-    /// 不该出现在回给客户端的 JSON 里。
-    #[serde(skip)]
+    /// 这是「如何构造响应」的服务端控制位，不参与响应序列化。
     redact: Option<bool>,
 }
 
-// 仅用于将 Error 序列化为扁平 JSON 对象的内部视图。
+// 仅用于将 Error 序列化为扁平 JSON 对象的内部视图（跨服务或日志持久化）。
 #[derive(Serialize)]
 struct ErrorSerialize<'a> {
-    /// 未设置分类时不输出，与 [`ErrorData`] 各可选字段的处理一致——
+    /// 未设置分类时不输出，与各可选字段的处理一致——
     /// `"category":""` 与缺省对前端没有区别，只是噪音。
     #[serde(skip_serializing_if = "str::is_empty")]
     category: &'a str,
     message: &'a str,
-    #[serde(flatten)]
-    data: &'a ErrorData,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sub_category: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    code: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    exception: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    extra: Option<&'a [String]>,
+}
+
+// 仅用于面向 HTTP 客户端响应的 JSON 视图：永不输出服务端内部告警位 `exception`，
+// 并在脱敏时隐去 `extra` 与原始 `message`。
+#[derive(Serialize)]
+struct ClientBody<'a> {
+    #[serde(skip_serializing_if = "str::is_empty")]
+    category: &'a str,
+    message: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sub_category: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    code: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    extra: Option<&'a [String]>,
 }
 
 // 仅用于从扁平 JSON 对象反序列化 Error 的内部视图。
@@ -65,8 +76,14 @@ struct ErrorDeserialize {
     category: String,
     #[serde(default)]
     message: String,
-    #[serde(flatten)]
-    data: ErrorData,
+    #[serde(default)]
+    sub_category: Option<String>,
+    #[serde(default)]
+    code: Option<String>,
+    #[serde(default)]
+    exception: Option<bool>,
+    #[serde(default)]
+    extra: Option<Vec<String>>,
 }
 
 /// 全局 HTTP 错误类型，贯穿整个应用。
@@ -75,8 +92,9 @@ struct ErrorDeserialize {
 /// `add_xxx` 方法配置；读取使用同名 getter（[`Error::status`]、
 /// [`Error::category`] 等）。
 ///
-/// 内部把可选字段统一装箱到 `Box<ErrorData>`，将 `Result<_, Error>` 的
-/// `Err` 变体保持在 `clippy::result_large_err` 128 字节限制以内。
+/// 内部把可选字段按需装箱到 `Option<Box<ErrorData>>`，常见错误零附加堆分配，
+/// 同时将 `Result<_, Error>` 的 `Err` 变体保持在 `clippy::result_large_err`
+/// 128 字节限制以内。
 #[derive(Debug, Clone, Default)]
 pub struct Error {
     /// HTTP 状态码，0 表示未显式设置，`IntoResponse` 时回退为 500。
@@ -85,8 +103,8 @@ pub struct Error {
     category: String,
     /// 面向用户或日志的错误描述信息。
     message: String,
-    /// 不常用的可选字段，装箱以控制 `Error` 大小。
-    data: Box<ErrorData>,
+    /// 不常用的可选字段，按需装箱以控制 `Error` 大小与堆分配。
+    data: Option<Box<ErrorData>>,
 }
 
 impl std::fmt::Display for Error {
@@ -103,10 +121,14 @@ impl Serialize for Error {
     where
         S: serde::Serializer,
     {
+        let data = self.data.as_deref();
         ErrorSerialize {
             category: &self.category,
             message: &self.message,
-            data: &self.data,
+            sub_category: data.and_then(|d| d.sub_category.as_deref()),
+            code: data.and_then(|d| d.code.as_deref()),
+            exception: data.and_then(|d| d.exception),
+            extra: data.and_then(|d| d.extra.as_deref()),
         }
         .serialize(serializer)
     }
@@ -118,11 +140,26 @@ impl<'de> Deserialize<'de> for Error {
         D: serde::Deserializer<'de>,
     {
         let d = ErrorDeserialize::deserialize(deserializer)?;
+        let data = if d.sub_category.is_none()
+            && d.code.is_none()
+            && d.exception.is_none()
+            && d.extra.is_none()
+        {
+            None
+        } else {
+            Some(Box::new(ErrorData {
+                sub_category: d.sub_category,
+                code: d.code,
+                exception: d.exception,
+                extra: d.extra,
+                redact: None,
+            }))
+        };
         Ok(Self {
             status: 0,
             category: d.category,
             message: d.message,
-            data: Box::new(d.data),
+            data,
         })
     }
 }
@@ -138,6 +175,10 @@ impl Error {
         }
     }
 
+    fn data_mut(&mut self) -> &mut ErrorData {
+        self.data.get_or_insert_with(Box::default)
+    }
+
     // ---------- 链式 setter ----------
 
     /// 设置错误分类（模块来源），支持链式调用。
@@ -150,14 +191,14 @@ impl Error {
     /// 设置错误子分类，支持链式调用。
     #[must_use]
     pub fn with_sub_category(mut self, sub_category: impl Into<String>) -> Self {
-        self.data.sub_category = Some(sub_category.into());
+        self.data_mut().sub_category = Some(sub_category.into());
         self
     }
 
     /// 设置业务错误码，支持链式调用。
     #[must_use]
     pub fn with_code(mut self, code: impl Into<String>) -> Self {
-        self.data.code = Some(code.into());
+        self.data_mut().code = Some(code.into());
         self
     }
 
@@ -173,7 +214,7 @@ impl Error {
     /// **只影响告警**，不影响响应体是否脱敏——脱敏见 [`Self::with_redact`]。
     #[must_use]
     pub fn with_exception(mut self, exception: bool) -> Self {
-        self.data.exception = Some(exception);
+        self.data_mut().exception = Some(exception);
         self
     }
 
@@ -191,14 +232,14 @@ impl Error {
     /// - `with_redact(false)`：5xx 但 message 是可安全外露的固定文案
     #[must_use]
     pub fn with_redact(mut self, redact: bool) -> Self {
-        self.data.redact = Some(redact);
+        self.data_mut().redact = Some(redact);
         self
     }
 
     /// 追加一条附加上下文信息，支持链式调用。
     #[must_use]
     pub fn add_extra(mut self, value: impl Into<String>) -> Self {
-        self.data
+        self.data_mut()
             .extra
             .get_or_insert_with(Vec::new)
             .push(value.into());
@@ -208,49 +249,150 @@ impl Error {
     // ---------- getter ----------
 
     /// HTTP 状态码；返回 0 表示未显式设置，响应时会回退到 500。
+    #[must_use]
     pub fn status(&self) -> u16 {
         self.status
     }
 
     /// 错误来源模块。
+    #[must_use]
     pub fn category(&self) -> &str {
         &self.category
     }
 
     /// 面向用户或日志的错误描述。
+    #[must_use]
     pub fn message(&self) -> &str {
         &self.message
     }
 
     /// 错误子分类，未设置时返回 `None`。
+    #[must_use]
     pub fn sub_category(&self) -> Option<&str> {
-        self.data.sub_category.as_deref()
+        self.data.as_deref().and_then(|d| d.sub_category.as_deref())
     }
 
     /// 业务错误码，未设置时返回 `None`。
+    #[must_use]
     pub fn code(&self) -> Option<&str> {
-        self.data.code.as_deref()
+        self.data.as_deref().and_then(|d| d.code.as_deref())
     }
 
     /// 是否为需要告警的异常级错误；未显式设置时返回 `false`。
+    #[must_use]
     pub fn is_exception(&self) -> bool {
-        self.data.exception.unwrap_or(false)
+        self.data
+            .as_deref()
+            .and_then(|d| d.exception)
+            .unwrap_or(false)
     }
 
     /// 是否已显式设置脱敏；`None` 表示按状态码默认判定（见 [`Self::with_redact`]）。
+    #[must_use]
     pub fn redact(&self) -> Option<bool> {
-        self.data.redact
+        self.data.as_deref().and_then(|d| d.redact)
+    }
+
+    /// 返回按响应状态码与显式设置计算后的最终脱敏判定。
+    #[must_use]
+    pub fn should_redact(&self) -> bool {
+        should_redact(response_status(self.status), self.redact())
     }
 
     /// 附加上下文列表，未设置时返回空切片。
+    #[must_use]
     pub fn extra(&self) -> &[String] {
-        self.data.extra.as_deref().unwrap_or(&[])
+        self.data
+            .as_deref()
+            .and_then(|d| d.extra.as_deref())
+            .unwrap_or(&[])
+    }
+
+    /// 构造对外响应 JSON 字节（遵循脱敏规则，且永不输出服务端 `exception` 标志）。
+    /// `message_override` 非空时覆盖对外展示的 `message`（供 `tibba-i18n` 本地化使用）。
+    pub fn to_client_json(
+        &self,
+        message_override: Option<&str>,
+    ) -> std::result::Result<Vec<u8>, serde_json::Error> {
+        let status = response_status(self.status);
+        let redact = should_redact(status, self.redact());
+        let fallback_msg = if redact {
+            Some(redacted_message(status))
+        } else {
+            None
+        };
+        let message = match (message_override, fallback_msg.as_deref()) {
+            (Some(m), _) => m,
+            (None, Some(m)) => m,
+            (None, None) => &self.message,
+        };
+        let body = ClientBody {
+            category: &self.category,
+            message,
+            sub_category: self.sub_category(),
+            code: self.code(),
+            extra: if redact {
+                None
+            } else {
+                self.data.as_deref().and_then(|d| d.extra.as_deref())
+            },
+        };
+        serde_json::to_vec(&body)
+    }
+
+    /// 构造对外响应 JSON `Value`（遵循脱敏规则，且永不输出服务端 `exception` 标志）。
+    #[must_use]
+    pub fn to_client_payload(&self, message_override: Option<&str>) -> serde_json::Value {
+        let status = response_status(self.status);
+        let redact = should_redact(status, self.redact());
+        let message = match message_override {
+            Some(m) => Cow::Borrowed(m),
+            None if redact => redacted_message(status),
+            None => Cow::Borrowed(self.message.as_str()),
+        };
+        let mut map = serde_json::Map::new();
+        if !self.category.is_empty() {
+            map.insert(
+                "category".to_string(),
+                serde_json::Value::String(self.category.clone()),
+            );
+        }
+        map.insert(
+            "message".to_string(),
+            serde_json::Value::String(message.into_owned()),
+        );
+        if let Some(sub) = self.sub_category() {
+            map.insert(
+                "sub_category".to_string(),
+                serde_json::Value::String(sub.to_string()),
+            );
+        }
+        if let Some(code) = self.code() {
+            map.insert(
+                "code".to_string(),
+                serde_json::Value::String(code.to_string()),
+            );
+        }
+        if !redact && let Some(extra) = self.data.as_deref().and_then(|d| d.extra.as_deref()) {
+            map.insert(
+                "extra".to_string(),
+                serde_json::Value::Array(
+                    extra
+                        .iter()
+                        .cloned()
+                        .map(serde_json::Value::String)
+                        .collect(),
+                ),
+            );
+        }
+        serde_json::Value::Object(map)
     }
 
     /// 由上游服务的 HTTP 错误响应重建 `Error`。
     ///
-    /// 上游若是同样用本类型的 tibba 服务，`category` / `sub_category` / `code` /
-    /// `extra` 会被**原样保留**；否则退化为「把响应体当纯文本作 message」。
+    /// 上游若是同样用本类型的 tibba 服务，`category` / `sub_category` / `code`
+    /// 会被保留（大响应体丢弃 `extra`、超长 `message` 截断，且不盲信上游 `exception`
+    /// 而按本方 `status >= 500` 重置）；否则退化为「把响应体当纯文本作 message」。
     ///
     /// # 为什么 status 从参数来而不是从响应体解析
     /// 状态码本来就在 HTTP 状态行上，把它再塞进 JSON body 是冗余——也正因如此
@@ -268,34 +410,63 @@ impl Error {
     /// 整页塞进 message 只会把日志冲垮。
     #[must_use]
     pub fn from_upstream(status: u16, body: &[u8]) -> Self {
-        match serde_json::from_slice::<Self>(body) {
-            // 结构化错误：字段全部保留，只补上状态码
-            Ok(err) if !err.message.is_empty() => err.with_status(status),
-            _ => Self::new(truncate_upstream_body(body)).with_status(status),
+        const MAX_UPSTREAM_JSON_BYTES: usize = 64 * 1024;
+        const MAX_UPSTREAM_EXTRA_BYTES: usize = 4 * 1024;
+
+        if body.len() <= MAX_UPSTREAM_JSON_BYTES
+            && let Ok(mut err) = serde_json::from_slice::<Self>(body)
+            && !err.message.is_empty()
+        {
+            if err.message.len() > MAX_UPSTREAM_MESSAGE_LEN {
+                err.message = truncate_str_to_max(&err.message);
+            }
+            if let Some(data) = err.data.as_deref_mut() {
+                if body.len() > MAX_UPSTREAM_EXTRA_BYTES {
+                    data.extra = None;
+                }
+                // 不信任外部上游 JSON 中的 `exception` 告警标记，统一按状态码重置
+                data.exception = if status >= 500 { Some(true) } else { None };
+            } else if status >= 500 {
+                err = err.with_exception(true);
+            }
+            return err.with_status(status);
         }
+        Self::new(truncate_upstream_body(body)).with_status(status)
     }
 }
 
 /// 非结构化上游响应体转成 message 时的长度上限（字节）。
 pub const MAX_UPSTREAM_MESSAGE_LEN: usize = 512;
 
+/// 将字符串按字符边界截断到 [`MAX_UPSTREAM_MESSAGE_LEN`] 字节并追加省略号。
+fn truncate_str_to_max(text: &str) -> String {
+    if text.len() <= MAX_UPSTREAM_MESSAGE_LEN {
+        return text.to_string();
+    }
+    let end = text.floor_char_boundary(MAX_UPSTREAM_MESSAGE_LEN);
+    format!("{}…", &text[..end])
+}
+
 /// 把上游响应体截成一条能进日志的 message。
 ///
-/// 按字符边界截断：直接切字节会在多字节字符中间断开，得到非法 UTF-8。
+/// 先裁剪首尾 ASCII 空白并限制 decode 窗口，再按字符边界截断：
+/// 既避免对数兆响应体做全量 UTF-8 解码，也避免切在多字节字符中间。
 fn truncate_upstream_body(body: &[u8]) -> String {
-    if body.is_empty() {
+    let trimmed_bytes = body.trim_ascii();
+    if trimmed_bytes.is_empty() {
         return "upstream returned an empty body".to_string();
     }
-    let text = String::from_utf8_lossy(body);
+    let max_decode = MAX_UPSTREAM_MESSAGE_LEN * 4;
+    let slice = &trimmed_bytes[..trimmed_bytes.len().min(max_decode)];
+    let text = String::from_utf8_lossy(slice);
     let trimmed = text.trim();
-    if trimmed.len() <= MAX_UPSTREAM_MESSAGE_LEN {
+    if trimmed.is_empty() {
+        return "upstream returned an empty body".to_string();
+    }
+    if trimmed.len() <= MAX_UPSTREAM_MESSAGE_LEN && trimmed_bytes.len() <= slice.len() {
         return trimmed.to_string();
     }
-    // floor_char_boundary 尚未稳定，自行往前找最近的字符边界
-    let mut end = MAX_UPSTREAM_MESSAGE_LEN;
-    while end > 0 && !trimmed.is_char_boundary(end) {
-        end -= 1;
-    }
+    let end = trimmed.floor_char_boundary(MAX_UPSTREAM_MESSAGE_LEN);
     format!("{}…", &trimmed[..end])
 }
 
@@ -314,15 +485,22 @@ fn response_status(status: u16) -> StatusCode {
 
 /// 脱敏后对外的通用文案：取状态码的标准短语（小写），与状态码保持一致。
 ///
-/// 此前固定回 `"internal server error"`，于是一个 `403 + with_redact(true)`
-/// 的错误会回 `403 {"message":"internal server error"}`——状态码说「禁止」，
-/// 文案说「服务器内部错误」，前端无从处理。这正是本文件在 `with_redact` 注释
-/// 里批评过的那种自相矛盾，只是换了个入口又出现了一次。
-fn redacted_message(status: StatusCode) -> String {
-    match status.canonical_reason() {
-        Some(reason) => reason.to_ascii_lowercase(),
-        None if status.is_client_error() => "client error".to_string(),
-        None => "internal server error".to_string(),
+/// 常见状态码直接返回静态借用切片，零堆分配。
+fn redacted_message(status: StatusCode) -> Cow<'static, str> {
+    match status {
+        StatusCode::INTERNAL_SERVER_ERROR => Cow::Borrowed("internal server error"),
+        StatusCode::BAD_GATEWAY => Cow::Borrowed("bad gateway"),
+        StatusCode::SERVICE_UNAVAILABLE => Cow::Borrowed("service unavailable"),
+        StatusCode::GATEWAY_TIMEOUT => Cow::Borrowed("gateway timeout"),
+        StatusCode::UNAUTHORIZED => Cow::Borrowed("unauthorized"),
+        StatusCode::FORBIDDEN => Cow::Borrowed("forbidden"),
+        StatusCode::NOT_FOUND => Cow::Borrowed("not found"),
+        StatusCode::TOO_MANY_REQUESTS => Cow::Borrowed("too many requests"),
+        _ => match status.canonical_reason() {
+            Some(reason) => Cow::Owned(reason.to_ascii_lowercase()),
+            None if status.is_client_error() => Cow::Borrowed("client error"),
+            None => Cow::Borrowed("internal server error"),
+        },
     }
 }
 
@@ -337,39 +515,35 @@ fn should_redact(status: StatusCode, explicit: Option<bool>) -> bool {
     explicit.unwrap_or_else(|| status.is_server_error())
 }
 
-/// 将 `Error` 转换为带 JSON 响应体和 `no-cache` 头的 HTTP 响应。
+/// 将 `Error` 转换为带 JSON 响应体和 `no-store` 头的 HTTP 响应。
 impl IntoResponse for Error {
     fn into_response(self) -> Response {
         let status = response_status(self.status);
+        let redact = should_redact(status, self.redact());
         // 需脱敏时：响应体隐去可能含内部细节的原始 message 与 extra，只回通用文案；
-        // 完整 message 仍随 self 存入 extensions 供服务端日志读取，不外泄给客户端。
-        // category / sub_category / code 属分类信息，保留供前端处理。
-        let mut res = if should_redact(status, self.data.redact) {
-            let redacted = ErrorData {
-                sub_category: self.data.sub_category.clone(),
-                code: self.data.code.clone(),
-                // `exception` 是「要不要告警」的**服务端**分级，客户端没有任何用途，
-                // 却会告诉调用方「这条错误我们内部当事故处理」——在已经决定脱敏的
-                // 响应里外泄这一位，等于把刚藏起来的内部状态又说了一半。
-                // 服务端侧不受影响：完整 Error 仍进 extensions 供 tracker 读取。
-                exception: None,
-                extra: None,
-                // 服务端控制位，不参与序列化，取值无关紧要
-                redact: None,
-            };
-            let message = redacted_message(status);
-            (
-                status,
-                Json(ErrorSerialize {
-                    category: &self.category,
-                    message: &message,
-                    data: &redacted,
-                }),
-            )
-                .into_response()
+        // 且所有客户端响应均不序列化服务端告警位 `exception`。
+        // 完整 Error 仍存入 extensions 供服务端日志/告警中间件读取。
+        let redacted_msg = if redact {
+            Some(redacted_message(status))
         } else {
-            (status, Json(&self)).into_response()
+            None
         };
+        let message = redacted_msg.as_deref().unwrap_or(&self.message);
+        let mut res = (
+            status,
+            Json(ClientBody {
+                category: &self.category,
+                message,
+                sub_category: self.sub_category(),
+                code: self.code(),
+                extra: if redact {
+                    None
+                } else {
+                    self.data.as_deref().and_then(|d| d.extra.as_deref())
+                },
+            }),
+        )
+            .into_response();
         // 把 Error 放入 extensions，方便日志/统计中间件读取上下文
         res.extensions_mut().insert(self);
         // 错误响应禁止缓存。用 no-store 而非 no-cache：后者只要求「用前先验证」，
@@ -693,5 +867,71 @@ mod tests {
         assert_eq!(back.extra(), ["a".to_string(), "b".to_string()]);
         // status 不参与序列化，跨服务传递会丢失（既有行为）
         assert_eq!(back.status(), 0);
+    }
+
+    #[test]
+    fn error_size_stays_within_limit_and_avoids_heap_alloc_when_simple() {
+        assert!(std::mem::size_of::<Error>() <= 64);
+        let simple = Error::new("simple");
+        assert!(simple.data.is_none());
+    }
+
+    #[tokio::test]
+    async fn non_redacted_response_never_leaks_exception_flag() {
+        let res = Error::new("email invalid")
+            .with_category("params")
+            .with_status(400)
+            .with_exception(true)
+            .add_extra("field=email")
+            .into_response();
+        let body = body_json(res).await;
+        assert_eq!(body["message"], "email invalid");
+        assert_eq!(body["extra"], serde_json::json!(["field=email"]));
+        assert!(body.get("exception").is_none());
+    }
+
+    #[test]
+    fn from_upstream_whitespace_body_and_untrusted_exception_reset() {
+        let err = Error::from_upstream(502, b"   \r\n\t  ");
+        assert_eq!(err.message(), "upstream returned an empty body");
+
+        let upstream = Error::new("bad request")
+            .with_exception(true)
+            .add_extra("detail");
+        let body = serde_json::to_vec(&upstream).unwrap();
+        let restored = Error::from_upstream(400, &body);
+        assert!(!restored.is_exception(), "400 上游不应盲信 exception=true");
+
+        // 超长结构化 message 也需截断，超大 body 丢弃 extra
+        let huge_extra = "e".repeat(5000);
+        let huge_msg = "m".repeat(MAX_UPSTREAM_MESSAGE_LEN * 2);
+        let json_body = serde_json::to_vec(&serde_json::json!({
+            "category": "svc",
+            "message": huge_msg,
+            "extra": [huge_extra],
+        }))
+        .unwrap();
+        let bounded = Error::from_upstream(500, &json_body);
+        assert!(bounded.message().len() <= MAX_UPSTREAM_MESSAGE_LEN + 4);
+        assert!(bounded.message().ends_with('…'));
+        assert!(bounded.extra().is_empty());
+        assert!(bounded.is_exception());
+    }
+
+    #[test]
+    fn to_client_payload_respects_redaction_and_override() {
+        let err = Error::new("secret db detail")
+            .with_category("db")
+            .with_sub_category("sqlx")
+            .with_code("DB_ERR")
+            .with_status(500)
+            .with_exception(true)
+            .add_extra("pg=primary");
+        assert!(err.should_redact());
+        let payload = err.to_client_payload(Some("系统繁忙"));
+        assert_eq!(payload["message"], "系统繁忙");
+        assert_eq!(payload["code"], "DB_ERR");
+        assert!(payload.get("extra").is_none());
+        assert!(payload.get("exception").is_none());
     }
 }

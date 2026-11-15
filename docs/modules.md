@@ -22,10 +22,6 @@ graph TD
 
     job --> error
 
-    llm --> error
-
-    oauth --> error
-
     runtime --> error
 
     util --> error
@@ -38,9 +34,6 @@ graph TD
     cache --> config
     cache --> error
     cache --> util
-
-    jwt --> error
-    jwt --> util
 
     opendal --> config
     opendal --> error
@@ -60,14 +53,24 @@ graph TD
     feature --> cache
     feature --> error
 
+    jwt --> cache
+    jwt --> error
+    jwt --> util
+
     session --> cache
     session --> error
     session --> runtime
     session --> util
 
+    llm --> error
+    llm --> request
+
     notify --> email
     notify --> error
     notify --> request
+
+    oauth --> error
+    oauth --> request
 
     webhook --> crypto
     webhook --> error
@@ -80,7 +83,9 @@ graph TD
     middleware --> session
     middleware --> util
 
+    rbac --> cache
     rbac --> error
+    rbac --> model-builtin
     rbac --> session
 
     router-common --> cache

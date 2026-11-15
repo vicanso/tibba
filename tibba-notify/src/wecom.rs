@@ -34,6 +34,7 @@ use tracing::debug;
 const WEBHOOK_BASE: &str = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send";
 
 /// 企业微信群机器人通知实例。`to` = `key=...` query 里的机器人 key。
+#[derive(Clone, Debug)]
 pub struct WecomRobotNotifier {
     client: tibba_request::Client,
 }
@@ -102,13 +103,15 @@ impl Notifier for WecomRobotNotifier {
                 format!("**{}**\n\n{}", msg.subject, msg.text)
             };
 
-            let url = format!("{WEBHOOK_BASE}?key={}", urlencode(to));
             let payload = WecomPayload {
                 msgtype: "markdown",
                 markdown: WecomMarkdown { content: &content },
             };
 
-            let resp: WecomResp = self.client.post(&url, &payload).await?;
+            let resp: WecomResp = self
+                .client
+                .post_with_query(WEBHOOK_BASE, &payload, &[("key", to)])
+                .await?;
 
             // WeCom 的非 0 errcode 不会触发 HTTP 错误，得手动检查
             if resp.errcode != 0 {
@@ -131,20 +134,4 @@ impl Notifier for WecomRobotNotifier {
     fn kind(&self) -> &'static str {
         "wecom"
     }
-}
-
-/// 最小 URL-encode：robot_key 通常 alphanumeric + 横杠/下划线，
-/// 其它字节 percent-encode；不引入 urlencoding 直接依赖。
-fn urlencode(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for c in s.chars() {
-        if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '~') {
-            out.push(c);
-        } else {
-            for b in c.to_string().as_bytes() {
-                out.push_str(&format!("%{b:02X}"));
-            }
-        }
-    }
-    out
 }

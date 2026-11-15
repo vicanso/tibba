@@ -19,21 +19,25 @@ use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 use snafu::ResultExt;
 use std::sync::Arc;
+use zeroize::Zeroizing;
 
 type Result<T> = std::result::Result<T, Error>;
 
 /// HMAC-SHA256 类型别名。
 type HmacSha256 = Hmac<Sha256>;
 
+/// HMAC-SHA256 原始摘要字节长度。
+const HMAC_SHA256_LEN: usize = 32;
+
 /// 基于 HMAC-SHA256 的多密钥管理器，支持签名、验签与密钥轮换。
 ///
-/// 内部使用 `ArcSwap` 存储密钥列表：读取（`sign`/`verify`）走无锁原子加载，
-/// 写入（`update_keys`）通过原子替换实现热轮换。第一个密钥始终是当前主密钥，
-/// 后续密钥用于校验旧签名的有效性以支持平滑过渡。
+/// 内部使用 `ArcSwap` 存储密钥列表（密钥缓冲区由 `Zeroizing` 托管，轮换与释放时自动清零）：
+/// 读取（`sign`/`verify`）走无锁原子加载，写入（`update_keys`）通过原子替换实现热轮换。
+/// 第一个密钥始终是当前主密钥，后续密钥用于校验旧签名的有效性以支持平滑过渡。
 ///
-/// 类型不变量：密钥列表始终非空（由 [`Self::new`] / [`Self::update_keys`] 保证）。
+/// 类型不变量：密钥列表非空且任一成员密钥字节均非空（由 [`Self::new`] / [`Self::update_keys`] 保证）。
 pub struct KeyGrip {
-    keys: ArcSwap<Vec<Vec<u8>>>,
+    keys: ArcSwap<Vec<Zeroizing<Vec<u8>>>>,
 }
 
 /// 手写 `Debug`：derive 会把**签名密钥原文**逐字节打出来。
@@ -69,24 +73,29 @@ fn verify_with_key(data: &[u8], key: &[u8], expected: &[u8]) -> Result<bool> {
     Ok(mac.verify_slice(expected).is_ok())
 }
 
+/// 将密钥列表封装为 `Zeroizing` 并校验「列表非空且每把密钥均非空」不变量。
+fn sanitize_keys(keys: Vec<Vec<u8>>) -> Result<Vec<Zeroizing<Vec<u8>>>> {
+    let wrapped: Vec<Zeroizing<Vec<u8>>> = keys.into_iter().map(Zeroizing::new).collect();
+    if wrapped.is_empty() || wrapped.iter().any(|k| k.is_empty()) {
+        return Err(Error::KeyGripEmpty);
+    }
+    Ok(wrapped)
+}
+
 impl KeyGrip {
-    /// 创建 KeyGrip 实例；`keys` 为空时返回 [`Error::KeyGripEmpty`]。
+    /// 创建 KeyGrip 实例；列表为空或含空密钥时返回 [`Error::KeyGripEmpty`]。
     /// 默认即支持运行时密钥轮换，无需区分静态/共享模式。
     pub fn new(keys: Vec<Vec<u8>>) -> Result<Self> {
-        if keys.is_empty() {
-            return Err(Error::KeyGripEmpty);
-        }
+        let keys = sanitize_keys(keys)?;
         Ok(Self {
             keys: ArcSwap::from_pointee(keys),
         })
     }
 
-    /// 原子替换密钥列表，用于密钥轮换；`new_keys` 为空时返回错误以维持非空不变量。
+    /// 原子替换密钥列表，用于密钥轮换；列表为空或含空密钥时返回错误以维持不变量。
     pub fn update_keys(&self, new_keys: Vec<Vec<u8>>) -> Result<()> {
-        if new_keys.is_empty() {
-            return Err(Error::KeyGripEmpty);
-        }
-        self.keys.store(Arc::new(new_keys));
+        let keys = sanitize_keys(new_keys)?;
+        self.keys.store(Arc::new(keys));
         Ok(())
     }
 
@@ -104,13 +113,13 @@ impl KeyGrip {
     /// 而且 `(false, true)` 这种不可能的组合在类型上也合法。改成枚举后三种
     /// 状态一目了然，也不存在非法组合。
     ///
-    /// 比较走常数时间路径（[`verify_with_key`]）；`digest` 非合法 hex 字符串时
-    /// 视为 [`Verification::Invalid`]，不向上游报错。
+    /// 比较走常数时间路径（[`verify_with_key`]）并将签名 hex 零堆分配解码到
+    /// 32 字节栈缓冲区（同时兼容大小写 hex）；格式非法视作 [`Verification::Invalid`]。
     pub fn verify(&self, data: &[u8], digest: &str) -> Result<Verification> {
-        // hex 解码失败说明客户端送了非法签名，等同于不匹配；不向上游报错
-        let Ok(expected) = hex::decode(digest) else {
+        let mut expected = [0u8; HMAC_SHA256_LEN];
+        if hex::decode_to_slice(digest, &mut expected).is_err() {
             return Ok(Verification::Invalid);
-        };
+        }
 
         let keys = self.keys.load();
         for (index, key) in keys.iter().enumerate() {
@@ -169,14 +178,26 @@ mod tests {
             KeyGrip::new(Vec::new()).unwrap_err(),
             Error::KeyGripEmpty
         ));
+        assert!(matches!(
+            KeyGrip::new(vec![Vec::new()]).unwrap_err(),
+            Error::KeyGripEmpty
+        ));
+        assert!(matches!(
+            KeyGrip::new(vec![b"ok".to_vec(), Vec::new()]).unwrap_err(),
+            Error::KeyGripEmpty
+        ));
     }
 
     #[test]
-    fn sign_then_verify_with_primary() {
+    fn sign_then_verify_with_primary_and_uppercase_hex() {
         let kg = KeyGrip::new(keys(b"primary", &[])).unwrap();
         let sig = kg.sign(b"hello").unwrap();
         assert_eq!(sig.len(), 64); // 32 bytes * 2 hex chars
         assert_eq!(kg.verify(b"hello", &sig).unwrap(), Verification::Current);
+        assert_eq!(
+            kg.verify(b"hello", &sig.to_ascii_uppercase()).unwrap(),
+            Verification::Current
+        );
     }
 
     #[test]
@@ -240,6 +261,10 @@ mod tests {
         let kg = KeyGrip::new(keys(b"v1", &[])).unwrap();
         assert!(matches!(
             kg.update_keys(Vec::new()).unwrap_err(),
+            Error::KeyGripEmpty
+        ));
+        assert!(matches!(
+            kg.update_keys(vec![Vec::new()]).unwrap_err(),
             Error::KeyGripEmpty
         ));
         // 失败的 update 不应影响原密钥

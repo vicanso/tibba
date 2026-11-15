@@ -31,6 +31,7 @@
 
 use serde::Deserialize;
 use snafu::Snafu;
+use std::fmt;
 use tibba_error::Error as BaseError;
 
 /// 本 crate 所有日志事件的 tracing target。
@@ -81,7 +82,7 @@ impl From<Error> for BaseError {
 /// 所有字段都标了 `#[serde(default)]`，配置文件无 `[email]` 段或部分字段缺失时
 /// 会得到空字符串/None，**应用照常启动**。真正发邮件时 `EmailService::send`
 /// 会校验 `api_key` 和 `from` 非空，缺失则返回 `Error::Invalid`。
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Clone, Default, Deserialize)]
 pub struct EmailConfig {
     /// Resend API key，形如 `re_xxx`
     #[serde(default)]
@@ -94,6 +95,21 @@ pub struct EmailConfig {
     pub reply_to: Option<String>,
 }
 
+impl fmt::Debug for EmailConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let api_key = if self.api_key.is_empty() {
+            ""
+        } else {
+            "[REDACTED]"
+        };
+        f.debug_struct("EmailConfig")
+            .field("api_key", &api_key)
+            .field("from", &self.from)
+            .field("reply_to", &self.reply_to)
+            .finish()
+    }
+}
+
 impl EmailConfig {
     /// 用本配置构造一个 `EmailService`。
     pub fn build_service(&self) -> EmailService {
@@ -102,5 +118,25 @@ impl EmailConfig {
             svc = svc.with_reply_to(reply_to.clone());
         }
         svc
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn email_config_debug_redacts_api_key() {
+        let cfg = EmailConfig {
+            api_key: "re_secret_123".to_string(),
+            from: "noreply@example.com".to_string(),
+            reply_to: None,
+        };
+        let formatted = format!("{cfg:?}");
+        assert!(!formatted.contains("re_secret_123"));
+        assert!(formatted.contains("[REDACTED]"));
+
+        let empty = EmailConfig::default();
+        assert!(format!("{empty:?}").contains("api_key: \"\""));
     }
 }

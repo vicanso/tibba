@@ -6357,7 +6357,7 @@ dependencies = [
 
 [[package]]
 name = "tibba"
-version = "0.2.7"
+version = "0.3.0"
 dependencies = [
  "axum",
  "axum-extra",
@@ -6379,7 +6379,6 @@ dependencies = [
  "quick-js",
  "rand 0.10.2",
  "regex",
- "reqwest",
  "rust-embed",
  "serde",
  "serde_json",
@@ -6388,6 +6387,7 @@ dependencies = [
  "substring",
  "tibba-cache",
  "tibba-config",
+ "tibba-crypto",
  "tibba-email",
  "tibba-error",
  "tibba-feature",
@@ -6402,6 +6402,7 @@ dependencies = [
  "tibba-notify",
  "tibba-oauth",
  "tibba-opendal",
+ "tibba-request",
  "tibba-router-common",
  "tibba-router-file",
  "tibba-router-model",
@@ -6427,7 +6428,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-cache"
-version = "0.2.7"
+version = "0.3.0"
 dependencies = [
  "dashmap",
  "deadpool",
@@ -6450,7 +6451,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-config"
-version = "0.2.7"
+version = "0.3.0"
 dependencies = [
  "bytesize-serde",
  "config",
@@ -6461,11 +6462,12 @@ dependencies = [
  "serde",
  "snafu",
  "tibba-error",
+ "zeroize",
 ]
 
 [[package]]
 name = "tibba-crypto"
-version = "0.2.7"
+version = "0.3.0"
 dependencies = [
  "aes-gcm",
  "arc-swap",
@@ -6479,11 +6481,12 @@ dependencies = [
  "snafu",
  "subtle",
  "tibba-error",
+ "zeroize",
 ]
 
 [[package]]
 name = "tibba-email"
-version = "0.2.7"
+version = "0.3.0"
 dependencies = [
  "resend-rs",
  "serde",
@@ -6494,7 +6497,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-error"
-version = "0.2.7"
+version = "0.3.0"
 dependencies = [
  "axum",
  "pretty_assertions",
@@ -6505,7 +6508,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-feature"
-version = "0.2.7"
+version = "0.3.0"
 dependencies = [
  "serde",
  "tibba-cache",
@@ -6514,7 +6517,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-i18n"
-version = "0.2.7"
+version = "0.3.0"
 dependencies = [
  "axum",
  "pretty_assertions",
@@ -6524,7 +6527,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-job"
-version = "0.2.7"
+version = "0.3.0"
 dependencies = [
  "dashmap",
  "metrics",
@@ -6539,7 +6542,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-jwt"
-version = "0.2.7"
+version = "0.3.0"
 dependencies = [
  "axum",
  "humantime-serde",
@@ -6554,23 +6557,24 @@ dependencies = [
 
 [[package]]
 name = "tibba-llm"
-version = "0.2.7"
+version = "0.3.0"
 dependencies = [
  "bytes",
  "futures",
+ "http",
  "pretty_assertions",
- "reqwest",
  "serde",
  "serde_json",
  "snafu",
  "tibba-error",
+ "tibba-request",
  "tokio",
  "tracing",
 ]
 
 [[package]]
 name = "tibba-middleware"
-version = "0.2.7"
+version = "0.3.0"
 dependencies = [
  "axum",
  "axum-extra",
@@ -6594,7 +6598,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-model"
-version = "0.2.7"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "http",
@@ -6611,7 +6615,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-model-builtin"
-version = "0.2.7"
+version = "0.3.0"
 dependencies = [
  "http",
  "serde",
@@ -6624,7 +6628,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-model-token"
-version = "0.2.7"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -6637,7 +6641,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-notify"
-version = "0.2.7"
+version = "0.3.0"
 dependencies = [
  "serde",
  "snafu",
@@ -6649,20 +6653,22 @@ dependencies = [
 
 [[package]]
 name = "tibba-oauth"
-version = "0.2.7"
+version = "0.3.0"
 dependencies = [
- "reqwest",
+ "http",
+ "pretty_assertions",
  "serde",
  "serde_json",
  "snafu",
  "tibba-error",
+ "tibba-request",
  "tracing",
  "urlencoding",
 ]
 
 [[package]]
 name = "tibba-opendal"
-version = "0.2.7"
+version = "0.3.0"
 dependencies = [
  "dirs",
  "opendal",
@@ -6678,7 +6684,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-rbac"
-version = "0.2.7"
+version = "0.3.0"
 dependencies = [
  "axum",
  "http-body-util",
@@ -6693,16 +6699,16 @@ dependencies = [
 
 [[package]]
 name = "tibba-request"
-version = "0.2.7"
+version = "0.3.0"
 dependencies = [
  "axum",
  "bytes",
  "futures",
+ "http",
  "opentelemetry",
  "pretty_assertions",
  "rand 0.10.2",
  "reqwest",
- "scopeguard",
  "serde",
  "serde_json",
  "snafu",
@@ -6711,12 +6717,13 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-opentelemetry",
+ "url",
  "x509-parser",
 ]
 
 [[package]]
 name = "tibba-router-common"
-version = "0.2.7"
+version = "0.3.0"
 dependencies = [
  "axum",
  "base64 0.23.1",
@@ -6740,7 +6747,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-router-file"
-version = "0.2.7"
+version = "0.3.0"
 dependencies = [
  "axum",
  "image 0.25.10",
@@ -6760,7 +6767,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-router-model"
-version = "0.2.7"
+version = "0.3.0"
 dependencies = [
  "axum",
  "serde",
@@ -6778,7 +6785,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-router-user"
-version = "0.2.7"
+version = "0.3.0"
 dependencies = [
  "axum",
  "axum-extra",
@@ -6805,7 +6812,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-runtime"
-version = "0.2.7"
+version = "0.3.0"
 dependencies = [
  "arc-swap",
  "cached",
@@ -6822,7 +6829,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-session"
-version = "0.2.7"
+version = "0.3.0"
 dependencies = [
  "axum",
  "axum-extra",
@@ -6840,7 +6847,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-sql"
-version = "0.2.7"
+version = "0.3.0"
 dependencies = [
  "humantime-serde",
  "serde",
@@ -6856,7 +6863,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-tenant"
-version = "0.2.7"
+version = "0.3.0"
 dependencies = [
  "axum",
  "snafu",
@@ -6866,7 +6873,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-totp"
-version = "0.2.7"
+version = "0.3.0"
 dependencies = [
  "base64 0.23.1",
  "hmac 0.13.0",
@@ -6879,7 +6886,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-util"
-version = "0.2.7"
+version = "0.3.0"
 dependencies = [
  "axum",
  "axum-extra",
@@ -6901,6 +6908,7 @@ dependencies = [
  "tibba-error",
  "tokio",
  "tower",
+ "tracing",
  "url",
  "uuid",
  "validator",
@@ -6909,7 +6917,7 @@ dependencies = [
 
 [[package]]
 name = "tibba-webhook"
-version = "0.2.7"
+version = "0.3.0"
 dependencies = [
  "http",
  "pretty_assertions",

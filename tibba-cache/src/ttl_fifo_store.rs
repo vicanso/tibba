@@ -54,6 +54,7 @@ pub struct TtlFifoStore<T> {
 
 impl<T: Expired + Clone> TtlFifoStore<T> {
     /// 创建指定容量的 `TtlFifoStore`，容量必须大于 0。
+    #[must_use]
     pub fn new(size: NonZeroUsize) -> Self {
         Self {
             cache: Mutex::new(LruCache::new(size)),
@@ -83,6 +84,7 @@ impl<T: Expired + Clone> TtlFifoStore<T> {
     /// 一个装满过期条目的 store 会在下次写入时把**活着**的条目淘汰掉，
     /// 而清理全靠调用方记得定期调 [`Self::purge_expired`]（实际上没人调）。
     /// 顺带清理让容量语义回到「最多 N 个**有效**条目」这个直觉上。
+    #[must_use]
     pub fn get(&self, key: &str) -> Option<T> {
         let mut cache = self.lock();
         if let Some(value) = cache.peek(key) {
@@ -97,6 +99,23 @@ impl<T: Expired + Clone> TtlFifoStore<T> {
     /// 删除指定键，键不存在时为空操作。
     pub fn del(&self, key: &str) {
         self.lock().pop(key);
+    }
+
+    /// 清空全部缓存条目（例如 pub/sub 断线重连后丢弃可能陈旧的本地副本）。
+    pub fn clear(&self) {
+        self.lock().clear();
+    }
+
+    /// 当前保存的条目数（含尚未惰性清理的过期条目）。
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.lock().len()
+    }
+
+    /// 当前缓存是否为空。
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.lock().is_empty()
     }
 
     /// 一次性清除所有已过期条目。
@@ -254,5 +273,22 @@ mod tests {
         // 删不存在的 key 不应 panic
         s.del("k");
         s.del("never-existed");
+    }
+
+    #[test]
+    fn clear_empties_store_and_updates_len() {
+        let s = store(4);
+        assert!(s.is_empty());
+        assert_eq!(s.len(), 0);
+        s.set("a", Entry::live("a"));
+        s.set("b", Entry::live("b"));
+        assert!(!s.is_empty());
+        assert_eq!(s.len(), 2);
+
+        s.clear();
+        assert!(s.is_empty());
+        assert_eq!(s.len(), 0);
+        assert_eq!(s.get("a"), None);
+        assert_eq!(s.get("b"), None);
     }
 }

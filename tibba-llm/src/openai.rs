@@ -18,11 +18,13 @@ use super::{
     BoxStream, ChatParams, ChatResponse, Error, InvalidHeaderSnafu, JsonSnafu, LOG_TARGET,
     RequestSnafu, Role, SsePoll, SseState, StreamChunk, Usage, next_sse_data_line,
 };
-use reqwest::Client as ReqwestClient;
-use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
+use http::Method;
+use http::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
 use serde::{Deserialize, Serialize};
 use snafu::ResultExt;
+use std::fmt;
 use std::time::Duration;
+use tibba_request::{BoxByteStream, Client, ClientBuilder, Params, StreamOutcome};
 use tracing::info;
 
 type Result<T> = std::result::Result<T, Error>;
@@ -107,8 +109,8 @@ struct ErrDetail {
 /// 格式：`data: <json>\n\n`，结束标志：`data: [DONE]\n\n`。
 /// 行级解析委托给 [`next_sse_data_line`]，本函数只处理 OpenAI 特有的
 /// `[DONE]` 终止和 `StreamResp` JSON 解码。
-fn parse_stream(response: reqwest::Response) -> BoxStream<Result<StreamChunk>> {
-    let state = SseState::new(response);
+fn parse_stream(stream: BoxByteStream) -> BoxStream<Result<StreamChunk>> {
+    let state = SseState::new("openai", stream);
 
     Box::pin(futures::stream::unfold(state, |mut state| async move {
         loop {
@@ -158,8 +160,28 @@ pub struct OpenAiClientBuilder {
     config: OpenAiConfig,
 }
 
+impl fmt::Debug for OpenAiClientBuilder {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("OpenAiClientBuilder")
+            .field(
+                "api_key",
+                &if self.config.api_key.is_empty() {
+                    ""
+                } else {
+                    "[REDACTED]"
+                },
+            )
+            .field("base_url", &self.config.base_url)
+            .field("timeout", &self.config.timeout)
+            .field("connect_timeout", &self.config.connect_timeout)
+            .field("default_model", &self.config.default_model)
+            .finish()
+    }
+}
+
 impl OpenAiClientBuilder {
     /// 以 API Key 创建构建器。
+    #[must_use]
     pub fn new(api_key: impl Into<String>) -> Self {
         Self {
             config: OpenAiConfig {
@@ -210,12 +232,15 @@ impl OpenAiClientBuilder {
         headers.insert(AUTHORIZATION, auth_value);
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
-        let mut builder = ReqwestClient::builder().default_headers(headers);
-        if let Some(t) = self.config.timeout {
-            builder = builder.timeout(t);
-        }
+        let mut builder = ClientBuilder::new("openai")
+            .with_headers(headers)
+            .with_common_interceptor();
+        builder = match self.config.timeout {
+            Some(t) => builder.with_timeout(t),
+            None => builder.without_timeout(),
+        };
         if let Some(t) = self.config.connect_timeout {
-            builder = builder.connect_timeout(t);
+            builder = builder.with_connect_timeout(t);
         }
 
         let client = builder.build().context(RequestSnafu)?;
@@ -231,8 +256,9 @@ impl OpenAiClientBuilder {
 // ── 客户端 ────────────────────────────────────────────────────────────────────
 
 /// OpenAI 兼容格式 LLM 客户端。
+#[derive(Clone, Debug)]
 pub struct OpenAiClient {
-    client: ReqwestClient,
+    client: Client,
     base_url: String,
     default_model: Option<String>,
 }
@@ -273,28 +299,24 @@ impl OpenAiClient {
             stream: false,
         };
 
+        let url = format!("{}/v1/chat/completions", self.base_url);
         let resp = self
             .client
-            .post(format!("{}/v1/chat/completions", self.base_url))
-            .json(&req_body)
-            .send()
+            .execute(Params::new(Method::POST, &url).with_body(&req_body))
             .await
             .context(RequestSnafu)?;
 
-        let status = resp.status().as_u16();
-        let bytes = resp.bytes().await.context(RequestSnafu)?;
-
-        if status >= 400 {
-            let message = serde_json::from_slice::<ErrBody>(&bytes)
+        if !resp.is_success() {
+            let message = serde_json::from_slice::<ErrBody>(&resp.body)
                 .map(|b| b.error.message)
-                .unwrap_or_else(|_| String::from_utf8_lossy(&bytes).into_owned());
+                .unwrap_or_else(|_| String::from_utf8_lossy(&resp.body).into_owned());
             return Err(Error::Api {
                 service: "openai".to_string(),
                 message,
             });
         }
 
-        let body: ChatCompletionResp = serde_json::from_slice(&bytes).context(JsonSnafu)?;
+        let body: ChatCompletionResp = serde_json::from_slice(&resp.body).context(JsonSnafu)?;
 
         let content = body
             .choices
@@ -335,26 +357,24 @@ impl OpenAiClient {
             stream: true,
         };
 
-        let resp = self
+        let url = format!("{}/v1/chat/completions", self.base_url);
+        let outcome = self
             .client
-            .post(format!("{}/v1/chat/completions", self.base_url))
-            .json(&req_body)
-            .send()
+            .execute_stream(Params::new(Method::POST, &url).with_body(&req_body))
             .await
             .context(RequestSnafu)?;
 
-        let status = resp.status().as_u16();
-        if status >= 400 {
-            let bytes = resp.bytes().await.context(RequestSnafu)?;
-            let message = serde_json::from_slice::<ErrBody>(&bytes)
-                .map(|b| b.error.message)
-                .unwrap_or_else(|_| String::from_utf8_lossy(&bytes).into_owned());
-            return Err(Error::Api {
-                service: "openai".to_string(),
-                message,
-            });
+        match outcome {
+            StreamOutcome::Stream(stream) => Ok(parse_stream(stream)),
+            StreamOutcome::StatusError { body, .. } => {
+                let message = serde_json::from_slice::<ErrBody>(&body)
+                    .map(|b| b.error.message)
+                    .unwrap_or_else(|_| String::from_utf8_lossy(&body).into_owned());
+                Err(Error::Api {
+                    service: "openai".to_string(),
+                    message,
+                })
+            }
         }
-
-        Ok(parse_stream(resp))
     }
 }

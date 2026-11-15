@@ -118,6 +118,22 @@ pub struct ShutdownToken {
     rx: watch::Receiver<bool>,
 }
 
+impl std::fmt::Debug for ShutdownSignal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ShutdownSignal")
+            .field("triggered", &self.is_triggered())
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for ShutdownToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ShutdownToken")
+            .field("triggered", &self.is_triggered())
+            .finish()
+    }
+}
+
 impl ShutdownToken {
     /// 是否已经收到停机通知。适合在循环体内做快速检查。
     #[must_use]
@@ -331,5 +347,16 @@ mod tests {
     fn process_token_is_available_and_starts_untriggered() {
         assert!(!is_shutting_down());
         assert!(!shutdown_token().is_triggered());
+    }
+
+    #[test]
+    fn debug_formats_triggered_state() {
+        let signal = ShutdownSignal::new();
+        let token = signal.token();
+        assert_eq!(format!("{signal:?}"), "ShutdownSignal { triggered: false }");
+        assert_eq!(format!("{token:?}"), "ShutdownToken { triggered: false }");
+        signal.trigger();
+        assert_eq!(format!("{signal:?}"), "ShutdownSignal { triggered: true }");
+        assert_eq!(format!("{token:?}"), "ShutdownToken { triggered: true }");
     }
 }

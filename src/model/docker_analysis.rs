@@ -15,10 +15,11 @@
 use crate::app_ctx::get_app_ctx;
 use crate::config::{must_get_diving_config, must_get_email_config};
 use ctor::ctor;
+use http::Method;
 use serde::{Deserialize, Serialize};
 use snafu::{OptionExt, ResultExt, Snafu};
 use sqlx::{FromRow, PgPool};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tibba_error::Error as BaseError;
 use tibba_llm::{Backend, LlmCall, Usage as LlmUsage};
@@ -27,6 +28,7 @@ use tibba_model_token::{
     TokenUsageInsertParams,
 };
 use tibba_notify::{EmailNotifier, MultiNotifier, Notifier, NotifyMessage, WecomRobotNotifier};
+use tibba_request::{Client, ClientBuilder, Params};
 use tibba_runtime::{BoxFuture, Task, register_job_task, register_task, singleton_cron_job};
 use tracing::{error, info, warn};
 
@@ -48,9 +50,9 @@ enum Error {
     /// HTTP 调用（diving / 企业微信 webhook）失败
     #[snafu(display("http: {source}"))]
     Http {
-        // reqwest::Error 体积较大，装箱避免 enum 膨胀
-        #[snafu(source(from(reqwest::Error, Box::new)))]
-        source: Box<reqwest::Error>,
+        // tibba_request::Error 体积较大，装箱避免 enum 膨胀
+        #[snafu(source(from(tibba_request::Error, Box::new)))]
+        source: Box<tibba_request::Error>,
     },
 
     /// diving 服务返回非 2xx 状态
@@ -68,7 +70,7 @@ enum Error {
     /// LLM 调用失败
     #[snafu(display("llm: {source}"))]
     Llm {
-        // tibba_llm::Error 内含 reqwest::Error，装箱避免 enum 膨胀
+        // tibba_llm::Error 内含 tibba_request::Error，装箱避免 enum 膨胀
         #[snafu(source(from(tibba_llm::Error, Box::new)))]
         source: Box<tibba_llm::Error>,
     },
@@ -76,10 +78,6 @@ enum Error {
     /// 数据库 token_llms 表中找不到 name='default' 的 LLM 配置
     #[snafu(display("no enabled token_llms record found (expect name='default')"))]
     LlmConfigMissing,
-
-    /// 注册定时任务失败
-    #[snafu(display("scheduler register fail: {message}"))]
-    Scheduler { message: String },
 }
 
 impl From<Error> for BaseError {
@@ -95,7 +93,6 @@ impl From<Error> for BaseError {
                 BaseError::new("no enabled token_llms record found (expect name='default')")
                     .with_sub_category("llm_config_missing")
             }
-            Error::Scheduler { message } => BaseError::new(message).with_sub_category("scheduler"),
         };
         err.with_category(ERROR_CATEGORY)
     }
@@ -360,6 +357,20 @@ const ANALYSIS_SYSTEM_PROMPT: &str = r#"
 
 ---"#;
 
+static DIVING_CLIENT: OnceLock<Client> = OnceLock::new();
+
+fn diving_client() -> std::result::Result<Client, tibba_request::Error> {
+    if let Some(client) = DIVING_CLIENT.get() {
+        return Ok(client.clone());
+    }
+    let client = ClientBuilder::new("diving")
+        .with_timeout(Duration::from_secs(60))
+        .with_common_interceptor()
+        .build()?;
+    let _ = DIVING_CLIENT.set(client.clone());
+    Ok(DIVING_CLIENT.get().cloned().unwrap_or(client))
+}
+
 /// 调用 diving 服务获取镜像诊断数据。成功时返回 markdown 字符串；
 /// 状态码 >=400 时按 `DivingHttpError` 解析并返回带 message 的错误。
 async fn fetch_diving_result(record: &DockerAnalysisRecord) -> Result<String> {
@@ -367,29 +378,30 @@ async fn fetch_diving_result(record: &DockerAnalysisRecord) -> Result<String> {
     let url = format!("{}/api/analyze", config.url.trim_end_matches('/'));
     let image = format!("{}:{}", record.repo_name, record.tag);
 
-    let resp = reqwest::Client::new()
-        .get(&url)
-        .query(&[
+    let resp = diving_client()
+        .context(HttpSnafu)?
+        .execute(Params::new(Method::GET, &url).with_query(&[
             ("image", image.as_str()),
             ("format", "markdown"),
             ("skipBase", "true"),
-        ])
-        .send()
+        ]))
         .await
         .context(HttpSnafu)?;
 
-    let status = resp.status().as_u16();
-    let bytes = resp.bytes().await.context(HttpSnafu)?;
-
-    if status >= 400 {
+    if !resp.is_success() {
         // 优先按约定的 HTTPError JSON 解析；解析失败则回退到原始响应文本
-        let err = serde_json::from_slice::<DivingHttpError>(&bytes).unwrap_or(DivingHttpError {
-            message: String::from_utf8_lossy(&bytes).into_owned(),
-            code: String::new(),
-            status,
-        });
+        let err =
+            serde_json::from_slice::<DivingHttpError>(&resp.body).unwrap_or(DivingHttpError {
+                message: String::from_utf8_lossy(&resp.body).into_owned(),
+                code: String::new(),
+                status: resp.status,
+            });
         // err.status 优先使用 diving 自报状态，缺省时回退到 HTTP status
-        let report_status = if err.status == 0 { status } else { err.status };
+        let report_status = if err.status == 0 {
+            resp.status
+        } else {
+            err.status
+        };
         let message = if err.code.is_empty() {
             format!("diving({report_status}): {}", err.message)
         } else {
@@ -398,7 +410,7 @@ async fn fetch_diving_result(record: &DockerAnalysisRecord) -> Result<String> {
         return Err(Error::Diving { message }.into());
     }
 
-    let s = String::from_utf8(bytes.to_vec()).context(Utf8Snafu)?;
+    let s = String::from_utf8(resp.body.to_vec()).context(Utf8Snafu)?;
     Ok(s)
 }
 
@@ -660,10 +672,7 @@ impl Task for DockerAnalysisTask {
                         }
                     }
                 },
-            )
-            .map_err(|e| Error::Scheduler {
-                message: e.to_string(),
-            })?;
+            )?;
             register_job_task("docker_analysis", job);
             Ok(true)
         })

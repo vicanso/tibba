@@ -16,6 +16,8 @@ use axum_extra::extract::cookie::Key;
 use ctor::ctor;
 use rust_embed::RustEmbed;
 use serde::Deserialize;
+use std::borrow::Cow;
+use std::fmt;
 use std::sync::Arc;
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -59,11 +61,16 @@ fn default_commit_id() -> String {
     }
 }
 
+fn redact_secret(value: &str) -> &'static str {
+    if value.is_empty() { "" } else { "[REDACTED]" }
+}
+
 // BasicConfig struct defines the basic application settings
 // with validation rules for each field
-#[derive(Debug, Clone, Default, Validate, Deserialize)]
+#[derive(Clone, Default, Validate, Deserialize)]
 pub struct BasicConfig {
     // listen address
+    #[validate(custom(function = "tibba_util::x_listen_addr"))]
     pub listen: String,
     // 最大并发请求数，0 表示不限制（此前 0 会拒绝所有请求）
     #[validate(range(max = 100000))]
@@ -74,6 +81,10 @@ pub struct BasicConfig {
     // secret：派生 TOTP AES-256-GCM 密钥、签发登录防重放令牌，必须足够长且生产不得用示例值
     #[validate(length(min = 32), custom(function = "validate_basic_secret"))]
     pub secret: String,
+    /// 可选密码哈希全局 pepper，配置后会在启动期注入 `tibba_crypto::PasswordPolicy`。
+    /// 生产推荐通过 `TIBBA_WEB__BASIC__PASSWORD_PEPPER` 注入。
+    #[serde(default)]
+    pub password_pepper: Option<String>,
     // prefix
     pub prefix: Option<String>,
     // web 静态文件前缀（与 Vite `base` 一致），用于 SPA 部署在子路径下的场景
@@ -98,6 +109,41 @@ pub struct BasicConfig {
     /// `TIBBA_WEB__BASIC__SUPER_ADMINS`。
     #[serde(default)]
     pub super_admins: Vec<String>,
+}
+
+impl fmt::Debug for BasicConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BasicConfig")
+            .field("listen", &self.listen)
+            .field("processing_limit", &self.processing_limit)
+            .field("timeout", &self.timeout)
+            .field("secret", &redact_secret(&self.secret))
+            .field(
+                "password_pepper",
+                &self.password_pepper.as_deref().map(redact_secret),
+            )
+            .field("prefix", &self.prefix)
+            .field("web_prefix", &self.web_prefix)
+            .field("commit_id", &self.commit_id)
+            .field("region", &self.region)
+            .field("cors_allow_origins", &self.cors_allow_origins)
+            .field("cors_allow_credentials", &self.cors_allow_credentials)
+            .field("super_admins", &self.super_admins)
+            .finish()
+    }
+}
+
+impl BasicConfig {
+    /// 将 `listen` 配置归一化为可直接用于 `TcpListener::bind` 的地址；
+    /// 将 `:port` 简写补齐为 `0.0.0.0:port`。
+    #[must_use]
+    pub fn bind_addr(&self) -> Cow<'_, str> {
+        if let Some(port) = self.listen.strip_prefix(':') {
+            Cow::Owned(format!("0.0.0.0:{port}"))
+        } else {
+            Cow::Borrowed(&self.listen)
+        }
+    }
 }
 
 static BASIC_CONFIG: OnceLock<BasicConfig> = OnceLock::new();
@@ -134,7 +180,7 @@ fn default_session_renewal() -> u8 {
     52
 }
 
-#[derive(Debug, Clone, Default, Validate, Deserialize)]
+#[derive(Clone, Default, Validate, Deserialize)]
 pub struct SessionConfig {
     // session ttl
     #[serde(with = "humantime_serde")]
@@ -150,6 +196,17 @@ pub struct SessionConfig {
     #[serde(default = "default_session_renewal")]
     #[validate(range(min = 1, max = 52))]
     pub max_renewal: u8,
+}
+
+impl fmt::Debug for SessionConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SessionConfig")
+            .field("ttl", &self.ttl)
+            .field("secret", &redact_secret(&self.secret))
+            .field("cookie", &self.cookie)
+            .field("max_renewal", &self.max_renewal)
+            .finish()
+    }
 }
 
 static SESSION_CONFIG: OnceLock<SessionConfig> = OnceLock::new();
@@ -267,12 +324,20 @@ pub fn must_get_token_config() -> &'static TokenConfig {
 }
 
 // 出站 webhook 配置。整段缺失或 secret 为空时应用照常启动，投递不签名。
-#[derive(Debug, Clone, Default, Validate, Deserialize)]
+#[derive(Clone, Default, Validate, Deserialize)]
 pub struct WebhookConfig {
     /// 出站 webhook 的 HMAC-SHA256 签名密钥；为空则投递不签名。
     /// 经环境变量 `TIBBA_WEB__WEBHOOK__SECRET` 注入，切勿写入仓库。
     #[serde(default)]
     pub secret: String,
+}
+
+impl fmt::Debug for WebhookConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("WebhookConfig")
+            .field("secret", &redact_secret(&self.secret))
+            .finish()
+    }
 }
 
 static WEBHOOK_CONFIG: OnceLock<WebhookConfig> = OnceLock::new();
@@ -354,6 +419,15 @@ async fn init_config() -> Result<()> {
     BASIC_CONFIG
         .set(basic_config)
         .map_err(|_| config_error("basic config init failed"))?;
+    // 从静态持久化后的 BasicConfig 借用 pepper（满足 PasswordPolicy::with_pepper 的 'static 约束）
+    if let Some(pepper) = must_get_basic_config()
+        .password_pepper
+        .as_deref()
+        .filter(|s| !s.is_empty())
+    {
+        let policy = tibba_crypto::PasswordPolicy::default().with_pepper(pepper.as_bytes());
+        tibba_crypto::init_global_password_policy(policy).map_err(config_error)?;
+    }
     let session_config = new_session_config(&app_config.sub_config("session"))?;
     SESSION_CONFIG
         .set(session_config)
@@ -420,4 +494,60 @@ impl Task for ConfigTask {
 #[ctor(unsafe)]
 fn init() {
     register_task("config", Arc::new(ConfigTask));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn basic_config_bind_addr_and_listen_validation() {
+        let mut cfg = BasicConfig {
+            listen: ":5000".to_string(),
+            processing_limit: 100,
+            timeout: Duration::from_secs(30),
+            secret: "01234567890123456789012345678901".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(cfg.bind_addr(), "0.0.0.0:5000");
+        assert!(cfg.validate().is_ok());
+
+        cfg.listen = "127.0.0.1:5000".to_string();
+        assert_eq!(cfg.bind_addr(), "127.0.0.1:5000");
+        assert!(cfg.validate().is_ok());
+
+        cfg.listen = "not-an-addr".to_string();
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn configs_redact_secrets_in_debug() {
+        let basic = BasicConfig {
+            listen: "127.0.0.1:5000".to_string(),
+            secret: "super-basic-secret-0123456789012345".to_string(),
+            password_pepper: Some("super-pepper-value".to_string()),
+            ..Default::default()
+        };
+        let basic_dbg = format!("{basic:?}");
+        assert!(!basic_dbg.contains("super-basic-secret"), "{basic_dbg}");
+        assert!(!basic_dbg.contains("super-pepper-value"), "{basic_dbg}");
+        assert!(basic_dbg.contains("[REDACTED]"), "{basic_dbg}");
+
+        let session = SessionConfig {
+            ttl: Duration::from_secs(3600),
+            secret: "session-secret-0123456789".to_string(),
+            cookie: "sid".to_string(),
+            max_renewal: 10,
+        };
+        let session_dbg = format!("{session:?}");
+        assert!(!session_dbg.contains("session-secret"), "{session_dbg}");
+        assert!(session_dbg.contains("[REDACTED]"), "{session_dbg}");
+
+        let webhook = WebhookConfig {
+            secret: "whsec-secret-value".to_string(),
+        };
+        let webhook_dbg = format!("{webhook:?}");
+        assert!(!webhook_dbg.contains("whsec-secret-value"), "{webhook_dbg}");
+        assert!(webhook_dbg.contains("[REDACTED]"), "{webhook_dbg}");
+    }
 }

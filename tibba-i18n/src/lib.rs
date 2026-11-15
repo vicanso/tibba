@@ -190,13 +190,22 @@ pub async fn i18n(req: Request, next: Next) -> Response {
         .and_then(|v| v.to_str().ok())
         .unwrap_or_default()
         .to_string();
-    let locale = catalog.negotiate(&accept);
-    let mut res = next.run(req).await;
+    let res = next.run(req).await;
+    localize_response(catalog, &accept, res)
+}
+
+/// 使用协商后的语言目录本地化错误响应体。
+fn localize_response(catalog: &Catalog, accept: &str, mut res: Response) -> Response {
+    let locale = catalog.negotiate(accept);
 
     // 仅本应用错误响应带 Error 扩展；非错误响应直接透传
     let Some(error) = res.extensions().get::<BaseError>().cloned() else {
         return res;
     };
+    // 已脱敏响应若未显式设置业务 code，不覆盖其通用脱敏文案
+    if error.should_redact() && error.code().is_none() {
+        return res;
+    }
     // key 优先级：显式 code > sub_category > category
     let key = error
         .code()
@@ -208,19 +217,13 @@ pub async fn i18n(req: Request, next: Next) -> Response {
     let Some(translated) = catalog.translate(&locale, key, &[]) else {
         return res;
     };
-    // 译文与原文一致（例如协商到了原文所用语言）则无需改写
-    if translated == error.message() {
+    // 译文与原文一致且非脱敏改写则无需重序列化
+    if !error.should_redact() && translated == error.message() {
         return res;
     }
 
-    // 用 Value 仅替换 message，保留 category / code / sub_category 等其它字段
-    let Ok(mut value) = serde_json::to_value(&error) else {
-        return res;
-    };
-    if let Some(obj) = value.as_object_mut() {
-        obj.insert("message".to_string(), serde_json::Value::String(translated));
-    }
-    let Ok(body) = serde_json::to_vec(&value) else {
+    // 经由 to_client_json 统一输出对外响应：严格遵守脱敏规则，永不泄露 extra/exception
+    let Ok(body) = error.to_client_json(Some(&translated)) else {
         return res;
     };
     let len = body.len();
@@ -287,5 +290,52 @@ mod tests {
                 .as_deref(),
             Some("你好 世界。")
         );
+    }
+
+    /// 轮询即时就绪的内存 Response body。
+    fn ready_body_json(res: Response) -> serde_json::Value {
+        use std::future::Future;
+        use std::task::{Context, Poll, Waker};
+        let mut fut = std::pin::pin!(axum::body::to_bytes(res.into_body(), usize::MAX));
+        let mut cx = Context::from_waker(Waker::noop());
+        match fut.as_mut().poll(&mut cx) {
+            Poll::Ready(Ok(bytes)) => serde_json::from_slice(&bytes).unwrap(),
+            other => panic!("unexpected poll result: {other:?}"),
+        }
+    }
+
+    /// 5xx 脱敏错误在本地化翻译后仍不得泄露 extra / exception。
+    #[test]
+    fn redacted_500_translation_never_leaks_extra_or_exception() {
+        use axum::response::IntoResponse;
+
+        let catalog = Catalog::new("en")
+            .add("zh", "E_DB", "数据库服务暂不可用")
+            .add("zh", "db", "内部数据库错误");
+
+        // 情况一：带显式 code 的 500 错误，翻译 message 且保持 extra / exception 隐去
+        let err = BaseError::new("relation users does not exist")
+            .with_category("db")
+            .with_sub_category("sqlx")
+            .with_code("E_DB")
+            .with_status(500)
+            .with_exception(true)
+            .add_extra("pg=primary");
+        let res = localize_response(&catalog, "zh", err.into_response());
+        let body = ready_body_json(res);
+        assert_eq!(body["message"], "数据库服务暂不可用");
+        assert_eq!(body["code"], "E_DB");
+        assert!(body.get("extra").is_none());
+        assert!(body.get("exception").is_none());
+
+        // 情况二：无显式 code 的 500 错误，保留通用脱敏文案，不被泛化分类覆盖
+        let err = BaseError::new("secret")
+            .with_category("db")
+            .with_status(500)
+            .with_exception(true);
+        let res = localize_response(&catalog, "zh", err.into_response());
+        let body = ready_body_json(res);
+        assert_eq!(body["message"], "internal server error");
+        assert!(body.get("exception").is_none());
     }
 }

@@ -16,7 +16,9 @@ use super::{
     CODE_USER_ACCOUNT, CODE_USER_ACCOUNT_STRICT, CODE_USER_EMAIL, CODE_USER_GROUPS,
     CODE_USER_PASSWORD, CODE_USER_ROLES,
 };
-use super::{has_control_or_space, is_disabled, is_identifier_char, new_error};
+use super::{
+    check_identifier_boundaries, has_control_or_space, is_disabled, is_identifier_char, new_error,
+};
 use validator::{ValidateEmail, ValidationError};
 
 type Result<T> = std::result::Result<T, ValidationError>;
@@ -36,6 +38,29 @@ const PASSWORD_MAX_LEN: usize = 256;
 const ROLE_MAX_LEN: usize = 64;
 /// 一次可提交的角色 / 用户组数量上限。
 const ROLE_MAX_COUNT: usize = 64;
+/// 邮箱地址最大长度（RFC 5321 路径上限为 254 字节）。
+const EMAIL_MAX_LEN: usize = 254;
+
+/// 账号格式校验的共享底线：ASCII、长度 [`ACCOUNT_MIN_LEN`]–[`ACCOUNT_MAX_LEN`]、无控制字符与空格。
+fn check_account_baseline(user: &str, code: &'static str) -> Result<()> {
+    if !user.is_ascii() {
+        return Err(new_error(code, "account must be ASCII".to_string()));
+    }
+    if user.len() < ACCOUNT_MIN_LEN || user.len() > ACCOUNT_MAX_LEN {
+        return Err(new_error(
+            code,
+            format!("account must be {ACCOUNT_MIN_LEN}-{ACCOUNT_MAX_LEN} characters"),
+        ));
+    }
+    // 控制字符 / 空格：账号会被写进日志、审计记录与会话，放行等于开放日志伪造
+    if has_control_or_space(user) {
+        return Err(new_error(
+            code,
+            "account must not contain control characters or spaces".to_string(),
+        ));
+    }
+    Ok(())
+}
 
 /// 账号格式校验（登录 / 找回密码等**存量**账号会走到的路径）。
 ///
@@ -52,32 +77,13 @@ pub fn x_user_account(user: &str) -> Result<()> {
     if is_disabled(CODE_USER_ACCOUNT) {
         return Ok(());
     }
-    if !user.is_ascii() {
-        return Err(new_error(
-            CODE_USER_ACCOUNT,
-            "account must be ASCII".to_string(),
-        ));
-    }
-    if user.len() < ACCOUNT_MIN_LEN || user.len() > ACCOUNT_MAX_LEN {
-        return Err(new_error(
-            CODE_USER_ACCOUNT,
-            format!("account must be {ACCOUNT_MIN_LEN}-{ACCOUNT_MAX_LEN} characters"),
-        ));
-    }
-    // 控制字符 / 空格：账号会被写进日志、审计记录与会话，放行等于开放日志伪造
-    if has_control_or_space(user) {
-        return Err(new_error(
-            CODE_USER_ACCOUNT,
-            "account must not contain control characters or spaces".to_string(),
-        ));
-    }
-    Ok(())
+    check_account_baseline(user, CODE_USER_ACCOUNT)
 }
 
-/// **新建**账号的格式校验：在 [`x_user_account`] 之上追加字符白名单。
+/// **新建**账号的格式校验：独立执行账号底线校验与字符白名单，不复用 [`x_user_account`] 的开关。
 ///
-/// 允许 `[A-Za-z0-9_.-]`，且首字符必须是字母或数字（避免 `-x` 这类在命令行 /
-/// 各类 CLI 参数里会被当成选项的形态）。
+/// 允许 `[A-Za-z0-9_.-]`，首字符必须是字母或数字（避免 `-x`、`..` 等歧义形态），
+/// 并拒绝连续 `..` 与尾随 `.`。
 ///
 /// 与 OAuth 侧自动分配账号名的清洗规则一致（见 `tibba-router-user` 的
 /// `allocate_account`，它本就只保留 `[A-Za-z0-9_-]`），因此收紧白名单不会让
@@ -86,8 +92,7 @@ pub fn x_user_account_strict(user: &str) -> Result<()> {
     if is_disabled(CODE_USER_ACCOUNT_STRICT) {
         return Ok(());
     }
-    // 先过底线检查，长度 / ASCII 的报错信息复用同一套
-    x_user_account(user)?;
+    check_account_baseline(user, CODE_USER_ACCOUNT_STRICT)?;
 
     if !user.chars().all(is_identifier_char) {
         return Err(new_error(
@@ -101,7 +106,7 @@ pub fn x_user_account_strict(user: &str) -> Result<()> {
             "account must start with a letter or digit".to_string(),
         ));
     }
-    Ok(())
+    check_identifier_boundaries(user, CODE_USER_ACCOUNT_STRICT, "account")
 }
 
 /// 口令格式校验：ASCII，长度 [`PASSWORD_MIN_LEN`]–[`PASSWORD_MAX_LEN`]。
@@ -134,6 +139,12 @@ pub fn x_user_password(password: &str) -> Result<()> {
 pub fn x_user_email(email: &str) -> Result<()> {
     if is_disabled(CODE_USER_EMAIL) {
         return Ok(());
+    }
+    if email.len() > EMAIL_MAX_LEN {
+        return Err(new_error(
+            CODE_USER_EMAIL,
+            format!("email must be at most {EMAIL_MAX_LEN} characters"),
+        ));
     }
     if !email.validate_email() {
         return Err(new_error(
@@ -171,6 +182,7 @@ fn validate_identifiers(values: &[String], code: &'static str, field: &str) -> R
                 format!("{field} may only contain letters, digits, '_', '-' and '.'"),
             ));
         }
+        check_identifier_boundaries(value, code, field)?;
     }
     Ok(())
 }
@@ -230,11 +242,14 @@ mod tests {
         for good in ["ab", "user_1", "gh_octocat", "a.b-c", "9lives"] {
             assert!(x_user_account_strict(good).is_ok(), "{good} 应当通过");
         }
-        for bad in ["a@b.com", "user+tag", "_leading", "-leading", ".dot", "a/b"] {
+        for bad in [
+            "a@b.com", "user+tag", "_leading", "-leading", ".dot", "a/b", "a..b", "ab.",
+        ] {
             assert!(x_user_account_strict(bad).is_err(), "{bad} 应当被拒绝");
         }
-        // 底线检查同样生效
-        assert!(x_user_account_strict("a").is_err());
+        // 底线检查同样生效，且错误码必须归属 CODE_USER_ACCOUNT_STRICT
+        let short_err = x_user_account_strict("a").unwrap_err();
+        assert_eq!(short_err.code.as_ref(), CODE_USER_ACCOUNT_STRICT);
         assert!(x_user_account_strict("ab cd").is_err());
     }
 
@@ -254,18 +269,32 @@ mod tests {
         assert!(x_user_roles(&["admin".to_string(), "su".to_string()]).is_ok());
         assert!(x_user_groups(&["team-a".to_string()]).is_ok());
 
-        // 回归守卫：此前只查 ASCII，下面三类全部会被放行
+        // 回归守卫：此前只查 ASCII，下面这些边界形态都会被放行
         assert!(x_user_roles(&["a".repeat(ROLE_MAX_LEN + 1)]).is_err());
         assert!(x_user_roles(&vec!["r".to_string(); ROLE_MAX_COUNT + 1]).is_err());
         assert!(x_user_roles(&["admin\nsu".to_string()]).is_err());
         assert!(x_user_roles(&[String::new()]).is_err());
         assert!(x_user_groups(&["team:a".to_string()]).is_err());
+        for bad in ["..", ".hidden", "-flag", "foo..", "foo."] {
+            assert!(
+                x_user_roles(&[bad.to_string()]).is_err(),
+                "{bad:?} 应被拒绝"
+            );
+            assert!(
+                x_user_groups(&[bad.to_string()]).is_err(),
+                "{bad:?} 应被拒绝"
+            );
+        }
     }
 
     #[test]
-    fn email_validation_reports_a_message() {
+    fn email_validation_reports_a_message_and_caps_length() {
         let err = x_user_email("not-an-email").unwrap_err();
         assert!(err.message.is_some(), "校验错误应带上可读信息");
         assert!(x_user_email("a@b.com").is_ok());
+
+        let too_long = format!("{}@example.com", "a".repeat(EMAIL_MAX_LEN));
+        assert!(too_long.len() > EMAIL_MAX_LEN);
+        assert!(x_user_email(&too_long).is_err());
     }
 }

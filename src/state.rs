@@ -21,7 +21,6 @@ use tibba_error::Error;
 use tibba_runtime::{
     AppState, BoxFuture, Job, Task, get_process_system_info_async, register_job_task, register_task,
 };
-use tibba_util::is_production;
 use tokio::sync::RwLock;
 use tracing::info;
 
@@ -111,12 +110,8 @@ struct StopAppTask;
 impl Task for StopAppTask {
     fn after(&self) -> BoxFuture<'_, Result<bool>> {
         Box::pin(async move {
-            if !is_production() {
-                return Ok(false);
-            }
-            // set flag --> wait x seconds
+            // 收尾保底：确保健康检查状态在 after 阶段同样已处于停止态
             get_app_state().stop();
-            tokio::time::sleep(Duration::from_secs(10)).await;
             Ok(true)
         })
     }

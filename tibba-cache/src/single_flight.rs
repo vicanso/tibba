@@ -51,7 +51,7 @@ static FLIGHTS: LazyLock<DashMap<String, Arc<Mutex<()>>>> = LazyLock::new(DashMa
 /// 必须靠 RAII 而不是在函数末尾手动清理：回源闭包可能返回 `Err`、也可能被取消
 /// （客户端断开时整个请求 future 被 drop），任何一条路径漏掉清理，这个 key 就
 /// 永远卡在「有人正在回源」的状态上。
-struct Flight {
+pub(super) struct Flight {
     key: String,
     _guard: OwnedMutexGuard<()>,
 }
@@ -68,7 +68,7 @@ impl Drop for Flight {
 }
 
 /// 取得 `key` 的回源权，已有任务在回源时在此等待。
-async fn begin_flight(key: String) -> Flight {
+pub(super) async fn begin_flight(key: String) -> Flight {
     let lock = FLIGHTS.entry(key.clone()).or_default().clone();
     let guard = lock.lock_owned().await;
     Flight { key, _guard: guard }
@@ -141,7 +141,7 @@ impl RedisCache {
     /// 旧格式随之消失。
     ///
     /// Redis 连接类错误照常上抛：那是真的读不到，不是数据过时。
-    async fn read_cached<T>(&self, key: &str) -> Result<Option<T>, CacheError>
+    pub(super) async fn read_cached<T>(&self, key: &str) -> Result<Option<T>, CacheError>
     where
         T: DeserializeOwned,
     {

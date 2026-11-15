@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use axum::Json;
-use axum::http::header;
+use axum::http::{HeaderValue, header};
 use axum::response::{IntoResponse, Response};
 use serde::Serialize;
 use std::fmt::Write;
@@ -94,7 +94,7 @@ where
         // 校验的复用，语义不如 `no-cache` 明确。
         if secs == 0 {
             return (
-                [(header::CACHE_CONTROL, "no-cache".to_string())],
+                [(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"))],
                 Json(self.data),
             )
                 .into_response();

@@ -26,25 +26,49 @@
 //! GitHub 要求每个请求带 `User-Agent`，否则 403。
 
 use crate::{ApiSnafu, Error, HttpSnafu, JsonSnafu, LOG_TARGET};
+use http::Method;
+use http::header::{ACCEPT, HeaderValue, USER_AGENT};
 use serde::Deserialize;
 use snafu::{OptionExt, ResultExt};
+use std::fmt;
+use std::sync::OnceLock;
 use std::time::Duration;
+use tibba_request::{Client, ClientBuilder, Params};
 use tracing::debug;
 
 const AUTHORIZE_URL: &str = "https://github.com/login/oauth/authorize";
 const TOKEN_URL: &str = "https://github.com/login/oauth/access_token";
 const USER_URL: &str = "https://api.github.com/user";
 const EMAILS_URL: &str = "https://api.github.com/user/emails";
-const USER_AGENT: &str = "tibba-oauth";
+const USER_AGENT_VALUE: &str = "tibba-oauth";
 const DEFAULT_SCOPE: &str = "read:user user:email";
 const HTTP_TIMEOUT_SECS: u64 = 15;
 
+static HTTP_CLIENT: OnceLock<Client> = OnceLock::new();
+
 /// 已配置的 GitHub OAuth 客户端。一次配置反复使用——客户端是无状态的。
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct GitHubProvider {
     client_id: String,
     client_secret: String,
     redirect_uri: String,
+}
+
+impl fmt::Debug for GitHubProvider {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("GitHubProvider")
+            .field("client_id", &self.client_id)
+            .field(
+                "client_secret",
+                &if self.client_secret.is_empty() {
+                    ""
+                } else {
+                    "[REDACTED]"
+                },
+            )
+            .field("redirect_uri", &self.redirect_uri)
+            .finish()
+    }
 }
 
 /// 第三方（GitHub）侧的用户身份信息汇总。`primary_verified_email`
@@ -64,6 +88,7 @@ pub struct GitHubUser {
 }
 
 impl GitHubProvider {
+    #[must_use]
     pub fn new(
         client_id: impl Into<String>,
         client_secret: impl Into<String>,
@@ -78,6 +103,7 @@ impl GitHubProvider {
 
     /// 生成 OAuth authorize URL。`state` 由调用方生成并存储（Redis），
     /// 在 callback 中比对，防 CSRF / 防回放。
+    #[must_use]
     pub fn authorize_url(&self, state: &str) -> String {
         // 按 GitHub 文档，所有参数都要 URL 编码
         format!(
@@ -115,7 +141,7 @@ impl GitHubProvider {
         })
     }
 
-    async fn exchange_code(&self, http: &reqwest::Client, code: &str) -> Result<String, Error> {
+    async fn exchange_code(&self, http: &Client, code: &str) -> Result<String, Error> {
         #[derive(Deserialize)]
         struct TokenResp {
             access_token: Option<String>,
@@ -132,93 +158,92 @@ impl GitHubProvider {
             ("redirect_uri", self.redirect_uri.as_str()),
         ];
         let resp = http
-            .post(TOKEN_URL)
-            .header(reqwest::header::ACCEPT, "application/json")
-            .form(&params)
-            .send()
+            .execute(
+                Params::new(Method::POST, TOKEN_URL)
+                    .with_header(ACCEPT, HeaderValue::from_static("application/json"))
+                    .with_form(&params),
+            )
             .await
             .context(HttpSnafu)?;
-        let status = resp.status();
-        let bytes = resp.bytes().await.context(HttpSnafu)?;
-        if !status.is_success() {
+        if !resp.is_success() {
             return Err(Error::Api {
                 provider: "github".to_string(),
-                status: status.as_u16(),
-                message: String::from_utf8_lossy(&bytes).into_owned(),
+                status: resp.status,
+                message: String::from_utf8_lossy(&resp.body).into_owned(),
             });
         }
-        let parsed: TokenResp = serde_json::from_slice(&bytes).context(JsonSnafu)?;
+        let parsed: TokenResp = serde_json::from_slice(&resp.body).context(JsonSnafu)?;
         if let Some(err) = parsed.error {
             return Err(Error::Api {
                 provider: "github".to_string(),
-                status: status.as_u16(),
+                status: resp.status,
                 message: parsed.error_description.unwrap_or(err),
             });
         }
         parsed.access_token.context(ApiSnafu {
             provider: "github".to_string(),
-            status: status.as_u16(),
+            status: resp.status,
             message: "token response missing access_token",
         })
     }
 
-    async fn fetch_user(
-        &self,
-        http: &reqwest::Client,
-        access_token: &str,
-    ) -> Result<RawUser, Error> {
+    async fn fetch_user(&self, http: &Client, access_token: &str) -> Result<RawUser, Error> {
         #[derive(Deserialize)]
         struct WithMessage {
             #[serde(default)]
             message: Option<String>,
         }
         let resp = http
-            .get(USER_URL)
-            .bearer_auth(access_token)
-            .header(reqwest::header::USER_AGENT, USER_AGENT)
-            .header(reqwest::header::ACCEPT, "application/vnd.github+json")
-            .send()
+            .execute(
+                Params::new(Method::GET, USER_URL)
+                    .with_bearer_auth(access_token)
+                    .with_header(USER_AGENT, HeaderValue::from_static(USER_AGENT_VALUE))
+                    .with_header(
+                        ACCEPT,
+                        HeaderValue::from_static("application/vnd.github+json"),
+                    ),
+            )
             .await
             .context(HttpSnafu)?;
-        let status = resp.status();
-        let bytes = resp.bytes().await.context(HttpSnafu)?;
-        if !status.is_success() {
-            let msg = serde_json::from_slice::<WithMessage>(&bytes)
+        if !resp.is_success() {
+            let msg = serde_json::from_slice::<WithMessage>(&resp.body)
                 .ok()
                 .and_then(|w| w.message)
-                .unwrap_or_else(|| String::from_utf8_lossy(&bytes).into_owned());
+                .unwrap_or_else(|| String::from_utf8_lossy(&resp.body).into_owned());
             return Err(Error::Api {
                 provider: "github".to_string(),
-                status: status.as_u16(),
+                status: resp.status,
                 message: msg,
             });
         }
-        serde_json::from_slice::<RawUser>(&bytes).context(JsonSnafu)
+        serde_json::from_slice::<RawUser>(&resp.body).context(JsonSnafu)
     }
 
     async fn fetch_primary_verified_email(
         &self,
-        http: &reqwest::Client,
+        http: &Client,
         access_token: &str,
     ) -> Result<Option<String>, Error> {
         let resp = http
-            .get(EMAILS_URL)
-            .bearer_auth(access_token)
-            .header(reqwest::header::USER_AGENT, USER_AGENT)
-            .header(reqwest::header::ACCEPT, "application/vnd.github+json")
-            .send()
+            .execute(
+                Params::new(Method::GET, EMAILS_URL)
+                    .with_bearer_auth(access_token)
+                    .with_header(USER_AGENT, HeaderValue::from_static(USER_AGENT_VALUE))
+                    .with_header(
+                        ACCEPT,
+                        HeaderValue::from_static("application/vnd.github+json"),
+                    ),
+            )
             .await
             .context(HttpSnafu)?;
-        let status = resp.status();
-        let bytes = resp.bytes().await.context(HttpSnafu)?;
-        if !status.is_success() {
+        if !resp.is_success() {
             return Err(Error::Api {
                 provider: "github".to_string(),
-                status: status.as_u16(),
-                message: String::from_utf8_lossy(&bytes).into_owned(),
+                status: resp.status,
+                message: String::from_utf8_lossy(&resp.body).into_owned(),
             });
         }
-        let emails: Vec<RawEmail> = serde_json::from_slice(&bytes).context(JsonSnafu)?;
+        let emails: Vec<RawEmail> = serde_json::from_slice(&resp.body).context(JsonSnafu)?;
         // 自动合并的关键安全前提：必须 primary=true 且 verified=true
         Ok(emails
             .into_iter()
@@ -227,13 +252,19 @@ impl GitHubProvider {
     }
 }
 
-/// HTTP 客户端构造：每次调用新建一个；reqwest 内部有连接池复用。
-/// 显式设置 timeout 防 hang，避免外部依赖把 OAuth callback 卡死。
-fn http_client() -> Result<reqwest::Client, Error> {
-    reqwest::Client::builder()
-        .timeout(Duration::from_secs(HTTP_TIMEOUT_SECS))
+/// 懒初始化复用 [`tibba_request::Client`] 连接池；显式设置 timeout 防 hang，
+/// 避免外部依赖把 OAuth callback 卡死。
+fn http_client() -> Result<Client, Error> {
+    if let Some(client) = HTTP_CLIENT.get() {
+        return Ok(client.clone());
+    }
+    let client = ClientBuilder::new("oauth-github")
+        .with_timeout(Duration::from_secs(HTTP_TIMEOUT_SECS))
+        .with_common_interceptor()
         .build()
-        .context(HttpSnafu)
+        .context(HttpSnafu)?;
+    let _ = HTTP_CLIENT.set(client.clone());
+    Ok(HTTP_CLIENT.get().cloned().unwrap_or(client))
 }
 
 #[derive(Deserialize)]

@@ -12,12 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{DecompressTooLargeSnafu, Error, Lz4DecompressSnafu, ZstdSnafu};
+use super::{
+    DecompressTooLargeSnafu, Error, Lz4CompressTooLargeSnafu, Lz4DecompressSnafu, ZstdSnafu,
+};
 use lz4_flex::block::{compress_prepend_size, decompress_size_prepended};
 use snafu::{ResultExt, ensure};
 use std::io::Read;
 
-// Custom Result type using the crate's Error type
+// 使用模块内统一 Result
 type Result<T> = std::result::Result<T, Error>;
 
 /// 默认解压上限：64 MiB。
@@ -31,41 +33,42 @@ pub const DEFAULT_DECOMPRESS_LIMIT: usize = 64 * 1024 * 1024;
 /// lz4 帧头部存放未压缩长度的字节数（小端 u32）。
 const LZ4_SIZE_PREFIX_LEN: usize = 4;
 
-/// An enum to represent supported compression algorithms and their parameters.
+/// 支持的压缩算法与参数。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Algorithm {
-    /// LZ4 algorithm.
+    /// LZ4 压缩算法。
     Lz4,
-    /// Zstandard (zstd) algorithm, can specify compression level.
+    /// Zstandard（zstd）压缩算法，可指定压缩级别。
     Zstd(i32),
 }
 
-/// Provide a default implementation for Algorithm, for easy use.
+/// `Algorithm` 默认实现，选用均衡的 zstd 默认压缩级别。
 impl Default for Algorithm {
     fn default() -> Self {
-        // Default to using zstd's default compression level, as it usually has a good balance between compression ratio and speed.
+        // 默认使用 zstd 的推荐压缩级别，在压缩率与速度之间取得平衡
         Algorithm::Zstd(zstd::DEFAULT_COMPRESSION_LEVEL)
     }
 }
 
-/// Compress data using the specified algorithm.
+/// 按指定算法压缩原始字节切片。
 ///
-/// # Arguments
-/// * `data` - Original data bytes.
-/// * `algorithm` - The compression algorithm to use (`Algorithm::Lz4` or `Algorithm::Zstd(level)`).
+/// # 参数
+/// * `data` - 待压缩的原始字节。
+/// * `algorithm` - 选用的压缩算法（`Algorithm::Lz4` 或 `Algorithm::Zstd(level)`）。
 ///
-/// # Returns
-/// * `Result<Vec<u8>>` - Compressed data or error.
+/// # 返回值
+/// * `Result<Vec<u8>>` - 压缩后的字节数组，或压缩错误。
 pub fn compress(data: &[u8], algorithm: Algorithm) -> Result<Vec<u8>> {
     match algorithm {
         Algorithm::Lz4 => {
-            // LZ4's compression function does not return an error, so we wrap it in Ok.
+            // compress_prepend_size 头部仅占 4 字节 u32，超长输入必须先拒绝，避免长度静默截断
+            ensure!(
+                u32::try_from(data.len()).is_ok(),
+                Lz4CompressTooLargeSnafu { size: data.len() }
+            );
             Ok(compress_prepend_size(data))
         }
-        Algorithm::Zstd(level) => {
-            // Optimization: use zstd::encode_all, code is more concise.
-            zstd::encode_all(data, level).context(ZstdSnafu)
-        }
+        Algorithm::Zstd(level) => zstd::encode_all(data, level).context(ZstdSnafu),
     }
 }
 
@@ -109,9 +112,9 @@ pub fn decompress_with_limit(data: &[u8], algorithm: Algorithm, limit: usize) ->
             let decoder = zstd::Decoder::new(data).context(ZstdSnafu)?;
             let mut out = Vec::new();
             // 多读 1 字节：读满 limit+1 说明真实输出已超限，否则无法区分
-            // 「恰好等于上限」与「被截断」
+            // 「恰好等于上限」与「被截断」；saturating_add 防止 limit == usize::MAX 时溢出回绕为 0
             decoder
-                .take(limit as u64 + 1)
+                .take((limit as u64).saturating_add(1))
                 .read_to_end(&mut out)
                 .context(ZstdSnafu)?;
             ensure!(
@@ -206,5 +209,16 @@ mod tests {
         let err = decompress_with_limit(&bomb, Algorithm::Zstd(3), 1024)
             .expect_err("高压缩比炸弹必须被上限拦下");
         assert!(err.to_string().contains("exceeds limit"), "{err}");
+    }
+
+    #[test]
+    fn decompress_with_usize_max_limit_does_not_overflow() {
+        for algo in [Algorithm::Lz4, Algorithm::Zstd(3)] {
+            let payload = b"saturating limit check";
+            let compressed = compress(payload, algo).expect("compress");
+            let out = decompress_with_limit(&compressed, algo, usize::MAX)
+                .expect("usize::MAX 上限不应因 +1 溢出回绕而报错");
+            assert_eq!(out, payload);
+        }
     }
 }

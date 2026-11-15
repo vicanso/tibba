@@ -73,12 +73,19 @@ pub enum Error {
     /// 密文长度不足以容纳 nonce 与 tag，数据已损坏。
     #[snafu(display("encrypted blob too short"))]
     BlobTooShort,
+
+    /// 全局密码策略重复初始化。
+    #[snafu(display("password policy already initialized"))]
+    PolicyAlreadyInitialized,
 }
 
 impl From<Error> for BaseError {
     fn from(val: Error) -> Self {
         let err = match val {
-            Error::HmacSha256 { source } => BaseError::new(source).with_sub_category("hmac_sha256"),
+            Error::HmacSha256 { source } => BaseError::new(source)
+                .with_sub_category("hmac_sha256")
+                .with_status(500)
+                .with_exception(true),
             Error::KeyGripEmpty => BaseError::new("key grip empty")
                 .with_sub_category("key_grip")
                 .with_status(500)
@@ -125,6 +132,12 @@ impl From<Error> for BaseError {
                 .with_sub_category("blob_too_short")
                 .with_status(500)
                 .with_exception(true),
+            Error::PolicyAlreadyInitialized => {
+                BaseError::new("password policy already initialized")
+                    .with_sub_category("policy_already_initialized")
+                    .with_status(500)
+                    .with_exception(true)
+            }
         };
         err.with_category("crypto")
     }

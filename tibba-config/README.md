@@ -34,6 +34,8 @@ let max_body = config.get_byte_size("basic.max_body")?; // "10MB"
 
 - **不调用 `with_env_prefix` 就完全不挂载环境变量源**。空前缀不会被透传给 config-rs —— 那会让 `prefix_pattern` 退化成 `"__"`，等于要求所有变量以 `__` 开头，覆盖能力静默失效。
 - 空值视为未设置（`ignore_empty`）：`export TIBBA_WEB__BASIC__SECRET=` 不会把 TOML 里的值抹成空串。
+- **支持 `*_FILE` 密钥文件展开**：`TIBBA_WEB__BASIC__SECRET_FILE=/run/secrets/app_secret` 会读取文件内容并映射为 `basic.secret`（兼容 K8s / Docker Secrets；单文件上限 64 KiB、使用 `Zeroizing` 缓冲、自动剔除末尾 `\n`/`\r\n`）。文件缺失、为空、超限或与直接环境变量冲突时 fail-fast（`SecretFile` / `EmptySecretFile` / `SecretFileTooLarge` / `ConflictingSecret`）。
+- `get_duration` 与 `get_byte_size` 在解析失败或 `usize` 溢出时携带键名与实际值返回详细错误，便于启动期排错。
 - 分隔符可用 `with_env_separator` 覆盖。
 
 ## 依赖

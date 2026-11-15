@@ -18,20 +18,20 @@ use chrono::DateTime;
 use ctor::ctor;
 use futures::future::join_all;
 use http::Uri;
-use http::{HeaderMap, HeaderName, HeaderValue};
+use http::{HeaderMap, HeaderName, HeaderValue, Method};
 use http_stat::{HttpRequest, request};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use std::collections::HashMap;
-use std::sync::Arc;
-use std::sync::LazyLock;
 use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::{Arc, LazyLock, OnceLock};
 use std::{net::IpAddr, time::Duration};
 use tibba_error::Error;
 use tibba_model::{AlarmConfig, ConfigurationModel, Model, ResultValue};
 use tibba_model_builtin::{
     HttpDetector, HttpDetectorModel, HttpStat, HttpStatInsertParams, HttpStatModel, REGION_ANY,
 };
+use tibba_request::{Client, ClientBuilder, Params};
 use tibba_runtime::{
     BoxFuture, Task, is_shutting_down, register_job_task, register_task, singleton_cron_job,
 };
@@ -479,33 +479,41 @@ impl StatAlarmParam {
     }
 }
 
+static ALARM_CLIENT: OnceLock<Client> = OnceLock::new();
+
+fn alarm_client() -> Result<Client> {
+    if let Some(client) = ALARM_CLIENT.get() {
+        return Ok(client.clone());
+    }
+    let client = ClientBuilder::new("httpstat-alarm")
+        .with_timeout(Duration::from_secs(10))
+        .with_common_interceptor()
+        .build()?;
+    let _ = ALARM_CLIENT.set(client.clone());
+    Ok(ALARM_CLIENT.get().cloned().unwrap_or(client))
+}
+
 async fn send_alarms(alarm_params: Vec<StatAlarmParam>, alarm_config: AlarmConfig) -> u32 {
     // 先发送指定了url的告警
     let mut success = 0;
     let send_markdown = async |content: String, url: String| -> Result<()> {
-        match reqwest::Client::new()
-            .post(&url)
-            .timeout(Duration::from_secs(10))
-            .json(&WeComMarkDownMessage {
-                msgtype: "markdown_v2".to_string(),
-                markdown_v2: WeComMarkDown { content },
-            })
-            .send()
-            .await
-        {
-            Ok(res) => {
-                if res.status().is_success() {
-                    Ok(())
-                } else {
-                    Err(Error::new(format!(
-                        "send alarm message failed, status: {}",
-                        res.status()
-                    )))
-                }
-            }
-            Err(e) => Err(Error::new(e.to_string())),
-        }?;
-        Ok(())
+        let client = alarm_client()?;
+        let res = client
+            .execute(
+                Params::new(Method::POST, &url).with_body(&WeComMarkDownMessage {
+                    msgtype: "markdown_v2".to_string(),
+                    markdown_v2: WeComMarkDown { content },
+                }),
+            )
+            .await?;
+        if res.is_success() {
+            Ok(())
+        } else {
+            Err(Error::new(format!(
+                "send alarm message failed, status: {}",
+                res.status
+            )))
+        }
     };
     let mut contents = vec![];
     for param in alarm_params.iter() {
@@ -743,8 +751,7 @@ impl Task for HttpDetectorTask {
                         }
                     };
                 },
-            )
-            .map_err(Error::new)?;
+            )?;
             register_job_task("http_detector", job);
             Ok(true)
         })
@@ -782,8 +789,7 @@ impl Task for HttpStatAlarmTask {
                         }
                     }
                 },
-            )
-            .map_err(Error::new)?;
+            )?;
             register_job_task("http_stat_alarm", job);
             Ok(true)
         })

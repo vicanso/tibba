@@ -19,6 +19,7 @@ use axum::http::header::HeaderMap;
 use axum::http::request::Parts;
 use axum::http::{Request, header};
 use serde::de::DeserializeOwned;
+use std::borrow::Cow;
 use tibba_error::Error;
 use validator::Validate;
 
@@ -41,6 +42,39 @@ fn map_err_with_status(err: impl ToString, sub_category: &str, status: u16) -> E
         .with_category("params")
         .with_sub_category(sub_category)
         .with_status(status)
+}
+
+/// 从 `validator::ValidationErrors` 中稳定提取首个校验错误码（按字段名排序）。
+fn first_validation_code(errors: &validator::ValidationErrors) -> Option<Cow<'static, str>> {
+    fn from_kind(kind: &validator::ValidationErrorsKind) -> Option<Cow<'static, str>> {
+        match kind {
+            validator::ValidationErrorsKind::Field(items) => {
+                items.iter().map(|err| &err.code).min().cloned()
+            }
+            validator::ValidationErrorsKind::Struct(nested) => first_validation_code(nested),
+            validator::ValidationErrorsKind::List(list) => list
+                .values()
+                .filter_map(|nested| first_validation_code(nested))
+                .min(),
+        }
+    }
+
+    let mut fields: Vec<&Cow<'static, str>> = errors.errors().keys().collect();
+    fields.sort_unstable();
+    fields
+        .into_iter()
+        .filter_map(|field| errors.errors().get(field).and_then(from_kind))
+        .next()
+}
+
+/// 将字段校验失败转为 400 [`Error`]，并透传首个触发校验器的错误码，便于前端按 code 映射文案。
+fn validation_err(err: validator::ValidationErrors) -> Error {
+    let code = first_validation_code(&err);
+    let mut base = map_err(err, "validate");
+    if let Some(code) = code {
+        base = base.with_code(code);
+    }
+    base
 }
 
 /// JSON 提取被拒时沿用 axum 给出的状态码。
@@ -75,7 +109,7 @@ where
             let Json(value) = Json::<T>::from_request(req, state)
                 .await
                 .map_err(json_rejection)?;
-            value.validate().map_err(|e| map_err(e, "validate"))?;
+            value.validate().map_err(validation_err)?;
 
             Ok(JsonParams(value))
         } else {
@@ -127,7 +161,7 @@ where
         let query = parts.uri.query().unwrap_or_default();
         let params: T =
             serde_urlencoded::from_str(query).map_err(|err| map_err(err, "from_query"))?;
-        params.validate().map_err(|e| map_err(e, "validate"))?;
+        params.validate().map_err(validation_err)?;
         Ok(QueryParams(params))
     }
 }
@@ -181,10 +215,37 @@ mod tests {
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(body["category"], "params");
         assert_eq!(body["sub_category"], "validate");
+        assert_eq!(body["code"], "email");
         assert_ne!(
             body["message"], "internal server error",
             "校验失败的原因不得被脱敏掉"
         );
+    }
+
+    #[tokio::test]
+    async fn query_validation_failure_propagates_error_code() {
+        #[derive(Debug, Deserialize, Validate)]
+        struct QueryPayload {
+            #[validate(custom(function = "crate::x_uuid"))]
+            id: String,
+        }
+
+        let req = Request::builder()
+            .uri("/items?id=not-a-uuid")
+            .body(Body::empty())
+            .expect("构造测试请求");
+        let (mut parts, _body) = req.into_parts();
+        let err = QueryParams::<QueryPayload>::from_request_parts(&mut parts, &())
+            .await
+            .expect_err("非法 uuid 查询参数应当被拒绝");
+        let res = err.into_response();
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+        let bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .expect("读取响应体");
+        let body: serde_json::Value = serde_json::from_slice(&bytes).expect("合法 JSON");
+        assert_eq!(body["sub_category"], "validate");
+        assert_eq!(body["code"], crate::CODE_UUID);
     }
 
     /// JSON 反序列化失败同样是客户端错误。

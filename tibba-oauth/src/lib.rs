@@ -16,7 +16,7 @@
 //!
 //! 第三方身份提供商客户端。当前仅 GitHub；预留 `OAuthConfig` 扩展为多 provider。
 //!
-//! **手写 reqwest 而非用 `oauth2` crate**：GitHub OAuth 2.0 协议简单，避免引入大依赖树。
+//! 基于 [`tibba_request`] 统一出站客户端（而未引入 `oauth2` crate），避免大依赖树并自动复用超时、OTel 与统计拦截器。
 //!
 //! ## 用法
 //!
@@ -33,6 +33,7 @@
 
 use serde::Deserialize;
 use snafu::Snafu;
+use std::fmt;
 use tibba_error::Error as BaseError;
 
 pub use github::{GitHubProvider, GitHubUser};
@@ -51,8 +52,8 @@ pub enum Error {
     /// HTTP 调用失败（DNS / 超时 / 连接错误等）
     #[snafu(display("oauth http error: {source}"))]
     Http {
-        #[snafu(source(from(reqwest::Error, Box::new)))]
-        source: Box<reqwest::Error>,
+        #[snafu(source(from(tibba_request::Error, Box::new)))]
+        source: Box<tibba_request::Error>,
     },
     /// 解析第三方响应 JSON 失败（响应格式与预期不符）
     #[snafu(display("oauth json parse error: {source}"))]
@@ -106,7 +107,7 @@ pub struct OAuthConfig {
 
 /// GitHub OAuth App 配置。三个字段均通过 GitHub 开发者后台
 /// （Settings → Developer settings → OAuth Apps）创建 App 时获得。
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Clone, Default, Deserialize)]
 pub struct GitHubConfig {
     /// Client ID（公开值）
     #[serde(default)]
@@ -120,8 +121,26 @@ pub struct GitHubConfig {
     pub redirect_uri: String,
 }
 
+impl fmt::Debug for GitHubConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("GitHubConfig")
+            .field("client_id", &self.client_id)
+            .field(
+                "client_secret",
+                &if self.client_secret.is_empty() {
+                    ""
+                } else {
+                    "[REDACTED]"
+                },
+            )
+            .field("redirect_uri", &self.redirect_uri)
+            .finish()
+    }
+}
+
 impl GitHubConfig {
     /// 三个字段都非空才视为已配置。
+    #[must_use]
     pub fn is_configured(&self) -> bool {
         !self.client_id.is_empty()
             && !self.client_secret.is_empty()
@@ -146,7 +165,7 @@ impl GitHubConfig {
 
 /// Google OAuth App 配置。三个字段从 Google Cloud Console
 /// （APIs & Services → Credentials → OAuth 2.0 Client IDs）创建 Web App 类型客户端获得。
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Clone, Default, Deserialize)]
 pub struct GoogleConfig {
     /// Client ID，形如 `xxx.apps.googleusercontent.com`
     #[serde(default)]
@@ -159,8 +178,26 @@ pub struct GoogleConfig {
     pub redirect_uri: String,
 }
 
+impl fmt::Debug for GoogleConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("GoogleConfig")
+            .field("client_id", &self.client_id)
+            .field(
+                "client_secret",
+                &if self.client_secret.is_empty() {
+                    ""
+                } else {
+                    "[REDACTED]"
+                },
+            )
+            .field("redirect_uri", &self.redirect_uri)
+            .finish()
+    }
+}
+
 impl GoogleConfig {
     /// 三个字段都非空才视为已配置。
+    #[must_use]
     pub fn is_configured(&self) -> bool {
         !self.client_id.is_empty()
             && !self.client_secret.is_empty()
@@ -179,5 +216,41 @@ impl GoogleConfig {
             self.client_secret.clone(),
             self.redirect_uri.clone(),
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn oauth_configs_and_providers_redact_client_secret_in_debug() {
+        let gh_cfg = GitHubConfig {
+            client_id: "gh-id".to_string(),
+            client_secret: "gh-super-secret".to_string(),
+            redirect_uri: "http://localhost/gh".to_string(),
+        };
+        let gh_dbg = format!("{gh_cfg:?}");
+        assert!(!gh_dbg.contains("gh-super-secret"), "{gh_dbg}");
+        assert!(gh_dbg.contains("[REDACTED]"), "{gh_dbg}");
+
+        let gh_provider = gh_cfg.build_provider().unwrap();
+        let gh_prov_dbg = format!("{gh_provider:?}");
+        assert!(!gh_prov_dbg.contains("gh-super-secret"), "{gh_prov_dbg}");
+        assert!(gh_prov_dbg.contains("[REDACTED]"), "{gh_prov_dbg}");
+
+        let g_cfg = GoogleConfig {
+            client_id: "google-id".to_string(),
+            client_secret: "google-super-secret".to_string(),
+            redirect_uri: "http://localhost/google".to_string(),
+        };
+        let g_dbg = format!("{g_cfg:?}");
+        assert!(!g_dbg.contains("google-super-secret"), "{g_dbg}");
+        assert!(g_dbg.contains("[REDACTED]"), "{g_dbg}");
+
+        let g_provider = g_cfg.build_provider().unwrap();
+        let g_prov_dbg = format!("{g_provider:?}");
+        assert!(!g_prov_dbg.contains("google-super-secret"), "{g_prov_dbg}");
+        assert!(g_prov_dbg.contains("[REDACTED]"), "{g_prov_dbg}");
     }
 }

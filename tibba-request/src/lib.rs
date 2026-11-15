@@ -20,6 +20,8 @@ use tibba_error::Error as BaseError;
 pub(crate) const LOG_TARGET: &str = "tibba:request";
 
 mod request;
+#[cfg(feature = "stream")]
+mod sse;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -37,17 +39,20 @@ pub enum Error {
     /// 熔断器处于打开状态，未发起请求直接快速失败（保护持续故障的下游）。
     #[snafu(display("{service} circuit breaker open"))]
     CircuitOpen { service: String },
+    /// 客户端并发请求数已达 `max_processing` 上限，拒绝新请求以保护下游。
+    #[snafu(display("{service} concurrency limit reached: max {limit}"))]
+    ConcurrencyLimit { service: String, limit: u32 },
     /// 构建 reqwest 请求失败（如非法 URL、头部格式错误等）。
     #[snafu(display("{service} build http request fail, {source}"))]
     Build {
         service: String,
         source: reqwest::Error,
     },
-    /// URL 解析为 `Uri` 失败。
+    /// URL 解析失败。
     #[snafu(display("{service} uri fail, {source}"))]
     Uri {
         service: String,
-        source: axum::http::uri::InvalidUri,
+        source: url::ParseError,
     },
     /// 发送请求或读取响应体时网络层出错（含超时、连接失败等）。
     #[snafu(display("{service} http request fail, {path} {source}"))]
@@ -85,7 +90,17 @@ impl From<Error> for BaseError {
                     .with_exception(true);
                 (service, err)
             }
-            Error::Build { service, source } => (service, BaseError::new(source)),
+            Error::ConcurrencyLimit { service, limit } => {
+                // 并发数已达客户端上限，回 503 并告警以提示限流/降级
+                let err = BaseError::new(format!("concurrency limit reached: max {limit}"))
+                    .with_status(503)
+                    .with_exception(true);
+                (service, err)
+            }
+            Error::Build { service, source } => {
+                // 剥离 URL 避免请求构建阶段的查询参数密钥进入对外错误消息
+                (service, BaseError::new(source.without_url()))
+            }
             Error::Uri { service, source } => (service, BaseError::new(source)),
             Error::Request {
                 service,
@@ -95,9 +110,11 @@ impl From<Error> for BaseError {
                 let status = source.status().map_or(500, |v| v.as_u16());
                 // 超时或连接失败属于基础设施异常，需告警
                 let is_network_exception = source.is_timeout() || source.is_connect();
+                // 剥离 URL 避免 `?key=...` 等查询参数密钥进入 `BaseError`
+                let sanitized = source.without_url();
                 (
                     service,
-                    BaseError::new(source)
+                    BaseError::new(sanitized)
                         .with_status(status)
                         .with_exception(is_network_exception)
                         // 此前这里是 `path: _`，把上游辛苦 clone 来的 path 直接丢掉。
@@ -162,6 +179,8 @@ impl From<Error> for BaseError {
 }
 
 pub use request::*;
+#[cfg(feature = "stream")]
+pub use sse::*;
 
 #[cfg(test)]
 mod tests {
@@ -238,5 +257,46 @@ mod tests {
             assert_eq!(base.category(), "request");
             assert_eq!(base.sub_category(), Some("webhook"));
         }
+    }
+
+    /// 客户端并发上限拒绝应映射为 503 并触发异常告警。
+    #[test]
+    fn concurrency_limit_maps_to_503_with_exception() {
+        let base = BaseError::from(Error::ConcurrencyLimit {
+            service: "wecom".to_string(),
+            limit: 64,
+        });
+        assert_eq!(base.status(), 503);
+        assert!(base.is_exception());
+        assert_eq!(base.category(), "request");
+        assert_eq!(base.sub_category(), Some("wecom"));
+        assert!(base.message().contains("64"));
+    }
+
+    /// `From<Error> for BaseError` 转换网络错误时必须剥离 URL，避免查询参数中的密钥泄漏。
+    #[tokio::test]
+    async fn request_error_redacts_url_query_secrets() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        drop(listener);
+
+        let url = format!("http://{addr}/hook?api_key=super_secret_token");
+        let err = reqwest::Client::new()
+            .get(&url)
+            .send()
+            .await
+            .expect_err("closed port must fail");
+        assert!(err.is_connect());
+
+        let base = BaseError::from(Error::Request {
+            service: "wecom".to_string(),
+            path: "/hook".to_string(),
+            source: err,
+        });
+        assert!(base.is_exception());
+        assert!(!base.message().contains("super_secret_token"));
+        assert!(!base.message().contains("api_key"));
     }
 }

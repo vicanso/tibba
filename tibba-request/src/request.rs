@@ -13,28 +13,27 @@
 // limitations under the License.
 
 use super::{BuildSnafu, Error, LOG_TARGET, RequestSnafu, SerdeSnafu, UriSnafu};
-use axum::http::Method;
-use axum::http::header::RETRY_AFTER;
-use axum::http::header::{HeaderMap, HeaderName, HeaderValue, LOCATION};
-use axum::http::uri::Uri;
 use bytes::{Bytes, BytesMut};
+use http::Method;
+use http::header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue, LOCATION, RETRY_AFTER};
 use reqwest::Client as ReqwestClient;
-use reqwest::RequestBuilder;
-use scopeguard::defer;
+use reqwest::{RequestBuilder, Url};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use snafu::ResultExt;
 use std::collections::HashMap;
+use std::fmt;
 use std::future::Future;
 use std::net::{IpAddr, SocketAddr};
 use std::pin::Pin;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tibba_error::Error as BaseError;
 use tibba_util::{Stopwatch, timestamp};
 use tracing::{info, warn};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
+use url::Host;
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -79,25 +78,61 @@ pub type NoParams = [(&'static str, &'static str)];
 /// 一个。链式写法同时也是本项目对「多可选参数结构体」的统一约定。
 ///
 /// `with_query` / `with_body` 会改变对应的泛型参数，因此返回的是新类型。
-#[derive(Clone, Debug, Default)]
+/// 请求体承载方式：JSON 序列化、表单编码或原始字节（避免调用方预编码数据被二次 JSON 化）。
+#[derive(Clone, Debug)]
+enum BodyPayload<'a, P: Serialize + ?Sized> {
+    Json(&'a P),
+    Form(&'a P),
+    Bytes {
+        content_type: Option<&'static str>,
+        data: &'a [u8],
+    },
+}
+
+#[derive(Clone, Default)]
 pub struct Params<'a, Q = NoParams, P = NoParams>
 where
     Q: Serialize + ?Sized,
     P: Serialize + ?Sized,
 {
     /// HTTP 方法
-    method: Method,
+    pub(crate) method: Method,
     /// 单次请求超时，覆盖客户端默认值；`None` 则沿用客户端配置。
     timeout: Option<Duration>,
     /// URL 查询参数
     query: Option<&'a Q>,
-    /// JSON 请求体
-    body: Option<&'a P>,
+    /// 请求体载荷（JSON / 表单 / 原始字节）
+    body: Option<BodyPayload<'a, P>>,
     /// 请求 URL（绝对地址或相对于 base_url 的路径）
     url: &'a str,
-    /// 单次请求附加头（如 webhook 签名、幂等键、追踪头）；在拦截器之前应用，
+    /// 单次请求附加头集合（如 webhook 签名、幂等键）；在拦截器之前应用，
     /// 仍可被后续拦截器覆盖。`None` 则不附加。
     headers: Option<&'a HeaderMap>,
+    /// 通过 [`Params::with_header`] 逐个追加的单次请求头。
+    extra_headers: HeaderMap,
+    /// 单次请求 Bearer Token（在 Debug 输出中脱敏）。
+    bearer_auth: Option<&'a str>,
+}
+
+impl<Q, P> fmt::Debug for Params<'_, Q, P>
+where
+    Q: Serialize + ?Sized,
+    P: Serialize + ?Sized,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Params")
+            .field("method", &self.method)
+            .field("url", &self.url)
+            .field("timeout", &self.timeout)
+            .field("has_query", &self.query.is_some())
+            .field("has_body", &self.body.is_some())
+            .field(
+                "header_count",
+                &(self.headers.map_or(0, HeaderMap::len) + self.extra_headers.len()),
+            )
+            .field("bearer_auth", &self.bearer_auth.map(|_| "[REDACTED]"))
+            .finish()
+    }
 }
 
 impl<'a> Params<'a> {
@@ -113,6 +148,8 @@ impl<'a> Params<'a> {
             body: None,
             url,
             headers: None,
+            extra_headers: HeaderMap::new(),
+            bearer_auth: None,
         }
     }
 }
@@ -129,10 +166,24 @@ where
         self
     }
 
-    /// 设置本次请求附加的请求头，支持链式调用。
+    /// 设置本次请求附加的请求头集合，支持链式调用。
     #[must_use]
     pub fn with_headers(mut self, headers: &'a HeaderMap) -> Self {
         self.headers = Some(headers);
+        self
+    }
+
+    /// 追加单个请求头（会在 `with_headers` 之后应用），支持链式调用。
+    #[must_use]
+    pub fn with_header(mut self, name: HeaderName, value: HeaderValue) -> Self {
+        self.extra_headers.insert(name, value);
+        self
+    }
+
+    /// 设置本次请求的 Bearer Token（即 `Authorization: Bearer <token>`），支持链式调用。
+    #[must_use]
+    pub fn with_bearer_auth(mut self, token: &'a str) -> Self {
+        self.bearer_auth = Some(token);
         self
     }
 
@@ -149,6 +200,8 @@ where
             body: self.body,
             url: self.url,
             headers: self.headers,
+            extra_headers: self.extra_headers,
+            bearer_auth: self.bearer_auth,
         }
     }
 
@@ -162,9 +215,65 @@ where
             method: self.method,
             timeout: self.timeout,
             query: self.query,
-            body: Some(body),
+            body: Some(BodyPayload::Json(body)),
             url: self.url,
             headers: self.headers,
+            extra_headers: self.extra_headers,
+            bearer_auth: self.bearer_auth,
+        }
+    }
+
+    /// 设置 `application/x-www-form-urlencoded` 表单请求体，支持链式调用。
+    #[must_use]
+    pub fn with_form<P2>(self, form: &'a P2) -> Params<'a, Q, P2>
+    where
+        P2: Serialize + ?Sized,
+    {
+        Params {
+            method: self.method,
+            timeout: self.timeout,
+            query: self.query,
+            body: Some(BodyPayload::Form(form)),
+            url: self.url,
+            headers: self.headers,
+            extra_headers: self.extra_headers,
+            bearer_auth: self.bearer_auth,
+        }
+    }
+
+    /// 设置原始字节请求体，不覆盖 `Content-Type`，支持链式调用。
+    #[must_use]
+    pub fn with_bytes(self, bytes: &'a [u8]) -> Params<'a, Q, NoParams> {
+        Params {
+            method: self.method,
+            timeout: self.timeout,
+            query: self.query,
+            body: Some(BodyPayload::Bytes {
+                content_type: None,
+                data: bytes,
+            }),
+            url: self.url,
+            headers: self.headers,
+            extra_headers: self.extra_headers,
+            bearer_auth: self.bearer_auth,
+        }
+    }
+
+    /// 设置已预序列化的 JSON 字节请求体（自动写入 `Content-Type: application/json`），避免二次序列化。
+    #[must_use]
+    pub fn with_json_bytes(self, bytes: &'a [u8]) -> Params<'a, Q, NoParams> {
+        Params {
+            method: self.method,
+            timeout: self.timeout,
+            query: self.query,
+            body: Some(BodyPayload::Bytes {
+                content_type: Some("application/json"),
+                data: bytes,
+            }),
+            url: self.url,
+            headers: self.headers,
+            extra_headers: self.extra_headers,
+            bearer_auth: self.bearer_auth,
         }
     }
 }
@@ -246,7 +355,7 @@ pub trait HttpInterceptor: Send + Sync {
 /// 一个日志/统计回调失败就把成功的 HTTP 响应变成 Err，调用方拿到的
 /// 是观测层的错误而不是真实业务结果。observability 的失败不应改写
 /// business outcome——所以这里改成 warn! 记下来、继续跑下一个拦截器。
-async fn run_on_done(config: &ClientConfig, stats: &HttpStats, err: Option<&Error>) {
+pub(crate) async fn run_on_done(config: &ClientConfig, stats: &HttpStats, err: Option<&Error>) {
     let Some(interceptors) = &config.interceptors else {
         return;
     };
@@ -339,7 +448,7 @@ impl HttpInterceptor for CommonInterceptor {
 }
 
 /// 幂等方法可安全重复发送（GET/HEAD/PUT/DELETE/OPTIONS）；POST/PATCH 视为非幂等。
-fn is_idempotent(method: &Method) -> bool {
+pub(crate) fn is_idempotent(method: &Method) -> bool {
     matches!(
         *method,
         Method::GET | Method::HEAD | Method::PUT | Method::DELETE | Method::OPTIONS
@@ -425,7 +534,9 @@ fn retry_backoff(base: Duration, attempt: u32) -> Duration {
 /// 简单熔断器：连续失败达 `threshold` 即打开，`cooldown` 内对请求快速失败；冷却结束后
 /// 以**半开单探针**恢复（仅放行一个探测请求，成功则关闭、失败则重开）。状态用原子 + 极短
 /// 临界区维护，**不跨 await 持锁**。
-struct CircuitBreaker {
+pub(crate) struct CircuitBreaker {
+    /// 快速路径标志：关闭态（`false`）时 `allow()` 与 `record_success()` 无需获取互斥锁。
+    is_open: AtomicBool,
     /// 连续失败计数。
     failures: AtomicU32,
     /// 打开阈值（连续失败次数）。
@@ -439,6 +550,7 @@ struct CircuitBreaker {
 impl CircuitBreaker {
     fn new(threshold: u32, cooldown: Duration) -> Self {
         Self {
+            is_open: AtomicBool::new(false),
             failures: AtomicU32::new(0),
             threshold: threshold.max(1),
             cooldown,
@@ -453,6 +565,9 @@ impl CircuitBreaker {
     /// `record_success`（关闭）/`record_failure`（重开）决定；探测若因异常未上报，窗口到期后
     /// 自然允许下一次探测，不会永久卡死。mutex 串行化保证同一时刻只放行一个探测。
     fn allow(&self) -> bool {
+        if !self.is_open.load(Ordering::Acquire) {
+            return true;
+        }
         let mut guard = self.open_until.lock().unwrap_or_else(|e| e.into_inner());
         match *guard {
             Some(until) if Instant::now() < until => false,
@@ -466,27 +581,34 @@ impl CircuitBreaker {
     }
 
     /// 记一次成功：清零失败计数并关闭熔断。
-    fn record_success(&self) {
-        self.failures.store(0, Ordering::Relaxed);
+    pub(crate) fn record_success(&self) {
+        if self.failures.load(Ordering::Acquire) != 0 {
+            self.failures.store(0, Ordering::Release);
+        }
+        if !self.is_open.load(Ordering::Acquire) {
+            return;
+        }
         let mut guard = self.open_until.lock().unwrap_or_else(|e| e.into_inner());
         *guard = None;
+        self.is_open.store(false, Ordering::Release);
     }
 
     /// 记一次失败：达阈值则打开熔断（设置冷却截止时刻）。
-    fn record_failure(&self) {
-        let failures = self.failures.fetch_add(1, Ordering::Relaxed) + 1;
+    pub(crate) fn record_failure(&self) {
+        let failures = self.failures.fetch_add(1, Ordering::AcqRel) + 1;
         if failures >= self.threshold {
             let until = Instant::now() + self.cooldown;
             let mut guard = self.open_until.lock().unwrap_or_else(|e| e.into_inner());
             *guard = Some(until);
+            self.is_open.store(true, Ordering::Release);
         }
     }
 }
 
 /// HTTP 客户端内部配置，由 `ClientBuilder` 填充后转移给 `Client`。
-struct ClientConfig {
+pub(crate) struct ClientConfig {
     /// 服务名称，用于日志和错误标识
-    service: String,
+    pub(crate) service: String,
     /// 所有相对路径请求的基础 URL
     base_url: String,
     /// 读取响应体的超时时间
@@ -499,7 +621,7 @@ struct ClientConfig {
     pool_idle_timeout: Option<Duration>,
     /// 每个 host 最大空闲连接数，0 表示使用默认值
     pool_max_idle_per_host: usize,
-    /// 最大并发在途请求数，超出时返回 "too many requests" 错误
+    /// 最大并发在途请求数，超出时返回 `Error::ConcurrencyLimit`
     max_processing: Option<u32>,
     /// 每个请求都附带的默认请求头
     headers: Option<HeaderMap>,
@@ -512,12 +634,41 @@ struct ClientConfig {
     /// 重试退避基数（按指数增长）
     retry_base_delay: Duration,
     /// 可选熔断器：连续失败达阈值后在冷却期内快速失败
-    circuit_breaker: Option<CircuitBreaker>,
+    pub(crate) circuit_breaker: Option<CircuitBreaker>,
     /// 开启后拒绝目标解析到内部地址（私网 / 回环 / 链路本地 / 云元数据）的请求，防 SSRF。
     /// 对投递到用户 / 运维可控 URL 的客户端（webhook、探测）应开启。
     deny_internal_targets: bool,
     /// 响应体字节上限；`None` = 不限制（仅在调用方显式关闭时出现）
     max_response_bytes: Option<usize>,
+}
+
+impl fmt::Debug for ClientConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // 默认请求头常携带 Authorization / x-api-key 等凭证，仅输出头部数量不暴露值
+        f.debug_struct("ClientConfig")
+            .field("service", &self.service)
+            .field("base_url", &self.base_url)
+            .field("timeout", &self.timeout)
+            .field("read_timeout", &self.read_timeout)
+            .field("connect_timeout", &self.connect_timeout)
+            .field("pool_idle_timeout", &self.pool_idle_timeout)
+            .field("pool_max_idle_per_host", &self.pool_max_idle_per_host)
+            .field("max_processing", &self.max_processing)
+            .field(
+                "header_count",
+                &self.headers.as_ref().map_or(0, HeaderMap::len),
+            )
+            .field(
+                "interceptor_count",
+                &self.interceptors.as_ref().map_or(0, Vec::len),
+            )
+            .field("max_retries", &self.max_retries)
+            .field("retry_base_delay", &self.retry_base_delay)
+            .field("has_circuit_breaker", &self.circuit_breaker.is_some())
+            .field("deny_internal_targets", &self.deny_internal_targets)
+            .field("max_response_bytes", &self.max_response_bytes)
+            .finish()
+    }
 }
 
 /// 默认整体请求超时（含建连 + 传输）。未调用 [`ClientBuilder::with_timeout`] 时生效。
@@ -579,6 +730,7 @@ fn parse_retry_after(headers: &HeaderMap) -> Option<Duration> {
 /// - **幂等方法**（GET/HEAD/PUT/DELETE/OPTIONS）：网络超时、连接失败、429、5xx
 /// - **非幂等**（POST/PATCH）：仅**连接未建立**时重试（服务端必未收到）
 /// - 超时 / 发送中断对非幂等**不**重试（可能已处理）
+#[derive(Debug)]
 pub struct ClientBuilder {
     config: ClientConfig,
 }
@@ -651,6 +803,13 @@ impl ClientBuilder {
         self
     }
 
+    /// 关闭整体请求超时（适用于大模型长连接 SSE 流式响应等场景，建议配合 `read_timeout` 或上层 deadline）。
+    #[must_use]
+    pub fn without_timeout(mut self) -> Self {
+        self.config.timeout = None;
+        self
+    }
+
     /// 设置响应体读取超时时间。
     #[must_use]
     pub fn with_read_timeout(mut self, read_timeout: Duration) -> Self {
@@ -676,6 +835,16 @@ impl ClientBuilder {
     #[must_use]
     pub fn with_headers(mut self, headers: HeaderMap) -> Self {
         self.config.headers = Some(headers);
+        self
+    }
+
+    /// 追加单个默认请求头（在每个请求上自动携带）。
+    #[must_use]
+    pub fn with_header(mut self, name: HeaderName, value: HeaderValue) -> Self {
+        self.config
+            .headers
+            .get_or_insert_with(HeaderMap::new)
+            .insert(name, value);
         self
     }
 
@@ -776,6 +945,20 @@ impl ClientBuilder {
         }
         if let Some(dns_overrides) = self.config.dns_overrides.take() {
             for (host, addrs) in dns_overrides {
+                if addrs.is_empty() {
+                    return Err(Error::Common {
+                        service: self.config.service.clone(),
+                        message: format!("empty dns override for host: {host}"),
+                    });
+                }
+                if self.config.deny_internal_targets
+                    && addrs.iter().any(|addr| is_internal_ip(addr.ip()))
+                {
+                    return Err(Error::BlockedTarget {
+                        service: self.config.service.clone(),
+                        host,
+                    });
+                }
                 builder = builder.resolve_to_addrs(&host, &addrs);
             }
         }
@@ -786,11 +969,12 @@ impl ClientBuilder {
         {
             builder = builder.tls_info(true);
         }
-        // SSRF 防护开启时必须关掉自动跟随：reqwest 默认最多跟 10 跳，而
-        // ensure_public_target 只在首次发送前校验一次，跟随即等于绕过。
-        // 见 ClientBuilder::with_deny_internal_targets 的说明。
+        // SSRF 防护开启时必须关掉自动跟随与系统代理：
+        // - reqwest 默认最多跟 10 跳，跟随未经校验的 Location 等于绕过校验；
+        // - 禁止环境代理防止通过 HTTP_PROXY/HTTPS_PROXY 间接访问内网资源。
         if self.config.deny_internal_targets {
             builder = builder
+                .no_proxy()
                 .redirect(reqwest::redirect::Policy::none())
                 .dns_resolver(Arc::new(PublicOnlyResolver));
         }
@@ -800,20 +984,62 @@ impl ClientBuilder {
         })?;
         Ok(Client {
             client,
-            config: self.config,
-            processing: AtomicU32::new(0),
+            config: Arc::new(self.config),
+            processing: Arc::new(AtomicU32::new(0)),
         })
     }
 }
 
+/// 在途请求计数守卫，释放时自动归还并发配额，亦可转入流式响应生命周期持有。
+pub(crate) struct ProcessingGuard {
+    counter: Arc<AtomicU32>,
+}
+
+impl Drop for ProcessingGuard {
+    fn drop(&mut self) {
+        self.counter.fetch_sub(1, Ordering::Release);
+    }
+}
+
+/// `Client::execute` 返回的原始 HTTP 响应（状态码、响应头与完整响应体字节）。
+///
+/// 供需要自行判定非 2xx 状态码或读取响应头的调用方（如 OAuth、LLM 等）使用。
+#[derive(Debug, Clone)]
+pub struct RawResponse {
+    /// 上游返回的 HTTP 状态码。
+    pub status: u16,
+    /// 上游返回的响应头。
+    pub headers: HeaderMap,
+    /// 经大小限制读取的完整响应体字节。
+    pub body: Bytes,
+}
+
+impl RawResponse {
+    /// 状态码是否为 2xx 成功。
+    #[must_use]
+    pub fn is_success(&self) -> bool {
+        (200..300).contains(&self.status)
+    }
+}
+
 /// HTTP 客户端，封装 reqwest `Client`，提供带拦截器链和并发限制的请求方法。
+#[derive(Clone)]
 pub struct Client {
-    /// 底层 reqwest 客户端
+    /// 底层 reqwest 客户端（内部已由 Arc 管理连接池，Clone 开销极低）
     client: ReqwestClient,
     /// 客户端配置（服务名、超时、拦截器等）
-    config: ClientConfig,
+    pub(crate) config: Arc<ClientConfig>,
     /// 当前在途请求数，用于并发限制
-    processing: AtomicU32,
+    processing: Arc<AtomicU32>,
+}
+
+impl fmt::Debug for Client {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Client")
+            .field("config", &self.config)
+            .field("processing", &self.processing.load(Ordering::Relaxed))
+            .finish()
+    }
 }
 
 /// 判断 IP 是否为内部 / 特殊地址，SSRF 场景下应拒绝：
@@ -826,7 +1052,7 @@ fn is_internal_ip(ip: IpAddr) -> bool {
             // 各种「IPv6 里夹带 IPv4」的形式都按内嵌的 v4 判断，否则攻击者换一种
             // 写法就能绕过 v4 的规则：
             // - IPv4-mapped ::ffff:a.b.c.d
-            // - NAT64 64:ff9b::a.b.c.d：经 NAT64 网关会被翻译成 a.b.c.d
+            // - NAT64 RFC 6052 64:ff9b::a.b.c.d：经 NAT64 网关会被翻译成 a.b.c.d
             // - 6to4 2002:AABB:CCDD::/48：内嵌 v4 AA.BB.CC.DD
             if let Some(v4) = v6.to_ipv4_mapped() {
                 return is_internal_ipv4(v4);
@@ -845,6 +1071,17 @@ fn is_internal_ip(ip: IpAddr) -> bool {
                 || (first & 0xfe00) == 0xfc00 // ULA fc00::/7
                 || (first & 0xffc0) == 0xfe80 // link-local fe80::/10
                 || (first & 0xffc0) == 0xfec0 // site-local fec0::/10（已废弃，但仍可能路由到内网）
+                // NAT64 本地使用前缀 64:ff9b:1::/48（RFC 8215）
+                || seg[..3] == [0x0064, 0xff9b, 0x0001]
+                // 丢弃专用前缀 100::/64（RFC 6666）
+                || seg[..4] == [0x0100, 0, 0, 0]
+                // Teredo 隧道前缀 2001::/32（RFC 4380）
+                || (first == 0x2001 && seg[1] == 0)
+                // 基准测试前缀 2001:2::/48（RFC 5180）
+                || (first == 0x2001 && seg[1] == 0x0002 && seg[2] == 0)
+                // 文档示例前缀 2001:db8::/32（RFC 3849）与 3fff::/20（RFC 9637）
+                || (first == 0x2001 && seg[1] == 0x0db8)
+                || (first == 0x3fff && (seg[1] & 0xf000) == 0)
                 // IPv4-compatible ::a.b.c.d（已废弃）：前 96 位全 0。::1 / :: 已在上面处理
                 || seg[..6] == [0; 6]
         }
@@ -941,17 +1178,57 @@ fn blocked_by_resolver(err: &reqwest::Error) -> Option<String> {
     None
 }
 
+/// 重定向 `Location` 最大截断长度（字节），防止超长 Location 膨胀错误与日志。
+const MAX_REDIRECT_LOCATION_BYTES: usize = 256;
+
+/// `read_body_limited` 多块响应预分配上限（64 KiB），防止伪造超大 Content-Length 造成大分配。
+const MAX_BODY_PREALLOC: usize = 64 * 1024;
+
+/// 按 UTF-8 字符边界把重定向目标截断至不超过 [`MAX_REDIRECT_LOCATION_BYTES`] 字节。
+fn truncate_location(location: &str) -> String {
+    if location.len() <= MAX_REDIRECT_LOCATION_BYTES {
+        return location.to_string();
+    }
+    let end = location.floor_char_boundary(MAX_REDIRECT_LOCATION_BYTES);
+    location[..end].to_string()
+}
+
 /// `url` 是否已是 http(s) 绝对地址。
 ///
 /// 必须匹配完整的 `http://` / `https://`，不能只看 `http` 前缀：`httpfoo/bar`
 /// 这样的相对路径会被误判为绝对地址，于是 base_url 不再拼接、请求打到一个
-/// 根本不存在的主机上。scheme 按 RFC 3986 大小写不敏感。
+/// 根本不存在的主机上。使用字节前缀比较（ASCII 大小写不敏感），避免在含多字节 UTF-8
+/// 字符时按第 8 字节切片落入字符内部，同时消除临时 `String` 分配。
 fn is_absolute_http_url(url: &str) -> bool {
-    let lower = url.get(..8).unwrap_or_default().to_ascii_lowercase();
-    lower.starts_with("http://") || lower.starts_with("https://")
+    let bytes = url.as_bytes();
+    bytes
+        .get(..7)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(b"http://"))
+        || bytes
+            .get(..8)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case(b"https://"))
 }
 
 impl Client {
+    /// 获取并发请求配额，超出 `max_processing` 时原子拒绝并返回 [`Error::ConcurrencyLimit`]。
+    pub(crate) fn acquire_processing(&self) -> Result<ProcessingGuard> {
+        if let Some(limit) = self.config.max_processing {
+            self.processing
+                .try_update(Ordering::AcqRel, Ordering::Acquire, |curr| {
+                    (curr < limit).then_some(curr + 1)
+                })
+                .map_err(|_| Error::ConcurrencyLimit {
+                    service: self.config.service.clone(),
+                    limit,
+                })?;
+        } else {
+            self.processing.fetch_add(1, Ordering::AcqRel);
+        }
+        Ok(ProcessingGuard {
+            counter: Arc::clone(&self.processing),
+        })
+    }
+
     /// 已是 http(s) 绝对地址则直接使用，否则拼接 base_url。
     fn get_url(&self, url: &str) -> String {
         if is_absolute_http_url(url) {
@@ -962,40 +1239,82 @@ impl Client {
         }
     }
 
-    /// SSRF 校验（IP 字面量部分）：目标是内部地址则拒绝。
+    /// SSRF 校验（scheme 与 IP 字面量部分）：仅放行 http/https，且目标为内部地址则拒绝。
     ///
     /// 域名目标由挂在 reqwest 上的 [`PublicOnlyResolver`] 在**建连时**校验，
     /// 与实际连接使用同一次解析结果，不存在 DNS rebinding 时间窗。
-    fn ensure_public_target(&self, uri: &Uri) -> Result<()> {
-        let host = uri.host().ok_or_else(|| Error::BlockedTarget {
-            service: self.config.service.clone(),
-            host: "<none>".to_string(),
-        })?;
-        // IPv6 字面量在 URI 里带方括号（`[::1]`），要先剥掉才能按地址解析。
-        // 此前直接 parse 失败，于是落进 DNS 分支，报的是「解析失败」而不是
-        // 「目标是内网」，排查方向完全被带偏。
-        let literal = host.trim_start_matches('[').trim_end_matches(']');
-        if let Ok(ip) = literal.parse::<IpAddr>()
-            && is_internal_ip(ip)
-        {
+    fn ensure_public_target(&self, url: &Url) -> Result<()> {
+        if !matches!(url.scheme(), "http" | "https") {
             return Err(Error::BlockedTarget {
                 service: self.config.service.clone(),
-                host: host.to_string(),
+                host: format!("unsupported scheme: {}", url.scheme()),
             });
+        }
+        match url.host() {
+            Some(Host::Ipv4(v4)) => {
+                if is_internal_ipv4(v4) {
+                    return Err(Error::BlockedTarget {
+                        service: self.config.service.clone(),
+                        host: v4.to_string(),
+                    });
+                }
+            }
+            Some(Host::Ipv6(v6)) => {
+                if is_internal_ip(IpAddr::V6(v6)) {
+                    return Err(Error::BlockedTarget {
+                        service: self.config.service.clone(),
+                        host: format!("[{v6}]"),
+                    });
+                }
+            }
+            Some(Host::Domain(domain)) => {
+                // 兜底校验：防止调用方绕过或出现被当成域名的 IP 字面量
+                let literal = domain.trim_start_matches('[').trim_end_matches(']');
+                if let Ok(ip) = literal.parse::<IpAddr>()
+                    && is_internal_ip(ip)
+                {
+                    return Err(Error::BlockedTarget {
+                        service: self.config.service.clone(),
+                        host: domain.to_string(),
+                    });
+                }
+            }
+            None => {
+                return Err(Error::BlockedTarget {
+                    service: self.config.service.clone(),
+                    host: "<none>".to_string(),
+                });
+            }
         }
         // 域名不在这里解析：交给挂在 reqwest 上的 PublicOnlyResolver，
         // 让校验与建连用同一次解析结果，见其文档
         Ok(())
     }
 
-    /// 读取响应体，并在超过 `max_response_bytes` 时**中止**读取。
-    ///
-    /// 关键是「中止」而非「读完再判断」：后者该占的内存早就占了，限制形同虚设。
-    /// 这里逐块累加并在越界的那一块就返回，`res` 随即被 drop、连接关闭，对端
-    /// 再往下发多少都与我们无关。
-    ///
-    /// 未配置上限时走 `Response::bytes()` 的快路径，不额外分配。
-    async fn read_body_limited(&self, mut res: reqwest::Response, path: &str) -> Result<Bytes> {
+    /// 读取响应体并在失败时通知熔断器记一次故障。
+    pub(crate) async fn read_body_limited(
+        &self,
+        res: reqwest::Response,
+        path: &str,
+    ) -> Result<Bytes> {
+        match self.read_body_limited_inner(res, path).await {
+            Ok(bytes) => Ok(bytes),
+            Err(err) => {
+                if let Some(cb) = &self.config.circuit_breaker {
+                    cb.record_failure();
+                }
+                Err(err)
+            }
+        }
+    }
+
+    /// 读取响应体，并在超过 `max_response_bytes` 时**中止**读取：
+    /// 单块响应走零拷贝快路径，多块响应预分配封顶 [`MAX_BODY_PREALLOC`]（64 KiB）。
+    async fn read_body_limited_inner(
+        &self,
+        mut res: reqwest::Response,
+        path: &str,
+    ) -> Result<Bytes> {
         let Some(limit) = self.config.max_response_bytes else {
             return res.bytes().await.with_context(|_| RequestSnafu {
                 service: self.config.service.clone(),
@@ -1013,18 +1332,49 @@ impl Client {
             });
         }
 
-        // 预分配取「声明长度」与「上限」的较小值：Content-Length 可能是伪造的
-        // 天文数字，照它预分配本身就是一次 OOM
-        let capacity = res
-            .content_length()
-            .map_or(8 * 1024, |len| len.min(limit as u64) as usize);
-        let mut buf = BytesMut::with_capacity(capacity);
+        let Some(first) = res.chunk().await.with_context(|_| RequestSnafu {
+            service: self.config.service.clone(),
+            path: path.to_string(),
+        })?
+        else {
+            return Ok(Bytes::new());
+        };
+        if first.len() > limit {
+            return Err(Error::ResponseTooLarge {
+                service: self.config.service.clone(),
+                limit,
+            });
+        }
+
+        // 单块快路径：若第二块已 EOF，直接零拷贝返回 first，省去整份 BytesMut 分配与拷贝
+        let Some(second) = res.chunk().await.with_context(|_| RequestSnafu {
+            service: self.config.service.clone(),
+            path: path.to_string(),
+        })?
+        else {
+            return Ok(first);
+        };
+        let two_chunks_len = first.len().saturating_add(second.len());
+        if two_chunks_len > limit {
+            return Err(Error::ResponseTooLarge {
+                service: self.config.service.clone(),
+                limit,
+            });
+        }
+
+        // 预分配取「声明长度」「上限」「64 KiB」的最小值，避免伪造超大 Content-Length 造成大分配
+        let hint = res.content_length().map_or(8 * 1024, |len| {
+            len.min(limit as u64).min(MAX_BODY_PREALLOC as u64) as usize
+        });
+        let mut buf = BytesMut::with_capacity(hint.max(two_chunks_len).min(limit));
+        buf.extend_from_slice(&first);
+        buf.extend_from_slice(&second);
 
         while let Some(chunk) = res.chunk().await.with_context(|_| RequestSnafu {
             service: self.config.service.clone(),
             path: path.to_string(),
         })? {
-            if buf.len() + chunk.len() > limit {
+            if buf.len().saturating_add(chunk.len()) > limit {
                 return Err(Error::ResponseTooLarge {
                     service: self.config.service.clone(),
                     limit,
@@ -1035,65 +1385,57 @@ impl Client {
         Ok(buf.freeze())
     }
 
-    /// 执行 HTTP 请求并返回原始响应字节。
-    /// 负责并发计数、拦截器链调用（request / fail / response）及统计采集。
-    async fn raw<Q, P>(&self, stats: &mut HttpStats, params: Params<'_, Q, P>) -> Result<Bytes>
+    /// 共用请求准备：URL 解析、SSRF 检查、载荷/头部应用、OTel 注入、请求拦截器与熔断器预检。
+    pub(crate) async fn prepare_request<Q, P>(
+        &self,
+        stats: &mut HttpStats,
+        params: Params<'_, Q, P>,
+    ) -> Result<RequestBuilder>
     where
         Q: Serialize + ?Sized,
         P: Serialize + ?Sized,
     {
-        let processing = self.processing.fetch_add(1, Ordering::Relaxed) + 1;
-        defer! {
-            self.processing.fetch_sub(1, Ordering::Relaxed);
-        };
-        // 超出并发限制时立即拒绝
-        if let Some(max_processing) = self.config.max_processing
-            && processing > max_processing
-        {
-            return Err(Error::Common {
-                service: self.config.service.clone(),
-                message: "too many requests".to_string(),
-            });
-        }
-
-        let url = self.get_url(params.url);
-        // 用 with_context 而非 context：后者会**立即**求值上下文表达式，于是
-        // `service.clone()` 在每个成功请求上也照跑一遍。闭包版只在出错时分配。
-        let uri = url.parse::<Uri>().with_context(|_| UriSnafu {
+        let raw_url = self.get_url(params.url);
+        let parsed_url = Url::parse(&raw_url).with_context(|_| UriSnafu {
             service: self.config.service.clone(),
         })?;
-        stats.path = uri.path().to_string();
+        stats.path = parsed_url.path().to_string();
         stats.method = params.method.to_string();
 
-        // SSRF 防护：对开启的客户端，拒绝目标解析到内部地址的请求
+        // SSRF 防护：对开启的客户端，拒绝非 http(s) 或目标为内部地址的请求
         if self.config.deny_internal_targets {
-            self.ensure_public_target(&uri)?;
+            self.ensure_public_target(&parsed_url)?;
         }
 
-        // 幂等性决定重试策略（在 match 消费前先算好）
-        let idempotent = is_idempotent(&params.method);
-        let mut req = match params.method {
-            Method::POST => self.client.post(url),
-            Method::PUT => self.client.put(url),
-            Method::PATCH => self.client.patch(url),
-            Method::DELETE => self.client.delete(url),
-            Method::GET => self.client.get(url),
-            // HEAD / OPTIONS 等其余方法按原始 method 构造，避免静默降级为 GET
-            method => self.client.request(method, url),
-        };
+        let mut req = self.client.request(params.method, parsed_url);
         if let Some(value) = params.timeout {
             req = req.timeout(value);
         }
         if let Some(value) = params.query {
             req = req.query(value);
         }
-        if let Some(value) = params.body {
-            req = req.json(value);
+        if let Some(body) = params.body {
+            req = match body {
+                BodyPayload::Json(value) => req.json(value),
+                BodyPayload::Form(value) => req.form(value),
+                BodyPayload::Bytes { content_type, data } => {
+                    if let Some(ct) = content_type {
+                        req = req.header(CONTENT_TYPE, HeaderValue::from_static(ct));
+                    }
+                    req.body(Bytes::copy_from_slice(data))
+                }
+            };
         }
         // 调用方注入的单次请求头（如 webhook 签名 / 幂等键）；置于拦截器之前，
         // 仍可被后续拦截器的 request 钩子覆盖
         if let Some(headers) = params.headers {
             req = req.headers(headers.clone());
+        }
+        if !params.extra_headers.is_empty() {
+            req = req.headers(params.extra_headers);
+        }
+        if let Some(token) = params.bearer_auth {
+            req = req.bearer_auth(token);
         }
         // 注入当前 span 的 W3C trace 上下文（traceparent），让下游服务延续同一条调用链。
         // 无活跃 span 或未启用 OTel 时上下文为空，propagator 不写入任何头，零额外开销。
@@ -1119,11 +1461,21 @@ impl Client {
                 service: self.config.service.clone(),
             });
         }
+        Ok(req)
+    }
 
-        // 重试循环：失败按指数退避重排，达上限后返回最后一次结果 / 错误
+    /// 共用发送与重试循环（供缓冲读取与流式读取复用）：
+    /// 在重试退避 `sleep` 期间释放并发计数守卫，并在下次尝试前重新申请，避免长时间退避占用并发配额。
+    pub(crate) async fn send_with_retry(
+        &self,
+        stats: &mut HttpStats,
+        idempotent: bool,
+        mut req: RequestBuilder,
+        mut guard: ProcessingGuard,
+    ) -> Result<(reqwest::Response, ProcessingGuard)> {
         let max_retries = self.config.max_retries;
         let mut attempt: u32 = 0;
-        let (status, mut full) = loop {
+        loop {
             // 预克隆以备下次重试；流式 body 不可克隆 → None（此请求不再重试）
             let retry_candidate = if attempt < max_retries {
                 req.try_clone()
@@ -1146,38 +1498,29 @@ impl Client {
                     }
                     let status = res.status().as_u16();
                     // SSRF 防护开启时不跟随重定向（build() 已设 Policy::none，这里把
-                    // 收到的 3xx 显式转成错误）。在读 body 之前返回：3xx 的响应体没有
-                    // 价值，交给下游反序列化只会退化成语义不明的 JSON 解析失败，把真正
-                    // 的原因盖掉。Location 带进错误信息，便于运维定位是哪个目标在跳转。
+                    // 收到的 3xx 显式转成错误）。Location 截断并带进错误信息。
                     if is_blocked_redirect(self.config.deny_internal_targets, status) {
                         stats.status = status;
-                        let location = res
+                        let raw_location = res
                             .headers()
                             .get(LOCATION)
                             .and_then(|v| v.to_str().ok())
-                            .unwrap_or("<none>")
-                            .to_string();
+                            .unwrap_or("<none>");
+                        let location = truncate_location(raw_location);
                         return Err(Error::BlockedRedirect {
                             service: self.config.service.clone(),
                             location,
                         });
                     }
-                    // 读 body 之前先留下重试要用的 Retry-After：`res` 马上会被消费掉
-                    let retry_after = parse_retry_after(res.headers());
-                    let transfer_done = Stopwatch::new();
-                    let body = self.read_body_limited(res, &stats.path).await?;
-                    stats.transfer = transfer_done.elapsed_ms();
-
-                    // 5xx / 429 且仍可重试 → 退避后重试
+                    // 5xx / 429 且仍可重试 → 退避后重试（丢弃本次响应体，退避期间归还并发配额）
                     if is_retryable_status(status, idempotent)
                         && let Some(next) = retry_candidate
                     {
-                        // 对端明确给了 Retry-After 就照办：它比我们的本地猜测更准，
-                        // 也是 429 场景下唯一能真正避免继续挨打的做法。
-                        // 超出 MAX_RETRY_AFTER 的值不可信，退回本地退避。
+                        let retry_after = parse_retry_after(res.headers());
                         let delay = retry_after.unwrap_or_else(|| {
                             retry_backoff(self.config.retry_base_delay, attempt)
                         });
+                        drop(res);
                         warn!(
                             target: LOG_TARGET,
                             service = self.config.service,
@@ -1188,17 +1531,18 @@ impl Client {
                             retry_after_honored = retry_after.is_some(),
                             "retry on server error",
                         );
+                        drop(guard);
                         tokio::time::sleep(delay).await;
+                        guard = self.acquire_processing()?;
                         req = next;
                         attempt += 1;
                         continue;
                     }
-                    break (status, body);
+                    stats.status = status;
+                    return Ok((res, guard));
                 }
                 Err(e) => {
-                    // 解析器因目标是内网而拒绝：在 reqwest 看来这是一个 connect 错误，
-                    // 会被下面的重试逻辑当作「连接未建立、可安全重试」——必须先截住。
-                    // 这是策略拒绝，不是网络故障：不重试、不计熔断失败。
+                    // 解析器因目标是内网而拒绝：不重试、不计熔断失败。
                     if let Some(host) = blocked_by_resolver(&e) {
                         return Err(Error::BlockedTarget {
                             service: self.config.service.clone(),
@@ -1219,7 +1563,9 @@ impl Client {
                             error = %e,
                             "retry on network error",
                         );
+                        drop(guard);
                         tokio::time::sleep(delay).await;
+                        guard = self.acquire_processing()?;
                         req = next;
                         attempt += 1;
                         continue;
@@ -1234,11 +1580,38 @@ impl Client {
                     });
                 }
             }
+        }
+    }
+
+    /// 执行一次完整的缓冲式 HTTP 请求并收集响应，供 `execute` 与 `raw` 共享。
+    async fn execute_buffered<Q, P>(
+        &self,
+        stats: &mut HttpStats,
+        params: Params<'_, Q, P>,
+        collect_headers: bool,
+    ) -> Result<RawResponse>
+    where
+        Q: Serialize + ?Sized,
+        P: Serialize + ?Sized,
+    {
+        let guard = self.acquire_processing()?;
+        let idempotent = is_idempotent(&params.method);
+        let req = self.prepare_request(stats, params).await?;
+        let (res, _guard) = self.send_with_retry(stats, idempotent, req, guard).await?;
+
+        let status = res.status().as_u16();
+        let headers = if collect_headers {
+            res.headers().clone()
+        } else {
+            HeaderMap::new()
         };
-        stats.content_length = full.len();
+        let transfer_done = Stopwatch::new();
+        let body = self.read_body_limited(res, &stats.path).await?;
+        stats.transfer = transfer_done.elapsed_ms();
+        stats.content_length = body.len();
         stats.status = status;
 
-        // 熔断计数：拿到响应后按状态码更新（5xx 计失败、其余视为恢复）
+        // 熔断计数：拿到完整响应后按状态码更新（5xx 计失败、其余视为恢复）
         if let Some(cb) = &self.config.circuit_breaker {
             if status >= 500 {
                 cb.record_failure();
@@ -1247,19 +1620,40 @@ impl Client {
             }
         }
 
-        if let Some(interceptors) = &self.config.interceptors {
-            // 状态码 ≥400 时触发各拦截器的 fail 钩子
-            if status >= 400 {
+        Ok(RawResponse {
+            status,
+            headers,
+            body,
+        })
+    }
+
+    /// 执行 HTTP 请求并返回原始响应字节。
+    /// 在公共发送逻辑之上追加拦截器 `fail` / `response` 钩子与 `≥400` 兜底校验。
+    async fn raw<Q, P>(&self, stats: &mut HttpStats, params: Params<'_, Q, P>) -> Result<Bytes>
+    where
+        Q: Serialize + ?Sized,
+        P: Serialize + ?Sized,
+    {
+        let RawResponse {
+            status, mut body, ..
+        } = self.execute_buffered(stats, params, false).await?;
+
+        if status >= 400 {
+            if let Some(interceptors) = &self.config.interceptors {
                 for interceptor in interceptors {
-                    interceptor.fail(status, &full).await?;
+                    interceptor.fail(status, &body).await?;
                 }
             }
-            // 依次调用各拦截器的 response 钩子（如解包外层结构）
+            // 未注册失败转换拦截器（或自定义拦截器未处理 fail）时兜底转成 Error::Upstream，
+            // 防止 ≥400 响应静默流入反序列化分支被当成 200 OK
+            handle_fail(&self.config.service, status, &body)?;
+        }
+        if let Some(interceptors) = &self.config.interceptors {
             for interceptor in interceptors {
-                full = interceptor.response(full).await?;
+                body = interceptor.response(body).await?;
             }
         }
-        Ok(full)
+        Ok(body)
     }
 
     /// 执行请求并将响应体反序列化为指定类型，记录反序列化耗时。
@@ -1293,6 +1687,21 @@ impl Client {
         let mut stats = HttpStats::default();
         let done = Stopwatch::new();
         let result = self.do_request(&mut stats, params).await;
+        stats.total = done.elapsed_ms();
+        run_on_done(&self.config, &stats, result.as_ref().err()).await;
+        result
+    }
+
+    /// 发送请求并返回包含状态码、响应头与完整字节体的 [`RawResponse`]；
+    /// 即使上游返回 ≥400 也会返回响应体，供需要自行解析上游错误结构的调用方使用。
+    pub async fn execute<Q, P>(&self, params: Params<'_, Q, P>) -> Result<RawResponse>
+    where
+        Q: Serialize + ?Sized,
+        P: Serialize + ?Sized,
+    {
+        let mut stats = HttpStats::default();
+        let done = Stopwatch::new();
+        let result = self.execute_buffered(&mut stats, params, true).await;
         stats.total = done.elapsed_ms();
         run_on_done(&self.config, &stats, result.as_ref().err()).await;
         result
@@ -1340,6 +1749,16 @@ impl Client {
             .await
     }
 
+    /// 发送带 `application/x-www-form-urlencoded` 表单体的 POST 请求并将响应反序列化为 `T`。
+    pub async fn post_form<P, T>(&self, url: &str, form: &P) -> Result<T>
+    where
+        P: Serialize + ?Sized,
+        T: DeserializeOwned,
+    {
+        self.request(Params::new(Method::POST, url).with_form(form))
+            .await
+    }
+
     /// 发送带 JSON 请求体和查询参数的 POST 请求并将响应反序列化为 `T`。
     pub async fn post_with_query<P, Q, T>(&self, url: &str, json: &P, query: &Q) -> Result<T>
     where
@@ -1384,6 +1803,7 @@ impl Client {
     }
 
     /// 获取当前在途请求数。
+    #[must_use]
     pub fn get_processing(&self) -> u32 {
         self.processing.load(Ordering::Relaxed)
     }
@@ -1422,8 +1842,15 @@ mod tests {
             "2002:7f00:1::",      // 6to4 夹带 127.0.0.1
             "2002:a00:1::",       // 6to4 夹带 10.0.0.1
             "ff02::1",            // IPv6 组播
-            "fec0::1",            // site-local
-            "::127.0.0.1",        // IPv4-compatible（已废弃）
+            // 站点本地与新增 IANA 特殊/保留前缀
+            "fec0::1",      // site-local
+            "::127.0.0.1",  // IPv4-compatible（已废弃）
+            "2001:db8::1",  // RFC 3849 文档前缀
+            "3fff::1",      // RFC 9637 文档前缀
+            "2001:2::1",    // RFC 5180 基准测试
+            "2001::1",      // RFC 4380 Teredo 隧道
+            "64:ff9b:1::1", // RFC 8215 NAT64 本地前缀
+            "100::1",       // RFC 6666 丢弃前缀
         ] {
             assert!(
                 is_internal_ip(ip.parse::<IpAddr>().unwrap()),
@@ -1436,6 +1863,8 @@ mod tests {
             "9.9.9.9",
             "93.184.216.34",
             "2606:4700::1111",
+            "2001:4860:4860::8888", // Google Public DNS（不应被 2001::/32 误伤）
+            "3fff:1000::1",         // 超出 3fff::/20 范围的公网块
             // 夹带的是公网 v4 时应当放行，别误伤
             "64:ff9b::808:808", // NAT64 → 8.8.8.8
             "2002:808:808::",   // 6to4 → 8.8.8.8
@@ -1540,8 +1969,11 @@ mod tests {
         assert!(!is_absolute_http_url("/http/health"));
         assert!(!is_absolute_http_url("http"));
         assert!(!is_absolute_http_url(""));
-        // 非 http scheme 不算（交给 base_url 拼接后由 reqwest 报错更明确）
+        // 非 http scheme 不算（交给 base_url 拼接后由解析器或 SSRF 策略拒绝）
         assert!(!is_absolute_http_url("ftp://example.com"));
+        // 含多字节 UTF-8 时第 8 字节可能落在字符中间，不能 panic 或误判为相对路径
+        assert!(is_absolute_http_url("http://中文.example/a"));
+        assert!(is_absolute_http_url("https://中"));
     }
 
     /// 幂等性分类：GET/PUT 幂等，POST/PATCH 非幂等。
@@ -1614,14 +2046,148 @@ mod tests {
     #[test]
     fn circuit_breaker_opens_and_recovers() {
         let cb = CircuitBreaker::new(2, Duration::from_millis(50));
+        assert!(!cb.is_open.load(Ordering::Acquire));
         assert!(cb.allow());
         cb.record_failure(); // 1 次，未达阈值
+        assert!(!cb.is_open.load(Ordering::Acquire));
         assert!(cb.allow());
         cb.record_failure(); // 达阈值 → 打开
+        assert!(cb.is_open.load(Ordering::Acquire));
         assert!(!cb.allow()); // 冷却窗口内快速失败
         std::thread::sleep(Duration::from_millis(60));
-        assert!(cb.allow()); // 冷却结束恢复
-        cb.record_success(); // 成功清零计数
+        assert!(cb.allow()); // 冷却结束恢复（半开单探针）
+        cb.record_success(); // 成功清零计数并关闭快速路径标志
+        assert!(!cb.is_open.load(Ordering::Acquire));
         assert!(cb.allow());
+    }
+
+    /// Client / ClientBuilder / Params 的 Debug 输出不得泄漏默认请求头或 Bearer 凭证。
+    #[test]
+    fn debug_redacts_secret_headers_and_tokens() {
+        let secret = "sk-super-secret-api-key-987654";
+        let builder = ClientBuilder::new("llm").with_header(
+            http::header::AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {secret}")).unwrap(),
+        );
+        let builder_dbg = format!("{builder:?}");
+        assert!(!builder_dbg.contains(secret), "{builder_dbg}");
+        assert!(builder_dbg.contains("header_count: 1"), "{builder_dbg}");
+
+        let client = builder.build().unwrap();
+        let client_dbg = format!("{client:?}");
+        assert!(!client_dbg.contains(secret), "{client_dbg}");
+
+        let params = Params::new(Method::POST, "/v1/chat").with_bearer_auth(secret);
+        let params_dbg = format!("{params:?}");
+        assert!(!params_dbg.contains(secret), "{params_dbg}");
+        assert!(params_dbg.contains("[REDACTED]"), "{params_dbg}");
+    }
+
+    /// 开启 SSRF 防护时，dns_overrides 不允许空列表或内网 IP；未开启时仍禁止空列表。
+    #[test]
+    fn dns_overrides_validation_rejects_empty_and_internal_under_ssrf() {
+        let mut empty = HashMap::new();
+        empty.insert("api.example.com".to_string(), Vec::new());
+        let err = ClientBuilder::new("test")
+            .with_dns_overrides(empty)
+            .build()
+            .unwrap_err();
+        assert!(matches!(err, Error::Common { .. }));
+
+        let mut internal = HashMap::new();
+        internal.insert(
+            "api.example.com".to_string(),
+            vec!["169.254.169.254:80".parse::<SocketAddr>().unwrap()],
+        );
+        let err = ClientBuilder::new("ssrf")
+            .with_deny_internal_targets()
+            .with_dns_overrides(internal)
+            .build()
+            .unwrap_err();
+        assert!(matches!(err, Error::BlockedTarget { .. }));
+    }
+
+    /// 超长 UTF-8 重定向 Location 截断后不超过 256 字节且保持合法 UTF-8。
+    #[test]
+    fn truncate_location_respects_char_boundary() {
+        let repeated = "https://example.com/".to_string() + &"中".repeat(120);
+        assert!(repeated.len() > MAX_REDIRECT_LOCATION_BYTES);
+        let truncated = truncate_location(&repeated);
+        assert!(truncated.len() <= MAX_REDIRECT_LOCATION_BYTES);
+        assert!(repeated.starts_with(&truncated));
+    }
+
+    /// 并发达上限时返回 ConcurrencyLimit（503），且计数器不会虚增或残留。
+    #[tokio::test]
+    async fn concurrency_limit_returns_503_and_keeps_counter_clean() {
+        let client = ClientBuilder::new("limit-test")
+            .with_max_processing(0)
+            .build()
+            .unwrap();
+        let err = client
+            .get::<serde_json::Value>("http://127.0.0.1:1/test")
+            .await
+            .unwrap_err();
+        assert!(matches!(err, Error::ConcurrencyLimit { limit: 0, .. }));
+        assert_eq!(client.get_processing(), 0);
+        let base = BaseError::from(err);
+        assert_eq!(base.status(), 503);
+    }
+
+    /// `Client::execute` 透传 ≥400 响应供上层解析，而未挂拦截器的 `get()` 兜底转成 Upstream 错误。
+    #[tokio::test]
+    async fn execute_returns_error_status_while_get_falls_back_to_handle_fail() {
+        use axum::routing::{get, post};
+
+        let app =
+            axum::Router::new()
+                .route(
+                    "/fail",
+                    get(|| async { (http::StatusCode::BAD_REQUEST, r#"{"message":"bad"}"#) }),
+                )
+                .route(
+                    "/form",
+                    post(
+                        |axum::Form(fields): axum::Form<HashMap<String, String>>| async move {
+                            axum::Json(serde_json::json!({ "k": fields.get("k") }))
+                        },
+                    ),
+                )
+                .route(
+                    "/raw-json",
+                    post(|body: Bytes| async move {
+                        axum::Json(serde_json::json!({ "len": body.len() }))
+                    }),
+                );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+
+        let client = ClientBuilder::new("svc")
+            .with_base_url(format!("http://{addr}"))
+            .build()
+            .unwrap();
+
+        let raw_resp = client
+            .execute(Params::new(Method::GET, "/fail"))
+            .await
+            .unwrap();
+        assert_eq!(raw_resp.status, 400);
+        assert!(!raw_resp.is_success());
+
+        let err = client.get::<serde_json::Value>("/fail").await.unwrap_err();
+        assert!(matches!(err, Error::Upstream { status: 400, .. }));
+
+        let form_resp: serde_json::Value = client.post_form("/form", &[("k", "v")]).await.unwrap();
+        assert_eq!(form_resp["k"], "v");
+
+        let json_bytes_resp: serde_json::Value = client
+            .request_raw(Params::new(Method::POST, "/raw-json").with_json_bytes(b"{\"a\":1}"))
+            .await
+            .map(|b| serde_json::from_slice(&b).unwrap())
+            .unwrap();
+        assert_eq!(json_bytes_resp["len"], 7);
     }
 }

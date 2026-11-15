@@ -253,8 +253,15 @@ async fn run_tasks(task_type: TaskType, timeouts: Option<ShutdownTimeouts>) -> R
 /// 注册一个具名钩子任务。同名任务重复注册时，新任务会覆盖旧任务
 /// （并取得一个新的注册序号，即排到同优先级的末尾）。
 pub fn register_task(name: impl Into<String>, task: Arc<dyn Task>) {
+    let name = name.into();
     let seq = REGISTRATION_SEQ.fetch_add(1, Ordering::Relaxed);
-    TASKS.insert(name.into(), (seq, task));
+    if TASKS.insert(name.clone(), (seq, task)).is_some() {
+        warn!(
+            target: HOOK_LOG_TARGET,
+            name,
+            "hook task name conflict; previous registration overwritten"
+        );
+    }
 }
 
 /// 按优先级升序执行所有已注册的 `before` 钩子（应用启动前调用）。

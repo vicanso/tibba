@@ -24,14 +24,16 @@ default = []
 # 2. x509-parser 带约 8 个传递依赖（asn1-rs / der-parser / nom / oid-registry …）。
 # 只有真正要做证书监控的部署才值得付这两笔，故设为 opt-in。
 tls-info = ["dep:x509-parser"]
+# 启用流式响应与 SSE 行级读取器，供大模型等流式上游复用
+stream = ["reqwest/stream", "dep:futures"]
 
 [dependencies]
-axum = { workspace = true }
 bytes = { workspace = true }
+futures = { workspace = true, optional = true }
+http = { workspace = true }
 # 重试退避的抖动源：纯指数退避会让所有重试者同时回源（thundering herd）
 rand = { workspace = true }
 reqwest = { workspace = true }
-scopeguard = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 snafu = { workspace = true }
@@ -45,9 +47,11 @@ tracing = { workspace = true }
 # 出站请求注入 W3C traceparent，串联下游服务调用链（分布式追踪）
 opentelemetry = { workspace = true }
 tracing-opentelemetry = { workspace = true }
+url = { workspace = true }
 x509-parser = { workspace = true, optional = true }
 
 [dev-dependencies]
+axum = { workspace = true }
 pretty_assertions = { workspace = true }
 # 响应体上限要跑一个真实的本地 HTTP 服务端才测得准（rt/macros 仅测试用）
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }

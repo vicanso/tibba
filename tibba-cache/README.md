@@ -84,6 +84,14 @@ deadpool-redis 自带 Manager 不暴露该配置，因此单节点与集群都�
 `XREAD`、`XREADGROUP`）在**成功**时直接跳过回调；出错仍上报（连接断开需要被看见），
 并带 `intentional_block = true` 供调用方分流。
 
+## 热点路径与扩展原语
+
+- **原子消费（`GETDEL`）**：`RedisCache::get_del` / `get_del_struct` 在单条 Redis 命令内读取并删除键，避免 MFA challenge / OAuth state 等一次性令牌的 TOCTOU 竞态
+- **分布式锁与限流**：`lock`（仅靠 TTL 释放，适合定时任务去重）、`lock_with_token` + Lua CAS 释放、`rate_limit_sliding`（滑动窗口跨实例共享限流）、`eval`（EVALSHA 自动回退）、`get_or_set`（进程内 singleflight 回源合并）
+- **两级缓存与跨节点失效**：`TwoLevelStore`（进程内 L1 对齐墙钟边界 + `DEFAULT_L2_JITTER_PERCENT` 防雪崩抖动）+ `InvalidationBus` / `InvalidationListener`（Redis pub/sub 广播失效 key、跳过本节点 `node_id`、指数退避自动重连）
+- **凭证撤销**：`revocation` 模块提供 `revoke_user_credentials` / `revoke_role_credentials` / `is_credential_revoked`
+- **配置脱敏**：`RedisConfig` 的 `Debug` 实现自动屏蔽 `password` 与节点 URI 中的 userinfo（`scheme://***@host:port`）
+
 ## 依赖
 
 依赖：tibba-config, tibba-error, tibba-util

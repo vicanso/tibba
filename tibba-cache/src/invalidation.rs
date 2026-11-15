@@ -126,24 +126,85 @@ impl InvalidationBus {
     /// 收到停止信号并退出。把它放进进程级状态，或用
     /// `tibba_runtime::shutdown_token()` 在停机时显式 `stop()`。
     ///
-    /// 连接断开会自动重连（指数退避，上限 [`RECONNECT_MAX_BACKOFF`]）。断线
-    /// 期间的消息**不会补发**，见模块文档的可靠性边界。
+    /// 连接断开会自动重连（指数退避，上限 [`RECONNECT_MAX_BACKOFF`]）。若需在
+    /// 断线重连后清空本地快照以避免窗口期内消息丢失带来的陈旧值，请使用
+    /// [`Self::spawn_listener_with_reconnect`]。
     #[must_use]
     pub fn spawn_listener<F>(&self, on_invalidate: F) -> InvalidationListener
     where
         F: Fn(&str) + Send + Sync + 'static,
     {
+        self.spawn_listener_with_reconnect(on_invalidate, || {})
+    }
+
+    /// 启动后台订阅任务，并注册重连成功回调 `on_reconnect`。
+    ///
+    /// - 首次启动订阅成功**不会**触发 `on_reconnect`；
+    /// - 任何一次建连失败或订阅中断后重新订阅成功时，都会触发 `on_reconnect`
+    ///   （用于清空 [`crate::TwoLevelStore`] 的本地 L1，兜底 Redis pub/sub 断线期间不补发的问题）。
+    #[must_use]
+    pub fn spawn_listener_with_reconnect<F, R>(
+        &self,
+        on_invalidate: F,
+        on_reconnect: R,
+    ) -> InvalidationListener
+    where
+        F: Fn(&str) + Send + Sync + 'static,
+        R: Fn() + Send + Sync + 'static,
+    {
         let (stop_tx, stop_rx) = watch::channel(false);
         let nodes = self.client.node_urls().to_vec();
+        let connection_timeout = self.client.connection_timeout();
         let channel = self.channel.clone();
         let node_id = self.node_id.clone();
         let callback = Arc::new(on_invalidate);
+        let reconnect_cb = Arc::new(on_reconnect);
 
         tokio::spawn(async move {
-            listen_loop(nodes, channel, node_id, callback, stop_rx).await;
+            listen_loop(
+                nodes,
+                connection_timeout,
+                channel,
+                node_id,
+                callback,
+                reconnect_cb,
+                stop_rx,
+            )
+            .await;
         });
 
         InvalidationListener { stop: stop_tx }
+    }
+}
+
+/// 断线重连退避与本地缓存冲刷状态机（纯逻辑，便于单测覆盖）。
+#[derive(Debug)]
+struct ReconnectState {
+    backoff: Duration,
+    /// 只要经历过建连失败或订阅流中断就置 `true`；下一次订阅成功后触发一次冲刷并复位。
+    needs_flush: bool,
+}
+
+impl ReconnectState {
+    fn new() -> Self {
+        Self {
+            backoff: RECONNECT_MIN_BACKOFF,
+            needs_flush: false,
+        }
+    }
+
+    /// 订阅成功后调用：重置退避时长，并返回此前是否经历过断线（需冲刷 L1）。
+    fn on_subscribed(&mut self) -> bool {
+        self.backoff = RECONNECT_MIN_BACKOFF;
+        std::mem::replace(&mut self.needs_flush, false)
+    }
+
+    /// 建连 / 订阅 / 消息流中断后调用：标记需要冲刷 L1，并返回本次等待的退避时长。
+    fn on_failure(&mut self) -> Duration {
+        self.needs_flush = true;
+        let wait = self.backoff;
+        self.backoff = (self.backoff * 2).min(RECONNECT_MAX_BACKOFF);
+        wait
     }
 }
 
@@ -167,21 +228,24 @@ impl Drop for InvalidationListener {
 }
 
 /// 订阅主循环：连接 → 收消息 → 断开则退避重连，直到收到停止信号。
-async fn listen_loop<F>(
+async fn listen_loop<F, R>(
     nodes: Vec<String>,
+    connection_timeout: Duration,
     channel: String,
     node_id: String,
     on_invalidate: Arc<F>,
+    on_reconnect: Arc<R>,
     mut stop_rx: watch::Receiver<bool>,
 ) where
     F: Fn(&str) + Send + Sync + 'static,
+    R: Fn() + Send + Sync + 'static,
 {
     if nodes.is_empty() {
         warn!(target: LOG_TARGET, channel, "no redis node configured; invalidation listener not started");
         return;
     }
 
-    let mut backoff = RECONNECT_MIN_BACKOFF;
+    let mut state = ReconnectState::new();
     let mut attempt = 0usize;
 
     while !*stop_rx.borrow() {
@@ -189,28 +253,39 @@ async fn listen_loop<F>(
         let url = &nodes[attempt % nodes.len()];
         attempt = attempt.wrapping_add(1);
 
-        match subscribe_once(url, &channel, &node_id, &on_invalidate, &mut stop_rx).await {
+        match subscribe_once(
+            url,
+            connection_timeout,
+            &channel,
+            &node_id,
+            &on_invalidate,
+            &on_reconnect,
+            &mut state,
+            &mut stop_rx,
+        )
+        .await
+        {
             Ok(()) => {
                 // 收到停止信号，正常退出
                 break;
             }
             Err(err) => {
+                let wait = state.on_failure();
                 warn!(
                     target: LOG_TARGET,
                     channel,
                     error = %err,
-                    backoff_ms = backoff.as_millis(),
+                    backoff_ms = wait.as_millis(),
                     "invalidation subscription lost; reconnecting",
                 );
+
+                // 退避期间也要能被叫停，否则停机要多等一个退避周期
+                tokio::select! {
+                    () = tokio::time::sleep(wait) => {}
+                    _ = stop_rx.changed() => {}
+                }
             }
         }
-
-        // 退避期间也要能被叫停，否则停机要多等一个退避周期
-        tokio::select! {
-            () = tokio::time::sleep(backoff) => {}
-            _ = stop_rx.changed() => {}
-        }
-        backoff = (backoff * 2).min(RECONNECT_MAX_BACKOFF);
     }
 
     info!(target: LOG_TARGET, channel, "invalidation listener stopped");
@@ -219,30 +294,51 @@ async fn listen_loop<F>(
 /// 建立一次订阅并消费消息。
 ///
 /// 返回 `Ok(())` 表示收到停止信号；`Err` 表示连接层出问题，由上层退避重连。
-async fn subscribe_once<F>(
+#[allow(clippy::too_many_arguments)]
+async fn subscribe_once<F, R>(
     url: &str,
+    connection_timeout: Duration,
     channel: &str,
     node_id: &str,
     on_invalidate: &Arc<F>,
+    on_reconnect: &Arc<R>,
+    state: &mut ReconnectState,
     stop_rx: &mut watch::Receiver<bool>,
 ) -> Result<()>
 where
     F: Fn(&str) + Send + Sync + 'static,
+    R: Fn() + Send + Sync + 'static,
 {
     // pub/sub 必须独占连接：订阅之后这条连接只能收推送，不能再跑普通命令，
     // 所以它不能进 deadpool
     let client = RedisRawClient::open(url).context(RedisSnafu {
         category: "invalidation_open",
     })?;
-    let mut pubsub = client.get_async_pubsub().await.context(RedisSnafu {
-        category: "invalidation_connect",
-    })?;
-    pubsub.subscribe(channel).await.context(RedisSnafu {
-        category: "invalidation_subscribe",
-    })?;
+    let mut pubsub = tokio::time::timeout(connection_timeout, client.get_async_pubsub())
+        .await
+        .map_err(|_| Error::Redis {
+            category: "invalidation_connect_timeout".to_string(),
+            source: redis::RedisError::from((redis::ErrorKind::Io, "pubsub connect timeout")),
+        })?
+        .context(RedisSnafu {
+            category: "invalidation_connect",
+        })?;
+    tokio::time::timeout(connection_timeout, pubsub.subscribe(channel))
+        .await
+        .map_err(|_| Error::Redis {
+            category: "invalidation_subscribe_timeout".to_string(),
+            source: redis::RedisError::from((redis::ErrorKind::Io, "pubsub subscribe timeout")),
+        })?
+        .context(RedisSnafu {
+            category: "invalidation_subscribe",
+        })?;
 
     info!(target: LOG_TARGET, channel, "invalidation listener subscribed");
-    // 重连成功后退避应当重置，由调用方在下一轮循环感知——这里只负责消费
+    // 重连成功时重置退避；若此前发生过断连或失败，立刻触发回调清空可能陈旧的本地缓存
+    if state.on_subscribed() {
+        info!(target: LOG_TARGET, channel, "invalidation reconnected; flushing local cache");
+        on_reconnect();
+    }
     let mut stream = pubsub.on_message();
 
     loop {
@@ -353,11 +449,31 @@ mod tests {
     /// 退避必须有上界，否则一次长时间故障之后重连间隔会涨到荒谬的量级。
     #[test]
     fn backoff_is_bounded() {
-        let mut backoff = RECONNECT_MIN_BACKOFF;
+        let mut state = ReconnectState::new();
+        let mut last = Duration::ZERO;
         for _ in 0..50 {
-            backoff = (backoff * 2).min(RECONNECT_MAX_BACKOFF);
+            last = state.on_failure();
         }
-        assert_eq!(backoff, RECONNECT_MAX_BACKOFF);
+        assert_eq!(last, RECONNECT_MAX_BACKOFF);
         assert!(RECONNECT_MIN_BACKOFF < RECONNECT_MAX_BACKOFF);
+    }
+
+    /// 首次订阅不应误触 L1 冲刷；断线/失败后重连成功必须重置退避并触发一次 L1 冲刷。
+    #[test]
+    fn reconnect_state_flushes_only_after_failure_and_resets_backoff() {
+        let mut state = ReconnectState::new();
+        // 首次启动即订阅成功：无需冲刷
+        assert!(!state.on_subscribed());
+
+        // 连续失败两次，退避指数增长并标记需要冲刷
+        assert_eq!(state.on_failure(), RECONNECT_MIN_BACKOFF);
+        assert_eq!(state.on_failure(), RECONNECT_MIN_BACKOFF * 2);
+
+        // 重连成功：返回 true（触发冲刷）并清空标志 + 重置退避
+        assert!(state.on_subscribed());
+        assert!(!state.on_subscribed());
+
+        // 若再次失败，退避必须从 RECONNECT_MIN_BACKOFF 重新起步
+        assert_eq!(state.on_failure(), RECONNECT_MIN_BACKOFF);
     }
 }

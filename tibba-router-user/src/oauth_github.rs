@@ -171,11 +171,9 @@ pub(crate) async fn callback(
 
     // 校验并立即作废 state，防重放
     let state_key = format!("{STATE_REDIS_PREFIX}{csrf_state}");
-    let stored: Option<bool> = state.cache.get_struct(&state_key).await?;
+    // 原子读取并删除一次性 OAuth state，防止并发回调重放同一 state
+    let stored: Option<bool> = state.cache.get_del_struct(&state_key).await?;
     stored.context(StateInvalidSnafu)?;
-    if let Err(e) = state.cache.del(&state_key).await {
-        warn!(target: LOG_TARGET, error = %e, "delete used state failed");
-    }
 
     let provider = state.oauth_config.github.build_provider()?;
     let github_user = provider.exchange_and_fetch(&code).await?;
