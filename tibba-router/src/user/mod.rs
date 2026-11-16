@@ -12,9 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use axum::extract::State;
+#[cfg(feature = "oauth")]
+use axum::extract::Path;
+use axum::extract::{Request, State};
 use axum::http::{HeaderMap, StatusCode};
-use axum::middleware::from_fn_with_state;
+use axum::middleware::{Next, from_fn, from_fn_with_state};
 #[cfg(feature = "oauth")]
 use axum::response::Redirect;
 use axum::response::{IntoResponse, Response};
@@ -48,15 +50,13 @@ use tibba_model::{
 use tibba_model::{CreateLinkParams, UserOauthLinkModel};
 #[cfg(feature = "email")]
 use tibba_request::email::EmailConfig;
-#[cfg(feature = "oauth")]
-use tibba_util::sha256;
 use tibba_util::{
-    JsonParams, JsonResult, generate_device_id_cookie, get_device_id_from_cookie, is_development,
-    is_test, now, timestamp, timestamp_hash, uuid, validate_timestamp_hash, x_sha256,
-    x_user_account, x_user_account_strict, x_user_email, x_user_password, x_uuid,
+    JsonParams, JsonResult, QueryParams, generate_device_id_cookie, get_device_id_from_cookie,
+    is_development, is_test, now, timestamp, timestamp_hash, uuid, validate_timestamp_hash,
+    x_sha256, x_user_account, x_user_account_strict, x_user_email, x_user_password, x_uuid,
 };
 use tracing::warn;
-use utoipa::{OpenApi, ToSchema};
+use utoipa::{IntoParams, OpenApi, ToSchema};
 use validator::Validate;
 
 /// 本 crate 日志 target；`RUST_LOG=tibba:router_user=info` 可过滤。
@@ -237,8 +237,9 @@ pub(crate) async fn verify_user_password_constant_time(
     stored_hash: Option<&str>,
     candidate: &str,
 ) -> Result<PasswordCheck> {
-    let is_missing = stored_hash.is_none();
-    let target = stored_hash
+    let normalized = stored_hash.filter(|s| !s.is_empty());
+    let is_missing = normalized.is_none();
+    let target = normalized
         .unwrap_or(DUMMY_PASSWORD_HASH.as_str())
         .to_string();
     let cand = candidate.as_bytes().to_vec();
@@ -301,6 +302,83 @@ pub(crate) fn append_mfa_query(base_path: &str, mfa_token: &str) -> String {
     format!("{base_path}{sep}mfa_required=1&mfa_token={mfa_token}")
 }
 
+/// 在相对回跳路径（兼容 HashRouter `#/profile` 形态）后安全追加单个查询参数。
+#[cfg(feature = "oauth")]
+pub(crate) fn append_redirect_query(base_path: &str, key: &str, val: &str) -> String {
+    if let Some((prefix, frag)) = base_path.split_once('#') {
+        let sep = if frag.contains('?') { '&' } else { '?' };
+        format!("{prefix}#{frag}{sep}{key}={val}")
+    } else {
+        let sep = if base_path.contains('?') { '&' } else { '?' };
+        format!("{base_path}{sep}{key}={val}")
+    }
+}
+
+/// 存于 Redis 的 OAuth 一次性状态载体（nonce 防 CSRF，可选 bind_user_id 用于已登录绑定）。
+#[cfg(feature = "oauth")]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct OAuthStatePayload {
+    pub nonce: String,
+    #[serde(default)]
+    pub bind_user_id: Option<i64>,
+    #[serde(default)]
+    pub redirect: Option<String>,
+}
+
+/// OAuth `/start` 查询参数（支持 `mode=bind` 发起账号关联以及站内相对 `redirect`）。
+#[cfg(feature = "oauth")]
+#[derive(Debug, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct OAuthStartParams {
+    /// 启动模式：`login`（默认）或 `bind`（已登录绑定第三方账号）
+    pub mode: Option<String>,
+    /// 回调完成后的站内相对回跳地址
+    pub redirect: Option<String>,
+}
+
+/// 校验并构建待存入 Redis 的 OAuth state payload。
+#[cfg(feature = "oauth")]
+pub(crate) fn build_oauth_state_payload(
+    params: &OAuthStartParams,
+    session: &Session,
+    nonce: String,
+    category: &'static str,
+) -> Result<OAuthStatePayload> {
+    let bind_user_id = match params.mode.as_deref().map(str::trim) {
+        None | Some("") | Some("login") => None,
+        Some("bind") => {
+            if !session.is_login() {
+                return Err(
+                    BaseError::new("login required before binding oauth account")
+                        .with_category(category)
+                        .with_sub_category("login_required")
+                        .with_status(401)
+                        .with_exception(false),
+                );
+            }
+            Some(session.get_user_id())
+        }
+        Some(_) => {
+            return Err(BaseError::new("invalid oauth mode")
+                .with_category(category)
+                .with_sub_category("invalid_params")
+                .with_status(400)
+                .with_exception(false));
+        }
+    };
+    let redirect = params
+        .redirect
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| sanitize_relative_redirect(s).to_string());
+    Ok(OAuthStatePayload {
+        nonce,
+        bind_user_id,
+        redirect,
+    })
+}
+
 /// 构造 HttpOnly `SameSite=Lax` 的 OAuth 浏览器绑定 nonce Cookie。
 #[cfg(feature = "oauth")]
 pub(crate) fn build_oauth_nonce_cookie(nonce: &str, ttl_secs: i64) -> Cookie<'static> {
@@ -333,7 +411,7 @@ pub(crate) async fn verify_oauth_state_and_nonce(
     csrf_state: &str,
     jar: &CookieJar,
     category: &'static str,
-) -> Result<()> {
+) -> Result<OAuthStatePayload> {
     let invalid = || {
         BaseError::new("oauth state invalid or expired")
             .with_category(category)
@@ -348,16 +426,16 @@ pub(crate) async fn verify_oauth_state_and_nonce(
         return Err(invalid());
     }
     let state_key = format!("{prefix}{csrf_state}");
-    let stored_nonce: Option<String> = cache.get_del_struct(&state_key).await?;
-    let Some(stored_nonce) = stored_nonce else {
+    let stored: Option<OAuthStatePayload> = cache.get_del_struct(&state_key).await?;
+    let Some(stored) = stored else {
         return Err(invalid());
     };
     let a = cookie_nonce.value().as_bytes();
-    let b = stored_nonce.as_bytes();
+    let b = stored.nonce.as_bytes();
     if a.len() != b.len() || !bool::from(a.ct_eq(b)) {
         return Err(invalid());
     }
-    Ok(())
+    Ok(stored)
 }
 
 /// 为 OAuth 新用户分配唯一账号名：清洗提示字符串，空值回退 `"user"`，保证长度落在 `4..=20`，
@@ -458,11 +536,9 @@ pub(crate) async fn land_oauth_user(
     }
 
     let account = allocate_oauth_account(pool, spec.account_prefix, spec.account_hint).await?;
-    let random_password = sha256(format!("{}{}", uuid(), uuid()).as_bytes());
-    let password_hash = hash_password_blocking(&random_password).await?;
     let email_str = spec.verified_email.unwrap_or("");
 
-    // 单事务原子建用户（含已验证邮箱）并写入 OAuth 绑定，避免中途失败留下孤儿用户
+    // 单事务原子建用户（OAuth 用户初始无本地密码，后续可自助设置；含已验证邮箱）并写入 OAuth 绑定
     let mut tx = pool.begin().await.map_err(map_sqlx_err)?;
     let row: (i64,) = sqlx::query_as(
         r#"INSERT INTO users (status, account, password, email, email_verified_at)
@@ -477,7 +553,7 @@ pub(crate) async fn land_oauth_user(
     )
     .bind(Status::Enabled as i16)
     .bind(&account)
-    .bind(&password_hash)
+    .bind("")
     .bind(email_str)
     .fetch_one(&mut *tx)
     .await
@@ -584,6 +660,100 @@ pub(crate) async fn complete_oauth_login(params: OAuthCompleteParams<'_>) -> Res
         SessionResponse(session, Redirect::temporary(safe_target)),
     )
         .into_response())
+}
+
+#[cfg(feature = "oauth")]
+pub(crate) struct OAuthBindParams<'a> {
+    pub pool: &'static PgPool,
+    pub session: Session,
+    pub bind_user_id: i64,
+    pub provider: &'static str,
+    pub provider_user_id: &'a str,
+    pub provider_login: &'a str,
+    pub verified_email: Option<&'a str>,
+    pub redirect: Option<&'a str>,
+    pub fallback_redirect: &'a str,
+    pub request_id: &'a RequestId,
+    pub ip: String,
+    pub headers: &'a HeaderMap,
+}
+
+/// 完成已登录用户在 Profile 页面发起的 OAuth 账号绑定回调。
+#[cfg(feature = "oauth")]
+pub(crate) async fn complete_oauth_bind(params: OAuthBindParams<'_>) -> Result<Response> {
+    let clean_jar = CookieJar::new().add(clear_oauth_nonce_cookie());
+    let default_target = if params.fallback_redirect.is_empty() {
+        "/#/profile"
+    } else {
+        params.fallback_redirect
+    };
+    let safe_target = sanitize_relative_redirect(
+        params
+            .redirect
+            .filter(|s| !s.is_empty())
+            .unwrap_or(default_target),
+    );
+
+    if !params.session.is_login() || params.session.get_user_id() != params.bind_user_id {
+        let err_url = append_redirect_query(safe_target, "oauth_error", "session_mismatch");
+        return Ok((clean_jar, Redirect::temporary(&err_url)).into_response());
+    }
+
+    let link_model = UserOauthLinkModel::new();
+    if let Some(existing) = link_model
+        .find_by_provider_uid(params.pool, params.provider, params.provider_user_id)
+        .await?
+    {
+        let redirect_url = if existing.user_id != params.bind_user_id {
+            append_redirect_query(safe_target, "oauth_error", "already_linked")
+        } else {
+            append_redirect_query(safe_target, "oauth_bound", params.provider)
+        };
+        return Ok((clean_jar, Redirect::temporary(&redirect_url)).into_response());
+    }
+
+    let current_links = link_model
+        .list_by_user(params.pool, params.bind_user_id)
+        .await?;
+    if current_links.iter().any(|l| l.provider == params.provider) {
+        let err_url = append_redirect_query(safe_target, "oauth_error", "provider_already_bound");
+        return Ok((clean_jar, Redirect::temporary(&err_url)).into_response());
+    }
+
+    let email_str = params.verified_email.unwrap_or("");
+    link_model
+        .create(
+            params.pool,
+            CreateLinkParams {
+                user_id: params.bind_user_id,
+                provider: params.provider,
+                provider_user_id: params.provider_user_id,
+                provider_login: params.provider_login,
+                provider_email: email_str,
+            },
+        )
+        .await?;
+
+    let _ = AuditLogModel::new()
+        .log(
+            params.pool,
+            AuditLogParams::new("user.oauth_bind")
+                .with_user(params.bind_user_id)
+                .with_target("user", params.bind_user_id.to_string())
+                .with_request(
+                    params.request_id.as_str(),
+                    params.ip,
+                    user_agent_of(params.headers),
+                )
+                .with_detail(json!({
+                    "provider": params.provider,
+                    "provider_login": params.provider_login,
+                })),
+        )
+        .await;
+
+    let ok_url = append_redirect_query(safe_target, "oauth_bound", params.provider);
+    Ok((clean_jar, Redirect::temporary(&ok_url)).into_response())
 }
 
 /// 登录令牌接口的响应结构体。
@@ -697,6 +867,8 @@ struct UserMeResp {
     groups: Option<Vec<String>>,
     /// 权限码列表，前端可据此控制按钮可见性
     permissions: Option<Vec<String>>,
+    /// 是否已设置本地密码（OAuth 首次注册未设置密码时为 `false`）
+    has_password: bool,
 }
 
 /// 2FA 登录挑战响应：密码已过但需第二步验证时返回，**不**建立 Session。
@@ -841,6 +1013,7 @@ async fn establish_session(
         )
         .await;
 
+    let has_password = !user.password.is_empty();
     let info = UserMeResp {
         account,
         expired_at: session.get_expired_at(),
@@ -854,6 +1027,7 @@ async fn establish_session(
         roles: user.roles,
         groups: user.groups,
         permissions: Some(permissions),
+        has_password,
     };
 
     Ok(SessionResponse(session, Json(info)))
@@ -947,6 +1121,7 @@ async fn me(
         .context(UserNotFoundSnafu {
             account: account.to_string(),
         })?;
+    let has_password = !user.password.is_empty();
     let info = UserMeResp {
         account: account.to_string(),
         expired_at: session.get_expired_at(),
@@ -960,6 +1135,7 @@ async fn me(
         roles: user.roles,
         groups: user.groups,
         permissions: Some(session.get_permissions().to_vec()),
+        has_password,
     };
 
     Ok((jar, Json(info)))
@@ -1158,6 +1334,284 @@ async fn update_profile(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// 修改或首次设置密码请求参数（密码均由前端做 SHA-256 摘要，与登录/注册口径一致）。
+#[derive(Deserialize, Validate, ToSchema)]
+struct ChangePasswordParams {
+    /// 旧密码 SHA-256 摘要；仅当当前账号已设置密码时必填
+    #[serde(default)]
+    old_password: Option<String>,
+    /// 新密码 SHA-256 摘要
+    #[validate(custom(function = "x_user_password"))]
+    new_password: String,
+}
+
+/// 自助设置（OAuth 首次设密）或修改当前登录用户密码，成功后吊销其它会话并轮换保留当前会话。
+#[utoipa::path(
+    patch,
+    path = "/users/password",
+    tag = "user",
+    request_body = ChangePasswordParams,
+    responses(
+        (status = 204, description = "密码已更新并吊销其余历史会话"),
+        (status = 400, description = "缺少旧密码或新密码格式非法"),
+        (status = 401, description = "旧密码校验失败或未登录")
+    )
+)]
+async fn change_password(
+    State(pool): State<&'static PgPool>,
+    session: UserSession,
+    request_id: RequestId,
+    ClientIp(ip): ClientIp,
+    headers: HeaderMap,
+    JsonParams(params): JsonParams<ChangePasswordParams>,
+) -> Result<SessionResponse<StatusCode>> {
+    let current_session: Session = session.into();
+    let user_id = current_session.get_user_id();
+    let uid = u64::try_from(user_id).map_err(|_| Error::BadCredentials)?;
+    let user = UserModel::new()
+        .get_by_id(pool, uid)
+        .await?
+        .context(UserNotFoundSnafu {
+            account: current_session.get_account().to_string(),
+        })?;
+    ensure_enabled(&user)?;
+
+    let had_password = !user.password.is_empty();
+    if had_password {
+        let old_pwd = params
+            .old_password
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                BaseError::new("old password is required")
+                    .with_category(ERROR_CATEGORY)
+                    .with_sub_category("old_password_required")
+                    .with_status(400)
+                    .with_exception(false)
+            })?;
+        let check = verify_user_password_constant_time(Some(&user.password), old_pwd).await?;
+        if matches!(check, PasswordCheck::Mismatch) {
+            return Err(Error::BadCredentials.into());
+        }
+    }
+
+    update_password_blocking(pool, user.id, &params.new_password).await?;
+    current_session.revoke_user(user.id).await?;
+
+    let groups = user.groups.clone().unwrap_or_default();
+    let roles = user.roles.clone().unwrap_or_default();
+    let permissions = RolePermissionModel::new()
+        .list_permissions_for_roles(pool, &roles)
+        .await?;
+    let mut refreshed = current_session
+        .with_account(&user.account, user.id)
+        .with_groups(groups)
+        .with_roles(roles)
+        .with_permissions(permissions);
+    refreshed.save().await?;
+
+    let action = if had_password {
+        "user.password_change"
+    } else {
+        "user.password_set"
+    };
+    let _ = AuditLogModel::new()
+        .log(
+            pool,
+            AuditLogParams::new(action)
+                .with_user(user.id)
+                .with_target("user", user.id.to_string())
+                .with_request(request_id.as_str(), ip.to_string(), user_agent_of(&headers)),
+        )
+        .await;
+
+    Ok(SessionResponse(refreshed, StatusCode::NO_CONTENT))
+}
+
+fn default_my_audit_limit() -> i64 {
+    20
+}
+
+#[derive(Debug, Deserialize, Validate, IntoParams)]
+#[into_params(parameter_in = Query)]
+struct MyAuditLogsQuery {
+    /// 返回条数（默认 20，范围 1..=100）
+    #[serde(default = "default_my_audit_limit")]
+    #[validate(range(min = 1, max = 100))]
+    limit: i64,
+}
+
+/// 查询当前登录用户自身最近的安全与审计活动记录。
+#[utoipa::path(
+    get,
+    path = "/users/audit-logs",
+    tag = "user",
+    params(MyAuditLogsQuery),
+    responses((status = 200, description = "个人近期安全活动列表", body = Vec<crate::audit::AuditLogItem>))
+)]
+async fn list_my_audit_logs(
+    State(pool): State<&'static PgPool>,
+    session: UserSession,
+    QueryParams(query): QueryParams<MyAuditLogsQuery>,
+) -> JsonResult<Vec<crate::audit::AuditLogItem>> {
+    let rows = AuditLogModel::new()
+        .list_by_user(pool, session.get_user_id(), query.limit)
+        .await?;
+    Ok(Json(
+        rows.into_iter()
+            .map(crate::audit::AuditLogItem::from)
+            .collect(),
+    ))
+}
+
+#[cfg(feature = "oauth")]
+#[derive(Debug, Serialize, ToSchema)]
+struct OAuthLinkItem {
+    provider: String,
+    provider_login: String,
+    provider_email: String,
+    created: String,
+}
+
+#[cfg(feature = "oauth")]
+#[derive(Debug, Serialize, ToSchema)]
+struct OAuthLinksResp {
+    /// 系统当前已启用的 OAuth 提供商标识列表（如 `github` / `google`）
+    providers: Vec<String>,
+    /// 当前登录用户已绑定的第三方账号
+    links: Vec<OAuthLinkItem>,
+}
+
+/// 列出系统已配置 OAuth 提供商及当前用户已绑定的第三方账号。
+#[cfg(feature = "oauth")]
+#[utoipa::path(
+    get,
+    path = "/users/oauth/links",
+    tag = "user",
+    responses((status = 200, description = "OAuth 提供商与当前用户绑定状态", body = OAuthLinksResp))
+)]
+async fn list_oauth_links(
+    State((pool, oauth_config)): State<(&'static PgPool, &'static OAuthConfig)>,
+    session: UserSession,
+) -> JsonResult<OAuthLinksResp> {
+    let mut providers = Vec::new();
+    if oauth_config.github.is_configured() {
+        providers.push("github".to_string());
+    }
+    if oauth_config.google.is_configured() {
+        providers.push("google".to_string());
+    }
+    let rows = UserOauthLinkModel::new()
+        .list_by_user(pool, session.get_user_id())
+        .await?;
+    let links = rows
+        .into_iter()
+        .map(|item| OAuthLinkItem {
+            provider: item.provider,
+            provider_login: item.provider_login,
+            provider_email: item.provider_email,
+            created: item.created,
+        })
+        .collect();
+    Ok(Json(OAuthLinksResp { providers, links }))
+}
+
+/// 防锁死判定：已设本地密码或仍保留超过 1 条 OAuth 绑定时才允许解绑。
+#[cfg(feature = "oauth")]
+fn can_unlink_oauth(has_password: bool, current_link_count: usize) -> bool {
+    has_password || current_link_count > 1
+}
+
+/// 解绑当前用户指定的 OAuth 第三方账号（禁止解绑最后一个登录凭据导致锁死）。
+#[cfg(feature = "oauth")]
+#[utoipa::path(
+    delete,
+    path = "/users/oauth/{provider}",
+    tag = "user",
+    params(("provider" = String, Path, description = "OAuth 提供商名称，如 github / google")),
+    responses(
+        (status = 204, description = "解绑成功"),
+        (status = 400, description = "未设置密码且仅剩此绑定，解绑将导致无法登录"),
+        (status = 404, description = "未找到对应 OAuth 绑定")
+    )
+)]
+async fn unlink_oauth(
+    State(pool): State<&'static PgPool>,
+    session: UserSession,
+    request_id: RequestId,
+    ClientIp(ip): ClientIp,
+    headers: HeaderMap,
+    Path(provider): Path<String>,
+) -> Result<StatusCode> {
+    if provider.is_empty()
+        || provider.len() > 32
+        || !provider
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b == b'_')
+    {
+        return Err(BaseError::new("invalid oauth provider")
+            .with_category(ERROR_CATEGORY)
+            .with_sub_category("invalid_provider")
+            .with_status(400)
+            .with_exception(false));
+    }
+    let user_id = session.get_user_id();
+    let uid = u64::try_from(user_id).map_err(|_| Error::BadCredentials)?;
+    let user = UserModel::new()
+        .get_by_id(pool, uid)
+        .await?
+        .context(UserNotFoundSnafu {
+            account: session.get_account().to_string(),
+        })?;
+    let link_model = UserOauthLinkModel::new();
+    let links = link_model.list_by_user(pool, user_id).await?;
+    if !links.iter().any(|l| l.provider == provider) {
+        return Err(BaseError::new("oauth link not found")
+            .with_category(ERROR_CATEGORY)
+            .with_sub_category("oauth_link_not_found")
+            .with_status(404)
+            .with_exception(false));
+    }
+    if !can_unlink_oauth(!user.password.is_empty(), links.len()) {
+        return Err(BaseError::new("cannot unlink the last login method")
+            .with_category(ERROR_CATEGORY)
+            .with_sub_category("cannot_unlink_last_login_method")
+            .with_status(400)
+            .with_exception(false));
+    }
+
+    link_model.unlink(pool, user_id, &provider).await?;
+    let _ = AuditLogModel::new()
+        .log(
+            pool,
+            AuditLogParams::new("user.oauth_unlink")
+                .with_user(user_id)
+                .with_target("user", user_id.to_string())
+                .with_request(request_id.as_str(), ip.to_string(), user_agent_of(&headers))
+                .with_detail(json!({ "provider": provider })),
+        )
+        .await;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// 阻止无个人用户 ID 的非人类主体会话（如 `app-auth` 注入的 `app:{app_id}`，`user_id = 0`）访问个人账号端点。
+async fn reject_non_human_session(req: Request, next: Next) -> Response {
+    if let Some(se) = req.extensions().get::<Session>()
+        && se.is_login()
+        && se.get_user_id() <= 0
+    {
+        return BaseError::new("app credential cannot access personal user endpoints")
+            .with_category(ERROR_CATEGORY)
+            .with_sub_category("app_session_forbidden")
+            .with_status(403)
+            .with_exception(false)
+            .into_response();
+    }
+    next.run(req).await
+}
+
 /// 构建用户路由所需的参数。
 pub struct UserRouterParams {
     /// 用于登录令牌签名的密钥
@@ -1228,7 +1682,12 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
                 .with_state(params.pool)
                 .layer(from_fn_with_state((name, "logout").into(), user_tracker)),
         )
-        .route("/profile", patch(update_profile).with_state(params.pool));
+        .route("/profile", patch(update_profile).with_state(params.pool))
+        .route("/password", patch(change_password).with_state(params.pool))
+        .route(
+            "/audit-logs",
+            get(list_my_audit_logs).with_state(params.pool),
+        );
 
     // 邮箱验证与密码重置（请求与确认均挂限流，防止暴力枚举 token 与邮件轰炸）
     #[cfg(feature = "email")]
@@ -1370,6 +1829,14 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
                         user_tracker,
                     ))
                     .layer(from_fn_with_state(oauth_limit, redis_ip_rate_limit)),
+            )
+            .route(
+                "/oauth/links",
+                get(list_oauth_links).with_state((params.pool, params.oauth_config)),
+            )
+            .route(
+                "/oauth/{provider}",
+                delete(unlink_oauth).with_state(params.pool),
             );
     }
 
@@ -1473,7 +1940,7 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
         }
     }
 
-    router
+    router.layer(from_fn(reject_non_human_session))
 }
 
 /// 本路由模块基础 OpenAPI 文档片段（路径相对 `/users` 已在注解里写全）。
@@ -1487,6 +1954,8 @@ pub fn new_user_router(params: UserRouterParams) -> Router {
         register,
         logout,
         update_profile,
+        change_password,
+        list_my_audit_logs,
     ),
     tags((name = "user", description = "用户认证、资料与会话管理"))
 )]
@@ -1518,12 +1987,17 @@ struct TotpApiDoc;
 
 #[cfg(feature = "oauth")]
 #[derive(OpenApi)]
-#[openapi(paths(
-    oauth_github::start_login,
-    oauth_github::callback,
-    oauth_google::start_login,
-    oauth_google::callback,
-))]
+#[openapi(
+    paths(
+        oauth_github::start_login,
+        oauth_github::callback,
+        oauth_google::start_login,
+        oauth_google::callback,
+        list_oauth_links,
+        unlink_oauth,
+    ),
+    components(schemas(OAuthLinkItem, OAuthLinksResp))
+)]
 struct OAuthApiDoc;
 
 #[cfg(feature = "jwt")]
@@ -1555,15 +2029,7 @@ pub fn openapi() -> utoipa::openapi::OpenApi {
     doc
 }
 
-/// 从 HeaderMap 取 User-Agent（缺失 / 非 ASCII 时返回空串）。
-/// audit_log 的 truncate 会再做长度截断，这里只负责取值。
-pub(crate) fn user_agent_of(headers: &HeaderMap) -> String {
-    headers
-        .get("user-agent")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
-        .to_string()
-}
+pub(crate) use crate::user_agent_of;
 
 #[cfg(test)]
 mod tests {
@@ -1643,6 +2109,12 @@ mod tests {
             PasswordCheck::Mismatch
         ));
         assert!(matches!(
+            verify_user_password_constant_time(Some(""), &secret)
+                .await
+                .expect("empty hash user check"),
+            PasswordCheck::Mismatch
+        ));
+        assert!(matches!(
             verify_user_password_constant_time(Some(&hashed), &secret)
                 .await
                 .expect("valid user check"),
@@ -1654,5 +2126,27 @@ mod tests {
                 .expect("wrong password check"),
             PasswordCheck::Mismatch
         ));
+    }
+
+    #[cfg(feature = "oauth")]
+    #[test]
+    fn oauth_redirect_query_and_unlink_guards_work() {
+        assert_eq!(
+            append_redirect_query("/#/profile", "oauth_bound", "github"),
+            "/#/profile?oauth_bound=github"
+        );
+        assert_eq!(
+            append_redirect_query("/#/profile?tab=sec", "oauth_bound", "github"),
+            "/#/profile?tab=sec&oauth_bound=github"
+        );
+        assert_eq!(
+            append_redirect_query("/profile", "oauth_error", "already_linked"),
+            "/profile?oauth_error=already_linked"
+        );
+
+        assert!(!can_unlink_oauth(false, 0));
+        assert!(!can_unlink_oauth(false, 1));
+        assert!(can_unlink_oauth(false, 2));
+        assert!(can_unlink_oauth(true, 1));
     }
 }

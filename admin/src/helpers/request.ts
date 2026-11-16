@@ -150,12 +150,12 @@ request.interceptors.response.use(
             return request(config);
         }
 
-        const he = new HTTPError(0, "请求出错");
+        const he = new HTTPError(0, i18n.t("common.requestFailed"));
         if (timeoutErrorCodes.includes(err.code)) {
             he.exception = true;
             he.code = err.code;
             he.category = "timeout";
-            he.message = "请求超时，请稍候再试";
+            he.message = i18n.t("common.requestTimeout");
         } else if (response) {
             he.status = response.status;
             if (response.data && response.data.message) {
@@ -166,7 +166,7 @@ request.interceptors.response.use(
             } else {
                 he.exception = true;
                 he.category = "exception";
-                he.message = `未知错误`;
+                he.message = i18n.t("common.unknownError");
             }
             he.extra = response.data?.extra;
         }

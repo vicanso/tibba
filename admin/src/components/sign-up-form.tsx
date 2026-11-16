@@ -11,7 +11,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useI18n } from "@/i18n";
-import { Link } from "react-router";
+import { Link, useNavigate } from "react-router";
 import { LOGIN } from "@/constants/route";
 import { useState } from "react";
 import { Loader2Icon } from "lucide-react";
@@ -19,12 +19,12 @@ import { toast } from "sonner";
 import { formatError } from "@/helpers/util";
 import useUserState from "@/states/user";
 import { useShallow } from "zustand/react/shallow";
-import router from "@/routers";
 
 export function SignUpForm({
     className,
     ...props
 }: React.ComponentPropsWithoutRef<"div">) {
+    const navigate = useNavigate();
     const i18nSignUp = useI18n("signUp");
     const [account, setAccount] = useState("");
     const [password, setPassword] = useState("");
@@ -35,14 +35,14 @@ export function SignUpForm({
         return account && password && password == confirmPassword;
     };
     const handleSignUp = async () => {
-        if (processing) {
+        if (processing || !canSubmit()) {
             return;
         }
         setProcessing(true);
         try {
             await signUp(account, password);
             toast.success(i18nSignUp("success"));
-            router.navigate(LOGIN, {
+            navigate(LOGIN, {
                 state: {
                     account,
                 },
@@ -66,7 +66,12 @@ export function SignUpForm({
                     </CardDescription>
                 </CardHeader>
                 <CardContent>
-                    <form>
+                    <form
+                        onSubmit={(e) => {
+                            e.preventDefault();
+                            void handleSignUp();
+                        }}
+                    >
                         <div className="flex flex-col gap-6">
                             <div className="grid gap-2">
                                 <Label htmlFor="account">
@@ -124,8 +129,7 @@ export function SignUpForm({
                             <Button
                                 type="submit"
                                 className="w-full"
-                                disabled={!canSubmit()}
-                                onClick={handleSignUp}
+                                disabled={processing || !canSubmit()}
                             >
                                 {processing && (
                                     <Loader2Icon className="size-4 animate-spin mr-2" />

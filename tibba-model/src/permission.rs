@@ -94,6 +94,26 @@ impl PermissionModel {
         Ok(row.map(Permission::from))
     }
 
+    /// 仅在不存在活跃行时插入内置权限点（不覆盖已有描述）。返回是否实际插入。
+    pub async fn insert_if_absent(
+        &self,
+        pool: &Pool<Postgres>,
+        code: &str,
+        description: &str,
+    ) -> Result<bool> {
+        let result = sqlx::query(
+            r#"INSERT INTO permissions (code, description)
+               VALUES ($1, $2)
+               ON CONFLICT (code) WHERE deleted_at IS NULL DO NOTHING"#,
+        )
+        .bind(code)
+        .bind(description)
+        .execute(pool)
+        .await
+        .context(SqlxSnafu)?;
+        Ok(result.rows_affected() > 0)
+    }
+
     /// 注册新的权限点；已存在活跃行（同 code）时按部分唯一索引触发 ON CONFLICT，
     /// 覆盖更新描述字段。ON CONFLICT 谓词须与 `uk_permissions_code (code) WHERE
     /// deleted_at IS NULL` 一致，否则无法匹配部分索引（42P10）。

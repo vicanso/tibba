@@ -43,7 +43,7 @@ struct ConfigurationSchema {
     modified: PrimitiveDateTime,
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Configuration {
     pub id: i64,
     pub status: i16,
@@ -55,6 +55,23 @@ pub struct Configuration {
     pub effective_end_time: String,
     pub created: String,
     pub modified: String,
+}
+
+impl Configuration {
+    /// 判断配置在给定 UTC 时刻是否处于启用且有效的生效时间窗口内。
+    #[must_use]
+    pub fn is_effective_at(&self, now: PrimitiveDateTime) -> bool {
+        if self.status != crate::Status::Enabled as i16 {
+            return false;
+        }
+        let Ok(start) = parse_primitive_datetime(&self.effective_start_time) else {
+            return false;
+        };
+        let Ok(end) = parse_primitive_datetime(&self.effective_end_time) else {
+            return false;
+        };
+        now >= start && now <= end
+    }
 }
 
 impl From<ConfigurationSchema> for Configuration {
@@ -309,6 +326,46 @@ impl Model for ConfigurationModel {
     }
 }
 
+impl ConfigurationModel {
+    /// 按分类与名称查询单条未删除配置（含未在时间窗或禁用记录，由调用方在内存判定生效状态）。
+    pub async fn get_by_category_name(
+        &self,
+        pool: &Pool<Postgres>,
+        category: &str,
+        name: &str,
+    ) -> Result<Option<Configuration>> {
+        let row: Option<ConfigurationSchema> = sqlx::query_as(
+            r#"SELECT * FROM configurations
+               WHERE category = $1 AND name = $2 AND deleted_at IS NULL
+               LIMIT 1"#,
+        )
+        .bind(category)
+        .bind(name)
+        .fetch_optional(pool)
+        .await
+        .context(SqlxSnafu)?;
+        Ok(row.map(Configuration::from))
+    }
+
+    /// 按分类列出全部未删除配置（按 name 升序）。
+    pub async fn list_by_category(
+        &self,
+        pool: &Pool<Postgres>,
+        category: &str,
+    ) -> Result<Vec<Configuration>> {
+        let rows: Vec<ConfigurationSchema> = sqlx::query_as(
+            r#"SELECT * FROM configurations
+               WHERE category = $1 AND deleted_at IS NULL
+               ORDER BY name ASC"#,
+        )
+        .bind(category)
+        .fetch_all(pool)
+        .await
+        .context(SqlxSnafu)?;
+        Ok(rows.into_iter().map(Configuration::from).collect())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -342,5 +399,37 @@ mod tests {
             Err(Error::Validation { .. })
         ));
         assert!(validate_effective_range(end, start).is_ok());
+    }
+
+    #[test]
+    fn configuration_is_effective_at_checks_status_and_window() {
+        let base = Configuration {
+            id: 1,
+            status: crate::Status::Enabled as i16,
+            category: "app".to_string(),
+            name: "banner".to_string(),
+            data: serde_json::json!({"ok": true}),
+            description: String::new(),
+            effective_start_time: "2026-06-05T10:00:00Z".to_string(),
+            effective_end_time: "2026-06-05T12:00:00Z".to_string(),
+            created: String::new(),
+            modified: String::new(),
+        };
+
+        // 窗口内（含边界）
+        assert!(base.is_effective_at(datetime!(2026-06-05 10:00:00)));
+        assert!(base.is_effective_at(datetime!(2026-06-05 11:00:00)));
+        assert!(base.is_effective_at(datetime!(2026-06-05 12:00:00)));
+
+        // 未到开始时间
+        assert!(!base.is_effective_at(datetime!(2026-06-05 09:59:59)));
+
+        // 已过结束时间
+        assert!(!base.is_effective_at(datetime!(2026-06-05 12:00:01)));
+
+        // 禁用状态即使在窗口内也不生效
+        let mut disabled = base;
+        disabled.status = crate::Status::Disabled as i16;
+        assert!(!disabled.is_effective_at(datetime!(2026-06-05 11:00:00)));
     }
 }

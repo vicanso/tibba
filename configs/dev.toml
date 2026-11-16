@@ -1,3 +1,7 @@
+# basic config
+[basic]
+super_admins = ["vicanso"]
+
 # redis config
 [redis]
 uri = "redis://127.0.0.1:6379"
@@ -7,4 +11,4 @@ uri = "redis://127.0.0.1:6379"
 secret = "y0nEeTWOF0Ud8XNoTfYacGC6MrKgxIUnJV1kv0PBh83IeKmyHtuJ5uqGa7hcfBSu"
 
 [database]
-uri = "postgres://vicanso:A123456@127.0.0.1:5432/cybertect"
+uri = "postgres://cyberapi:cyberapi@127.0.0.1:55432/tibba"

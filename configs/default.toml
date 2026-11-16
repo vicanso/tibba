@@ -18,6 +18,9 @@ secret = "tibba-dev-insecure-secret-do-not-use-in-production"
 # 启动时授予超级管理员（su）角色的账号（需已注册；幂等）。首个注册用户**不再**自动成为超管。
 # 环境变量：TIBBA_WEB__BASIC__SUPER_ADMINS
 # super_admins = ["admin"]
+# Prometheus /api/metrics 抓取凭证（Bearer Token）；未设置时生产环境仅 AdminSession 可访问。
+# 环境变量：TIBBA_WEB__BASIC__METRICS_TOKEN
+# metrics_token = ""
 
 
 # session config

@@ -49,6 +49,10 @@ process-info = ["tibba-runtime/process-info", "tibba-router/process-info"]
 scheduler = ["tibba-runtime/scheduler"]
 # 编译期嵌入 admin/dist SPA 静态资源
 embed-admin = ["dep:rust-embed", "dep:mime_guess2"]
+# 运行期配置化只读 SQL 查询接口（/queries/{group}/{name} 与 /sql-queries）
+sql-query = ["tibba-router/sql-query"]
+# 应用级签名鉴权（app_id + ts + sign 与 /apps 管理端点）
+app-auth = ["tibba-router/app-auth"]
 # 全部可选能力
 full = [
     "file",
@@ -63,6 +67,8 @@ full = [
     "process-info",
     "scheduler",
     "embed-admin",
+    "sql-query",
+    "app-auth",
 ]
 
 [dependencies]
@@ -80,6 +86,7 @@ rust-embed = { workspace = true, optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sqlx = { workspace = true }
+subtle = { workspace = true }
 substring = { workspace = true }
 tibba-auth = { workspace = true }
 tibba-cache = { workspace = true }

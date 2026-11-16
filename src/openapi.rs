@@ -90,9 +90,13 @@ mod tests {
         assert!(paths.contains_key("/healthz"));
         assert!(paths.contains_key("/readyz"));
         assert!(paths.contains_key("/commons/application"));
+        assert!(paths.contains_key("/commons/configs/{category}"));
         assert!(paths.contains_key("/models/schema"));
         assert!(paths.contains_key("/models/create"));
+        assert!(paths.contains_key("/rbac/overview"));
+        assert!(paths.contains_key("/audit-logs"));
         assert!(paths.contains_key("/users/login"));
+        assert!(paths.contains_key("/users/password"));
 
         #[cfg(feature = "file")]
         {
@@ -112,6 +116,18 @@ mod tests {
         {
             assert!(paths.contains_key("/users/login/mfa"));
             assert!(paths.contains_key("/users/totp/enroll"));
+        }
+        #[cfg(feature = "sql-query")]
+        {
+            assert!(paths.contains_key("/queries/{group}/{name}"));
+            assert!(paths.contains_key("/sql-queries"));
+            assert!(paths.contains_key("/sql-queries/groups"));
+        }
+        #[cfg(feature = "app-auth")]
+        {
+            assert!(paths.contains_key("/apps"));
+            assert!(paths.contains_key("/apps/{id}/secret"));
+            assert!(paths.contains_key("/apps/{id}/rotate-secret"));
         }
     }
 }

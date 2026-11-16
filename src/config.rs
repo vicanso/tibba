@@ -101,6 +101,9 @@ pub struct BasicConfig {
     /// 启动时授予超级管理员角色的账号列表（幂等）
     #[serde(default)]
     pub super_admins: Vec<String>,
+    /// Prometheus `/metrics` 接口抓取密钥（`Authorization: Bearer <token>`）；生产推荐设置
+    #[serde(default)]
+    pub metrics_token: Option<String>,
 }
 
 impl fmt::Debug for BasicConfig {
@@ -120,6 +123,10 @@ impl fmt::Debug for BasicConfig {
             .field("cors_allow_origins", &self.cors_allow_origins)
             .field("cors_allow_credentials", &self.cors_allow_credentials)
             .field("super_admins", &self.super_admins)
+            .field(
+                "metrics_token",
+                &self.metrics_token.as_deref().map(redact_secret),
+            )
             .finish()
     }
 }
@@ -404,11 +411,13 @@ mod tests {
             listen: "127.0.0.1:5000".to_string(),
             secret: "super-basic-secret-0123456789012345".to_string(),
             password_pepper: Some("super-pepper-value".to_string()),
+            metrics_token: Some("super-metrics-secret".to_string()),
             ..Default::default()
         };
         let basic_dbg = format!("{basic:?}");
         assert!(!basic_dbg.contains("super-basic-secret"), "{basic_dbg}");
         assert!(!basic_dbg.contains("super-pepper-value"), "{basic_dbg}");
+        assert!(!basic_dbg.contains("super-metrics-secret"), "{basic_dbg}");
         assert!(basic_dbg.contains("[REDACTED]"), "{basic_dbg}");
 
         let session = SessionConfig {

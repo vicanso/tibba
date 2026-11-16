@@ -4233,6 +4233,7 @@ dependencies = [
  "serde_json",
  "sqlx",
  "substring",
+ "subtle",
  "tibba-auth",
  "tibba-cache",
  "tibba-config",
@@ -4482,6 +4483,7 @@ dependencies = [
  "tracing",
  "utoipa",
  "validator",
+ "zeroize",
 ]
 
 [[package]]

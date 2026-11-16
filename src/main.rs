@@ -187,6 +187,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     let ctx = app_ctx::init().await?;
     bootstrap_super_admins(ctx.pool).await?;
+    tibba_router::rbac::ensure_builtin_permissions(ctx.pool).await?;
 
     // JWT access token 的撤销校验与 Session 共用 Redis 中的撤销标记
     #[cfg(feature = "jwt")]
@@ -214,7 +215,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     let mw = MiddlewareOptions::default()
         .with_otel(cfg!(feature = "otel"))
-        .with_api_key(cfg!(feature = "api-key"));
+        .with_api_key(cfg!(feature = "api-key") || cfg!(feature = "app-auth"));
     info!(
         target: LOG_TARGET,
         otel = mw.otel,
@@ -226,8 +227,10 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let session_params = Arc::new(config::get_session_params()?);
+    #[cfg(feature = "api-key")]
+    let api_session_params = session_params.clone();
     #[allow(unused_mut)]
-    let mut stack_params = MiddlewareStackParams::new(ctx.state, ctx.cache, session_params.clone())
+    let mut stack_params = MiddlewareStackParams::new(ctx.state, ctx.cache, session_params)
         .with_cors(cors_cfg)
         .with_timeout(basic_config.timeout)
         .with_options(mw);
@@ -237,8 +240,22 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         let cache = ctx.cache;
         stack_params = stack_params.with_post_session_layer(move |router| {
             router.layer(axum::middleware::from_fn_with_state(
-                (pool, cache, session_params),
+                (pool, cache, api_session_params),
                 tibba_router::user::api_key_auth,
+            ))
+        });
+    }
+    #[cfg(feature = "app-auth")]
+    {
+        let app_auth_state = tibba_router::app_auth::new_app_auth_state(
+            ctx.configs,
+            ctx.cache,
+            &basic_config.secret,
+        );
+        stack_params = stack_params.with_post_session_layer(move |router| {
+            router.layer(axum::middleware::from_fn_with_state(
+                app_auth_state,
+                tibba_router::app_auth::app_auth_middleware,
             ))
         });
     }

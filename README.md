@@ -13,9 +13,9 @@ HTTP 中间件栈（tibba_middleware::apply_middleware_stack）
   → session → [api_key_auth] → [validate_csrf] → [http_cache]
        ↓
   Router（src/router.rs → tibba-router）
-  /healthz · /readyz · /commons/* · /users/* · /models/* · [/files/*] · [/jobs/*] · /metrics · /csrf/token
+  /healthz · /readyz · /commons/* · /users/* · /models/* · /rbac/* · /audit-logs · [/files/*] · [/jobs/*] · [/queries/*] · /metrics · /csrf/token
        ↓
-  AppCtx（src/app_ctx.rs::init 显式初始化：state · pool · cache · [storage]）
+  AppCtx（src/app_ctx.rs::init 显式初始化：state · pool · cache · configs · [storage]）
        ↓
   sqlx（PgPool + ./migrations）· RedisCache · OpenDAL · JobQueue
 ```
@@ -61,6 +61,7 @@ docker run -d --name tibba-redis -p 6379:6379 redis:7-alpine
 | `TIBBA_WEB__BASIC__PASSWORD_PEPPER` | 可选密码哈希服务端 pepper（经 `tibba-crypto` 全局策略生效） |
 | `TIBBA_WEB__BASIC__CORS_ALLOW_ORIGINS` | 生产**必须**配置来源白名单 |
 | `TIBBA_WEB__BASIC__SUPER_ADMINS` | 启动时授予 `su` 超管的账号列表（幂等） |
+| `TIBBA_WEB__BASIC__METRICS_TOKEN` | 可选 `/api/metrics` Bearer 采集令牌（未设置时生产环境仅允许管理员会话） |
 | `TIBBA_WEB__BASIC__LISTEN` | 监听地址，默认 `127.0.0.1:5000` |
 | `TIBBA_WEB__DATABASE__URI` | PostgreSQL 连接串 |
 | `TIBBA_WEB__REDIS__URI` | Redis 连接串 |
@@ -90,7 +91,8 @@ cargo test --workspace
 - 存活探针：`GET /api/healthz`
 - 就绪探针：`GET /api/readyz`（探测 DB / Redis / 可选 OpenDAL / 可选任务积压）
 - 接口文档：dev/test 下 `GET /swagger-ui`（Scalar API Reference）与 `GET /api-docs/openapi.json`
-- 指标输出：`GET /api/metrics`
+- 公开动态配置：`GET /api/commons/configs/{category}` 与 `GET /api/commons/configs/{category}/{name}`（白名单 `common` / `app`，基于 `ConfigStore` 双层缓存）
+- 指标输出：`GET /api/metrics`（dev/test 默认放行；生产需 `Authorization: Bearer <basic.metrics_token>` 或管理员会话）
 
 ### 5. Admin 前端
 
@@ -132,7 +134,9 @@ make init name=my-app dest=~/github flags=--minimal  # 将 default features 置�
 | `process-info` | 进程 CPU / 内存 / FD / 磁盘 I/O 采样 |
 | `scheduler` | 进程内 cron 周期监控任务调度器 |
 | `embed-admin` | 编译期嵌入 `admin/dist/` SPA 静态资源 |
-| `full` | 启用上述全部 12 个可选 feature |
+| `sql-query` | 运行期配置化只读 SQL 查询接口（`/queries/{group}/{name}` 与 `/sql-queries`） |
+| `app-auth` | 应用级签名鉴权（`app_id + ts + sign` 查询参数与 `/apps` 管理端点） |
+| `full` | 启用上述全部 14 个可选 feature |
 
 ```bash
 # 最小二进制（关闭 file、job 与 email）

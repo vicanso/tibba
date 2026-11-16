@@ -49,6 +49,12 @@ impl ModelCaller {
             .iter()
             .any(|r| Role::from(r.as_str()) == Role::SuperAdmin)
     }
+
+    pub fn is_admin(&self) -> bool {
+        self.roles
+            .iter()
+            .any(|r| matches!(Role::from(r.as_str()), Role::SuperAdmin | Role::Admin))
+    }
 }
 
 /// 模块对外暴露的 Result 仍以 `tibba_error::Error` 为错误类型，本地 `Error` 仅作 snafu 上下文。

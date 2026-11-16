@@ -86,11 +86,19 @@ pub async fn csrf_token(jar: CookieJar) -> (CookieJar, Json<CsrfTokenResp>) {
     (jar.add(cookie), Json(CsrfTokenResp { token }))
 }
 
+/// 非 Cookie 显式凭证鉴权（如已验签的 `app_auth` 查询参数签名）在当前请求上已完成校验的标记。
+/// 仅由后端验签中间件在验证通过后注入请求扩展，避免伪造查询参数绕过浏览器 Cookie 会话的 CSRF 校验。
+#[derive(Debug, Clone, Copy)]
+pub struct VerifiedNonCookieAuth;
+
 /// 中间件：校验状态变更请求的 CSRF token。GET/HEAD/OPTIONS 直通。
 ///
 /// 校验失败返回 HTTP 403。调用方按路由分组挂载，不要全局挂——会冲击
 /// `/csrf/token`、`/login`、`/register` 等不应受此约束的端点。
 pub async fn validate_csrf(jar: CookieJar, req: Request, next: Next) -> Result<Response> {
+    if req.extensions().get::<VerifiedNonCookieAuth>().is_some() {
+        return Ok(next.run(req).await);
+    }
     // 安全方法 + API 客户端（显式凭据、非 cookie 鉴权）直通，其余走 double-submit 校验
     if is_csrf_exempt(req.method(), req.headers()) {
         return Ok(next.run(req).await);

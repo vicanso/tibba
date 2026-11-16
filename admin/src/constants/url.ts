@@ -8,6 +8,8 @@ export const USER_LOGIN_TOKEN = "/users/login/token";
 export const USER_LOGOUT = "/users/logout";
 export const USER_REFRESH = "/users/refresh";
 export const USER_PROFILE = "/users/profile";
+export const USER_PASSWORD = "/users/password";
+export const USER_AUDIT_LOGS = "/users/audit-logs";
 export const USER_EMAIL_VERIFY_REQUEST = "/users/email/verify/request";
 export const USER_EMAIL_VERIFY_CONFIRM = "/users/email/verify/confirm";
 export const USER_PASSWORD_RESET_REQUEST = "/users/password/reset/request";
@@ -17,6 +19,8 @@ export const USER_TOTP_ENROLL = "/users/totp/enroll";
 export const USER_TOTP_ACTIVATE = "/users/totp/activate";
 export const USER_TOTP_DISABLE = "/users/totp/disable";
 export const USER_API_KEYS = "/users/api-keys";
+export const USER_OAUTH_LINKS = "/users/oauth/links";
+export const USER_OAUTH_UNLINK = "/users/oauth";
 export const USER_OAUTH_GITHUB = "/api/users/oauth/github/start";
 export const USER_OAUTH_GOOGLE = "/api/users/oauth/google/start";
 
@@ -34,3 +38,15 @@ export const FILE_DOWNLOAD = "/api/files/download";
 
 export const JOBS_STATS = "/jobs/stats";
 export const JOBS_DEAD = "/jobs/dead";
+
+export const RBAC_OVERVIEW = "/rbac/overview";
+export const RBAC_PERMISSIONS = "/rbac/permissions";
+export const RBAC_ROLES = "/rbac/roles";
+
+export const AUDIT_LOGS_URL = "/audit-logs";
+export const AUDIT_LOGS_TRACE = "/audit-logs/trace";
+
+export const SQL_QUERIES_URL = "/sql-queries";
+export const SQL_QUERIES_TEST = "/sql-queries/test";
+export const SQL_QUERIES_GROUPS = "/sql-queries/groups";
+export const APPS_URL = "/apps";

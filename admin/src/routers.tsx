@@ -9,6 +9,10 @@ import Model from "@/pages/Model";
 import ModelEditor from "@/pages/ModelEditor";
 import FileUploader from "@/pages/FileUploader";
 import Jobs from "@/pages/Jobs";
+import Rbac from "@/pages/Rbac";
+import AuditLogs from "@/pages/AuditLogs";
+import SqlQueries from "@/pages/SqlQueries";
+import Apps from "@/pages/Apps";
 
 import {
     HOME,
@@ -17,6 +21,10 @@ import {
     RESET_PASSWORD,
     PROFILE,
     JOBS,
+    RBAC,
+    AUDIT_LOGS,
+    SQL_QUERIES,
+    APPS,
     MODEL,
     MODEL_EDITOR,
     FILE_UPLOADER,
@@ -50,6 +58,22 @@ const router = createHashRouter([
             {
                 path: JOBS,
                 element: <Jobs />,
+            },
+            {
+                path: RBAC,
+                element: <Rbac />,
+            },
+            {
+                path: AUDIT_LOGS,
+                element: <AuditLogs />,
+            },
+            {
+                path: SQL_QUERIES,
+                element: <SqlQueries />,
+            },
+            {
+                path: APPS,
+                element: <Apps />,
             },
             {
                 path: `${MODEL}/:name`,

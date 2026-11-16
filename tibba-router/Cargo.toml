@@ -31,6 +31,10 @@ totp = ["tibba-auth/totp"]
 oauth = ["tibba-auth/oauth"]
 # API Key / 个人访问令牌（/users/api-keys* 与 api_key_auth 中间件）
 api-key = []
+# 运行期配置化只读 SQL 查询接口（/queries/{group}/{name} 与 /sql-queries）
+sql-query = []
+# 应用级签名鉴权（app_id + ts + sign 查询参数与 /apps 管理端点）
+app-auth = []
 
 [dependencies]
 axum = { workspace = true, features = ["default"] }
@@ -60,3 +64,4 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 utoipa = { workspace = true }
 validator = { workspace = true }
+zeroize = { workspace = true }

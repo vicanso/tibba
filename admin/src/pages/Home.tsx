@@ -164,7 +164,7 @@ export default function Home() {
     }
 
     return (
-        <div className="mx-auto w-full max-w-5xl space-y-6 p-2 md:p-4">
+        <div className="w-full space-y-6 p-2 md:p-4">
             <Card>
                 <CardHeader className="flex flex-row items-center justify-between gap-4">
                     <div>

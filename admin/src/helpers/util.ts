@@ -31,6 +31,10 @@ export function isAdminRole(roles?: string[]): boolean {
     return Boolean(roles?.some((r) => r === "su" || r === "admin"));
 }
 
+export function isSuperAdminRole(roles?: string[]): boolean {
+    return Boolean(roles?.includes("su"));
+}
+
 export function hasPermission(
     permissions: string[] | undefined,
     required: string,

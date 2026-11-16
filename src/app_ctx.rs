@@ -27,6 +27,7 @@ use tibba_error::Error;
 use tibba_model::sql::{PoolStat, new_pg_pool};
 #[cfg(feature = "file")]
 use tibba_opendal::{Storage, new_opendal_storage};
+use tibba_router::configuration::ConfigStore;
 use tibba_runtime::AppState;
 #[cfg(all(feature = "scheduler", feature = "process-info"))]
 use tibba_runtime::get_process_system_info_async;
@@ -48,6 +49,7 @@ static REDIS_CLIENT: OnceLock<RedisClient> = OnceLock::new();
 static REDIS_CACHE: OnceLock<RedisCache> = OnceLock::new();
 #[cfg(feature = "file")]
 static STORAGE: OnceLock<Storage> = OnceLock::new();
+static CONFIG_STORE: OnceLock<ConfigStore> = OnceLock::new();
 static APP_CTX: OnceLock<AppCtx> = OnceLock::new();
 
 /// 应用级共享依赖集合，由 [`init`] 构造并在进程生命周期内以 `'static` 引用共享。
@@ -59,6 +61,8 @@ pub struct AppCtx {
     pub pool: &'static PgPool,
     /// Redis 缓存客户端
     pub cache: &'static RedisCache,
+    /// 动态配置双层缓存（带跨节点 pub/sub 失效）
+    pub configs: &'static ConfigStore,
     /// 对象存储（`file` feature 开启时可用）
     #[cfg(feature = "file")]
     pub storage: &'static Storage,
@@ -159,6 +163,11 @@ pub async fn init() -> Result<&'static AppCtx> {
             .ok_or_else(|| Error::new("storage init failed").with_category("open_dal"))?
     };
 
+    let _ = CONFIG_STORE.set(ConfigStore::new(pool, client));
+    let configs = CONFIG_STORE
+        .get()
+        .ok_or_else(|| Error::new("config store init failed").with_category("app_ctx"))?;
+
     // 周期性健康检查与资源指标上报
     #[cfg(feature = "scheduler")]
     {
@@ -166,12 +175,13 @@ pub async fn init() -> Result<&'static AppCtx> {
         run_scheduler_jobs().await?;
     }
     #[cfg(not(feature = "scheduler"))]
-    let _ = (&pool_stat, client);
+    let _ = &pool_stat;
 
     let ctx = AppCtx {
         state,
         pool,
         cache,
+        configs,
         #[cfg(feature = "file")]
         storage,
     };
@@ -184,6 +194,7 @@ pub async fn init() -> Result<&'static AppCtx> {
 /// 优雅关闭各底层连接池与运行时调度任务。
 pub async fn shutdown(ctx: &AppCtx) {
     ctx.state.stop();
+    ctx.configs.stop();
     #[cfg(feature = "scheduler")]
     if let Err(e) = tibba_runtime::run_after_tasks().await {
         tracing::warn!(target: "tibba:app", error = %e, "shutdown scheduler tasks failed");

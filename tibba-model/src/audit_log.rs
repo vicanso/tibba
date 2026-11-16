@@ -41,7 +41,7 @@ use serde_json::Value;
 use snafu::ResultExt;
 use sqlx::FromRow;
 use sqlx::types::Json;
-use sqlx::{Pool, Postgres};
+use sqlx::{Pool, Postgres, QueryBuilder};
 use time::PrimitiveDateTime;
 
 type Result<T> = std::result::Result<T, Error>;
@@ -170,12 +170,62 @@ impl AuditLogParams {
     }
 }
 
+/// 多维分页查询审计日志的参数。
+#[derive(Debug, Clone, Default)]
+pub struct AuditLogListParams {
+    pub page: u64,
+    pub limit: u64,
+    pub user_id: Option<i64>,
+    pub action: Option<String>,
+    pub target_type: Option<String>,
+    pub target_id: Option<String>,
+    pub request_id: Option<String>,
+    pub ip: Option<String>,
+    pub start_time: Option<PrimitiveDateTime>,
+    pub end_time: Option<PrimitiveDateTime>,
+}
+
 #[derive(Default)]
 pub struct AuditLogModel;
 
 impl AuditLogModel {
     pub fn new() -> Self {
         Self
+    }
+
+    fn push_filter_conditions(&self, qb: &mut QueryBuilder<Postgres>, params: &AuditLogListParams) {
+        if let Some(user_id) = params.user_id {
+            qb.push(" AND user_id = ");
+            qb.push_bind(user_id);
+        }
+        if let Some(action) = params.action.as_deref().filter(|s| !s.is_empty()) {
+            qb.push(" AND action = ");
+            qb.push_bind(action.to_string());
+        }
+        if let Some(target_type) = params.target_type.as_deref().filter(|s| !s.is_empty()) {
+            qb.push(" AND target_type = ");
+            qb.push_bind(target_type.to_string());
+        }
+        if let Some(target_id) = params.target_id.as_deref().filter(|s| !s.is_empty()) {
+            qb.push(" AND target_id = ");
+            qb.push_bind(target_id.to_string());
+        }
+        if let Some(request_id) = params.request_id.as_deref().filter(|s| !s.is_empty()) {
+            qb.push(" AND request_id = ");
+            qb.push_bind(request_id.to_string());
+        }
+        if let Some(ip) = params.ip.as_deref().filter(|s| !s.is_empty()) {
+            qb.push(" AND ip = ");
+            qb.push_bind(ip.to_string());
+        }
+        if let Some(start_time) = params.start_time {
+            qb.push(" AND created >= ");
+            qb.push_bind(start_time);
+        }
+        if let Some(end_time) = params.end_time {
+            qb.push(" AND created <= ");
+            qb.push_bind(end_time);
+        }
     }
 
     /// 写一条审计日志。
@@ -246,6 +296,53 @@ impl AuditLogModel {
         .await
         .context(SqlxSnafu)?;
         Ok(rows.into_iter().map(AuditLog::from).collect())
+    }
+
+    /// 多维筛选分页查询审计日志。`count == false` 时返回的 total 为 `-1`。
+    pub async fn list_and_count(
+        &self,
+        pool: &Pool<Postgres>,
+        count: bool,
+        params: &AuditLogListParams,
+    ) -> Result<(Vec<AuditLog>, i64)> {
+        let total = if count {
+            let mut count_qb = QueryBuilder::new("SELECT COUNT(*) FROM audit_logs WHERE 1 = 1");
+            self.push_filter_conditions(&mut count_qb, params);
+            count_qb
+                .build_query_scalar::<i64>()
+                .fetch_one(pool)
+                .await
+                .context(SqlxSnafu)?
+        } else {
+            -1
+        };
+
+        let mut list_qb = QueryBuilder::new(
+            "SELECT id, user_id, action, target_type, target_id, detail, request_id, ip, user_agent, created FROM audit_logs WHERE 1 = 1",
+        );
+        self.push_filter_conditions(&mut list_qb, params);
+
+        let limit_u64 = params.limit.clamp(1, 200);
+        let limit = i64::try_from(limit_u64).unwrap_or(200);
+        let offset_u64 = params
+            .page
+            .max(1)
+            .saturating_sub(1)
+            .saturating_mul(limit_u64)
+            .min(i64::MAX as u64);
+        let offset = i64::try_from(offset_u64).unwrap_or(i64::MAX);
+
+        list_qb.push(" ORDER BY id DESC LIMIT ");
+        list_qb.push_bind(limit);
+        list_qb.push(" OFFSET ");
+        list_qb.push_bind(offset);
+
+        let rows: Vec<AuditLogSchema> = list_qb
+            .build_query_as::<AuditLogSchema>()
+            .fetch_all(pool)
+            .await
+            .context(SqlxSnafu)?;
+        Ok((rows.into_iter().map(AuditLog::from).collect(), total))
     }
 }
 

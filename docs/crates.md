@@ -32,7 +32,7 @@ Workspace 内共 **12 个**可发布的 `tibba-*` crate，精简为 **核心（C
 | `tibba-opendal` | 对象存储抽象（路径校验与凭证脱敏；默认本地文件系统） | `fs`（默认开）、`s3`、`http` |
 | `tibba-auth` | Cookie + Redis 会话、RBAC 权限判定与可选鉴权扩展 | `jwt`、`totp`、`oauth`、`oauth-google`、`oauth-github` |
 | `tibba-middleware` | 统一 HTTP 中间件栈装配、`request_id`、CORS、CSRF、ETag、限流、幂等与 i18n 本地化 | `otel` |
-| `tibba-router` | HTTP 路由聚合（`common`、`user`、`model`、`user_admin`、`rbac`、可选 `email` / `file` / `job`）及 OpenAPI 拼接 | `email`、`file`、`job`、`jwt`、`totp`、`oauth`、`api-key`、`process-info` |
+| `tibba-router` | HTTP 路由聚合（`common`、`configuration`、`user`、`model`、`user_admin`、`rbac`、`audit`、可选 `email` / `file` / `job` / `sql-query`）及 OpenAPI 拼接 | `email`、`file`、`job`、`jwt`、`totp`、`oauth`、`api-key`、`process-info`、`sql-query` |
 
 ## 主应用 Feature 映射
 
@@ -52,7 +52,9 @@ Workspace 内共 **12 个**可发布的 `tibba-*` crate，精简为 **核心（C
 | `process-info` | `tibba-runtime/process-info` + `tibba-router/process-info` |
 | `scheduler` | `tibba-runtime/scheduler`（`src/app_ctx.rs` 注册周期健康检查与指标任务） |
 | `embed-admin` | `rust-embed` + `mime_guess2`（内嵌 `admin/dist/` 静态资源） |
-| `full` | 打开以上全部 12 项 |
+| `sql-query` | `tibba-router/sql-query`（`/queries/{group}/{name}` 只读 SQL 查询与 `/sql-queries` 超管管理） |
+| `app-auth` | `tibba-router/app-auth`（全局 `app_id + ts + sign` 签名鉴权中间件与 `/apps` 应用授权管理） |
+| `full` | 打开以上全部 14 项 |
 
 ## 发布
 

@@ -18,26 +18,38 @@ import { Label } from "@/components/ui/label";
 import { useShallow } from "zustand/react/shallow";
 import useUserState from "@/states/user";
 import { Loading } from "@/components/loading";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useI18n } from "@/i18n";
 import { formatError, getDirtyValues, DirtyFields } from "@/helpers/util";
 import { Loader2Icon } from "lucide-react";
 
-const profileFormSchema = z.object({
-    nickname: z.string().max(100),
-    phone: z.string().max(64),
-    email: z.union([
-        z.email({ message: "Invalid email format" }),
-        z.literal(""),
-    ]),
-    avatar: z.union([z.url({ message: "Invalid URL" }), z.literal("")]),
-});
-
-type ProfileFormValues = z.infer<typeof profileFormSchema>;
+interface ProfileFormValues {
+    nickname: string;
+    phone: string;
+    email: string;
+    avatar: string;
+}
 
 export function ProfileForm() {
     const profileI18n = useI18n("profile");
     const [processing, setProcessing] = useState(false);
+
+    const profileFormSchema = useMemo(
+        () =>
+            z.object({
+                nickname: z.string().max(100),
+                phone: z.string().max(64),
+                email: z.union([
+                    z.email({ message: profileI18n("invalidEmail") }),
+                    z.literal(""),
+                ]),
+                avatar: z.union([
+                    z.url({ message: profileI18n("invalidAvatarUrl") }),
+                    z.literal(""),
+                ]),
+            }),
+        [profileI18n],
+    );
 
     const [user, initialized, updateProfile] = useUserState(
         useShallow((state) => [

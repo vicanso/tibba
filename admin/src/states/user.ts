@@ -9,8 +9,21 @@ import {
     CogIcon,
     UploadIcon,
     ActivityIcon,
+    ShieldIcon,
+    ScrollTextIcon,
+    DatabaseIcon,
+    KeyRoundIcon,
 } from "lucide-react";
-import { FILE_UPLOADER, HOME, JOBS, MODEL } from "@/constants/route";
+import {
+    APPS,
+    AUDIT_LOGS,
+    FILE_UPLOADER,
+    HOME,
+    JOBS,
+    MODEL,
+    RBAC,
+    SQL_QUERIES,
+} from "@/constants/route";
 import { hasPermission, isAdminRole } from "@/helpers/util";
 
 import {
@@ -21,6 +34,8 @@ import {
     USER_ME,
     USER_REGISTER,
     USER_PROFILE,
+    USER_PASSWORD,
+    USER_AUDIT_LOGS,
     USER_REFRESH,
     USER_EMAIL_VERIFY_REQUEST,
     USER_EMAIL_VERIFY_CONFIRM,
@@ -31,6 +46,8 @@ import {
     USER_TOTP_ACTIVATE,
     USER_TOTP_DISABLE,
     USER_API_KEYS,
+    USER_OAUTH_LINKS,
+    USER_OAUTH_UNLINK,
 } from "@/constants/url";
 
 export interface UserSession {
@@ -39,6 +56,7 @@ export interface UserSession {
     issued_at: string;
     time: string;
     can_renew: boolean;
+    has_password: boolean;
     nickname?: string;
     phone?: string;
     email?: string;
@@ -46,6 +64,31 @@ export interface UserSession {
     roles: string[];
     groups: string[];
     permissions: string[];
+}
+
+export interface OAuthLinkItem {
+    provider: string;
+    provider_login: string;
+    provider_email: string;
+    created: string;
+}
+
+export interface OAuthLinksResp {
+    providers: string[];
+    links: OAuthLinkItem[];
+}
+
+export interface AuditLogItem {
+    id: number;
+    user_id?: number | null;
+    action: string;
+    target_type: string;
+    target_id: string;
+    detail: Record<string, unknown>;
+    request_id: string;
+    ip: string;
+    user_agent: string;
+    created: string;
 }
 
 export type LoginResult =
@@ -153,17 +196,49 @@ function getMainNav(roles: string[], permissions: string[]): NavGroup[] {
         });
     }
 
+    const systemItems: NavItem[] = [];
+    if (
+        admin ||
+        hasPermission(permissions, "rbac:read") ||
+        hasPermission(permissions, "rbac:write")
+    ) {
+        systemItems.push({
+            title: "rbac",
+            url: RBAC,
+            icon: ShieldIcon,
+        });
+    }
+    if (admin || hasPermission(permissions, "audit:read")) {
+        systemItems.push({
+            title: "auditLogs",
+            url: AUDIT_LOGS,
+            icon: ScrollTextIcon,
+        });
+    }
     if (admin) {
+        systemItems.push({
+            title: "jobs",
+            url: JOBS,
+            icon: ActivityIcon,
+        });
+    }
+    if (admin) {
+        systemItems.push({
+            title: "sqlQueries",
+            url: SQL_QUERIES,
+            icon: DatabaseIcon,
+        });
+        systemItems.push({
+            title: "apps",
+            url: APPS,
+            icon: KeyRoundIcon,
+        });
+    }
+    if (systemItems.length > 0) {
         groups.push({
             title: "systemFeature",
             url: "#",
-            items: [
-                {
-                    title: "jobs",
-                    url: JOBS,
-                    icon: ActivityIcon,
-                },
-            ],
+            items: systemItems,
         });
     }
 
@@ -176,6 +251,7 @@ interface RawUserMeResp {
     issued_at?: string;
     time?: string;
     can_renew?: boolean;
+    has_password?: boolean;
     nickname?: string | null;
     phone?: string | null;
     email?: string | null;
@@ -192,6 +268,7 @@ function normalizeUserSession(raw?: RawUserMeResp | null): UserSession {
         issued_at: raw?.issued_at || "",
         time: raw?.time || "",
         can_renew: Boolean(raw?.can_renew),
+        has_password: Boolean(raw?.has_password),
         nickname: raw?.nickname || undefined,
         phone: raw?.phone || undefined,
         email: raw?.email || undefined,
@@ -238,6 +315,13 @@ interface UserState {
         expiresInDays?: number,
     ) => Promise<CreateApiKeyResp>;
     revokeApiKey: (id: number) => Promise<void>;
+    changePassword: (
+        oldRawPassword: string | undefined,
+        newRawPassword: string,
+    ) => Promise<void>;
+    listOAuthLinks: () => Promise<OAuthLinksResp>;
+    unlinkOAuth: (provider: string) => Promise<void>;
+    listMyAuditLogs: (limit?: number) => Promise<AuditLogItem[]>;
 }
 
 const defaultUser: UserSession = {
@@ -246,6 +330,7 @@ const defaultUser: UserSession = {
     issued_at: "",
     time: "",
     can_renew: false,
+    has_password: false,
     roles: [],
     groups: [],
     permissions: [],
@@ -399,6 +484,34 @@ const useUserState = create<UserState>((set, get) => ({
     },
     revokeApiKey: async (id: number) => {
         await request.delete(`${USER_API_KEYS}/${id}`);
+    },
+    changePassword: async (
+        oldRawPassword: string | undefined,
+        newRawPassword: string,
+    ) => {
+        const payload: { old_password?: string; new_password: string } = {
+            new_password: sha256(newRawPassword).toString(),
+        };
+        if (oldRawPassword) {
+            payload.old_password = sha256(oldRawPassword).toString();
+        }
+        await request.patch(USER_PASSWORD, payload);
+        await get().fetch();
+    },
+    listOAuthLinks: async () => {
+        const { data } = await request.get<OAuthLinksResp>(USER_OAUTH_LINKS);
+        return data;
+    },
+    unlinkOAuth: async (provider: string) => {
+        await request.delete(
+            `${USER_OAUTH_UNLINK}/${encodeURIComponent(provider)}`,
+        );
+    },
+    listMyAuditLogs: async (limit = 15) => {
+        const { data } = await request.get<AuditLogItem[]>(USER_AUDIT_LOGS, {
+            params: { limit },
+        });
+        return data;
     },
 }));
 

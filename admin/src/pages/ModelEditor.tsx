@@ -630,8 +630,11 @@ export default function ModelEditor() {
                         valueField = renderFormField(name, (field) => {
                             return (
                                 <DateTimePicker
-                                    {...field}
-                                    date={field.value}
+                                    date={
+                                        field.value as
+                                            Date | string | null | undefined
+                                    }
+                                    disabled={disabled}
                                     i18n={i18nComponent}
                                     setDate={(date) => {
                                         if (date) {

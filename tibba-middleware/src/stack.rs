@@ -197,13 +197,16 @@ impl MiddlewareStackParams {
         self
     }
 
-    /// 注册挂载在 `session` 内侧的自定义层（如 API Key 认证）。
+    /// 注册挂载在 `session` 内侧的自定义层（如 API Key / 应用签名认证）。多次调用会按调用顺序串联保留。
     #[must_use]
     pub fn with_post_session_layer(
         mut self,
         hook: impl FnOnce(Router) -> Router + 'static,
     ) -> Self {
-        self.post_session_layer = Some(Box::new(hook));
+        self.post_session_layer = Some(match self.post_session_layer {
+            Some(prev) => Box::new(move |router| hook(prev(router))),
+            None => Box::new(hook),
+        });
         self
     }
 }

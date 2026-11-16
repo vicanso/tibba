@@ -19,8 +19,23 @@ lint:
 fmt:
 	cargo fmt
 
+# 本地开发运行（支持 make dev features=sql-query 按需开启特性）
 dev:
-	bacon run
+	bacon run $(if $(features),--features $(features),)
+
+# 本地开发运行（启用 sql-query 与 app-auth 特性）
+dev-sql:
+	bacon run --features sql-query,app-auth
+
+# 本地开发运行（仅启用 app-auth 应用签名鉴权特性）
+dev-app:
+	bacon run --features app-auth
+
+# 本地开发运行（启用 full 全部可选特性）
+dev-full:
+	bacon run --features full
+
+.PHONY: dev dev-sql dev-app dev-full
 
 mermaid:
 	cargo run --bin generate-mermaid

@@ -40,7 +40,10 @@ export default function AppHeader() {
                         key={key}
                         className="flex items-center gap-2"
                     >
-                        <Link to={item.url}>
+                        <Link
+                            to={item.url}
+                            className="flex items-center gap-2 transition-colors hover:text-foreground"
+                        >
                             {item.icon}
                             {item.title}
                         </Link>

@@ -6,6 +6,7 @@ import {
     Calendar as CalendarIcon,
     ChevronsLeftIcon,
     ChevronsRightIcon,
+    XIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -16,10 +17,13 @@ import {
     PopoverTrigger,
 } from "@/components/ui/popover";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
-import { useCallback } from "react";
+
 interface DateTimePickerProps {
-    date: Date | undefined;
+    date: Date | string | null | undefined;
     setDate: (date: Date | undefined) => void;
+    placeholder?: string;
+    clearable?: boolean;
+    disabled?: boolean;
     className?: string;
     i18n?: (key: string) => string;
 }
@@ -27,12 +31,24 @@ interface DateTimePickerProps {
 export function DateTimePicker({
     date,
     setDate,
+    placeholder,
+    clearable = false,
+    disabled = false,
     className,
     i18n,
 }: DateTimePickerProps) {
-    const currentDate = dayjs(date);
-    // 使用 ref 来跟踪是否是用户手动更改时间
-    const isUserTimeChange = React.useRef(false);
+    const parsed = React.useMemo(() => {
+        if (!date) return undefined;
+        const d = dayjs(date);
+        return d.isValid() ? d : undefined;
+    }, [date]);
+
+    const validDate = parsed?.toDate();
+    const minMonth = React.useMemo(() => new Date(2000, 0), []);
+    const maxMonth = React.useMemo(
+        () => new Date(new Date().getFullYear() + 20, 11),
+        [],
+    );
 
     const handleI18n = (key: string) => {
         if (i18n) {
@@ -41,128 +57,95 @@ export function DateTimePicker({
         return key;
     };
 
-    // 从日期中提取时间
-    const getTimeFromDate = useCallback(
-        (date: Date | undefined) => {
-            if (!date) return "";
-            return currentDate.format("HH:mm");
-        },
-        [currentDate],
-    );
-
-    // 初始时间状态
-    const [selectedTime, setSelectedTime] = React.useState<string>(
-        getTimeFromDate(date),
-    );
-
-    // 处理日期变化
     const handleDateChange = (newDate: Date | undefined) => {
-        if (newDate) {
-            // 如果已有时间，保留时间部分
-            if (selectedTime) {
-                const [hours, minutes] = selectedTime.split(":").map(Number);
-                const dateWithTime = new Date(newDate);
-                dateWithTime.setHours(hours);
-                dateWithTime.setMinutes(minutes);
-                setDate(dateWithTime);
-            } else {
-                setDate(newDate);
-            }
-        } else {
+        if (!newDate) {
             setDate(undefined);
+            return;
         }
+        const next = new Date(newDate);
+        if (parsed) {
+            next.setHours(parsed.hour(), parsed.minute(), parsed.second(), 0);
+        }
+        setDate(next);
     };
 
-    // 处理时间变化
-    const handleTimeChange = (hours: string, minutes: string) => {
-        isUserTimeChange.current = true;
-        const newTime = `${hours}:${minutes}`;
-        setSelectedTime(newTime);
-
-        if (date) {
-            const newDate = new Date(date);
-            newDate.setHours(parseInt(hours, 10));
-            newDate.setMinutes(parseInt(minutes, 10));
-            setDate(newDate);
-        }
+    const handleHourSelect = (hour: number) => {
+        const base = parsed ?? dayjs().minute(0).second(0).millisecond(0);
+        setDate(base.hour(hour).toDate());
     };
 
-    // 当外部日期变化时更新时间（仅当不是用户手动更改时）
-    React.useEffect(() => {
-        if (!isUserTimeChange.current && date) {
-            setSelectedTime(getTimeFromDate(date));
-        }
-        isUserTimeChange.current = false;
-    }, [date, getTimeFromDate]);
+    const handleMinuteSelect = (minute: number) => {
+        const base = parsed ?? dayjs().second(0).millisecond(0);
+        setDate(base.minute(minute).toDate());
+    };
 
     return (
-        <div className={cn("flex items-center gap-2", className)}>
-            <div className="flex-1">
+        <div className={cn("flex items-center gap-1", className)}>
+            <div className="min-w-0 flex-1">
                 <Popover>
                     <PopoverTrigger asChild>
                         <Button
-                            variant={"outline"}
+                            type="button"
+                            variant="outline"
+                            disabled={disabled}
                             className={cn(
                                 "w-full justify-start text-left font-normal",
-                                !date && "text-muted-foreground",
+                                !parsed && "text-muted-foreground",
                             )}
                         >
-                            <CalendarIcon className="mr-2 h-4 w-4" />
-                            {date ? (
-                                currentDate.format("YYYY-MM-DD HH:mm")
-                            ) : (
-                                <span>{handleI18n("pickDate")}</span>
-                            )}
+                            <CalendarIcon className="mr-2 size-4 shrink-0" />
+                            <span className="truncate">
+                                {parsed
+                                    ? parsed.format("YYYY-MM-DD HH:mm")
+                                    : placeholder || handleI18n("pickDate")}
+                            </span>
                         </Button>
                     </PopoverTrigger>
                     <PopoverContent className="w-auto p-0" align="start">
                         <div className="sm:flex">
                             <Calendar
                                 mode="single"
-                                selected={date}
+                                captionLayout="dropdown"
+                                startMonth={minMonth}
+                                endMonth={maxMonth}
+                                defaultMonth={validDate}
+                                selected={validDate}
                                 onSelect={handleDateChange}
                                 autoFocus
                                 footer={
                                     <div className="flex items-center gap-2">
                                         <Button
+                                            type="button"
                                             variant="outline"
                                             size="sm"
                                             onClick={() => {
-                                                let selectedDate = new Date();
-                                                if (currentDate.isValid()) {
-                                                    selectedDate = new Date(
-                                                        currentDate.valueOf(),
-                                                    );
-                                                }
-                                                selectedDate.setFullYear(
-                                                    selectedDate.getFullYear() -
-                                                        1,
+                                                const base = parsed ?? dayjs();
+                                                setDate(
+                                                    base
+                                                        .subtract(1, "year")
+                                                        .toDate(),
                                                 );
-                                                setDate(selectedDate);
                                             }}
                                         >
                                             <ChevronsLeftIcon className="h-4 w-4" />
                                         </Button>
                                         <Button
+                                            type="button"
                                             variant="outline"
                                             size="sm"
                                             onClick={() => {
-                                                let selectedDate = new Date();
-                                                if (currentDate.isValid()) {
-                                                    selectedDate = new Date(
-                                                        currentDate.valueOf(),
-                                                    );
-                                                }
-                                                selectedDate.setFullYear(
-                                                    selectedDate.getFullYear() +
-                                                        1,
+                                                const base = parsed ?? dayjs();
+                                                setDate(
+                                                    base
+                                                        .add(1, "year")
+                                                        .toDate(),
                                                 );
-                                                setDate(selectedDate);
                                             }}
                                         >
                                             <ChevronsRightIcon className="h-4 w-4" />
                                         </Button>
                                         <Button
+                                            type="button"
                                             variant="outline"
                                             size="sm"
                                             onClick={() => {
@@ -174,35 +157,33 @@ export function DateTimePicker({
                                     </div>
                                 }
                             />
-                            <div className="flex flex-col sm:flex-row sm:h-[305px] divide-y sm:divide-y-0 sm:divide-x">
+                            <div className="flex flex-col divide-y sm:h-[305px] sm:flex-row sm:divide-x sm:divide-y-0">
                                 <ScrollArea className="w-64 sm:w-auto">
-                                    <div className="flex sm:flex-col p-2">
-                                        {Array.from({ length: 24 }, (_, i) => i)
-                                            .reverse()
-                                            .map((hour) => (
-                                                <Button
-                                                    key={hour}
-                                                    size="icon"
-                                                    variant={
-                                                        date &&
-                                                        currentDate.hour() ===
-                                                            hour
-                                                            ? "secondary"
-                                                            : "ghost"
-                                                    }
-                                                    className="sm:w-full shrink-0 aspect-square"
-                                                    onClick={() =>
-                                                        handleTimeChange(
-                                                            hour.toString(),
-                                                            currentDate
-                                                                .minute()
-                                                                .toString(),
-                                                        )
-                                                    }
-                                                >
-                                                    {hour}
-                                                </Button>
-                                            ))}
+                                    <div className="flex p-2 sm:flex-col">
+                                        {Array.from(
+                                            { length: 24 },
+                                            (_, i) => i,
+                                        ).map((hour) => (
+                                            <Button
+                                                key={hour}
+                                                type="button"
+                                                size="icon"
+                                                variant={
+                                                    parsed &&
+                                                    parsed.hour() === hour
+                                                        ? "secondary"
+                                                        : "ghost"
+                                                }
+                                                className="aspect-square shrink-0 sm:w-full"
+                                                onClick={() =>
+                                                    handleHourSelect(hour)
+                                                }
+                                            >
+                                                {hour
+                                                    .toString()
+                                                    .padStart(2, "0")}
+                                            </Button>
+                                        ))}
                                     </div>
                                     <ScrollBar
                                         orientation="horizontal"
@@ -210,29 +191,24 @@ export function DateTimePicker({
                                     />
                                 </ScrollArea>
                                 <ScrollArea className="w-64 sm:w-auto">
-                                    <div className="flex sm:flex-col p-2">
+                                    <div className="flex p-2 sm:flex-col">
                                         {Array.from(
                                             { length: 12 },
                                             (_, i) => i * 5,
                                         ).map((minute) => (
                                             <Button
                                                 key={minute}
+                                                type="button"
                                                 size="icon"
                                                 variant={
-                                                    date &&
-                                                    currentDate.minute() ===
-                                                        minute
+                                                    parsed &&
+                                                    parsed.minute() === minute
                                                         ? "secondary"
                                                         : "ghost"
                                                 }
-                                                className="sm:w-full shrink-0 aspect-square"
+                                                className="aspect-square shrink-0 sm:w-full"
                                                 onClick={() =>
-                                                    handleTimeChange(
-                                                        currentDate
-                                                            .hour()
-                                                            .toString(),
-                                                        minute.toString(),
-                                                    )
+                                                    handleMinuteSelect(minute)
                                                 }
                                             >
                                                 {minute
@@ -251,6 +227,17 @@ export function DateTimePicker({
                     </PopoverContent>
                 </Popover>
             </div>
+            {clearable && parsed && !disabled && (
+                <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="size-9 shrink-0"
+                    onClick={() => setDate(undefined)}
+                >
+                    <XIcon className="size-4" />
+                </Button>
+            )}
         </div>
     );
 }

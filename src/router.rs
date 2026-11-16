@@ -27,14 +27,17 @@ use tibba_auth::SessionParams;
 use tibba_cache::RedisCache;
 use tibba_error::Error;
 use tibba_middleware::csrf_token;
-use tibba_model::{ConfigurationModel, FileModel, Model, ping_db};
+use tibba_model::{FileModel, Model, ping_db};
+use tibba_router::audit::new_audit_router;
 use tibba_router::common::{CommonRouterParams, ReadinessCheck, new_common_router};
+use tibba_router::configuration::{ConfigStore, ConfigurationAdminModel, new_config_router};
 #[cfg(feature = "file")]
 use tibba_router::file::{FileRouterParams, new_file_router};
 use tibba_router::model::{
     ModelAdapter, ModelPermissions, ModelRouterParams, new_model_router, register_model,
     register_model_with,
 };
+use tibba_router::rbac::{RbacAdmin, new_rbac_router};
 use tibba_router::user::{UserRouterParams, new_user_router};
 use tibba_router::user_admin::UserAdminModel;
 
@@ -45,7 +48,11 @@ type Result<T> = std::result::Result<T, Error>;
 #[cfg(feature = "job")]
 const READINESS_MAX_PENDING: i64 = 5000;
 
-fn register_models(cache: &'static RedisCache, session_params: Arc<SessionParams>) {
+fn register_models(
+    cache: &'static RedisCache,
+    configs: &'static ConfigStore,
+    session_params: Arc<SessionParams>,
+) {
     // 敏感模型挂细粒度权限码；Admin 角色仍可通过 authorize 的 admin 逃生舱访问。
     // SuperAdmin 持有 `*`，权限码路径同样放行。未声明权限的模型保持「仅 Admin」。
     // user 模型改身份字段 / 删除后撤销该用户的会话，见 `UserAdminModel`。
@@ -58,7 +65,7 @@ fn register_models(cache: &'static RedisCache, session_params: Arc<SessionParams
     );
     register_model_with(
         "configuration",
-        Arc::new(ModelAdapter(ConfigurationModel::new())),
+        Arc::new(ConfigurationAdminModel::new(configs)),
         ModelPermissions::default()
             .with_read("model:configuration:read")
             .with_write("model:configuration:write"),
@@ -68,7 +75,8 @@ fn register_models(cache: &'static RedisCache, session_params: Arc<SessionParams
 
 /// 组装完整 HTTP 路由树。
 pub fn new_router(ctx: &AppCtx) -> Result<Router> {
-    register_models(ctx.cache, Arc::new(crate::config::get_session_params()?));
+    let session_params = Arc::new(crate::config::get_session_params()?);
+    register_models(ctx.cache, ctx.configs, session_params.clone());
 
     let basic_config = must_get_basic_config();
     let pool = ctx.pool;
@@ -128,7 +136,13 @@ pub fn new_router(ctx: &AppCtx) -> Result<Router> {
         .route("/csrf/token", get(csrf_token))
         .nest("/users", user_router)
         .nest("/models", model_router)
-        .merge(common_router);
+        .nest(
+            "/rbac",
+            new_rbac_router(RbacAdmin::new(pool, cache, session_params), pool),
+        )
+        .nest("/audit-logs", new_audit_router(pool))
+        .merge(common_router)
+        .merge(new_config_router(ctx.configs));
 
     #[cfg(feature = "file")]
     {
@@ -141,6 +155,27 @@ pub fn new_router(ctx: &AppCtx) -> Result<Router> {
     #[cfg(feature = "job")]
     {
         api_router = api_router.nest("/jobs", tibba_router::job::new_job_router(pool));
+    }
+
+    #[cfg(feature = "sql-query")]
+    {
+        api_router = api_router
+            .nest(
+                "/queries",
+                tibba_router::sql_query::new_query_exec_router(pool, cache, ctx.configs),
+            )
+            .nest(
+                "/sql-queries",
+                tibba_router::sql_query::new_sql_query_admin_router(pool, ctx.configs),
+            );
+    }
+
+    #[cfg(feature = "app-auth")]
+    {
+        api_router = api_router.nest(
+            "/apps",
+            tibba_router::app_auth::new_app_admin_router(pool, ctx.configs, &basic_config.secret),
+        );
     }
 
     let app = if let Some(prefix) = &basic_config.prefix {

@@ -160,4 +160,33 @@ impl RolePermissionModel {
         .context(SqlxSnafu)?;
         Ok(rows.into_iter().map(RolePermission::from).collect())
     }
+
+    /// 列出全部生效的角色-权限映射（admin 概览页用）。
+    pub async fn list_all(&self, pool: &Pool<Postgres>) -> Result<Vec<RolePermission>> {
+        let rows: Vec<RolePermissionSchema> = sqlx::query_as(
+            r#"SELECT id, role, permission_code, created FROM role_permissions
+               WHERE deleted_at IS NULL
+               ORDER BY role ASC, permission_code ASC"#,
+        )
+        .fetch_all(pool)
+        .await
+        .context(SqlxSnafu)?;
+        Ok(rows.into_iter().map(RolePermission::from).collect())
+    }
+
+    /// 汇总当前所有已知角色名（合并 role_permissions 与 users.roles 中的活跃角色）。
+    pub async fn list_known_roles(&self, pool: &Pool<Postgres>) -> Result<Vec<String>> {
+        let rows: Vec<(String,)> = sqlx::query_as(
+            r#"SELECT DISTINCT role FROM role_permissions WHERE deleted_at IS NULL
+               UNION
+               SELECT DISTINCT jsonb_array_elements_text(roles) AS role
+                 FROM users
+                 WHERE deleted_at IS NULL AND jsonb_typeof(roles) = 'array'
+               ORDER BY role ASC"#,
+        )
+        .fetch_all(pool)
+        .await
+        .context(SqlxSnafu)?;
+        Ok(rows.into_iter().map(|(r,)| r).collect())
+    }
 }

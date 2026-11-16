@@ -1,14 +1,19 @@
-import { useEffect, useState } from "react";
-import { Link } from "react-router";
+import { useCallback, useEffect, useState } from "react";
+import { Link, useSearchParams } from "react-router";
 import { useShallow } from "zustand/react/shallow";
 import {
+    ActivityIcon,
     CopyIcon,
     ExternalLinkIcon,
     KeyIcon,
+    Link2Icon,
     Loader2Icon,
+    LockKeyholeIcon,
     MailCheckIcon,
+    RefreshCwIcon,
     ShieldCheckIcon,
     TrashIcon,
+    UnlinkIcon,
     UserIcon,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -57,7 +62,9 @@ import { useI18n } from "@/i18n";
 import useBasicState from "@/states/basic";
 import useUserState, {
     ApiKeyItem,
+    AuditLogItem,
     CreateApiKeyResp,
+    OAuthLinksResp,
     TotpEnrollResp,
     TotpStatus,
 } from "@/states/user";
@@ -73,6 +80,7 @@ export default function Profile() {
             state.resetPageHeaderNavigation,
         ]),
     );
+    const [searchParams, setSearchParams] = useSearchParams();
     const [
         user,
         initialized,
@@ -85,6 +93,10 @@ export default function Profile() {
         listApiKeys,
         createApiKey,
         revokeApiKey,
+        changePassword,
+        listOAuthLinks,
+        unlinkOAuth,
+        listMyAuditLogs,
     ] = useUserState(
         useShallow((state) => [
             state.data,
@@ -98,8 +110,25 @@ export default function Profile() {
             state.listApiKeys,
             state.createApiKey,
             state.revokeApiKey,
+            state.changePassword,
+            state.listOAuthLinks,
+            state.unlinkOAuth,
+            state.listMyAuditLogs,
         ]),
     );
+
+    const [oldPassword, setOldPassword] = useState("");
+    const [newPassword, setNewPassword] = useState("");
+    const [confirmPassword, setConfirmPassword] = useState("");
+    const [passwordBusy, setPasswordBusy] = useState(false);
+
+    const [oauthData, setOauthData] = useState<OAuthLinksResp | null>(null);
+    const [oauthSupported, setOauthSupported] = useState(true);
+    const [unlinkTarget, setUnlinkTarget] = useState<string | null>(null);
+    const [oauthBusy, setOauthBusy] = useState(false);
+
+    const [activities, setActivities] = useState<AuditLogItem[]>([]);
+    const [activityRefreshing, setActivityRefreshing] = useState(false);
 
     const [emailToken, setEmailToken] = useState("");
     const [sendingEmail, setSendingEmail] = useState(false);
@@ -120,6 +149,44 @@ export default function Profile() {
     const [createdKey, setCreatedKey] = useState<CreateApiKeyResp | null>(null);
     const [apiKeyBusy, setApiKeyBusy] = useState(false);
     const [revokeTarget, setRevokeTarget] = useState<ApiKeyItem | null>(null);
+
+    const refreshActivities = useCallback(async () => {
+        if (!user.account) return;
+        setActivityRefreshing(true);
+        try {
+            const rows = await listMyAuditLogs(15);
+            setActivities(rows);
+        } catch (err) {
+            toast.error(formatError(err));
+        } finally {
+            setActivityRefreshing(false);
+        }
+    }, [user.account, listMyAuditLogs]);
+
+    useEffect(() => {
+        const bound = searchParams.get("oauth_bound");
+        const oauthErr = searchParams.get("oauth_error");
+        if (!bound && !oauthErr) return;
+
+        if (bound) {
+            toast.success(`${profileI18n("oauthBindSuccess")} (${bound})`);
+        }
+        if (oauthErr) {
+            const key =
+                oauthErr === "already_linked"
+                    ? "oauthErrorAlreadyLinked"
+                    : oauthErr === "provider_already_bound"
+                      ? "oauthErrorProviderBound"
+                      : oauthErr === "session_mismatch"
+                        ? "oauthErrorSessionMismatch"
+                        : "oauthErrorGeneric";
+            toast.error(profileI18n(key));
+        }
+        const next = new URLSearchParams(searchParams);
+        next.delete("oauth_bound");
+        next.delete("oauth_error");
+        setSearchParams(next, { replace: true });
+    }, [searchParams, setSearchParams, profileI18n]);
 
     useEffect(() => {
         setPageHeaderNavigation([
@@ -170,17 +237,51 @@ export default function Profile() {
                 }
             });
 
+        listOAuthLinks()
+            .then((data) => {
+                if (!cancelled) {
+                    setOauthData(data);
+                    setOauthSupported(true);
+                }
+            })
+            .catch((err) => {
+                if (cancelled) return;
+                if (err instanceof HTTPError && err.status === 404) {
+                    setOauthSupported(false);
+                } else {
+                    toast.error(formatError(err));
+                }
+            });
+
+        listMyAuditLogs(15)
+            .then((rows) => {
+                if (!cancelled) {
+                    setActivities(rows);
+                }
+            })
+            .catch((err) => {
+                if (!cancelled) {
+                    toast.error(formatError(err));
+                }
+            });
+
         return () => {
             cancelled = true;
         };
-    }, [user.account, getTotpStatus, listApiKeys]);
+    }, [
+        user.account,
+        getTotpStatus,
+        listApiKeys,
+        listOAuthLinks,
+        listMyAuditLogs,
+    ]);
 
     const copyText = async (text: string) => {
         try {
             await navigator.clipboard.writeText(text);
             toast.success(commonI18n("copied"));
         } catch {
-            toast.error("Copy failed");
+            toast.error(commonI18n("copyFailed"));
         }
     };
 
@@ -278,6 +379,56 @@ export default function Profile() {
         }
     };
 
+    const handleSavePassword = async () => {
+        if (passwordBusy) return;
+        if (user.has_password && !oldPassword) {
+            toast.error(profileI18n("oldPasswordPlaceholder"));
+            return;
+        }
+        if (newPassword.length < 6) {
+            toast.error(profileI18n("passwordTooShort"));
+            return;
+        }
+        if (newPassword !== confirmPassword) {
+            toast.error(profileI18n("passwordMismatch"));
+            return;
+        }
+        setPasswordBusy(true);
+        try {
+            await changePassword(
+                user.has_password ? oldPassword : undefined,
+                newPassword,
+            );
+            setOldPassword("");
+            setNewPassword("");
+            setConfirmPassword("");
+            toast.success(profileI18n("passwordSaveSuccess"));
+            void refreshActivities();
+        } catch (err) {
+            toast.error(formatError(err));
+        } finally {
+            setPasswordBusy(false);
+        }
+    };
+
+    const handleUnlinkOAuth = async () => {
+        if (!unlinkTarget || oauthBusy) return;
+        const provider = unlinkTarget;
+        setUnlinkTarget(null);
+        setOauthBusy(true);
+        try {
+            await unlinkOAuth(provider);
+            toast.success(profileI18n("oauthUnlinkSuccess"));
+            const updated = await listOAuthLinks();
+            setOauthData(updated);
+            void refreshActivities();
+        } catch (err) {
+            toast.error(formatError(err));
+        } finally {
+            setOauthBusy(false);
+        }
+    };
+
     const handleRevokeApiKey = async () => {
         if (!revokeTarget) return;
         const targetId = revokeTarget.id;
@@ -317,7 +468,7 @@ export default function Profile() {
     }
 
     return (
-        <div className="mx-auto w-full max-w-4xl space-y-6 p-4 md:p-6">
+        <div className="w-full space-y-6 p-2 md:p-4">
             <Card>
                 <CardHeader>
                     <CardTitle>{profileI18n("basicTitle")}</CardTitle>
@@ -326,6 +477,223 @@ export default function Profile() {
                     <ProfileForm />
                 </CardContent>
             </Card>
+
+            <Card>
+                <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                        <LockKeyholeIcon className="size-5" />
+                        {user.has_password
+                            ? profileI18n("passwordChangeTitle")
+                            : profileI18n("passwordSetTitle")}
+                    </CardTitle>
+                    <CardDescription>
+                        {user.has_password
+                            ? profileI18n("passwordChangeDesc")
+                            : profileI18n("passwordSetDesc")}
+                    </CardDescription>
+                </CardHeader>
+                <CardContent>
+                    <form
+                        className="space-y-4 max-w-md"
+                        onSubmit={(e) => {
+                            e.preventDefault();
+                            void handleSavePassword();
+                        }}
+                    >
+                        {user.has_password && (
+                            <div className="space-y-1.5">
+                                <Label htmlFor="old-password">
+                                    {profileI18n("oldPasswordLabel")}
+                                </Label>
+                                <Input
+                                    id="old-password"
+                                    type="password"
+                                    autoComplete="current-password"
+                                    value={oldPassword}
+                                    onChange={(e) =>
+                                        setOldPassword(e.target.value)
+                                    }
+                                    placeholder={profileI18n(
+                                        "oldPasswordPlaceholder",
+                                    )}
+                                />
+                            </div>
+                        )}
+                        <div className="space-y-1.5">
+                            <Label htmlFor="new-password">
+                                {profileI18n("newPasswordLabel")}
+                            </Label>
+                            <Input
+                                id="new-password"
+                                type="password"
+                                autoComplete="new-password"
+                                value={newPassword}
+                                onChange={(e) => setNewPassword(e.target.value)}
+                                placeholder={profileI18n(
+                                    "newPasswordPlaceholder",
+                                )}
+                            />
+                        </div>
+                        <div className="space-y-1.5">
+                            <Label htmlFor="confirm-password">
+                                {profileI18n("confirmPasswordLabel")}
+                            </Label>
+                            <Input
+                                id="confirm-password"
+                                type="password"
+                                autoComplete="new-password"
+                                value={confirmPassword}
+                                onChange={(e) =>
+                                    setConfirmPassword(e.target.value)
+                                }
+                                placeholder={profileI18n(
+                                    "confirmPasswordPlaceholder",
+                                )}
+                            />
+                        </div>
+                        <Button type="submit" disabled={passwordBusy}>
+                            {passwordBusy && (
+                                <Loader2Icon className="mr-2 size-4 animate-spin" />
+                            )}
+                            {user.has_password
+                                ? profileI18n("passwordChangeBtn")
+                                : profileI18n("passwordSetBtn")}
+                        </Button>
+                    </form>
+                </CardContent>
+            </Card>
+
+            {oauthSupported &&
+                oauthData &&
+                (oauthData.providers.length > 0 ||
+                    oauthData.links.length > 0) && (
+                    <Card>
+                        <CardHeader>
+                            <CardTitle className="flex items-center gap-2">
+                                <Link2Icon className="size-5" />
+                                {profileI18n("oauthTitle")}
+                            </CardTitle>
+                            <CardDescription>
+                                {profileI18n("oauthDesc")}
+                            </CardDescription>
+                        </CardHeader>
+                        <CardContent className="space-y-3">
+                            {Array.from(
+                                new Set([
+                                    ...oauthData.providers,
+                                    ...oauthData.links.map((l) => l.provider),
+                                ]),
+                            ).map((provider) => {
+                                const link = oauthData.links.find(
+                                    (l) => l.provider === provider,
+                                );
+                                const canUnlink =
+                                    user.has_password ||
+                                    oauthData.links.length > 1;
+                                const isConfigurable =
+                                    oauthData.providers.includes(provider);
+                                const displayProvider =
+                                    provider === "github"
+                                        ? "GitHub"
+                                        : provider === "google"
+                                          ? "Google"
+                                          : provider;
+                                return (
+                                    <div
+                                        key={provider}
+                                        className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3"
+                                    >
+                                        <div className="space-y-1">
+                                            <div className="flex items-center gap-2">
+                                                <span className="font-medium text-sm">
+                                                    {displayProvider}
+                                                </span>
+                                                <Badge
+                                                    variant={
+                                                        link
+                                                            ? "default"
+                                                            : "secondary"
+                                                    }
+                                                >
+                                                    {link
+                                                        ? profileI18n(
+                                                              "oauthBound",
+                                                          )
+                                                        : profileI18n(
+                                                              "oauthUnbound",
+                                                          )}
+                                                </Badge>
+                                            </div>
+                                            {link && (
+                                                <p className="text-xs text-muted-foreground">
+                                                    {[
+                                                        link.provider_login,
+                                                        link.provider_email,
+                                                    ]
+                                                        .filter(Boolean)
+                                                        .join(" · ") ||
+                                                        "-"}{" "}
+                                                    · {formatDate(link.created)}
+                                                </p>
+                                            )}
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            {link ? (
+                                                <Button
+                                                    type="button"
+                                                    variant="outline"
+                                                    size="sm"
+                                                    disabled={
+                                                        !canUnlink || oauthBusy
+                                                    }
+                                                    title={
+                                                        canUnlink
+                                                            ? undefined
+                                                            : profileI18n(
+                                                                  "oauthUnlinkDisabledHint",
+                                                              )
+                                                    }
+                                                    onClick={() =>
+                                                        setUnlinkTarget(
+                                                            provider,
+                                                        )
+                                                    }
+                                                >
+                                                    <UnlinkIcon className="mr-1.5 size-3.5" />
+                                                    {profileI18n("oauthUnlink")}
+                                                </Button>
+                                            ) : (
+                                                isConfigurable && (
+                                                    <Button
+                                                        type="button"
+                                                        variant="outline"
+                                                        size="sm"
+                                                        onClick={() => {
+                                                            window.location.assign(
+                                                                `/api/users/oauth/${encodeURIComponent(provider)}/start?mode=bind&redirect=${encodeURIComponent("/#/profile")}`,
+                                                            );
+                                                        }}
+                                                    >
+                                                        <Link2Icon className="mr-1.5 size-3.5" />
+                                                        {profileI18n(
+                                                            "oauthConnect",
+                                                        )}
+                                                    </Button>
+                                                )
+                                            )}
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                            {!user.has_password &&
+                                oauthData.links.length === 1 && (
+                                    <p className="text-xs text-muted-foreground">
+                                        {profileI18n("oauthUnlinkDisabledHint")}
+                                    </p>
+                                )}
+                        </CardContent>
+                    </Card>
+                )}
 
             <Card>
                 <CardHeader>
@@ -772,6 +1140,94 @@ export default function Profile() {
                 </Card>
             )}
 
+            <Card>
+                <CardHeader className="flex flex-row items-center justify-between gap-2">
+                    <div>
+                        <CardTitle className="flex items-center gap-2">
+                            <ActivityIcon className="size-5" />
+                            {profileI18n("activityTitle")}
+                        </CardTitle>
+                        <CardDescription className="mt-1">
+                            {profileI18n("activityDesc")}
+                        </CardDescription>
+                    </div>
+                    <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={activityRefreshing}
+                        onClick={() => void refreshActivities()}
+                    >
+                        <RefreshCwIcon
+                            className={`mr-1.5 size-3.5 ${activityRefreshing ? "animate-spin" : ""}`}
+                        />
+                        {commonI18n("refresh")}
+                    </Button>
+                </CardHeader>
+                <CardContent>
+                    <div className="rounded-md border">
+                        <Table>
+                            <TableHeader>
+                                <TableRow>
+                                    <TableHead>
+                                        {profileI18n("activityColAction")}
+                                    </TableHead>
+                                    <TableHead>
+                                        {profileI18n("activityColIp")}
+                                    </TableHead>
+                                    <TableHead>
+                                        {profileI18n("activityColDetail")}
+                                    </TableHead>
+                                    <TableHead>
+                                        {profileI18n("activityColTime")}
+                                    </TableHead>
+                                </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                                {activities.length === 0 ? (
+                                    <TableRow>
+                                        <TableCell
+                                            colSpan={4}
+                                            className="h-20 text-center text-muted-foreground"
+                                        >
+                                            {profileI18n("activityEmpty")}
+                                        </TableCell>
+                                    </TableRow>
+                                ) : (
+                                    activities.map((item) => {
+                                        const detailKeys = Object.keys(
+                                            item.detail || {},
+                                        );
+                                        const detailText =
+                                            detailKeys.length > 0
+                                                ? JSON.stringify(item.detail)
+                                                : "-";
+                                        return (
+                                            <TableRow key={item.id}>
+                                                <TableCell>
+                                                    <Badge variant="outline">
+                                                        {item.action}
+                                                    </Badge>
+                                                </TableCell>
+                                                <TableCell className="font-mono text-xs">
+                                                    {item.ip || "-"}
+                                                </TableCell>
+                                                <TableCell className="max-w-xs truncate font-mono text-xs text-muted-foreground">
+                                                    {detailText}
+                                                </TableCell>
+                                                <TableCell className="text-xs">
+                                                    {formatDate(item.created)}
+                                                </TableCell>
+                                            </TableRow>
+                                        );
+                                    })
+                                )}
+                            </TableBody>
+                        </Table>
+                    </div>
+                </CardContent>
+            </Card>
+
             <AlertDialog
                 open={Boolean(revokeTarget)}
                 onOpenChange={(open) => {
@@ -793,6 +1249,35 @@ export default function Profile() {
                             {modelI18n("cancel")}
                         </AlertDialogCancel>
                         <AlertDialogAction onClick={handleRevokeApiKey}>
+                            {modelI18n("continue")}
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
+
+            <AlertDialog
+                open={Boolean(unlinkTarget)}
+                onOpenChange={(open) => {
+                    if (!open) setUnlinkTarget(null);
+                }}
+            >
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>
+                            {profileI18n("oauthUnlinkTitle")}
+                        </AlertDialogTitle>
+                        <AlertDialogDescription>
+                            {profileI18n("oauthUnlinkDesc")}
+                            {unlinkTarget ? ` (${unlinkTarget})` : ""}
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel>
+                            {modelI18n("cancel")}
+                        </AlertDialogCancel>
+                        <AlertDialogAction
+                            onClick={() => void handleUnlinkOAuth()}
+                        >
                             {modelI18n("continue")}
                         </AlertDialogAction>
                     </AlertDialogFooter>

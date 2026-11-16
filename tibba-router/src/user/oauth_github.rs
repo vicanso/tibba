@@ -27,7 +27,8 @@
 //! 4. **2FA 闸门与防开放重定向** —— 若已启用 2FA 则签发短期挑战并跳转到站内安全路径，否则写 Session 并回跳
 
 use super::{
-    OAuthCompleteParams, OAuthLandingSpec, Result, build_oauth_nonce_cookie, complete_oauth_login,
+    OAuthBindParams, OAuthCompleteParams, OAuthLandingSpec, OAuthStartParams, Result,
+    build_oauth_nonce_cookie, build_oauth_state_payload, complete_oauth_bind, complete_oauth_login,
     land_oauth_user, verify_oauth_state_and_nonce,
 };
 use axum::extract::{Query, State};
@@ -97,23 +98,29 @@ pub(crate) struct CallbackParams {
     path = "/users/oauth/github/start",
     tag = "user",
     operation_id = "oauth_github_start",
+    params(OAuthStartParams),
     responses(
         (status = 307, description = "302/307 重定向到 GitHub 授权页"),
+        (status = 401, description = "绑定模式要求当前会话已登录"),
         (status = 503, description = "GitHub OAuth 未配置")
     )
 )]
 pub(crate) async fn start_login(
     State(state): State<OauthGitHubState>,
+    Query(params): Query<OAuthStartParams>,
+    session: Session,
     jar: CookieJar,
 ) -> Result<(CookieJar, Redirect)> {
     let provider = state.oauth_config.github.build_provider()?;
     let csrf_state = uuid();
     let browser_nonce = uuid();
+    let payload =
+        build_oauth_state_payload(&params, &session, browser_nonce.clone(), ERROR_CATEGORY)?;
     state
         .cache
         .set_struct(
             &format!("{STATE_REDIS_PREFIX}{csrf_state}"),
-            &browser_nonce,
+            &payload,
             Some(Duration::from_secs(STATE_TTL_SECS)),
         )
         .await?;
@@ -135,7 +142,7 @@ pub(crate) async fn start_login(
     operation_id = "oauth_github_callback",
     params(CallbackParams),
     responses(
-        (status = 307, description = "登录成功或进入 MFA 第二步，安全重定向回站内前端"),
+        (status = 307, description = "登录/绑定成功或进入 MFA 第二步，安全重定向回站内前端"),
         (status = 401, description = "state 无效、浏览器绑定缺失或参数缺失")
     )
 )]
@@ -151,7 +158,7 @@ pub(crate) async fn callback(
     let code = params.code.context(InvalidParamsSnafu)?;
     let csrf_state = params.state.context(InvalidParamsSnafu)?;
 
-    verify_oauth_state_and_nonce(
+    let state_payload = verify_oauth_state_and_nonce(
         state.cache,
         STATE_REDIS_PREFIX,
         &csrf_state,
@@ -163,6 +170,24 @@ pub(crate) async fn callback(
     let provider = state.oauth_config.github.build_provider()?;
     let github_user = provider.exchange_and_fetch(&code).await?;
     let provider_user_id = github_user.id.to_string();
+
+    if let Some(bind_user_id) = state_payload.bind_user_id {
+        return complete_oauth_bind(OAuthBindParams {
+            pool: state.pool,
+            session,
+            bind_user_id,
+            provider: PROVIDER,
+            provider_user_id: &provider_user_id,
+            provider_login: &github_user.login,
+            verified_email: github_user.primary_verified_email.as_deref(),
+            redirect: state_payload.redirect.as_deref(),
+            fallback_redirect: &state.success_redirect,
+            request_id: &request_id,
+            ip: ip.to_string(),
+            headers: &headers,
+        })
+        .await;
+    }
 
     let user = land_oauth_user(
         state.pool,
@@ -178,13 +203,17 @@ pub(crate) async fn callback(
     )
     .await?;
 
+    let redirect_target = state_payload
+        .redirect
+        .as_deref()
+        .unwrap_or(&state.success_redirect);
     complete_oauth_login(OAuthCompleteParams {
         pool: state.pool,
         cache: state.cache,
         session,
         user,
         provider: PROVIDER,
-        success_redirect: &state.success_redirect,
+        success_redirect: redirect_target,
         request_id: &request_id,
         ip: ip.to_string(),
         headers: &headers,
